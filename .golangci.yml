@@ -1,0 +1,9 @@
+version: "2"
+
+linters:
+  exclusions:
+    rules:
+      - linters: [errcheck]
+        source: "fmt\\.Fprint"
+      - linters: [errcheck]
+        source: "\\.Body\\.Close\\(\\)"

@@ -1,0 +1,15 @@
+# oapi-codegen configuration for the name.com Core API client.
+#
+# Regenerate with `make generate`. Do not hand-edit the output in this package.
+#
+# Spec source: https://namedotcom-cdn.name.tools/api-info/namecom.api.yaml
+# Vendored at: namecom.api.yaml (SHA256 recorded in that file's header comment)
+package: gen
+output: internal/api/gen/zz_generated.go
+generate:
+  models: true
+  client: true
+output-options:
+  # Skip the embedded spec blob — we vendor the YAML separately and don't need
+  # it baked into the binary.
+  skip-prune: false
