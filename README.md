@@ -78,10 +78,13 @@ namecom auth login
 # 2. See your portfolio at a glance
 namecom status
 
-# 3. Check if a domain is available — and register it right there
+# 3. Check if a domain is available
 namecom domain check mycoolstartup.com
 
-# 4. Point it somewhere
+# 4. Register it
+namecom domain register mycoolstartup.com
+
+# 5. Point it somewhere
 namecom dns create mycoolstartup.com --type A --answer 1.2.3.4
 ```
 
@@ -162,6 +165,13 @@ namecom auth login --profile personal
 namecom domain list --profile work
 namecom config use work                 # make it the default
 ```
+
+**Sandbox vs. production** — test changes safely against name.com's sandbox API before running them for real:
+```bash
+namecom auth login --profile sandbox --sandbox
+namecom domain register test.com --profile sandbox
+```
+Omit `--profile` to use your default (production) profile.
 
 **Environment variables** (useful in CI):
 ```bash
