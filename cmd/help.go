@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/namedotcom/namecom-cli/internal/output"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )

@@ -2,7 +2,7 @@
 package domain
 
 import (
-	"github.com/namedotcom/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/spf13/cobra"
 )
 

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/namedotcom/namecom-cli/cmd"
+import "github.com/patramsey/namecom-cli/cmd"
 
 // version is set at build time via:
 //

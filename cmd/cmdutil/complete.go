@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/namedotcom/namecom-cli/internal/api"
-	"github.com/namedotcom/namecom-cli/internal/api/gen"
+	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/spf13/cobra"
 )
 

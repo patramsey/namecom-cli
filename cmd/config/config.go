@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/namedotcom/namecom-cli/cmd/cmdutil"
-	"github.com/namedotcom/namecom-cli/internal/config"
-	"github.com/namedotcom/namecom-cli/internal/output"
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/config"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

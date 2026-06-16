@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/huh"
-	"github.com/namedotcom/namecom-cli/internal/output"
+	"github.com/patramsey/namecom-cli/internal/output"
 )
 
 // Confirm prompts the user for a yes/no confirmation using a styled huh form.

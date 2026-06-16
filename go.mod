@@ -1,4 +1,4 @@
-module github.com/namedotcom/namecom-cli
+module github.com/patramsey/namecom-cli
 
 go 1.26.4
 

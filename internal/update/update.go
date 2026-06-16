@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	releaseURL = "https://api.github.com/repos/namedotcom/namecom-cli/releases/latest"
+	releaseURL = "https://api.github.com/repos/patramsey/namecom-cli/releases/latest"
 	cacheTTL   = 24 * time.Hour
 	httpTimeout = 2 * time.Second
 )
@@ -40,7 +40,7 @@ func Check(current string) string {
 	}
 	if isNewer(latest, current) {
 		return fmt.Sprintf(
-			"A newer version is available: v%s  (current: v%s) — see github.com/namedotcom/namecom-cli/releases",
+			"A newer version is available: v%s  (current: v%s) — see github.com/patramsey/namecom-cli/releases",
 			latest, current,
 		)
 	}

@@ -4,9 +4,9 @@
 
 **The official command-line interface for [name.com](https://www.name.com)**
 
-[![CI](https://github.com/namedotcom/namecom-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/namedotcom/namecom-cli/actions/workflows/ci.yml)
-[![Latest Release](https://img.shields.io/github/v/release/namedotcom/namecom-cli)](https://github.com/namedotcom/namecom-cli/releases/latest)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/namedotcom/namecom-cli)](go.mod)
+[![CI](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/patramsey/namecom-cli)](https://github.com/patramsey/namecom-cli/releases/latest)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/patramsey/namecom-cli)](go.mod)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Register domains, manage DNS, and run your entire domain portfolio — without leaving the terminal.
@@ -44,29 +44,29 @@ The name.com web UI is great for one-offs. The CLI is for everything else:
 
 **Homebrew** (macOS/Linux):
 ```bash
-brew install namedotcom/tap/namecom
+brew install patramsey/tap/namecom
 ```
 
 **Download a release binary:**
 ```bash
 # macOS (Apple Silicon)
-curl -L https://github.com/namedotcom/namecom-cli/releases/latest/download/namecom_darwin_arm64.tar.gz | tar xz
+curl -L https://github.com/patramsey/namecom-cli/releases/latest/download/namecom_darwin_arm64.tar.gz | tar xz
 sudo mv namecom /usr/local/bin/
 
 # macOS (Intel)
-curl -L https://github.com/namedotcom/namecom-cli/releases/latest/download/namecom_darwin_amd64.tar.gz | tar xz
+curl -L https://github.com/patramsey/namecom-cli/releases/latest/download/namecom_darwin_amd64.tar.gz | tar xz
 sudo mv namecom /usr/local/bin/
 
 # Linux (amd64)
-curl -L https://github.com/namedotcom/namecom-cli/releases/latest/download/namecom_linux_amd64.tar.gz | tar xz
+curl -L https://github.com/patramsey/namecom-cli/releases/latest/download/namecom_linux_amd64.tar.gz | tar xz
 sudo mv namecom /usr/local/bin/
 ```
 
-All platforms and checksums on the [releases page](https://github.com/namedotcom/namecom-cli/releases).
+All platforms and checksums on the [releases page](https://github.com/patramsey/namecom-cli/releases).
 
 **Go install:**
 ```bash
-go install github.com/namedotcom/namecom-cli@latest
+go install github.com/patramsey/namecom-cli@latest
 ```
 
 ## Quick start

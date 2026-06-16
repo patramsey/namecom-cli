@@ -8,10 +8,10 @@ import (
 	"strconv"
 
 	"github.com/charmbracelet/huh"
-	"github.com/namedotcom/namecom-cli/cmd/cmdutil"
-	"github.com/namedotcom/namecom-cli/internal/api"
-	"github.com/namedotcom/namecom-cli/internal/api/gen"
-	"github.com/namedotcom/namecom-cli/internal/output"
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/api/gen"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

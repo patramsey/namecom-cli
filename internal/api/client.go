@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/namedotcom/namecom-cli/internal/api/gen"
-	"github.com/namedotcom/namecom-cli/internal/config"
+	"github.com/patramsey/namecom-cli/internal/api/gen"
+	"github.com/patramsey/namecom-cli/internal/config"
 	"golang.org/x/time/rate"
 )
 
