@@ -50,6 +50,7 @@ type Config struct {
 	Color     ColorMode // --color flag value
 	Writer    io.Writer // defaults to os.Stdout
 	EWriter   io.Writer // defaults to os.Stderr
+	Sandbox   bool      // true when targeting the sandbox API (--sandbox / profile)
 }
 
 // DefaultConfig returns an output config with defaults resolved from the
@@ -233,12 +234,25 @@ func (c *Config) PrintQuiet(vals []string) {
 	}
 }
 
+// SandboxTag returns a styled "[sandbox]" badge when c.Sandbox is set, or ""
+// otherwise. Used to flag output that came from the sandbox API so it's never
+// mistaken for a production result.
+func (c *Config) SandboxTag() string {
+	if !c.Sandbox {
+		return ""
+	}
+	if c.ColorEnabled() {
+		return lipgloss.NewStyle().Bold(true).Foreground(acAmber).Render("[sandbox]") + " "
+	}
+	return "[sandbox] "
+}
+
 // Success prints a ✓ success message to stdout.
 func (c *Config) Success(msg string) {
 	if c.ColorEnabled() {
-		fmt.Fprintln(c.Writer, styleSuccess.Render("✓")+" "+msg)
+		fmt.Fprintln(c.Writer, styleSuccess.Render("✓")+" "+c.SandboxTag()+msg)
 	} else {
-		fmt.Fprintln(c.Writer, "✓ "+msg)
+		fmt.Fprintln(c.Writer, "✓ "+c.SandboxTag()+msg)
 	}
 }
 
@@ -573,9 +587,9 @@ func (c *Config) Title(name string) {
 		return
 	}
 	if c.ColorEnabled() {
-		fmt.Fprintln(c.Writer, styleTitle.Render(name))
+		fmt.Fprintln(c.Writer, c.SandboxTag()+styleTitle.Render(name))
 	} else {
-		fmt.Fprintln(c.Writer, name)
+		fmt.Fprintln(c.Writer, c.SandboxTag()+name)
 	}
 }
 

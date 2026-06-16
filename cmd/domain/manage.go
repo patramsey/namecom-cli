@@ -132,7 +132,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	if enable {
 		// PurchasePrivacy may charge money — confirm first.
 		yes := cmdutil.IsYes(cmd)
-		ok, err := confirm(yes, fmt.Sprintf("Purchase WHOIS privacy for %s?", domainName))
+		ok, err := confirm(out, yes, fmt.Sprintf("Purchase WHOIS privacy for %s?", domainName))
 		if err != nil {
 			return err
 		}

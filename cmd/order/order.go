@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func confirmRefund(yes bool, orderID int32, itemIDs []int32) (bool, error) {
-	return cmdutil.Confirm(yes, fmt.Sprintf("Refund order %d, items %v? This cannot be undone.", orderID, itemIDs))
+func confirmRefund(out *output.Config, yes bool, orderID int32, itemIDs []int32) (bool, error) {
+	return cmdutil.Confirm(out, yes, fmt.Sprintf("Refund order %d, items %v? This cannot be undone.", orderID, itemIDs))
 }
 
 // Cmd is the `namecom order` parent command.
@@ -161,7 +161,7 @@ func runRefund(cmd *cobra.Command, args []string) error {
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 
-	ok, err := confirmRefund(yes, refundOrderID, refundItemIDs)
+	ok, err := confirmRefund(out, yes, refundOrderID, refundItemIDs)
 	if err != nil {
 		return err
 	}

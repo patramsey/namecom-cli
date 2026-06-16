@@ -312,7 +312,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	dryRun := cmdutil.IsDryRun(cmd)
 	domain, mailbox := args[0], args[1]
 
-	ok, err := cmdutil.Confirm(yes, fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain))
+	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain))
 	if err != nil {
 		return err
 	}

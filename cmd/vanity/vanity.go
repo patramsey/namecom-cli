@@ -255,7 +255,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	dryRun := cmdutil.IsDryRun(cmd)
 	domain, hostname := args[0], args[1]
 
-	ok, err := cmdutil.Confirm(yes, fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain))
+	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain))
 	if err != nil {
 		return err
 	}

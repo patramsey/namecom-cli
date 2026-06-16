@@ -354,7 +354,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := confirmDelete(yes, fmt.Sprintf("Delete DNS record %d from %s?", id, domain))
+	ok, err := confirmDelete(out, yes, fmt.Sprintf("Delete DNS record %d from %s?", id, domain))
 	if err != nil {
 		return err
 	}
@@ -654,8 +654,8 @@ func dnsCreateForm(cmd *cobra.Command) error {
 	return nil
 }
 
-func confirmDelete(yes bool, msg string) (bool, error) {
-	return cmdutil.Confirm(yes, msg)
+func confirmDelete(out *output.Config, yes bool, msg string) (bool, error) {
+	return cmdutil.Confirm(out, yes, msg)
 }
 
 func parseID(s string) (int32, error) {

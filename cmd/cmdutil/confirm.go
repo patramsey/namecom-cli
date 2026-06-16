@@ -11,7 +11,10 @@ import (
 // Confirm prompts the user for a yes/no confirmation using a styled huh form.
 // Returns true if confirmed. If yes is true, skips the prompt entirely.
 // In non-interactive mode without --yes, returns a clear error.
-func Confirm(yes bool, msg string) (bool, error) {
+// The prompt is tagged "[sandbox]" when out targets the sandbox API, so the
+// decision point makes the environment unmistakable.
+func Confirm(out *output.Config, yes bool, msg string) (bool, error) {
+	msg = out.SandboxTag() + msg
 	if yes {
 		return true, nil
 	}

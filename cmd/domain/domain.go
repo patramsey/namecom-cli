@@ -3,6 +3,7 @@ package domain
 
 import (
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -31,8 +32,8 @@ func init() {
 	)
 }
 
-func confirm(yes bool, msg string) (bool, error) {
-	return cmdutil.Confirm(yes, msg)
+func confirm(out *output.Config, yes bool, msg string) (bool, error) {
+	return cmdutil.Confirm(out, yes, msg)
 }
 
 // ptr returns a pointer to v, used for optional struct fields.

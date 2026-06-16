@@ -206,6 +206,8 @@ func initContext(cmd *cobra.Command) error {
 		return err
 	}
 
+	out.Sandbox = creds.Sandbox
+
 	// --- API client ---
 	apiClient, err := api.New(api.Options{
 		Creds:     creds,

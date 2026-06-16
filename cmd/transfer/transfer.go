@@ -224,7 +224,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ok, err := confirm(yes, fmt.Sprintf("Initiate transfer of %s?", domain))
+	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
@@ -354,7 +354,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ok, err := confirm(yes, fmt.Sprintf("Transfer %s from another name.com account?", domain))
+	ok, err := confirm(out, yes, fmt.Sprintf("Transfer %s from another name.com account?", domain))
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	dryRun := cmdutil.IsDryRun(cmd)
 	domain := args[0]
 
-	ok, err := confirm(yes, fmt.Sprintf("Cancel transfer of %s?", domain))
+	ok, err := confirm(out, yes, fmt.Sprintf("Cancel transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
@@ -437,7 +437,7 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 	dryRun := cmdutil.IsDryRun(cmd)
 	domain := args[0]
 
-	ok, err := confirm(yes, fmt.Sprintf("Cancel outbound transfer of %s?", domain))
+	ok, err := confirm(out, yes, fmt.Sprintf("Cancel outbound transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
@@ -519,8 +519,8 @@ func transferRows(out *output.Config, transfers []gen.Transfer) [][]string {
 	return rows
 }
 
-func confirm(yes bool, msg string) (bool, error) {
-	return cmdutil.Confirm(yes, msg)
+func confirm(out *output.Config, yes bool, msg string) (bool, error) {
+	return cmdutil.Confirm(out, yes, msg)
 }
 
 func ptr[T any](v T) *T { return &v }

@@ -394,7 +394,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := cmdutil.Confirm(yes, fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain))
+	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain))
 	if err != nil {
 		return err
 	}

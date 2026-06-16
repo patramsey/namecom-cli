@@ -86,7 +86,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		regPrice = fmt.Sprintf("$%.2f/yr", *pricing.PurchasePrice)
 	}
 	promptMsg := fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, registerYears, regPrice)
-	ok, err := confirm(yes, promptMsg)
+	ok, err := confirm(out, yes, promptMsg)
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		renewPrice = fmt.Sprintf("$%.2f/yr", *pricing.RenewalPrice)
 	}
 	promptMsg := fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, renewYears, renewPrice)
-	ok, err := confirm(yes, promptMsg)
+	ok, err := confirm(out, yes, promptMsg)
 	if err != nil {
 		return err
 	}

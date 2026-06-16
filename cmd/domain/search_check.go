@@ -115,7 +115,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if r.PurchasePrice != nil {
 		price = fmt.Sprintf(" for $%.2f/yr", *r.PurchasePrice)
 	}
-	ok, err := confirm(cmdutil.IsYes(cmd), fmt.Sprintf("Register %s%s?", r.DomainName, price))
+	ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Register %s%s?", r.DomainName, price))
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
@@ -184,5 +185,69 @@ func TestExpiryDate_IncludesFormattedDate(t *testing.T) {
 	got := c.ExpiryDate(&d)
 	if !strings.Contains(got, "2027-03-15") {
 		t.Errorf("ExpiryDate = %q, want formatted date '2027-03-15'", got)
+	}
+}
+
+// ---- SandboxTag -------------------------------------------------------------
+
+func TestSandboxTag_NoColor(t *testing.T) {
+	c := &Config{Color: ColorNever, Sandbox: true}
+	if got := c.SandboxTag(); got != "[sandbox] " {
+		t.Errorf("SandboxTag() = %q, want %q", got, "[sandbox] ")
+	}
+}
+
+func TestSandboxTag_NotSandbox(t *testing.T) {
+	// Production (Sandbox: false) must render no tag at all, in either color mode.
+	for _, color := range []ColorMode{ColorNever, ColorAlways} {
+		c := &Config{Color: color, Sandbox: false}
+		if got := c.SandboxTag(); got != "" {
+			t.Errorf("SandboxTag() with Color=%v, Sandbox=false = %q, want empty", color, got)
+		}
+	}
+}
+
+func TestSandboxTag_Color(t *testing.T) {
+	c := &Config{Color: ColorAlways, Sandbox: true}
+	if got := c.SandboxTag(); !strings.Contains(got, "[sandbox]") {
+		t.Errorf("SandboxTag() = %q, want it to contain '[sandbox]'", got)
+	}
+}
+
+// ---- Success / Title sandbox tagging ----------------------------------------
+
+func TestSuccess_SandboxTag(t *testing.T) {
+	var buf bytes.Buffer
+	c := &Config{Color: ColorNever, Writer: &buf, Sandbox: true}
+	c.Success("Registered acme.io")
+	if got := buf.String(); !strings.Contains(got, "[sandbox]") || !strings.Contains(got, "Registered acme.io") {
+		t.Errorf("Success() output = %q, want it to contain '[sandbox]' and the message", got)
+	}
+}
+
+func TestSuccess_NoSandboxTagInProduction(t *testing.T) {
+	var buf bytes.Buffer
+	c := &Config{Color: ColorNever, Writer: &buf, Sandbox: false}
+	c.Success("Registered acme.io")
+	if got := buf.String(); strings.Contains(got, "[sandbox]") {
+		t.Errorf("Success() output = %q, want no '[sandbox]' tag in production", got)
+	}
+}
+
+func TestTitle_SandboxTag(t *testing.T) {
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, Sandbox: true}
+	c.Title("acme.io")
+	if got := buf.String(); !strings.Contains(got, "[sandbox]") || !strings.Contains(got, "acme.io") {
+		t.Errorf("Title() output = %q, want it to contain '[sandbox]' and the name", got)
+	}
+}
+
+func TestTitle_NoSandboxTagInProduction(t *testing.T) {
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, Sandbox: false}
+	c.Title("acme.io")
+	if got := buf.String(); strings.Contains(got, "[sandbox]") {
+		t.Errorf("Title() output = %q, want no '[sandbox]' tag in production", got)
 	}
 }

@@ -156,7 +156,8 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 func renderStatus(out *output.Config, s statusSummary) {
 	// Header line: profile + endpoint.
-	fmt.Fprintf(out.Writer, "%s  %s  %s\n",
+	fmt.Fprintf(out.Writer, "%s%s  %s  %s\n",
+		out.SandboxTag(),
 		out.Dim("Profile"),
 		s.Profile,
 		out.Dim(s.Endpoint),
