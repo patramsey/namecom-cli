@@ -83,6 +83,9 @@ namecom domain register mycoolstartup.com
 
 # 5. Point it somewhere
 namecom dns create mycoolstartup.com --type A --answer 1.2.3.4
+
+# Tip: jump to the name.com dashboard for any domain
+namecom open mycoolstartup.com
 ```
 
 ## Commands
@@ -91,11 +94,16 @@ namecom dns create mycoolstartup.com --type A --answer 1.2.3.4
 |---|---|
 | `domain` | `list` `get` `search` `check` `register` `renew` `lock` `autorenew` `privacy` `set-ns` `contacts` `auth-code` `pricing` `update` |
 | `dns` | `list` `create` `update` `delete` `export` `import` |
+| `dnssec` | `list` `get` `create` `delete` |
 | `transfer` | `list` `get` `create` `cancel` `eligibility` `internal-in` `cancel-outbound` |
 | `email` | `list` `get` `create` `update` `delete` |
 | `url` | `list` `get` `create` `update` `delete` |
+| `vanity-ns` | `list` `get` `create` `update` `delete` |
 | `auth` | `login` `logout` `status` |
 | `order` | `list` `get` `refund` |
+| `config` | `list-profiles` `use` `show` |
+| `api` | raw HTTP passthrough with auth applied |
+| `open` | open name.com in a browser |
 
 ```
 namecom --help
@@ -128,6 +136,26 @@ namecom dns export acme.io --zone > acme.io.zone           # export as BIND zone
 namecom transfer eligibility acme.io                      # confirm it's eligible
 namecom transfer create acme.io --auth-code XXXXXX
 namecom transfer get acme.io                              # check status
+```
+
+**Set up email and URL forwarding:**
+```bash
+namecom email create acme.io hello --to you@gmail.com     # hello@acme.io → you@gmail.com
+namecom email list acme.io
+namecom url create acme.io --to https://new-site.com      # redirect apex to another URL
+```
+
+**Enable DNSSEC:**
+```bash
+namecom dnssec list acme.io
+namecom dnssec create acme.io --algorithm 13 --digest-type 2 --key-tag 12345 --digest abc123
+```
+
+**Set up vanity nameservers:**
+```bash
+namecom vanity-ns create acme.io --hostname ns1.acme.io --ips 1.2.3.4
+namecom vanity-ns create acme.io --hostname ns2.acme.io --ips 5.6.7.8
+namecom domain set-ns acme.io --ns ns1.acme.io,ns2.acme.io
 ```
 
 **Scripting and automation:**
@@ -175,6 +203,9 @@ Omit `--profile` to use your default (production) profile.
 ```bash
 export NAMECOM_USERNAME=yourname
 export NAMECOM_TOKEN=yourtoken
+export NAMECOM_SANDBOX=true        # target sandbox API
+export NAMECOM_PROFILE=staging     # select a profile
+export NAMECOM_CONFIG=~/.config/namecom/ci.yaml  # alternate config file
 namecom domain list
 ```
 
@@ -196,14 +227,19 @@ namecom completion fish  > ~/.config/fish/completions/namecom.fish
 
 ## Global flags
 
-| Flag | Description |
-|---|---|
-| `-o, --output` | Output format: `table` (default in TTY), `json`, `yaml` |
-| `-q, --quiet` | One result per line — for piping and scripting |
-| `-y, --yes` | Skip all confirmation prompts |
-| `--dry-run` | Print the API request without sending it |
-| `--profile` | Use a named credential profile |
-| `--sandbox` | Target the sandbox API (`api.dev.name.com`) |
+| Flag | Default | Description |
+|---|---|---|
+| `-o, --output` | `table` in TTY, `json` otherwise | Output format: `table`, `json`, `yaml` |
+| `-q, --quiet` | | One result per line — for piping and scripting |
+| `-y, --yes` | | Skip all confirmation prompts |
+| `--dry-run` | | Print the API request without sending it |
+| `--profile` | | Use a named credential profile |
+| `--sandbox` | | Target the sandbox API (`api.dev.name.com`) |
+| `--color` | `auto` | Colorize output: `auto`, `always`, `never` |
+| `--timeout` | `30s` | Per-request timeout |
+| `--debug` | | Print HTTP requests/responses (token redacted) |
+| `--username` | | API username (overrides config and `NAMECOM_USERNAME`) |
+| `--token` | | API token (overrides config and `NAMECOM_TOKEN`) |
 
 ## Development
 
