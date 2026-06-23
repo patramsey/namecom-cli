@@ -211,16 +211,21 @@ var contactsCmd = &cobra.Command{
 }
 
 var contactsGetCmd = &cobra.Command{
-	Use:               "get <domain>",
-	Short:             "Get contact information for a domain",
+	Use:   "get <domain>",
+	Short: "Get contact information for a domain",
+	Example: `  namecom domain contacts get example.com
+  namecom domain contacts get example.com -o json > contacts.json   # save for editing`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runContactsGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var contactsSetCmd = &cobra.Command{
-	Use:               "set <domain> --from-file contacts.json",
-	Short:             "Set contact information for a domain",
+	Use:   "set <domain> --from-file contacts.json",
+	Short: "Set contact information for a domain",
+	Example: `  namecom domain contacts get example.com -o json > contacts.json
+  # edit contacts.json, then:
+  namecom domain contacts set example.com --from-file contacts.json`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runContactsSet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -283,8 +288,10 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 // -- auth-code --
 
 var authCodeCmd = &cobra.Command{
-	Use:               "auth-code <domain>",
-	Short:             "Get the EPP/transfer auth code for a domain",
+	Use:   "auth-code <domain>",
+	Short: "Get the EPP/transfer auth code for a domain",
+	Example: `  namecom domain auth-code example.com
+  namecom domain auth-code example.com -o json | jq -r .authCode   # extract for scripting`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runAuthCode,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -317,8 +324,10 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 // -- pricing --
 
 var pricingCmd = &cobra.Command{
-	Use:               "pricing <domain>",
-	Short:             "Get registration, renewal, and transfer pricing for a domain",
+	Use:   "pricing <domain>",
+	Short: "Get registration, renewal, and transfer pricing for a domain",
+	Example: `  namecom domain pricing example.com
+  namecom domain pricing premium.io      # shows premium flag and confirmed price`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runPricing,
 	ValidArgsFunction: cmdutil.CompleteDomains,

@@ -18,24 +18,29 @@ var Cmd = &cobra.Command{
 }
 
 var listProfilesCmd = &cobra.Command{
-	Use:   "list-profiles",
-	Short: "List all configured credential profiles",
-	Args:  cobra.NoArgs,
-	RunE:  runListProfiles,
+	Use:     "list-profiles",
+	Short:   "List all configured credential profiles",
+	Example: `  namecom config list-profiles`,
+	Args:    cobra.NoArgs,
+	RunE:    runListProfiles,
 }
 
 var useCmd = &cobra.Command{
 	Use:   "use <profile>",
 	Short: "Set the default credential profile",
-	Args:  cmdutil.ExactArgs(1),
-	RunE:  runUse,
+	Example: `  namecom config use sandbox
+  namecom config use default`,
+	Args: cmdutil.ExactArgs(1),
+	RunE: runUse,
 }
 
 var showCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show resolved credentials for the active profile",
-	Args:  cobra.NoArgs,
-	RunE:  runShow,
+	Example: `  namecom config show
+  namecom config show --profile sandbox`,
+	Args: cobra.NoArgs,
+	RunE: runShow,
 }
 
 func init() {

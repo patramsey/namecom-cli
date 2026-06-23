@@ -106,18 +106,20 @@ var deleteCmd = &cobra.Command{
 var exportCmd = &cobra.Command{
 	Use:   "export <domain>",
 	Short: "Export DNS records as JSON (default) or a zone-file snapshot",
-	Example: `  namecom dns export example.com                     # JSON, pipe to a file
-  namecom dns export example.com --zone               # RFC 1035 zone-file format
-  namecom dns export example.com > records.json       # save for later import
-  namecom dns export example.com --zone > example.com.zone`,
+	Example: `  namecom dns export example.com > records.json          # save for later import
+  namecom dns export example.com --zone > example.com.zone
+  namecom dns export old.com | namecom dns import new.com --file -   # clone records to another domain`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runExport,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var importCmd = &cobra.Command{
-	Use:               "import <domain>",
-	Short:             "Import DNS records from a JSON export file",
+	Use:   "import <domain>",
+	Short: "Import DNS records from a JSON export file",
+	Example: `  namecom dns import example.com --file records.json
+  namecom dns export old.com | namecom dns import new.com --file -   # pipe directly between domains
+  namecom dns import example.com --file records.json --dry-run       # preview without applying`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runImport,
 	ValidArgsFunction: cmdutil.CompleteDomains,

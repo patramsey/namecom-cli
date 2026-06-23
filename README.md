@@ -42,11 +42,6 @@ The name.com web UI is great for one-offs. The CLI is for everything else:
 
 ## Installation
 
-**Homebrew** (macOS/Linux):
-```bash
-brew install patramsey/tap/namecom
-```
-
 **Download a release binary:**
 ```bash
 # macOS (Apple Silicon)
@@ -67,7 +62,9 @@ All platforms and checksums on the [releases page](https://github.com/patramsey/
 **Go install:**
 ```bash
 go install github.com/patramsey/namecom-cli@latest
+mv "$(go env GOPATH)/bin/namecom-cli" "$(go env GOPATH)/bin/namecom"
 ```
+`go install` names the binary after the module path (`namecom-cli`); the `mv` renames it to `namecom` to match the rest of this README.
 
 ## Quick start
 
@@ -110,7 +107,8 @@ namecom dns --help
 
 **Register a domain and set it up:**
 ```bash
-namecom domain check acme.io                              # available? register in one step
+namecom domain check acme.io                              # check availability
+namecom domain register acme.io                           # register it
 namecom dns create acme.io --type A --answer 1.2.3.4
 namecom dns create acme.io --type MX --answer mail.google.com --priority 10
 namecom email create acme.io hello --to you@gmail.com     # hello@acme.io → you@gmail.com
@@ -122,7 +120,7 @@ namecom domain autorenew on acme.io                       # never let it expire
 namecom dns list acme.io
 namecom dns create acme.io --type CNAME --host www --answer acme.io.
 namecom dns update acme.io 12345 --answer 5.6.7.8
-namecom dns export acme.io > acme.io.zone                 # export as BIND zone file
+namecom dns export acme.io --zone > acme.io.zone           # export as BIND zone file
 ```
 
 **Transfer a domain in:**
@@ -134,8 +132,8 @@ namecom transfer get acme.io                              # check status
 
 **Scripting and automation:**
 ```bash
-# List all domains expiring within 60 days, pipe to renewal script
-namecom domain list --output json | jq -r '.[] | select(.expiry_date < "2026-08-01") | .domain_name'
+# List all domains expiring within 60 days
+namecom domain list --output json | jq -r '.[] | select(.expireDate != null and .expireDate < "2026-08-01") | .domainName'
 
 # Bulk-create an A record across all domains
 namecom domain list -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4

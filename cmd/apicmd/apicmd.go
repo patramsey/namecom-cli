@@ -17,12 +17,11 @@ import (
 var Cmd = &cobra.Command{
 	Use:   "api <METHOD> <path>",
 	Short: "Make a raw API request",
-	Long: `Make a raw HTTP request to the name.com API.
-
-Examples:
-  namecom api GET /core/v1/domains
+	Long:  `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.`,
+	Example: `  namecom api GET /core/v1/domains
   namecom api GET /core/v1/domains/example.com
-  echo '{"host":"@","type":"A","answer":"1.2.3.4","ttl":300}' | namecom api POST /core/v1/domains/example.com/records`,
+  namecom api POST /core/v1/domains/example.com/records --data '{"host":"@","type":"A","answer":"1.2.3.4","ttl":300}'
+  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records`,
 	Args: cmdutil.ExactArgs(2),
 	RunE: runAPI,
 }
