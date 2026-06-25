@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"strconv"
 	"net/http/httptest"
 	"testing"
 
@@ -49,8 +49,8 @@ func domainServer(t *testing.T, pages [][]string) (*httptest.Server, *[]string) 
 		received = append(received, r.URL.String())
 		pageQ := r.URL.Query().Get("page")
 		pageNum := 1
-		if pageQ != "" {
-			fmt.Sscanf(pageQ, "%d", &pageNum)
+		if n, err := strconv.Atoi(pageQ); pageQ != "" && err == nil {
+			pageNum = n
 		}
 		idx := pageNum - 1
 		if idx < 0 || idx >= len(pages) {
