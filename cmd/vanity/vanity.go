@@ -91,7 +91,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	domain := args[0]
 
-	stop := out.Spin("Fetching vanity nameservers…")
+	spin := out.StartSpinner("Fetching vanity nameservers…")
 	var page int32 = 1
 	var all []gen.VanityNameserverResponseSchema
 	var hasMore bool
@@ -99,12 +99,12 @@ func runList(cmd *cobra.Command, args []string) error {
 		params := &gen.ListVanityNameserversParams{Page: &page}
 		resp, err := client.Gen().ListVanityNameservers(cmd.Context(), domain, params)
 		if err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		var result gen.ListVanityNameserversResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		all = append(all, result.VanityNameservers...)
@@ -116,8 +116,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			break
 		}
 		page = *result.NextPage
+		spin.Update(fmt.Sprintf("Fetching vanity nameservers… (page %d, %d so far)", page, len(all)))
 	}
-	stop()
+	spin.Stop()
 
 	if out.QuietMode {
 		hostnames := make([]string, 0, len(all))

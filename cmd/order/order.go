@@ -88,7 +88,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		cmd.Flags().Changed("until") || cmd.Flags().Changed("status")
 	autoPage := listAll || filtered
 
-	stop := out.Spin("Fetching orders…")
+	spin := out.StartSpinner("Fetching orders…")
 	var page int32 = 1
 	var orders []gen.Order
 	var hasMore bool
@@ -109,12 +109,12 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		resp, err := client.Gen().ListOrders(cmd.Context(), params)
 		if err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		var result gen.ListOrdersResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		orders = append(orders, result.Orders...)
@@ -126,8 +126,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			break
 		}
 		page = *result.NextPage
+		spin.Update(fmt.Sprintf("Fetching orders… (page %d, %d so far)", page, len(orders)))
 	}
-	stop()
+	spin.Stop()
 
 	if out.QuietMode {
 		ids := make([]string, 0, len(orders))

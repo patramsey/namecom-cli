@@ -110,7 +110,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	stop := out.Spin("Fetching transfers…")
+	spin := out.StartSpinner("Fetching transfers…")
 	var page int32 = 1
 	var transfers []gen.Transfer
 	var hasMore bool
@@ -118,12 +118,12 @@ func runList(cmd *cobra.Command, args []string) error {
 		params := &gen.ListTransfersParams{Page: &page}
 		resp, err := client.Gen().ListTransfers(cmd.Context(), params)
 		if err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		var result gen.ListTransfersResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		transfers = append(transfers, result.Transfers...)
@@ -135,8 +135,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			break
 		}
 		page = *result.NextPage
+		spin.Update(fmt.Sprintf("Fetching transfers… (page %d, %d so far)", page, len(transfers)))
 	}
-	stop()
+	spin.Stop()
 
 	if out.QuietMode {
 		names := make([]string, 0, len(transfers))

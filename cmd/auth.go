@@ -142,7 +142,10 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	client := cmdutil.APIClient(cmd)
+
+	stop := out.Spin("Checking credentials…")
 	resp, err := client.Gen().Hello(cmd.Context())
+	stop()
 	if err != nil {
 		return err
 	}
@@ -159,7 +162,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	if ov.Profile != "" {
 		profileName = ov.Profile
 	}
-	baseURL := client.BaseURL()
+
 	username := ""
 	if p, ok := cfgFile.Profiles[profileName]; ok {
 		username = p.Username
@@ -167,11 +170,22 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	if ov.Username != "" {
 		username = ov.Username
 	}
-	msg := fmt.Sprintf("Authenticated as %s (profile: %s, endpoint: %s)", username, profileName, baseURL)
-	if username == "" {
-		msg = fmt.Sprintf("Authenticated (profile: %s, endpoint: %s)", profileName, baseURL)
+
+	env := "production"
+	if client.BaseURL() == "https://api.dev.name.com" {
+		env = "sandbox"
 	}
-	out.Success(msg)
+
+	cfgPath, _ := config.Path()
+
+	out.Success("Credentials verified")
+	out.KVTable([][]string{
+		{"Profile", profileName},
+		{"Username", username},
+		{"Environment", env},
+		{"Endpoint", client.BaseURL()},
+		{"Config", cfgPath},
+	})
 	return nil
 }
 

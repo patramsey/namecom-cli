@@ -105,7 +105,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	domain := args[0]
 
-	stop := out.Spin("Fetching URL forwardings…")
+	spin := out.StartSpinner("Fetching URL forwardings…")
 	var page int32 = 1
 	var all []gen.URLForwardingResponseSchema
 	var hasMore bool
@@ -113,12 +113,12 @@ func runList(cmd *cobra.Command, args []string) error {
 		params := &gen.ListURLForwardingsByDomainParams{Page: &page}
 		resp, err := client.Gen().ListURLForwardingsByDomain(cmd.Context(), domain, params)
 		if err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		var result gen.ListURLForwardingsResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		all = append(all, result.UrlForwarding...)
@@ -130,8 +130,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			break
 		}
 		page = *result.NextPage
+		spin.Update(fmt.Sprintf("Fetching URL forwardings… (page %d, %d so far)", page, len(all)))
 	}
-	stop()
+	spin.Stop()
 
 	if out.QuietMode {
 		ids := make([]string, 0, len(all))

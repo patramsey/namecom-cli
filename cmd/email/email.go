@@ -88,7 +88,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	domain := args[0]
 
-	stop := out.Spin("Fetching email forwardings…")
+	spin := out.StartSpinner("Fetching email forwardings…")
 	var page int32 = 1
 	var all []gen.EmailForwarding
 	var hasMore bool
@@ -96,12 +96,12 @@ func runList(cmd *cobra.Command, args []string) error {
 		params := &gen.ListEmailForwardingsParams{Page: &page}
 		resp, err := client.Gen().ListEmailForwardings(cmd.Context(), domain, params)
 		if err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		var result gen.ListEmailForwardingsResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		all = append(all, result.EmailForwarding...)
@@ -113,8 +113,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			break
 		}
 		page = *result.NextPage
+		spin.Update(fmt.Sprintf("Fetching email forwardings… (page %d, %d so far)", page, len(all)))
 	}
-	stop()
+	spin.Stop()
 
 	if out.QuietMode {
 		boxes := make([]string, 0, len(all))

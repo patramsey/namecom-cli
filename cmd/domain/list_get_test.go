@@ -98,6 +98,7 @@ func cmdForDomainList(t *testing.T, srv *httptest.Server, stdout, stderr *bytes.
 	cmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "")
 	cmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "")
 	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	cmd.Flags().Int32Var(&listPage, "page", 1, "")
 	cmd.Flags().StringVar(&listSort, "sort", "", "")
 	return cmd
 }
@@ -109,7 +110,7 @@ func TestDomainList_PaginationStopsAtFirstPage(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
-	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore = false, "", "", "", ""
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
 
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
@@ -137,7 +138,7 @@ func TestDomainList_AllFetchesAllPages(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
-	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore = false, "", "", "", ""
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
 	if err := cmd.ParseFlags([]string{"--all"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestDomainList_FilterWrapsWildcardAndAutoPages(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
-	listAll, listExpiringAfter, listExpiringBefore, listTLD = false, "", "", ""
+	listAll, listExpiringAfter, listExpiringBefore, listTLD, listPage = false, "", "", "", 1
 	if err := cmd.ParseFlags([]string{"--filter", "acme"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestDomainList_TLDFilterPassedToAPI(t *testing.T) {
 	srv, requests := domainServer(t, [][]string{{"acme.io"}})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
-	listAll, listFilter, listExpiringAfter, listExpiringBefore = false, "", "", ""
+	listAll, listFilter, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", 1
 	if err := cmd.ParseFlags([]string{"--tld", "io"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}

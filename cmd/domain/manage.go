@@ -33,10 +33,15 @@ var lockCmd = &cobra.Command{
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	dryRun := cmdutil.IsDryRun(cmd)
 	enable := strings.ToLower(args[0]) == "on"
 	domainName := args[1]
 
 	if enable {
+		if dryRun {
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
+			return nil
+		}
 		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{})
 		if err != nil {
 			return err
@@ -47,6 +52,10 @@ func runLock(cmd *cobra.Command, args []string) error {
 		out.Success(fmt.Sprintf("Transfer lock enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm status", domainName))
 	} else {
+		if dryRun {
+			out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
+			return nil
+		}
 		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{})
 		if err != nil {
 			return err
@@ -80,9 +89,14 @@ var autorenewCmd = &cobra.Command{
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	dryRun := cmdutil.IsDryRun(cmd)
 	enable := strings.ToLower(args[0]) == "on"
 	domainName := args[1]
 	if enable {
+		if dryRun {
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-autorenew", domainName), nil)
+			return nil
+		}
 		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{})
 		if err != nil {
 			return err
@@ -93,6 +107,10 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 		out.Success(fmt.Sprintf("Auto-renewal enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm settings", domainName))
 	} else {
+		if dryRun {
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-autorenew", domainName), nil)
+			return nil
+		}
 		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{})
 		if e != nil {
 			return e
@@ -126,10 +144,15 @@ var privacyCmd = &cobra.Command{
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	dryRun := cmdutil.IsDryRun(cmd)
 	enable := strings.ToLower(args[0]) == "on"
 	domainName := args[1]
 
 	if enable {
+		if dryRun {
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-privacy", domainName), nil)
+			return nil
+		}
 		// PurchasePrivacy may charge money — confirm first.
 		yes := cmdutil.IsYes(cmd)
 		ok, err := confirm(out, yes, fmt.Sprintf("Purchase WHOIS privacy for %s?", domainName))
@@ -150,6 +173,10 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 		out.Success(fmt.Sprintf("WHOIS privacy enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm privacy status", domainName))
 	} else {
+		if dryRun {
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-privacy", domainName), nil)
+			return nil
+		}
 		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{})
 		if err != nil {
 			return err
@@ -184,10 +211,16 @@ func init() {
 func runSetNS(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	dryRun := cmdutil.IsDryRun(cmd)
 	domain := args[0]
 	ns := strings.Split(setNSList, ",")
 	for i := range ns {
 		ns[i] = strings.TrimSpace(ns[i])
+	}
+	if dryRun {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/nameservers", domain), nil)
+		fmt.Fprintf(out.Writer, "  ns=%s\n", setNSList)
+		return nil
 	}
 	stop := out.Spin("Updating nameservers…")
 	resp, err := client.Gen().SetNameservers(cmd.Context(), domain, gen.SetNameserversJSONRequestBody{Nameservers: ns})
@@ -263,7 +296,9 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 }
 
 func runContactsSet(cmd *cobra.Command, args []string) error {
+	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	dryRun := cmdutil.IsDryRun(cmd)
 
 	f, err := os.ReadFile(contactsFile)
 	if err != nil {
@@ -274,6 +309,11 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing contacts file: %w", err)
 	}
 
+	if dryRun {
+		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", args[0]), contacts)
+		return nil
+	}
+
 	resp, err := client.Gen().SetContacts(cmd.Context(), args[0], gen.SetContactsJSONRequestBody{Contacts: &contacts})
 	if err != nil {
 		return err
@@ -281,7 +321,7 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	if err := api.Decode(resp, nil); err != nil {
 		return err
 	}
-	cmdutil.Out(cmd).Success(fmt.Sprintf("Contacts updated for %s", args[0]))
+	out.Success(fmt.Sprintf("Contacts updated for %s", args[0]))
 	return nil
 }
 
@@ -387,6 +427,7 @@ func init() {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	dryRun := cmdutil.IsDryRun(cmd)
 
 	// Read-modify-write: fetch current state first.
 	getResp, err := client.Gen().GetDomain(cmd.Context(), args[0])
@@ -415,6 +456,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("lock") {
 		v, _ := cmd.Flags().GetBool("lock")
 		body.Locked = ptr(v)
+	}
+
+	if dryRun {
+		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", args[0]), body)
+		return nil
 	}
 
 	resp, err := client.Gen().UpdateDomain(cmd.Context(), args[0], body)

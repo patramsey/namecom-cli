@@ -47,6 +47,7 @@ const (
 type Config struct {
 	Format    Format
 	QuietMode bool      // -q: print IDs/names only, one per line
+	NoHeader  bool      // --no-header: omit header row from table output
 	Color     ColorMode // --color flag value
 	Writer    io.Writer // defaults to os.Stdout
 	EWriter   io.Writer // defaults to os.Stderr
@@ -179,8 +180,10 @@ func (c *Config) Table(headers []string, rows [][]string) {
 	t := table.New().
 		StyleFunc(styleFunc).
 		Border(lipgloss.RoundedBorder()).
-		BorderColumn(true).
-		Headers(headers...)
+		BorderColumn(true)
+	if !c.NoHeader {
+		t = t.Headers(headers...)
+	}
 
 	if color {
 		t = t.BorderStyle(styleBorder)
@@ -500,6 +503,68 @@ func (c *Config) Spin(msg string) func() {
 			wg.Wait()
 		})
 	}
+}
+
+// Spinner is a running spinner whose message can be updated mid-operation.
+// Obtain one via StartSpinner; call Stop when the operation completes.
+type Spinner struct {
+	update chan string
+	stop   chan struct{}
+	wg     sync.WaitGroup
+	once   sync.Once
+}
+
+// Stop halts the spinner and clears the line.
+func (s *Spinner) Stop() {
+	s.once.Do(func() {
+		close(s.stop)
+		s.wg.Wait()
+	})
+}
+
+// Update changes the message shown next to the spinner frame.
+func (s *Spinner) Update(msg string) {
+	select {
+	case s.update <- msg:
+	default:
+	}
+}
+
+// StartSpinner starts a spinner that can be updated via Update while running.
+// In non-TTY or non-table mode it is a no-op (Stop/Update are still safe to call).
+func (c *Config) StartSpinner(msg string) *Spinner {
+	s := &Spinner{
+		update: make(chan string, 1),
+		stop:   make(chan struct{}),
+	}
+	if !isStderrTTY() || c.Format != FormatTable || c.QuietMode {
+		return s
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		current := msg
+		i := 0
+		for {
+			select {
+			case <-s.stop:
+				fmt.Fprintf(c.EWriter, "\r\033[K")
+				return
+			case m := <-s.update:
+				current = m
+			case <-ticker.C:
+				frame := spinFrames[i%len(spinFrames)]
+				if c.ColorEnabled() {
+					frame = styleDim.Render(frame)
+				}
+				fmt.Fprintf(c.EWriter, "\r%s %s", frame, current)
+				i++
+			}
+		}
+	}()
+	return s
 }
 
 // DryRun prints a styled mock-request line for --dry-run mode.

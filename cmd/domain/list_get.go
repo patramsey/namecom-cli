@@ -16,6 +16,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List domains in your account",
 	Example: `  namecom domain list                             # first page (250)
+  namecom domain list --page 2                    # second page
   namecom domain list --all                       # all domains (good for scripting)
   namecom domain list --filter acme               # server-side wildcard search
   namecom domain list --tld io                    # filter by TLD
@@ -35,11 +36,12 @@ var getCmd = &cobra.Command{
 }
 
 var (
-	listFilter        string
-	listTLD           string
-	listSort          string
-	listAll           bool
-	listExpiringAfter string
+	listFilter         string
+	listTLD            string
+	listSort           string
+	listAll            bool
+	listPage           int32
+	listExpiringAfter  string
 	listExpiringBefore string
 )
 
@@ -50,6 +52,7 @@ func init() {
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (use with --output json for scripting)")
+	listCmd.Flags().Int32Var(&listPage, "page", 1, "page number to fetch (use with --all to start from a specific page)")
 }
 
 // isFiltered reports whether any server-side filter flag is set.
@@ -71,9 +74,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 	// expects to see everything matching, not just the first page.
 	autoPage := listAll || isFiltered(cmd)
 
-	stop := out.Spin("Fetching domains…")
+	spin := out.StartSpinner("Fetching domains…")
 	var domains []gen.DomainResponsePayload
-	var page int32 = 1
+	page := listPage
+	if page < 1 {
+		page = 1
+	}
+	var lastResult gen.ListDomainsResponseSchema
 	var hasMore bool
 
 	for {
@@ -98,15 +105,16 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 		resp, err := client.Gen().ListDomains(ctx, params)
 		if err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		var result gen.ListDomainsResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
+			spin.Stop()
 			return err
 		}
 		domains = append(domains, result.Domains...)
+		lastResult = result
 
 		if result.NextPage == nil || *result.NextPage == 0 {
 			break
@@ -116,9 +124,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 			break
 		}
 		page = *result.NextPage
+		spin.Update(fmt.Sprintf("Fetching domains… (page %d, %d so far)", page, len(domains)))
 	}
 
-	stop()
+	spin.Stop()
 
 	if out.QuietMode {
 		names := make([]string, 0, len(domains))
@@ -156,8 +165,18 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		out.Table(headers, rows)
 		out.Count(len(domains), "domain")
-		if hasMore {
-			out.Hint("Showing first page (250) — use --filter, --tld, or --expiring-before to narrow results; --all to fetch everything")
+		if hasMore && lastResult.TotalCount > 0 {
+			nextPage := int32(0)
+			if lastResult.NextPage != nil {
+				nextPage = *lastResult.NextPage
+			}
+			hint := fmt.Sprintf(
+				"Showing %d–%d of %d — use --page %d for next page, or --filter/--tld to narrow results, --all for everything",
+				lastResult.From, lastResult.To, lastResult.TotalCount, nextPage,
+			)
+			out.Hint(hint)
+		} else if hasMore {
+			out.Hint("Showing first page — use --page 2 for next, --filter/--tld to narrow results, --all for everything")
 		}
 	}
 	return nil

@@ -40,12 +40,13 @@ type globalFlags struct {
 	token    string
 	sandbox  bool
 	output   string
-	quiet      bool
-	color      string
-	timeout    time.Duration
-	debug      bool
-	yes        bool
-	dryRun     bool
+	quiet    bool
+	noHeader bool
+	color    string
+	timeout  time.Duration
+	debug    bool
+	yes      bool
+	dryRun   bool
 }
 
 var gf globalFlags
@@ -55,13 +56,20 @@ var gf globalFlags
 var rootCmd = &cobra.Command{
 	Use:   "namecom",
 	Short: "CLI for the name.com Core API",
-	Long: `namecom is a command-line interface for the name.com Core API.
+	Long: `namecom — CLI for the name.com Core API
 
-Manage domains, DNS records, email forwarding, transfers, and more.
-Run 'namecom auth login' to configure credentials.`,
-	SilenceUsage:  true,
-	SilenceErrors: true,
-	Version:       Version,
+Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.
+
+Quick start:
+  namecom auth login              # configure credentials
+  namecom domain list             # list your domains
+  namecom dns list example.com    # manage DNS records
+  namecom domain register foo.com # register a new domain
+
+Run 'namecom <command> --help' for details on any command.`,
+	SilenceUsage:      true,
+	SilenceErrors:     true,
+	Version:           Version,
 	PersistentPreRunE: persistentPreRunE,
 }
 
@@ -73,8 +81,13 @@ func Execute() {
 	go func() { updateCh <- update.Check(Version) }()
 
 	if err := rootCmd.Execute(); err != nil {
-		output.DefaultConfig().Error(err)
-		os.Exit(exitCode(err))
+		cfg := output.DefaultConfig()
+		cfg.Error(err)
+		code := exitCode(err)
+		if code == 3 {
+			cfg.Hint("Run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure")
+		}
+		os.Exit(code)
 	}
 
 	// Show update notification if the goroutine finished in time.
@@ -138,6 +151,7 @@ func init() {
 	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com)")
 	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml (default: table in TTY, json otherwise)")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "print IDs/names only (one per line)")
+	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
 	pf.StringVar(&gf.color, "color", "auto", "colorize output: auto, always, never (env: NO_COLOR, CLICOLOR_FORCE)")
 	pf.DurationVar(&gf.timeout, "timeout", 30*time.Second, "per-request timeout")
 	pf.BoolVar(&gf.debug, "debug", false, "print HTTP requests/responses (token redacted)")
@@ -179,6 +193,7 @@ func initContext(cmd *cobra.Command) error {
 		out.Color = cm
 	}
 	out.QuietMode = gf.quiet
+	out.NoHeader = gf.noHeader
 
 	// --- Credentials ---
 	sandboxSet := cmd.Flags().Changed("sandbox")
