@@ -29,12 +29,15 @@ var (
 	internalAuthCode string
 )
 
+var listAll bool
+
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List in-progress transfers",
-	Example: `  namecom transfer list`,
-	Args:  cobra.NoArgs,
-	RunE:  runList,
+	Short: "List transfers",
+	Example: `  namecom transfer list         # active/recent transfers (first page)
+  namecom transfer list --all   # full transfer history`,
+	Args: cobra.NoArgs,
+	RunE: runList,
 }
 
 var getCmd = &cobra.Command{
@@ -98,6 +101,8 @@ func init() {
 
 	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code")
 
+	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full transfer history)")
+
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
@@ -107,7 +112,8 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	stop := out.Spin("Fetching transfers…")
 	var page int32 = 1
-	var all []gen.Transfer
+	var transfers []gen.Transfer
+	var hasMore bool
 	for {
 		params := &gen.ListTransfersParams{Page: &page}
 		resp, err := client.Gen().ListTransfers(cmd.Context(), params)
@@ -120,8 +126,12 @@ func runList(cmd *cobra.Command, args []string) error {
 			stop()
 			return err
 		}
-		all = append(all, result.Transfers...)
+		transfers = append(transfers, result.Transfers...)
 		if result.NextPage == nil || *result.NextPage == 0 {
+			break
+		}
+		if !listAll {
+			hasMore = true
 			break
 		}
 		page = *result.NextPage
@@ -129,8 +139,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	stop()
 
 	if out.QuietMode {
-		names := make([]string, 0, len(all))
-		for _, t := range all {
+		names := make([]string, 0, len(transfers))
+		for _, t := range transfers {
 			names = append(names, t.DomainName)
 		}
 		out.PrintQuiet(names)
@@ -139,19 +149,22 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		return out.JSON(transfers)
 	case output.FormatYAML:
-		return out.YAML(all)
+		return out.YAML(transfers)
 	default:
-		if len(all) == 0 {
+		if len(transfers) == 0 {
 			out.Empty("transfer", "Run 'namecom transfer create <domain> --auth-code XXXXXX' to initiate a transfer")
 			return nil
 		}
 		out.Table(
 			[]string{"DOMAIN", "STATUS"},
-			transferRows(out, all),
+			transferRows(out, transfers),
 		)
-		out.Count(len(all), "transfer")
+		out.Count(len(transfers), "transfer")
+		if hasMore {
+			out.Hint("Showing first page — pass --all for full transfer history")
+		}
 	}
 	return nil
 }

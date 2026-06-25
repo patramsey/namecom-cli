@@ -22,12 +22,14 @@ var (
 	createHostname string
 	createIPs      string
 	updateIPs      string
+	listAll        bool
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list <domain>",
 	Short: "List vanity nameservers for a domain",
-	Example: `  namecom vanity-ns list example.com`,
+	Example: `  namecom vanity-ns list example.com
+  namecom vanity-ns list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runList,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -71,6 +73,8 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
+	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+
 	createCmd.Flags().StringVar(&createHostname, "hostname", "", "fully-qualified nameserver hostname (required)")
 	createCmd.Flags().StringVar(&createIPs, "ips", "", "comma-separated IP addresses (required)")
 	_ = createCmd.MarkFlagRequired("hostname")
@@ -90,6 +94,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	stop := out.Spin("Fetching vanity nameservers…")
 	var page int32 = 1
 	var all []gen.VanityNameserverResponseSchema
+	var hasMore bool
 	for {
 		params := &gen.ListVanityNameserversParams{Page: &page}
 		resp, err := client.Gen().ListVanityNameservers(cmd.Context(), domain, params)
@@ -104,6 +109,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		all = append(all, result.VanityNameservers...)
 		if result.NextPage == nil || *result.NextPage == 0 {
+			break
+		}
+		if !listAll {
+			hasMore = true
 			break
 		}
 		page = *result.NextPage
@@ -134,6 +143,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			vanityRows(all),
 		)
 		out.Count(len(all), "vanity nameserver")
+		if hasMore {
+			out.Hint("Showing first page — pass --all to fetch all entries")
+		}
 	}
 	return nil
 }

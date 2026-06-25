@@ -37,6 +37,7 @@ type Options struct {
 	UserAgent string        // e.g. "namecom-cli/1.2.3"
 	Timeout   time.Duration // per-request timeout; 0 uses defaultTimeout
 	Debug     bool          // log requests/responses to stderr (token redacted)
+	BaseURL   string        // override base URL (prod/sandbox inferred from Creds if empty); used in tests
 
 	// Advanced knobs; zero values fall back to the defaults above.
 	RPS        float64
@@ -56,6 +57,9 @@ func New(opts Options) (*Client, error) {
 	baseURL := prodBaseURL
 	if opts.Creds.Sandbox {
 		baseURL = sandboxBaseURL
+	}
+	if opts.BaseURL != "" {
+		baseURL = opts.BaseURL
 	}
 
 	rps := opts.RPS

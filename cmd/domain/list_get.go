@@ -14,39 +14,62 @@ import (
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all domains in your account",
-	Example: `  namecom domain list
-  namecom domain list --all
-  namecom domain list --filter acme
-  namecom domain list --sort expireDate`,
-	RunE:  runList,
+	Short: "List domains in your account",
+	Example: `  namecom domain list                             # first page (250)
+  namecom domain list --all                       # all domains (good for scripting)
+  namecom domain list --filter acme               # server-side wildcard search
+  namecom domain list --tld io                    # filter by TLD
+  namecom domain list --expiring-before 2026-09-01
+  namecom domain list --sort expireDate
+  namecom domain list --all -o json | jq -r '.[].domainName'`,
+	RunE: runList,
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <domain>",
-	Short: "Get details for a single domain",
-	Example: `  namecom domain get example.com`,
+	Use:               "get <domain>",
+	Short:             "Get details for a single domain",
+	Example:           `  namecom domain get example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var (
-	listFilter string
-	listSort   string
-	listAll    bool
+	listFilter        string
+	listTLD           string
+	listSort          string
+	listAll           bool
+	listExpiringAfter string
+	listExpiringBefore string
 )
 
 func init() {
-	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter domains by name substring")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "sort field (e.g. domainName, expireDate)")
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages automatically")
+	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter by domain name (supports * wildcard, e.g. '*acme*')")
+	listCmd.Flags().StringVar(&listTLD, "tld", "", "filter by TLD (e.g. com, io)")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "sort field: domainName, expireDate, createDate")
+	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
+	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (use with --output json for scripting)")
+}
+
+// isFiltered reports whether any server-side filter flag is set.
+func isFiltered(cmd *cobra.Command) bool {
+	for _, f := range []string{"filter", "tld", "expiring-after", "expiring-before"} {
+		if cmd.Flags().Changed(f) {
+			return true
+		}
+	}
+	return false
 }
 
 func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
+
+	// When a filter is active, auto-paginate — results are small and the user
+	// expects to see everything matching, not just the first page.
+	autoPage := listAll || isFiltered(cmd)
 
 	stop := out.Spin("Fetching domains…")
 	var domains []gen.DomainResponsePayload
@@ -58,6 +81,21 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if listSort != "" {
 			params.Sort = &listSort
 		}
+		if listFilter != "" {
+			f := filterToWildcard(listFilter)
+			params.DomainName = &f
+		}
+		if listTLD != "" {
+			tld := strings.TrimPrefix(listTLD, ".")
+			params.Tld = &tld
+		}
+		if listExpiringAfter != "" {
+			params.ExpireDateStart = &listExpiringAfter
+		}
+		if listExpiringBefore != "" {
+			params.ExpireDateEnd = &listExpiringBefore
+		}
+
 		resp, err := client.Gen().ListDomains(ctx, params)
 		if err != nil {
 			stop()
@@ -73,7 +111,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
-		if !listAll {
+		if !autoPage {
 			hasMore = true
 			break
 		}
@@ -81,17 +119,6 @@ func runList(cmd *cobra.Command, _ []string) error {
 	}
 
 	stop()
-
-	// Apply client-side name filter.
-	if listFilter != "" {
-		filtered := domains[:0]
-		for _, d := range domains {
-			if strings.Contains(d.DomainName, listFilter) {
-				filtered = append(filtered, d)
-			}
-		}
-		domains = filtered
-	}
 
 	if out.QuietMode {
 		names := make([]string, 0, len(domains))
@@ -109,7 +136,11 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return out.YAML(domains)
 	default:
 		if len(domains) == 0 {
-			out.Empty("domain", "Run 'namecom domain register <domain>' to register your first domain")
+			if isFiltered(cmd) {
+				out.Warn("no domains matched — try a different filter")
+			} else {
+				out.Empty("domain", "Run 'namecom domain register <domain>' to register your first domain")
+			}
 			return nil
 		}
 		headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
@@ -126,7 +157,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		out.Table(headers, rows)
 		out.Count(len(domains), "domain")
 		if hasMore {
-			out.Hint("More domains exist — pass --all to fetch all pages")
+			out.Hint("Showing first page (250) — use --filter, --tld, or --expiring-before to narrow results; --all to fetch everything")
 		}
 	}
 	return nil
@@ -170,6 +201,17 @@ func runGet(cmd *cobra.Command, args []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to manage DNS records", d.DomainName))
 	}
 	return nil
+}
+
+// filterToWildcard wraps a bare search term in * wildcards so that --filter
+// acme matches acme.io, acme.com, myacme.net, etc. Values that already
+// contain a * are passed through unchanged, letting callers express exact
+// prefix/suffix patterns like "*acme" or "acme*".
+func filterToWildcard(f string) string {
+	if strings.Contains(f, "*") {
+		return f
+	}
+	return "*" + f + "*"
 }
 
 func formatTime(t *time.Time) string {

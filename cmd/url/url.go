@@ -31,12 +31,15 @@ var (
 	updateType       string
 	updateTitle      string
 	updateMeta       string
+
+	listAll bool
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list <domain>",
 	Short: "List URL forwarding entries",
-	Example: `  namecom url list example.com`,
+	Example: `  namecom url list example.com
+  namecom url list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runList,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -81,6 +84,8 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
+	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+
 	createCmd.Flags().StringVar(&createHost, "host", "@", "subdomain host (@ for apex)")
 	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL")
 	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: redirect, 302, masked")
@@ -103,6 +108,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	stop := out.Spin("Fetching URL forwardings…")
 	var page int32 = 1
 	var all []gen.URLForwardingResponseSchema
+	var hasMore bool
 	for {
 		params := &gen.ListURLForwardingsByDomainParams{Page: &page}
 		resp, err := client.Gen().ListURLForwardingsByDomain(cmd.Context(), domain, params)
@@ -117,6 +123,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		all = append(all, result.UrlForwarding...)
 		if result.NextPage == nil || *result.NextPage == 0 {
+			break
+		}
+		if !listAll {
+			hasMore = true
 			break
 		}
 		page = *result.NextPage
@@ -149,6 +159,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			urlRows(all),
 		)
 		out.Count(len(all), "URL forwarding")
+		if hasMore {
+			out.Hint("Showing first page — pass --all to fetch all entries")
+		}
 	}
 	return nil
 }

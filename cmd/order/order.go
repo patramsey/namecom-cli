@@ -23,18 +23,28 @@ var Cmd = &cobra.Command{
 }
 
 var (
-	refundOrderID   int32
-	refundItemIDs   []int32
-	refundIdemKey   string
+	refundOrderID int32
+	refundItemIDs []int32
+	refundIdemKey string
+
+	listAll    bool
+	listDomain string
+	listSince  string
+	listUntil  string
+	listStatus string
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List orders",
-	Example: `  namecom order list
-  namecom order list -o json | jq '.[] | select(.status=="completed")'`,
-	Args:  cobra.NoArgs,
-	RunE:  runList,
+	Example: `  namecom order list                                   # most recent page
+  namecom order list --all                             # full history (can be slow)
+  namecom order list --since 2026-01-01               # orders from this year
+  namecom order list --domain acme.io                 # orders for one domain
+  namecom order list --status success
+  namecom order list --all -o json | jq '.[].domainName'`,
+	Args: cobra.NoArgs,
+	RunE: runList,
 }
 
 var getCmd = &cobra.Command{
@@ -54,6 +64,12 @@ var refundCmd = &cobra.Command{
 }
 
 func init() {
+	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full history — can be slow)")
+	listCmd.Flags().StringVar(&listDomain, "domain", "", "filter by domain name (supports * wildcard)")
+	listCmd.Flags().StringVar(&listSince, "since", "", "filter orders created on or after this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listStatus, "status", "", "filter by status: success, failed, initialized, started, review")
+
 	refundCmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "order ID (required)")
 	refundCmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "comma-separated order item IDs (required)")
 	refundCmd.Flags().StringVar(&refundIdemKey, "idempotency-key", "", "idempotency key for safe retries")
@@ -67,11 +83,30 @@ func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	// Auto-paginate when any filter is active — results will be small.
+	filtered := cmd.Flags().Changed("domain") || cmd.Flags().Changed("since") ||
+		cmd.Flags().Changed("until") || cmd.Flags().Changed("status")
+	autoPage := listAll || filtered
+
 	stop := out.Spin("Fetching orders…")
 	var page int32 = 1
-	var all []gen.Order
+	var orders []gen.Order
+	var hasMore bool
 	for {
 		params := &gen.ListOrdersParams{Page: &page}
+		if listDomain != "" {
+			params.DomainName = &listDomain
+		}
+		if listSince != "" {
+			params.CreateDateStart = &listSince
+		}
+		if listUntil != "" {
+			params.CreateDateEnd = &listUntil
+		}
+		if listStatus != "" {
+			s := gen.ListOrdersParamsOrderStatus(listStatus)
+			params.OrderStatus = &s
+		}
 		resp, err := client.Gen().ListOrders(cmd.Context(), params)
 		if err != nil {
 			stop()
@@ -82,8 +117,12 @@ func runList(cmd *cobra.Command, args []string) error {
 			stop()
 			return err
 		}
-		all = append(all, result.Orders...)
+		orders = append(orders, result.Orders...)
 		if result.NextPage == nil || *result.NextPage == 0 {
+			break
+		}
+		if !autoPage {
+			hasMore = true
 			break
 		}
 		page = *result.NextPage
@@ -91,8 +130,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	stop()
 
 	if out.QuietMode {
-		ids := make([]string, 0, len(all))
-		for _, o := range all {
+		ids := make([]string, 0, len(orders))
+		for _, o := range orders {
 			if o.Id != nil {
 				ids = append(ids, strconv.Itoa(int(*o.Id)))
 			}
@@ -103,19 +142,22 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		return out.JSON(orders)
 	case output.FormatYAML:
-		return out.YAML(all)
+		return out.YAML(orders)
 	default:
-		if len(all) == 0 {
+		if len(orders) == 0 {
 			out.Empty("order", "")
 			return nil
 		}
 		out.Table(
 			[]string{"ID", "STATUS", "DATE", "TOTAL"},
-			orderRows(out, all),
+			orderRows(out, orders),
 		)
-		out.Count(len(all), "order")
+		out.Count(len(orders), "order")
+		if hasMore {
+			out.Hint("Showing first page — use --since, --domain, or --status to narrow results; --all for full history")
+		}
 	}
 	return nil
 }
