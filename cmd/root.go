@@ -127,8 +127,10 @@ func init() {
 	configcmd.Cmd.GroupID = "account"
 
 	apicmd.Cmd.GroupID = "utilities"
+	versionCmd.GroupID = "utilities"
 
 	rootCmd.AddCommand(apicmd.Cmd)
+	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(configcmd.Cmd)
 	rootCmd.AddCommand(domain.Cmd)
 	rootCmd.AddCommand(dns.Cmd)
@@ -169,16 +171,19 @@ func init() {
 }
 
 func persistentPreRunE(cmd *cobra.Command, _ []string) error {
+	if err := initOutputContext(cmd); err != nil {
+		return err
+	}
 	if skipClientInit(cmd) {
 		return nil
 	}
 	return initContext(cmd)
 }
 
-// initContext builds the output config, API client, and config file from the
-// resolved flags/env and stores them on the command's context.
-func initContext(cmd *cobra.Command) error {
-	// --- Output config ---
+// initOutputContext applies --output, --color, --quiet, and --no-header to the
+// command context. It runs for every command, including those that skip API
+// credential setup (auth, version, etc.).
+func initOutputContext(cmd *cobra.Command) error {
 	out := output.DefaultConfig()
 	if gf.output != "" {
 		f, err := output.ParseFormat(gf.output)
@@ -196,6 +201,15 @@ func initContext(cmd *cobra.Command) error {
 	}
 	out.QuietMode = gf.quiet
 	out.NoHeader = gf.noHeader
+	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
+	return nil
+}
+
+// initContext builds the API client and config file from the resolved
+// flags/env and stores them on the command's context. Output config is
+// already set by initOutputContext.
+func initContext(cmd *cobra.Command) error {
+	out := cmdutil.Out(cmd)
 
 	// --- Credentials ---
 	sandboxSet := cmd.Flags().Changed("sandbox")
@@ -281,7 +295,6 @@ func initContext(cmd *cobra.Command) error {
 		idempKey = uuid.New().String()
 	}
 	ctx = api.ContextWithIdempotencyKey(ctx, idempKey)
-	ctx = context.WithValue(ctx, cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, apiClient)
 	ctx = context.WithValue(ctx, cmdutil.KeyConfig, cfgFile)
 	ctx = context.WithValue(ctx, cmdutil.KeyOverrides, ov)
@@ -299,7 +312,7 @@ func IsDryRun() bool { return gf.dryRun }
 func skipClientInit(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		switch c.Name() {
-		case "auth", "config", "open":
+		case "auth", "config", "open", "version":
 			return true
 		}
 	}
