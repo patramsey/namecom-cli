@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -147,7 +146,7 @@ func (t *retryTransport) backoffDelay(attempt int, retryAfter *time.Duration) ti
 		unit = time.Second
 	}
 	const maxBackoff = 30 * time.Second
-	base := min(time.Duration(math.Pow(2, float64(attempt)))*unit, maxBackoff)
+	base := min(unit<<attempt, maxBackoff)
 	jitter := time.Duration(rand.Int63n(int64(base)/5 + 1)) //nolint:gosec // jitter, not crypto
 	return base - base/10 + jitter
 }

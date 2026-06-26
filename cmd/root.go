@@ -3,14 +3,13 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/patramsey/namecom-cli/cmd/apicmd"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	configcmd "github.com/patramsey/namecom-cli/cmd/config"
@@ -283,7 +282,7 @@ func initContext(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	idempKey := gf.idempKey
 	if idempKey == "" {
-		idempKey = randomHex(16)
+		idempKey = uuid.New().String()
 	}
 	ctx = api.ContextWithIdempotencyKey(ctx, idempKey)
 	ctx = context.WithValue(ctx, cmdutil.KeyOutput, out)
@@ -330,11 +329,4 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 1
-}
-
-// randomHex returns n random bytes encoded as a hex string.
-func randomHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }
