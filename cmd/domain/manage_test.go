@@ -143,9 +143,9 @@ func TestRegister_UnavailableDomain(t *testing.T) {
 
 func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 	// When the domain is available the flow continues past the availability check
-	// and hits the pricing endpoint next. We return 500 from pricing to stop
-	// execution there — the important assertion is that the availability endpoint
-	// was reached and did not produce a "not available" error.
+	// and reaches the pricing endpoint. We return 500 there to stop execution.
+	// Assertions: the availability endpoint was called, and the error is the
+	// expected pricing failure — not a false "not available" rejection.
 	var checkCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/core/v1/domains:checkAvailability" {
@@ -166,8 +166,16 @@ func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 	if !checkCalled {
 		t.Error("availability endpoint was never called")
 	}
-	if err != nil && strings.Contains(err.Error(), "not available") {
+	if err == nil {
+		t.Error("expected error from pricing stub, got nil")
+	}
+	if strings.Contains(err.Error(), "not available") {
 		t.Errorf("available domain incorrectly rejected: %v", err)
+	}
+	// "stop" is the sentinel message our stub returns for post-check endpoints,
+	// confirming execution passed the availability gate and reached pricing.
+	if !strings.Contains(err.Error(), "stop") {
+		t.Errorf("expected sentinel error from pricing stub, got: %v", err)
 	}
 }
 
