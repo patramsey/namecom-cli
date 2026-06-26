@@ -204,11 +204,17 @@ func (t *retryTransport) logResponse(resp *http.Response, _ int) {
 		return
 	}
 	fmt.Fprintf(t.logw, "← %s\n", resp.Status)
-	// Buffer the body so we can log it and still hand it to the caller.
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// Read the full body so the caller receives it intact; truncate only the log.
+	data, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(data))
 	if len(data) > 0 {
-		fmt.Fprintf(t.logw, "  body: %s\n", data)
+		const logLimit = 4096
+		logged := data
+		if len(logged) > logLimit {
+			fmt.Fprintf(t.logw, "  body: %s… (%d bytes total)\n", logged[:logLimit], len(data))
+		} else {
+			fmt.Fprintf(t.logw, "  body: %s\n", logged)
+		}
 	}
 }
