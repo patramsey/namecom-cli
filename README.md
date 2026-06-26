@@ -46,6 +46,7 @@ The name.com web UI is great for humans. The CLI is for agents and terminal wiza
 **Homebrew (macOS / Linux):**
 ```bash
 brew tap patramsey/tap
+brew trust patramsey/tap
 brew install namecom
 ```
 
