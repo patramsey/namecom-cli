@@ -14,8 +14,8 @@ import (
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	configcmd "github.com/patramsey/namecom-cli/cmd/config"
 	"github.com/patramsey/namecom-cli/cmd/dns"
-	"github.com/patramsey/namecom-cli/cmd/domain"
 	"github.com/patramsey/namecom-cli/cmd/dnssec"
+	"github.com/patramsey/namecom-cli/cmd/domain"
 	"github.com/patramsey/namecom-cli/cmd/email"
 	"github.com/patramsey/namecom-cli/cmd/order"
 	"github.com/patramsey/namecom-cli/cmd/transfer"
@@ -31,21 +31,20 @@ import (
 // Use the shared context keys from cmdutil so subpackages can retrieve values
 // without importing cmd (which would create a cycle).
 
-
 // Version is set at build time via -ldflags "-X main.version=x.y.z".
 var Version = "dev"
 
 // globalFlags holds the parsed values of all root-level persistent flags.
 type globalFlags struct {
-	profile  string
-	username string
-	token    string
-	sandbox  bool
-	output   string
-	quiet    bool
-	noHeader bool
-	color    string
-	timeout  time.Duration
+	profile   string
+	username  string
+	token     string
+	sandbox   bool
+	output    string
+	quiet     bool
+	noHeader  bool
+	color     string
+	timeout   time.Duration
 	debug     bool
 	debugFile string
 	yes       bool
@@ -163,9 +162,6 @@ func init() {
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "print the API request that would be sent without executing it")
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for write operations (auto-generated per invocation if not set)")
-
-	// Mark --sandbox so we can detect explicit-false vs absent.
-	_ = pf.Lookup("sandbox").Value // exists — no error path needed
 
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind

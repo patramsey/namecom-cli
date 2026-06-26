@@ -1,9 +1,22 @@
 version: "2"
 
 linters:
+  enable:
+    - revive
+    - misspell
+    - unconvert
   exclusions:
     rules:
       - linters: [errcheck]
         source: "fmt\\.Fprint"
       - linters: [errcheck]
         source: "\\.Body\\.Close\\(\\)"
+
+# Formatters are checked by `golangci-lint run` and applied by
+# `golangci-lint fmt`. Enabling gofmt here makes CI fail on formatting drift,
+# which the default linter set does not catch.
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
