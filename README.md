@@ -4,6 +4,7 @@
 
 **The command-line interface for [name.com](https://www.name.com)**
 
+[![Beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/patramsey/namecom-cli/releases)
 [![CI](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/patramsey/namecom-cli)](https://github.com/patramsey/namecom-cli/releases/latest)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/patramsey/namecom-cli)](go.mod)
