@@ -39,7 +39,7 @@ var (
 	updateTTL      int64
 	updatePriority int64
 
-	exportZone bool
+	exportZone   bool
 	importFile   string
 	importDryRun bool
 )

@@ -206,9 +206,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 			rows = append(rows, []string{
 				d.DomainName,
 				out.ExpiryDate(d.ExpireDate),
-				out.BoolBadge(bool(d.AutorenewEnabled)),
-				out.BoolBadge(bool(d.Locked)),
-				out.BoolBadge(bool(d.PrivacyEnabled)),
+				out.BoolBadge(d.AutorenewEnabled),
+				out.BoolBadge(d.Locked),
+				out.BoolBadge(d.PrivacyEnabled),
 			})
 		}
 		out.Table(headers, rows)
@@ -263,9 +263,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 			{"Domain", d.DomainName},
 			{"Created", out.Dim(formatTime(d.CreateDate))},
 			{"Expires", out.ExpiryDate(d.ExpireDate)},
-			{"Auto-Renew", out.BoolBadge(bool(d.AutorenewEnabled))},
-			{"Locked", out.BoolBadge(bool(d.Locked))},
-			{"Privacy", out.BoolBadge(bool(d.PrivacyEnabled))},
+			{"Auto-Renew", out.BoolBadge(d.AutorenewEnabled)},
+			{"Locked", out.BoolBadge(d.Locked)},
+			{"Privacy", out.BoolBadge(d.PrivacyEnabled)},
 			{"Nameservers", out.Dim(formatNS(d.Nameservers))},
 		}
 		out.KVTable(rows)

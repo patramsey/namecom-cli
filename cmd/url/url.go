@@ -46,9 +46,9 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <domain> <id>",
-	Short: "Get a URL forwarding entry by ID",
-	Example: `  namecom url get example.com 12345`,
+	Use:               "get <domain> <id>",
+	Short:             "Get a URL forwarding entry by ID",
+	Example:           `  namecom url get example.com 12345`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -66,18 +66,18 @@ var createCmd = &cobra.Command{
 }
 
 var updateCmd = &cobra.Command{
-	Use:   "update <domain> <id>",
-	Short: "Update a URL forwarding entry",
-	Example: `  namecom url update example.com 12345 --to https://other-site.com`,
+	Use:               "update <domain> <id>",
+	Short:             "Update a URL forwarding entry",
+	Example:           `  namecom url update example.com 12345 --to https://other-site.com`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <id>",
-	Short: "Delete a URL forwarding entry",
-	Example: `  namecom url delete example.com 12345`,
+	Use:               "delete <domain> <id>",
+	Short:             "Delete a URL forwarding entry",
+	Example:           `  namecom url delete example.com 12345`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,

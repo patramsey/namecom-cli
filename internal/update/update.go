@@ -10,14 +10,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 const (
-	releaseURL = "https://api.github.com/repos/patramsey/namecom-cli/releases/latest"
-	cacheTTL   = 24 * time.Hour
+	releaseURL  = "https://api.github.com/repos/patramsey/namecom-cli/releases/latest"
+	cacheTTL    = 24 * time.Hour
 	httpTimeout = 2 * time.Second
 )
 
@@ -119,29 +120,13 @@ func writeCache(version string) {
 }
 
 // isNewer returns true if candidate is a strictly higher semver than current.
+// Both values are expected without a leading "v"; this function adds it for
+// golang.org/x/mod/semver which requires canonical "vX.Y.Z" form.
 func isNewer(candidate, current string) bool {
-	c := parseSemver(candidate)
-	cur := parseSemver(current)
-	for i := 0; i < len(c); i++ {
-		if i >= len(cur) {
-			return c[i] > 0
-		}
-		if c[i] > cur[i] {
-			return true
-		}
-		if c[i] < cur[i] {
-			return false
-		}
+	c := "v" + candidate
+	cur := "v" + current
+	if !semver.IsValid(c) || !semver.IsValid(cur) {
+		return false
 	}
-	return false
-}
-
-func parseSemver(v string) []int {
-	parts := strings.Split(v, ".")
-	out := make([]int, len(parts))
-	for i, p := range parts {
-		n, _ := strconv.Atoi(p)
-		out[i] = n
-	}
-	return out
+	return semver.Compare(c, cur) > 0
 }

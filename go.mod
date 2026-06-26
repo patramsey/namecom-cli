@@ -9,6 +9,7 @@ require (
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/pflag v1.0.5
+	golang.org/x/mod v0.30.0
 	golang.org/x/sync v0.21.0
 	golang.org/x/term v0.44.0
 	golang.org/x/time v0.15.0
@@ -56,7 +57,6 @@ require (
 	github.com/speakeasy-api/openapi-overlay v0.9.0 // indirect
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect

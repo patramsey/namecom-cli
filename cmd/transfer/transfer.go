@@ -43,7 +43,7 @@ var listCmd = &cobra.Command{
 var getCmd = &cobra.Command{
 	Use:               "get <domain>",
 	Short:             "Get a transfer's status",
-	Example: `  namecom transfer get example.com`,
+	Example:           `  namecom transfer get example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -54,22 +54,22 @@ var createCmd = &cobra.Command{
 	Short: "Initiate a transfer in from another registrar",
 	Example: `  namecom transfer create example.com --auth-code XXXXXX
   namecom transfer create example.com --auth-code XXXXXX --privacy`,
-	Args:  cmdutil.ExactArgs(1),
-	RunE:  runCreate,
+	Args: cmdutil.ExactArgs(1),
+	RunE: runCreate,
 }
 
 var internalCmd = &cobra.Command{
-	Use:   "internal-in <domain>",
-	Short: "Move a domain between name.com accounts (no EPP wait required)",
+	Use:     "internal-in <domain>",
+	Short:   "Move a domain between name.com accounts (no EPP wait required)",
 	Example: `  namecom transfer internal-in example.com --auth-code XXXXXX`,
-	Args:  cmdutil.ExactArgs(1),
-	RunE:  runInternalIn,
+	Args:    cmdutil.ExactArgs(1),
+	RunE:    runInternalIn,
 }
 
 var cancelCmd = &cobra.Command{
 	Use:               "cancel <domain>",
 	Short:             "Cancel an in-progress transfer",
-	Example: `  namecom transfer cancel example.com`,
+	Example:           `  namecom transfer cancel example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCancel,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -78,7 +78,7 @@ var cancelCmd = &cobra.Command{
 var cancelOutboundCmd = &cobra.Command{
 	Use:               "cancel-outbound <domain>",
 	Short:             "Cancel an outbound transfer-out",
-	Example: `  namecom transfer cancel-outbound example.com`,
+	Example:           `  namecom transfer cancel-outbound example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCancelOutbound,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -87,7 +87,7 @@ var cancelOutboundCmd = &cobra.Command{
 var eligibilityCmd = &cobra.Command{
 	Use:               "eligibility <domain>",
 	Short:             "Check if a domain is eligible for transfer",
-	Example: `  namecom transfer eligibility example.com`,
+	Example:           `  namecom transfer eligibility example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runEligibility,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -106,7 +106,7 @@ func init() {
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
-func runList(cmd *cobra.Command, args []string) error {
+func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 

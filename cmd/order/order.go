@@ -48,19 +48,19 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get an order by ID",
+	Use:     "get <id>",
+	Short:   "Get an order by ID",
 	Example: `  namecom order get 12345`,
-	Args:  cmdutil.ExactArgs(1),
-	RunE:  runGet,
+	Args:    cmdutil.ExactArgs(1),
+	RunE:    runGet,
 }
 
 var refundCmd = &cobra.Command{
-	Use:   "refund",
-	Short: "Process a refund for order items",
+	Use:     "refund",
+	Short:   "Process a refund for order items",
 	Example: `  namecom order refund --order-id 12345 --item-ids 67890 --yes`,
-	Args:  cobra.NoArgs,
-	RunE:  runRefund,
+	Args:    cobra.NoArgs,
+	RunE:    runRefund,
 }
 
 func init() {
@@ -79,7 +79,7 @@ func init() {
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 
-func runList(cmd *cobra.Command, args []string) error {
+func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
@@ -217,7 +217,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runRefund(cmd *cobra.Command, args []string) error {
+func runRefund(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)

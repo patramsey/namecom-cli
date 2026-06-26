@@ -36,9 +36,9 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <domain> <hostname>",
-	Short: "Get a vanity nameserver",
-	Example: `  namecom vanity-ns get example.com ns1.example.com`,
+	Use:               "get <domain> <hostname>",
+	Short:             "Get a vanity nameserver",
+	Example:           `  namecom vanity-ns get example.com ns1.example.com`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -55,18 +55,18 @@ var createCmd = &cobra.Command{
 }
 
 var updateCmd = &cobra.Command{
-	Use:   "update <domain> <hostname>",
-	Short: "Update vanity nameserver IPs",
-	Example: `  namecom vanity-ns update example.com ns1.example.com --ips 1.2.3.4,5.6.7.8`,
+	Use:               "update <domain> <hostname>",
+	Short:             "Update vanity nameserver IPs",
+	Example:           `  namecom vanity-ns update example.com ns1.example.com --ips 1.2.3.4,5.6.7.8`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <hostname>",
-	Short: "Delete a vanity nameserver",
-	Example: `  namecom vanity-ns delete example.com ns1.example.com`,
+	Use:               "delete <domain> <hostname>",
+	Short:             "Delete a vanity nameserver",
+	Example:           `  namecom vanity-ns delete example.com ns1.example.com`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,

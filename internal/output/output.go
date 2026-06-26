@@ -27,6 +27,7 @@ import (
 // Format is the output format selected by --output / -o.
 type Format string
 
+// Output format constants for the --output / -o flag.
 const (
 	FormatTable Format = "table"
 	FormatJSON  Format = "json"
@@ -36,6 +37,7 @@ const (
 // ColorMode maps to --color flag values.
 type ColorMode string
 
+// Color mode constants for the --color flag.
 const (
 	ColorAuto   ColorMode = "auto"
 	ColorAlways ColorMode = "always"
@@ -197,7 +199,7 @@ func (c *Config) Table(headers []string, rows [][]string) {
 		header = header.Foreground(lipgloss.Color("15")) // bright white
 	}
 
-	styleFunc := func(row, col int) lipgloss.Style {
+	styleFunc := func(row, _ int) lipgloss.Style {
 		if row == table.HeaderRow {
 			return header
 		}
@@ -599,8 +601,8 @@ func (c *Config) StartSpinner(msg string) *Spinner {
 func (c *Config) DryRun(method, path string, body any) {
 	if c.ColorEnabled() {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("dry-run")
-		m   := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(method)
-		p   := styleDim.Render(path)
+		m := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(method)
+		p := styleDim.Render(path)
 		fmt.Fprintf(c.Writer, "  [%s]  %s %s\n", tag, m, p)
 	} else {
 		fmt.Fprintf(c.Writer, "%s %s\n", method, path)
@@ -657,7 +659,6 @@ func ParseColorMode(s string) (ColorMode, error) {
 	}
 	return "", fmt.Errorf("unknown color mode %q; choose auto, always, or never", s)
 }
-
 
 // Step prints a flyctl-style phase header ("==> Checking availability…") to
 // stdout. Only emitted in table/interactive mode, skipped when quiet or piped.
@@ -737,7 +738,7 @@ func (c *Config) Amber(s string) string {
 }
 
 // IsStderrTTY reports whether stderr is a terminal.
-func IsStderrTTY() bool      { return isStderrTTY() }
+func IsStderrTTY() bool { return isStderrTTY() }
 func isStdoutTTY() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 func isStdinTTY() bool  { return term.IsTerminal(int(os.Stdin.Fd())) }
 func isStderrTTY() bool { return term.IsTerminal(int(os.Stderr.Fd())) }

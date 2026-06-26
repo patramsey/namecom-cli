@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -25,9 +25,9 @@ func TestFilterToWildcard(t *testing.T) {
 	}{
 		{"acme", "*acme*"},
 		{"acme.io", "*acme.io*"},
-		{"*acme", "*acme"},    // already has wildcard — leave alone
-		{"acme*", "acme*"},    // already has wildcard — leave alone
-		{"*acme*", "*acme*"},  // already has wildcard — leave alone
+		{"*acme", "*acme"},   // already has wildcard — leave alone
+		{"acme*", "acme*"},   // already has wildcard — leave alone
+		{"*acme*", "*acme*"}, // already has wildcard — leave alone
 	}
 	for _, tt := range tests {
 		if got := filterToWildcard(tt.input); got != tt.want {

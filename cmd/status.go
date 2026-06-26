@@ -28,15 +28,15 @@ func init() {
 }
 
 type statusSummary struct {
-	Profile          string    `json:"profile"`
-	Endpoint         string    `json:"endpoint"`
-	DomainsTotal     int       `json:"domains_total"`
-	ExpiringCritical int       `json:"expiring_critical"` // <7 days
-	ExpiringSoon     int       `json:"expiring_soon"`     // 7-30 days
-	Unlocked         int       `json:"unlocked"`
-	PendingTransfers int       `json:"pending_transfers"`
-	ExpiringDomains  []expiryItem  `json:"expiring_domains,omitempty"`
-	PendingDomains   []string  `json:"pending_transfer_domains,omitempty"`
+	Profile          string       `json:"profile"`
+	Endpoint         string       `json:"endpoint"`
+	DomainsTotal     int          `json:"domains_total"`
+	ExpiringCritical int          `json:"expiring_critical"` // <7 days
+	ExpiringSoon     int          `json:"expiring_soon"`     // 7-30 days
+	Unlocked         int          `json:"unlocked"`
+	PendingTransfers int          `json:"pending_transfers"`
+	ExpiringDomains  []expiryItem `json:"expiring_domains,omitempty"`
+	PendingDomains   []string     `json:"pending_transfer_domains,omitempty"`
 }
 
 type expiryItem struct {
@@ -259,6 +259,5 @@ func renderStatus(out *output.Config, s statusSummary) {
 	}
 	out.Hint("Run 'namecom domain list' to see all domains")
 }
-
 
 func ptrInt32(n int32) *int32 { return &n }

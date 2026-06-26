@@ -26,36 +26,36 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List DNSSEC keys for a domain",
-	Example: `  namecom dnssec list example.com`,
+	Use:               "list <domain>",
+	Short:             "List DNSSEC keys for a domain",
+	Example:           `  namecom dnssec list example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runList,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <domain> <digest>",
-	Short: "Get a specific DNSSEC key",
-	Example: `  namecom dnssec get example.com abc123def456`,
+	Use:               "get <domain> <digest>",
+	Short:             "Get a specific DNSSEC key",
+	Example:           `  namecom dnssec get example.com abc123def456`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain>",
-	Short: "Add a DNSSEC key",
-	Example: `  namecom dnssec create example.com --algorithm 8 --digest-type 2 --key-tag 12345 --digest abc123`,
+	Use:               "create <domain>",
+	Short:             "Add a DNSSEC key",
+	Example:           `  namecom dnssec create example.com --algorithm 8 --digest-type 2 --key-tag 12345 --digest abc123`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCreate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <digest>",
-	Short: "Remove a DNSSEC key",
-	Example: `  namecom dnssec delete example.com abc123def456`,
+	Use:               "delete <domain> <digest>",
+	Short:             "Remove a DNSSEC key",
+	Example:           `  namecom dnssec delete example.com abc123def456`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,
