@@ -27,9 +27,10 @@ type buildInfo struct {
 }
 
 func runVersion(cmd *cobra.Command, _ []string) error {
-	out := cmdutil.Out(cmd)
-	info := gatherBuildInfo()
+	return renderVersion(cmdutil.Out(cmd), gatherBuildInfo())
+}
 
+func renderVersion(out *output.Config, info buildInfo) error {
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(info)
