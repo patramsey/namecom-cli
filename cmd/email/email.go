@@ -86,7 +86,10 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	spin := out.StartSpinner("Fetching email forwardings…")
 	var page int32 = 1
@@ -161,7 +164,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	stop := out.Spin("Fetching email forwarding…")
-	resp, err := client.Gen().GetEmailForwarding(cmd.Context(), args[0], args[1])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetEmailForwarding(cmd.Context(), domain, args[1])
 	stop()
 	if err != nil {
 		return err
@@ -189,7 +196,15 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, mailbox := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	mailbox := args[1]
+
+	if err := cmdutil.ValidEmailLocalPart(mailbox, "mailbox"); err != nil {
+		return err
+	}
 
 	if createEmailTo == "" {
 		if !output.IsInteractive() {

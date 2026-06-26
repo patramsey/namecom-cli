@@ -77,7 +77,10 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	stop := out.Spin("Fetching DNSSEC keys…")
 	resp, err := client.Gen().ListDNSSECs(cmd.Context(), domain)
@@ -123,7 +126,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	stop := out.Spin("Fetching DNSSEC key…")
-	resp, err := client.Gen().GetDNSSEC(cmd.Context(), args[0], args[1])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetDNSSEC(cmd.Context(), domain, args[1])
 	stop()
 	if err != nil {
 		return err
@@ -151,7 +158,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	body := gen.CreateDNSSECJSONRequestBody{
 		Algorithm:  &createAlgorithm,

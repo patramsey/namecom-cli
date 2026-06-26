@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,12 +58,7 @@ func init() {
 
 // isFiltered reports whether any server-side filter flag is set.
 func isFiltered(cmd *cobra.Command) bool {
-	for _, f := range []string{"filter", "tld", "expiring-after", "expiring-before"} {
-		if cmd.Flags().Changed(f) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc([]string{"filter", "tld", "expiring-after", "expiring-before"}, cmd.Flags().Changed)
 }
 
 func runList(cmd *cobra.Command, _ []string) error {
@@ -91,9 +87,6 @@ func runList(cmd *cobra.Command, _ []string) error {
 	spin := out.StartSpinner("Fetching domains…")
 	var domains []gen.DomainResponsePayload
 	page := listPage
-	if page < 1 {
-		page = 1
-	}
 	var lastResult gen.ListDomainsResponseSchema
 	var hasMore bool
 
@@ -208,8 +201,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 	stop := out.Spin("Fetching domain…")
-	resp, err := client.Gen().GetDomain(cmd.Context(), args[0])
+	resp, err := client.Gen().GetDomain(cmd.Context(), domain)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {

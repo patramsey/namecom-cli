@@ -215,7 +215,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
@@ -264,10 +267,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		AuthCode:   createAuthCode,
 	}
 	if createPrivacy {
-		body.PrivacyEnabled = ptr(createPrivacy)
+		body.PrivacyEnabled = &createPrivacy
 	}
 	if createPrice > 0 {
-		body.PurchasePrice = ptr(createPrice)
+		body.PurchasePrice = &createPrice
 	}
 
 	if dryRun {
@@ -350,7 +353,10 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	if internalAuthCode == "" {
 		if !output.IsInteractive() {
@@ -430,7 +436,10 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	ok, err := confirm(out, yes, fmt.Sprintf("Cancel transfer of %s?", domain))
 	if err != nil {
@@ -465,7 +474,10 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	ok, err := confirm(out, yes, fmt.Sprintf("Cancel outbound transfer of %s?", domain))
 	if err != nil {
@@ -507,7 +519,10 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 func runEligibility(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	stop := out.Spin("Checking transfer eligibility…")
 	resp, err := client.Gen().GetTransferEligibility(cmd.Context(), domain)
@@ -552,5 +567,3 @@ func transferRows(out *output.Config, transfers []gen.Transfer) [][]string {
 func confirm(out *output.Config, yes bool, msg string) (bool, error) {
 	return cmdutil.Confirm(out, yes, msg)
 }
-
-func ptr[T any](v T) *T { return &v }

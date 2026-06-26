@@ -60,7 +60,10 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domainName := args[0]
+	domainName, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	if cmd.Flags().Changed("years") {
 		if err := cmdutil.ValidYears(registerYears); err != nil {
@@ -104,8 +107,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	years := int32(registerYears)
 	payload := gen.DomainCreatePayload{
 		DomainName:       domainName,
-		AutorenewEnabled: ptr(registerAutorenew),
-		PrivacyEnabled:   ptr(registerPrivacy),
+		AutorenewEnabled: &registerAutorenew,
+		PrivacyEnabled:   &registerPrivacy,
 	}
 
 	body := gen.CreateDomainJSONRequestBody{
@@ -124,7 +127,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		body.Domain.Contacts = &contacts
 	}
 	if registerPrice > 0 {
-		body.PurchasePrice = ptr(registerPrice)
+		body.PurchasePrice = &registerPrice
 	} else if pricing.Premium && pricing.PurchasePrice != nil {
 		// Premium domains require the confirmed price in the body. Use the price
 		// we already fetched so the user isn't forced to pass --price manually.
@@ -139,7 +142,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	out.Step("Registering " + domainName + "…")
 	params := &gen.CreateDomainParams{}
 	if registerIdemKey != "" {
-		params.XIdempotencyKey = ptr(registerIdemKey)
+		params.XIdempotencyKey = &registerIdemKey
 	}
 	resp, err := client.Gen().CreateDomain(cmd.Context(), params, body)
 	if err != nil {

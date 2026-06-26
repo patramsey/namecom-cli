@@ -228,6 +228,38 @@ func ValidEmail(addr, flagName string) error {
 	return nil
 }
 
+// ValidURLForwardingType checks that t is a supported URL forwarding type.
+func ValidURLForwardingType(t, flagName string) error {
+	switch t {
+	case "redirect", "302", "masked":
+		return nil
+	}
+	return fmt.Errorf("--%s %q is not valid — must be one of: redirect, 302, masked", flagName, t)
+}
+
+// ValidEmailLocalPart checks that s is a valid email mailbox local-part.
+func ValidEmailLocalPart(s, argName string) error {
+	if s == "" {
+		return fmt.Errorf("%s must not be empty", argName)
+	}
+	if strings.Contains(s, "@") {
+		return fmt.Errorf("%s %q must not contain '@' — provide only the local part (e.g. 'info', not 'info@example.com')", argName, s)
+	}
+	if strings.ContainsAny(s, " \t\n") {
+		return fmt.Errorf("%s %q must not contain spaces", argName, s)
+	}
+	return nil
+}
+
+// DomainArg validates and normalizes (lowercases) a domain name positional argument.
+func DomainArg(args []string, n int) (string, error) {
+	d := strings.ToLower(args[n])
+	if err := ValidDomainName(d); err != nil {
+		return "", err
+	}
+	return d, nil
+}
+
 // ValidAuthCode checks that a transfer auth code is plausibly non-trivial.
 func ValidAuthCode(code string) error {
 	if code == "" {

@@ -103,7 +103,10 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	spin := out.StartSpinner("Fetching URL forwardings…")
 	var page int32 = 1
@@ -185,7 +188,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Fetching URL forwarding…")
-	resp, err := client.Gen().GetURLForwardingById(cmd.Context(), args[0], id)
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetURLForwardingById(cmd.Context(), domain, id)
 	stop()
 	if err != nil {
 		return err
@@ -213,7 +220,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	if createForwardsTo == "" {
 		if !output.IsInteractive() {
@@ -253,6 +263,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := cmdutil.ValidURL(createForwardsTo, "to"); err != nil {
+		return err
+	}
+	if err := cmdutil.ValidURLForwardingType(createType, "type"); err != nil {
 		return err
 	}
 
@@ -306,7 +319,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	id, err := parseID(args[1])
 	if err != nil {
@@ -364,6 +380,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidURL(updateForwardsTo, "to"); err != nil {
 		return err
 	}
+	if cmd.Flags().Changed("type") {
+		if err := cmdutil.ValidURLForwardingType(updateType, "type"); err != nil {
+			return err
+		}
+	}
 
 	// Preserve current type when --type wasn't explicitly passed and the
 	// interactive form didn't run (form always lets the user pick a type).
@@ -417,7 +438,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	id, err := parseID(args[1])
 	if err != nil {

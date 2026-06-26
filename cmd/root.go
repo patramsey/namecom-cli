@@ -296,8 +296,7 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	var apiErr *api.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		switch apiErr.StatusCode {
 		case 401, 403:
 			return 3
