@@ -212,7 +212,10 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 	ns := strings.Split(setNSList, ",")
 	for i := range ns {
 		ns[i] = strings.TrimSpace(ns[i])

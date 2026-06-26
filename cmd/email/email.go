@@ -279,7 +279,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, mailbox := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	mailbox := args[1]
 
 	if updateEmailTo == "" {
 		if !output.IsInteractive() {
@@ -354,7 +358,11 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, mailbox := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	mailbox := args[1]
 
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain))
 	if err != nil {

@@ -182,12 +182,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 	stop := out.Spin("Fetching transfer…")
-	resp, err := client.Gen().GetTransfer(cmd.Context(), args[0])
+	resp, err := client.Gen().GetTransfer(cmd.Context(), domain)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return fmt.Errorf("no transfer found for %q — run 'namecom transfer list' to see active transfers", args[0])
+			return fmt.Errorf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain)
 		}
 		return err
 	}
