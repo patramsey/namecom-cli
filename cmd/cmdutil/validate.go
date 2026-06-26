@@ -44,7 +44,7 @@ func ValidDNSHost(host string) error {
 	if len(check) > 253 {
 		return fmt.Errorf("--host %q exceeds maximum DNS name length (253 chars)", host)
 	}
-	for _, label := range strings.Split(check, ".") {
+	for label := range strings.SplitSeq(check, ".") {
 		if label == "" {
 			return fmt.Errorf("--host %q has an empty label (double dot or leading/trailing dot)", host)
 		}
@@ -67,12 +67,12 @@ func ValidDNSAnswer(recordType, host, answer string) error {
 	case "A":
 		ip := net.ParseIP(answer)
 		if ip == nil || ip.To4() == nil {
-			return fmt.Errorf("A record --answer must be a valid IPv4 address, got %q", answer)
+			return fmt.Errorf("--answer must be a valid IPv4 address for A records, got %q", answer)
 		}
 	case "AAAA":
 		ip := net.ParseIP(answer)
 		if ip == nil || ip.To4() != nil {
-			return fmt.Errorf("AAAA record --answer must be a valid IPv6 address, got %q", answer)
+			return fmt.Errorf("--answer must be a valid IPv6 address for AAAA records, got %q", answer)
 		}
 	case "CNAME":
 		if host == "@" || host == "" {
@@ -182,7 +182,7 @@ func ValidNameserver(ns string, idx int) error {
 	if strings.HasPrefix(ns, ".") || strings.HasSuffix(ns, ".") {
 		return fmt.Errorf("nameserver %q must not start or end with a dot", ns)
 	}
-	for _, label := range strings.Split(ns, ".") {
+	for label := range strings.SplitSeq(ns, ".") {
 		if label == "" {
 			return fmt.Errorf("nameserver %q has an empty label", ns)
 		}
