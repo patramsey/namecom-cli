@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/patramsey/namecom-cli/cmd/apicmd"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	configcmd "github.com/patramsey/namecom-cli/cmd/config"
@@ -45,7 +46,8 @@ type globalFlags struct {
 	noHeader bool
 	color    string
 	timeout  time.Duration
-	debug    bool
+	debug     bool
+	debugFile string
 	yes       bool
 	dryRun    bool
 	idempKey  string
@@ -156,10 +158,11 @@ func init() {
 	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
 	pf.StringVar(&gf.color, "color", "auto", "colorize output: auto, always, never (env: NO_COLOR, CLICOLOR_FORCE)")
 	pf.DurationVar(&gf.timeout, "timeout", 30*time.Second, "per-request timeout")
-	pf.BoolVar(&gf.debug, "debug", false, "print HTTP requests/responses (token redacted)")
+	pf.BoolVar(&gf.debug, "debug", false, "log HTTP requests/responses to stderr (token redacted)")
+	pf.StringVar(&gf.debugFile, "debug-file", "", "log HTTP requests/responses to this file instead of stderr")
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "print the API request that would be sent without executing it")
-	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for safe retries of write operations")
+	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for write operations (auto-generated per invocation if not set)")
 
 	// Mark --sandbox so we can detect explicit-false vs absent.
 	_ = pf.Lookup("sandbox").Value // exists — no error path needed
@@ -248,12 +251,28 @@ func initContext(cmd *cobra.Command) error {
 	out.Sandbox = creds.Sandbox
 
 	// --- API client ---
-	apiClient, err := api.New(api.Options{
+	apiOpts := api.Options{
 		Creds:     creds,
 		UserAgent: "namecom-cli/" + Version,
 		Timeout:   gf.timeout,
-		Debug:     gf.debug,
-	})
+	}
+	switch {
+	case gf.debugFile != "":
+		f, err := os.OpenFile(gf.debugFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return fmt.Errorf("opening debug file: %w", err)
+		}
+		// File is intentionally left open for the process lifetime.
+		apiOpts.DebugLog = f
+	case gf.debug:
+		apiOpts.DebugLog = os.Stderr
+	}
+	if apiOpts.DebugLog != nil || output.IsStderrTTY() {
+		apiOpts.OnRetry = func(attempt int, delay time.Duration) {
+			fmt.Fprintf(os.Stderr, "retrying (attempt %d, waiting %s)…\n", attempt, delay.Round(time.Millisecond))
+		}
+	}
+	apiClient, err := api.New(apiOpts)
 	if err != nil {
 		return fmt.Errorf("initializing API client: %w", err)
 	}
@@ -261,9 +280,11 @@ func initContext(cmd *cobra.Command) error {
 	// Stash everything on the context so subcommands can retrieve them via
 	// the helpers below without threading parameters through every call.
 	ctx := cmd.Context()
-	if gf.idempKey != "" {
-		ctx = api.ContextWithIdempotencyKey(ctx, gf.idempKey)
+	idempKey := gf.idempKey
+	if idempKey == "" {
+		idempKey = uuid.New().String()
 	}
+	ctx = api.ContextWithIdempotencyKey(ctx, idempKey)
 	ctx = context.WithValue(ctx, cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, apiClient)
 	ctx = context.WithValue(ctx, cmdutil.KeyConfig, cfgFile)

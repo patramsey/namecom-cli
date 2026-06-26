@@ -46,8 +46,12 @@ type Options struct {
 	Creds     config.Credentials
 	UserAgent string        // e.g. "namecom-cli/1.2.3"
 	Timeout   time.Duration // per-request timeout; 0 uses defaultTimeout
-	Debug     bool          // log requests/responses to stderr (token redacted)
+	DebugLog  io.Writer     // when non-nil, log requests/responses here (token redacted)
 	BaseURL   string        // override base URL (prod/sandbox inferred from Creds if empty); used in tests
+
+	// OnRetry is called just before sleeping between retry attempts so the
+	// caller can surface a "retrying…" message to the user.
+	OnRetry func(attempt int, delay time.Duration)
 
 	// Advanced knobs; zero values fall back to the defaults above.
 	RPS        float64
@@ -95,7 +99,8 @@ func New(opts Options) (*Client, error) {
 			base:       http.DefaultTransport,
 			limiter:    rate.NewLimiter(rate.Limit(rps), burst),
 			maxRetries: maxRetries,
-			debug:      opts.Debug,
+			logw:       opts.DebugLog,
+			onRetry:    opts.OnRetry,
 		},
 	}
 
