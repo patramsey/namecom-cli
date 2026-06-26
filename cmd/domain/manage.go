@@ -459,9 +459,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	autorenew := bool(current.AutorenewEnabled)
-	privacy := bool(current.PrivacyEnabled)
-	locked := bool(current.Locked)
+	autorenew := current.AutorenewEnabled
+	privacy := current.PrivacyEnabled
+	locked := current.Locked
 	body := gen.UpdateDomainJSONRequestBody{
 		AutorenewEnabled: &autorenew,
 		PrivacyEnabled:   &privacy,
