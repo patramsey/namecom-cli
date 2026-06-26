@@ -105,7 +105,7 @@ func TestNoRetryOn4xx(t *testing.T) {
 }
 
 func TestContextCancelStopsRetry(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "30") // long, so we cancel during backoff
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))

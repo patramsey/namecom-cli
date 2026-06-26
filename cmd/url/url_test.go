@@ -97,7 +97,7 @@ func TestURLCreate_ValidTypes(t *testing.T) {
 	for _, fwdType := range []string{"redirect", "302", "masked"} {
 		t.Run(fwdType, func(t *testing.T) {
 			var called bool
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				called = true
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"host":"@","forwardsTo":"https://example.com","type":"` + fwdType + `"}`))

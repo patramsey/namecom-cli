@@ -264,7 +264,7 @@ func TestDNSCreate_DomainNormalized(t *testing.T) {
 
 func recordServer(t *testing.T, records []gen.Record, nextPage int32) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(gen.ListRecordsResponseSchema{
 			Records:  records,
