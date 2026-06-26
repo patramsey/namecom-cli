@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -82,4 +83,21 @@ func gatherBuildInfo() buildInfo {
 		}
 	}
 	return info
+}
+
+// resolveVersion returns Version when set by ldflags (release builds), and
+// falls back to the module version embedded by go install (e.g. "0.1.7").
+// "(devel)" means a local go build/run without ldflags — leave it as "dev".
+func resolveVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return Version
+	}
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		return strings.TrimPrefix(v, "v")
+	}
+	return Version
 }

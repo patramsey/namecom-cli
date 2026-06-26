@@ -78,8 +78,9 @@ Run 'namecom <command> --help' for details on any command.`,
 
 // Execute is the entry point called from main.
 func Execute() {
-	// Version is set by main() via ldflags after package init, so we must
-	// propagate it to the cobra command here rather than at declaration time.
+	// Resolve the effective version: ldflag value for release builds, module
+	// metadata for go install builds, "dev" for local builds.
+	Version = resolveVersion()
 	rootCmd.Version = Version
 	rootCmd.Long = "namecom " + Version + " — CLI for the name.com Core API\n\n" +
 		"Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.\n\n" +
