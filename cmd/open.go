@@ -26,9 +26,9 @@ func init() {
 }
 
 func runOpen(_ *cobra.Command, args []string) error {
-	url := "https://www.name.com/account/domains/"
+	url := "https://www.name.com/account/domain/"
 	if len(args) == 1 {
-		url = "https://www.name.com/account/domains/details#?domain=" + args[0]
+		url = "https://www.name.com/account/domain/details#?domain=" + args[0]
 	}
 	fmt.Println("Opening " + url)
 	return openBrowser(url)
