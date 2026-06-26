@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -105,6 +107,76 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	return cmd
+}
+
+// availabilityServer returns a server that responds to the CheckAvailability
+// endpoint with a single result whose Purchasable field is set to purchasable.
+// Any other request causes the test to fail.
+func availabilityServer(t *testing.T, domain string, purchasable bool) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/core/v1/domains:checkAvailability" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		price := 12.99
+		results := []gen.SearchResult{{DomainName: domain, Purchasable: purchasable, PurchasePrice: &price}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRegister_UnavailableDomain(t *testing.T) {
+	srv := availabilityServer(t, "taken.com", false)
+	cmd := cmdForRegister(t, srv)
+	err := runRegister(cmd, []string{"taken.com"})
+	if err == nil {
+		t.Fatal("expected error for unavailable domain, got nil")
+	}
+	if !strings.Contains(err.Error(), "not available") {
+		t.Errorf("expected 'not available' in error, got: %v", err)
+	}
+}
+
+func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
+	// When the domain is available the flow continues past the availability check
+	// and reaches the pricing endpoint. We return 500 there to stop execution.
+	// Assertions: the availability endpoint was called, and the error is the
+	// expected pricing failure — not a false "not available" rejection.
+	var checkCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/core/v1/domains:checkAvailability" {
+			checkCalled = true
+			price := 12.99
+			results := []gen.SearchResult{{DomainName: "free.com", Purchasable: true, PurchasePrice: &price}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			return
+		}
+		// Stop at pricing — we don't need to simulate the full flow.
+		http.Error(w, `{"message":"stop"}`, http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRegister(t, srv)
+	err := runRegister(cmd, []string{"free.com"})
+	if !checkCalled {
+		t.Error("availability endpoint was never called")
+	}
+	if err == nil {
+		t.Error("expected error from pricing stub, got nil")
+	}
+	if strings.Contains(err.Error(), "not available") {
+		t.Errorf("available domain incorrectly rejected: %v", err)
+	}
+	// "stop" is the sentinel message our stub returns for post-check endpoints,
+	// confirming execution passed the availability gate and reached pricing.
+	if !strings.Contains(err.Error(), "stop") {
+		t.Errorf("expected sentinel error from pricing stub, got: %v", err)
+	}
 }
 
 func TestRegister_YearsOutOfRange(t *testing.T) {

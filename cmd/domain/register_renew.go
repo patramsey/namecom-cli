@@ -71,6 +71,31 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Check availability before collecting any further input.
+	if !dryRun {
+		stop := out.Spin("Checking availability of " + domainName + "…")
+		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: []string{domainName}})
+		stop()
+		if err != nil {
+			return fmt.Errorf("checking availability: %w", err)
+		}
+		var checkResult gen.SearchResponseSchema
+		if err := api.Decode(checkResp, &checkResult); err != nil {
+			return err
+		}
+		if checkResult.Results == nil || len(*checkResult.Results) == 0 {
+			return fmt.Errorf("%s is not available for registration", domainName)
+		}
+		r := (*checkResult.Results)[0]
+		if !r.Purchasable {
+			msg := domainName + " is not available for registration"
+			if r.Reason != nil && *r.Reason != "" {
+				msg += ": " + *r.Reason
+			}
+			return fmt.Errorf("%s", msg)
+		}
+	}
+
 	// Guided form when interactive and no customization flags supplied.
 	noFlags := !cmd.Flags().Changed("years") && !cmd.Flags().Changed("privacy") && !cmd.Flags().Changed("autorenew")
 	if output.IsInteractive() && noFlags && !yes {

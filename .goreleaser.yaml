@@ -36,6 +36,22 @@ archives:
 checksum:
   name_template: checksums.txt
 
+brews:
+  - name: namecom
+    homepage: https://github.com/patramsey/namecom-cli
+    description: CLI for the name.com domain registrar API
+    license: MIT
+    repository:
+      owner: patramsey
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    install: bin.install "namecom"
+    test: |
+      system "#{bin}/namecom", "--version"
+
 changelog:
   sort: asc
   filters:
