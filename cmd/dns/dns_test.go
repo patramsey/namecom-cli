@@ -37,9 +37,9 @@ func cmdForCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 		t.Fatalf("api.New: %v", err)
 	}
 	out := &output.Config{
-		Format: output.FormatTable,
-		Color:  output.ColorNever,
-		Writer: &bytes.Buffer{},
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
 		EWriter: &bytes.Buffer{},
 	}
 	cmd := &cobra.Command{}

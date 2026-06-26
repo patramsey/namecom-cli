@@ -65,9 +65,9 @@ func TestValidDNSAnswer(t *testing.T) {
 		{"A", "@", "1.2.3.4", false},
 		{"A", "@", "256.0.0.1", true},
 		{"A", "@", "not-an-ip", true},
-		{"A", "@", "::1", true},                   // IPv6 for A record
+		{"A", "@", "::1", true}, // IPv6 for A record
 		{"AAAA", "@", "::1", false},
-		{"AAAA", "@", "1.2.3.4", true},            // IPv4 for AAAA record
+		{"AAAA", "@", "1.2.3.4", true}, // IPv4 for AAAA record
 		{"AAAA", "@", "not-an-ip", true},
 		{"CNAME", "www", "target.example.com.", false},
 		{"CNAME", "@", "target.example.com.", true}, // apex CNAME
@@ -113,7 +113,7 @@ func TestDNSAnswerWarnings(t *testing.T) {
 		{"CNAME", "target.example.com", 0, false, "trailing dot"},
 		{"CNAME", "target.example.com.", 0, false, ""},
 		{"MX", "mail.example.com", 0, false, "priority"},
-		{"MX", "mail.example.com", 0, true, ""},  // priority explicitly set
+		{"MX", "mail.example.com", 0, true, ""},   // priority explicitly set
 		{"MX", "mail.example.com", 10, false, ""}, // non-zero priority
 		{"TXT", "v=spf1 ~all", 0, false, ""},
 	}

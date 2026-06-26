@@ -48,19 +48,19 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get an order by ID",
+	Use:     "get <id>",
+	Short:   "Get an order by ID",
 	Example: `  namecom order get 12345`,
-	Args:  cmdutil.ExactArgs(1),
-	RunE:  runGet,
+	Args:    cmdutil.ExactArgs(1),
+	RunE:    runGet,
 }
 
 var refundCmd = &cobra.Command{
-	Use:   "refund",
-	Short: "Process a refund for order items",
+	Use:     "refund",
+	Short:   "Process a refund for order items",
 	Example: `  namecom order refund --order-id 12345 --item-ids 67890 --yes`,
-	Args:  cobra.NoArgs,
-	RunE:  runRefund,
+	Args:    cobra.NoArgs,
+	RunE:    runRefund,
 }
 
 func init() {

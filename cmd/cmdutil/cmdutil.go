@@ -15,7 +15,7 @@ import (
 type contextKey int
 
 const (
-	KeyOutput    contextKey = iota
+	KeyOutput contextKey = iota
 	KeyClient
 	KeyConfig
 	KeyOverrides

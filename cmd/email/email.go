@@ -38,9 +38,9 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <domain> <mailbox>",
-	Short: "Get an email forwarding entry",
-	Example: `  namecom email get example.com info`,
+	Use:               "get <domain> <mailbox>",
+	Short:             "Get an email forwarding entry",
+	Example:           `  namecom email get example.com info`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -57,18 +57,18 @@ var createCmd = &cobra.Command{
 }
 
 var updateCmd = &cobra.Command{
-	Use:   "update <domain> <mailbox>",
-	Short: "Update an email forwarding entry",
-	Example: `  namecom email update example.com info --to newemail@gmail.com`,
+	Use:               "update <domain> <mailbox>",
+	Short:             "Update an email forwarding entry",
+	Example:           `  namecom email update example.com info --to newemail@gmail.com`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <mailbox>",
-	Short: "Delete an email forwarding entry",
-	Example: `  namecom email delete example.com info`,
+	Use:               "delete <domain> <mailbox>",
+	Short:             "Delete an email forwarding entry",
+	Example:           `  namecom email delete example.com info`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,

@@ -76,8 +76,8 @@ var autorenewCmd = &cobra.Command{
 	Short: "Enable or disable automatic renewal",
 	Example: `  namecom domain autorenew on example.com
   namecom domain autorenew off example.com`,
-	Args:  cmdutil.ExactArgs(2),
-	RunE:  runAutorenew,
+	Args: cmdutil.ExactArgs(2),
+	RunE: runAutorenew,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
@@ -131,8 +131,8 @@ var privacyCmd = &cobra.Command{
 	Short: "Enable or disable WHOIS privacy",
 	Example: `  namecom domain privacy on example.com
   namecom domain privacy off example.com`,
-	Args:  cmdutil.ExactArgs(2),
-	RunE:  runPrivacy,
+	Args: cmdutil.ExactArgs(2),
+	RunE: runPrivacy,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp

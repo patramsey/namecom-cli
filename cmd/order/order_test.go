@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -155,8 +155,8 @@ func TestOrderList_StatusFilterPassedToAPI(t *testing.T) {
 
 func TestOrderList_FilterAutoPages(t *testing.T) {
 	srv, requests := orderServer(t, [][]int32{
-		{101},  // page 1 — NextPage=2
-		{102},  // page 2 — no NextPage
+		{101}, // page 1 — NextPage=2
+		{102}, // page 2 — no NextPage
 	})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForOrderList(t, srv, &stdout, &stderr)

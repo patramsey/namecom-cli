@@ -36,7 +36,6 @@ func confirm(out *output.Config, yes bool, msg string) (bool, error) {
 	return cmdutil.Confirm(out, yes, msg)
 }
 
-
 // derefBool dereferences a *bool, returning false for nil.
 func derefBool(b *bool) bool {
 	if b == nil {
