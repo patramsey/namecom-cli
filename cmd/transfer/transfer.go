@@ -114,6 +114,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var page int32 = 1
 	var transfers []gen.Transfer
 	var hasMore bool
+	var lastResult gen.ListTransfersResponseSchema
 	for {
 		params := &gen.ListTransfersParams{Page: &page}
 		resp, err := client.Gen().ListTransfers(cmd.Context(), params)
@@ -121,20 +122,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListTransfersResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		transfers = append(transfers, result.Transfers...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		transfers = append(transfers, lastResult.Transfers...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching transfers… (page %d, %d so far)", page, len(transfers)))
 	}
 	spin.Stop()
@@ -150,9 +150,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(transfers)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(transfers, np, 0)
 	case output.FormatYAML:
-		return out.YAML(transfers)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(transfers, np, 0)
 	default:
 		if len(transfers) == 0 {
 			out.Empty("transfer", "Run 'namecom transfer create <domain> --auth-code XXXXXX' to initiate a transfer")
@@ -236,6 +244,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidAuthCode(createAuthCode); err != nil {
+		return err
 	}
 
 	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s?", domain))
@@ -366,6 +378,10 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidAuthCode(internalAuthCode); err != nil {
+		return err
 	}
 
 	ok, err := confirm(out, yes, fmt.Sprintf("Transfer %s from another name.com account?", domain))

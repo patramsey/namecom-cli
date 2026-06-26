@@ -95,6 +95,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var page int32 = 1
 	var all []gen.VanityNameserverResponseSchema
 	var hasMore bool
+	var lastResult gen.ListVanityNameserversResponseSchema
 	for {
 		params := &gen.ListVanityNameserversParams{Page: &page}
 		resp, err := client.Gen().ListVanityNameservers(cmd.Context(), domain, params)
@@ -102,20 +103,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListVanityNameserversResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, result.VanityNameservers...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		all = append(all, lastResult.VanityNameservers...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching vanity nameservers… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -131,9 +131,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
-		return out.YAML(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
 			out.Empty("vanity nameserver", fmt.Sprintf("Run 'namecom vanity-ns create %s --hostname ns1.%s --ips 1.2.3.4' to add one", domain, domain))

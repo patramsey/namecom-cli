@@ -109,6 +109,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var page int32 = 1
 	var all []gen.URLForwardingResponseSchema
 	var hasMore bool
+	var lastResult gen.ListURLForwardingsResponseSchema
 	for {
 		params := &gen.ListURLForwardingsByDomainParams{Page: &page}
 		resp, err := client.Gen().ListURLForwardingsByDomain(cmd.Context(), domain, params)
@@ -116,20 +117,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListURLForwardingsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, result.UrlForwarding...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		all = append(all, lastResult.UrlForwarding...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching URL forwardings… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -147,9 +147,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
-		return out.YAML(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
 			out.Empty("URL forwarding", fmt.Sprintf("Run 'namecom url create %s --to https://example.com' to add one", domain))
@@ -242,6 +250,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidURL(createForwardsTo, "to"); err != nil {
+		return err
 	}
 
 	fwdType := gen.URLForwardingType(createType)
@@ -347,6 +359,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidURL(updateForwardsTo, "to"); err != nil {
+		return err
 	}
 
 	// Preserve current type when --type wasn't explicitly passed and the

@@ -70,6 +70,20 @@ func runList(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 
+	if listPage < 1 {
+		return fmt.Errorf("--page must be 1 or greater (got %d)", listPage)
+	}
+	if listExpiringAfter != "" {
+		if err := cmdutil.ValidDate(listExpiringAfter, "expiring-after"); err != nil {
+			return err
+		}
+	}
+	if listExpiringBefore != "" {
+		if err := cmdutil.ValidDate(listExpiringBefore, "expiring-before"); err != nil {
+			return err
+		}
+	}
+
 	// When a filter is active, auto-paginate — results are small and the user
 	// expects to see everything matching, not just the first page.
 	autoPage := listAll || isFiltered(cmd)
@@ -140,9 +154,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(domains)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(domains, np, lastResult.TotalCount)
 	case output.FormatYAML:
-		return out.YAML(domains)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(domains, np, lastResult.TotalCount)
 	default:
 		if len(domains) == 0 {
 			if isFiltered(cmd) {

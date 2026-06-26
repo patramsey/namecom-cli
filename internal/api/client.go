@@ -18,6 +18,16 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// idempKeyCtxKey is the private context key for per-request idempotency keys.
+type idempKeyCtxKey struct{}
+
+// ContextWithIdempotencyKey attaches key to ctx; the Client's request editor
+// will set X-Idempotency-Key on all write requests (POST/PUT/DELETE) that
+// use this context.
+func ContextWithIdempotencyKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, idempKeyCtxKey{}, key)
+}
+
 const (
 	prodBaseURL    = "https://api.name.com"
 	sandboxBaseURL = "https://api.dev.name.com"
@@ -96,10 +106,14 @@ func New(opts Options) (*Client, error) {
 	authHeader := "Basic " + base64.StdEncoding.EncodeToString(
 		[]byte(opts.Creds.Username+":"+opts.Creds.Token))
 
-	editor := func(_ context.Context, req *http.Request) error {
+	editor := func(ctx context.Context, req *http.Request) error {
 		req.Header.Set("Authorization", authHeader)
 		req.Header.Set("User-Agent", ua)
 		req.Header.Set("Accept", "application/json")
+		if key, _ := ctx.Value(idempKeyCtxKey{}).(string); key != "" &&
+			(req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodDelete) {
+			req.Header.Set("X-Idempotency-Key", key)
+		}
 		return nil
 	}
 

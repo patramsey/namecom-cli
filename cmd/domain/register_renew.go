@@ -62,6 +62,12 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	dryRun := cmdutil.IsDryRun(cmd)
 	domainName := args[0]
 
+	if cmd.Flags().Changed("years") {
+		if err := cmdutil.ValidYears(registerYears); err != nil {
+			return err
+		}
+	}
+
 	// Guided form when interactive and no customization flags supplied.
 	noFlags := !cmd.Flags().Changed("years") && !cmd.Flags().Changed("privacy") && !cmd.Flags().Changed("autorenew")
 	if output.IsInteractive() && noFlags && !yes {
@@ -199,6 +205,12 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	domainName := args[0]
+
+	if cmd.Flags().Changed("years") {
+		if err := cmdutil.ValidYears(renewYears); err != nil {
+			return err
+		}
+	}
 
 	// Fetch pricing to show renewal cost before charging.
 	out.Step("Checking renewal pricing for " + domainName + "…")

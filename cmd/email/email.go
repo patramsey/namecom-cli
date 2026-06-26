@@ -92,6 +92,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var page int32 = 1
 	var all []gen.EmailForwarding
 	var hasMore bool
+	var lastResult gen.ListEmailForwardingsResponseSchema
 	for {
 		params := &gen.ListEmailForwardingsParams{Page: &page}
 		resp, err := client.Gen().ListEmailForwardings(cmd.Context(), domain, params)
@@ -99,20 +100,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListEmailForwardingsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, result.EmailForwarding...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		all = append(all, lastResult.EmailForwarding...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching email forwardings… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -128,9 +128,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
-		return out.YAML(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
 			out.Empty("email forwarding", fmt.Sprintf("Run 'namecom email create %s <mailbox> --to dest@example.com' to add one", domain))
@@ -214,6 +222,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if err := cmdutil.ValidEmail(createEmailTo, "to"); err != nil {
+		return err
+	}
+
 	body := gen.CreateEmailForwardingJSONRequestBody{
 		EmailBox: mailbox,
 		EmailTo:  openapi_types.Email(createEmailTo),
@@ -283,6 +295,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidEmail(updateEmailTo, "to"); err != nil {
+		return err
 	}
 
 	body := gen.UpdateEmailForwardingJSONRequestBody{

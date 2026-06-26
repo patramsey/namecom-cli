@@ -232,6 +232,27 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if createType == "" {
+		return fmt.Errorf("--type is required (A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT)")
+	}
+	if err := cmdutil.ValidDNSType(createType); err != nil {
+		return err
+	}
+	if err := cmdutil.ValidDNSHost(createHost); err != nil {
+		return err
+	}
+	if err := cmdutil.ValidDNSAnswer(createType, createHost, createAnswer); err != nil {
+		return err
+	}
+	for _, w := range cmdutil.DNSAnswerWarnings(createType, createAnswer, createPriority, cmd.Flags().Changed("priority")) {
+		out.Warn(w)
+	}
+	if cmd.Flags().Changed("ttl") {
+		if err := cmdutil.ValidTTL(createTTL); err != nil {
+			return err
+		}
+	}
+
 	body := gen.CreateRecordJSONRequestBody{
 		Type:   gen.DNSCreateRecordBodyType(createType),
 		Host:   createHost,
@@ -303,15 +324,35 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmd.Flags().Changed("type") {
+		if err := cmdutil.ValidDNSType(updateType); err != nil {
+			return err
+		}
 		body.Type = gen.DNSUpdateRecordBodyType(updateType)
 	}
-	if cmd.Flags().Changed("answer") {
-		body.Answer = updateAnswer
-	}
 	if cmd.Flags().Changed("host") {
+		if err := cmdutil.ValidDNSHost(updateHost); err != nil {
+			return err
+		}
 		body.Host = &updateHost
 	}
+	if cmd.Flags().Changed("answer") {
+		rtype := string(body.Type)
+		host := ""
+		if body.Host != nil {
+			host = *body.Host
+		}
+		if err := cmdutil.ValidDNSAnswer(rtype, host, updateAnswer); err != nil {
+			return err
+		}
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, updatePriority, cmd.Flags().Changed("priority")) {
+			out.Warn(w)
+		}
+		body.Answer = updateAnswer
+	}
 	if cmd.Flags().Changed("ttl") {
+		if err := cmdutil.ValidTTL(updateTTL); err != nil {
+			return err
+		}
 		body.Ttl = &updateTTL
 	}
 	if cmd.Flags().Changed("priority") {

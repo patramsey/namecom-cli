@@ -83,6 +83,17 @@ func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	if listSince != "" {
+		if err := cmdutil.ValidDate(listSince, "since"); err != nil {
+			return err
+		}
+	}
+	if listUntil != "" {
+		if err := cmdutil.ValidDate(listUntil, "until"); err != nil {
+			return err
+		}
+	}
+
 	// Auto-paginate when any filter is active — results will be small.
 	filtered := cmd.Flags().Changed("domain") || cmd.Flags().Changed("since") ||
 		cmd.Flags().Changed("until") || cmd.Flags().Changed("status")
@@ -92,6 +103,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var page int32 = 1
 	var orders []gen.Order
 	var hasMore bool
+	var lastResult gen.ListOrdersResponseSchema
 	for {
 		params := &gen.ListOrdersParams{Page: &page}
 		if listDomain != "" {
@@ -112,20 +124,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListOrdersResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		orders = append(orders, result.Orders...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		orders = append(orders, lastResult.Orders...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !autoPage {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching orders… (page %d, %d so far)", page, len(orders)))
 	}
 	spin.Stop()
@@ -143,9 +154,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(orders)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(orders, np, lastResult.TotalCount)
 	case output.FormatYAML:
-		return out.YAML(orders)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(orders, np, lastResult.TotalCount)
 	default:
 		if len(orders) == 0 {
 			out.Empty("order", "")

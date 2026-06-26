@@ -217,6 +217,11 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	for i := range ns {
 		ns[i] = strings.TrimSpace(ns[i])
 	}
+	for i, n := range ns {
+		if err := cmdutil.ValidNameserver(n, i); err != nil {
+			return err
+		}
+	}
 	if dryRun {
 		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/nameservers", domain), nil)
 		fmt.Fprintf(out.Writer, "  ns=%s\n", setNSList)
