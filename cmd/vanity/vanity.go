@@ -89,12 +89,16 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	spin := out.StartSpinner("Fetching vanity nameservers…")
 	var page int32 = 1
 	var all []gen.VanityNameserverResponseSchema
 	var hasMore bool
+	var lastResult gen.ListVanityNameserversResponseSchema
 	for {
 		params := &gen.ListVanityNameserversParams{Page: &page}
 		resp, err := client.Gen().ListVanityNameservers(cmd.Context(), domain, params)
@@ -102,20 +106,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListVanityNameserversResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, result.VanityNameservers...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		all = append(all, lastResult.VanityNameservers...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching vanity nameservers… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -131,9 +134,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
-		return out.YAML(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
 			out.Empty("vanity nameserver", fmt.Sprintf("Run 'namecom vanity-ns create %s --hostname ns1.%s --ips 1.2.3.4' to add one", domain, domain))
@@ -156,7 +167,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	stop := out.Spin("Fetching vanity nameserver…")
-	resp, err := client.Gen().GetVanityNameserver(cmd.Context(), args[0], args[1])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetVanityNameserver(cmd.Context(), domain, args[1])
 	stop()
 	if err != nil {
 		return err
@@ -184,7 +199,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	ips := splitIPs(createIPs)
 	body := gen.CreateVanityNameserverJSONRequestBody{
@@ -225,7 +243,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, hostname := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	hostname := args[1]
 
 	ips := splitIPs(updateIPs)
 	body := gen.UpdateVanityNameserverJSONRequestBody{
@@ -266,7 +288,11 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, hostname := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	hostname := args[1]
 
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain))
 	if err != nil {

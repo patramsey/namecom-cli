@@ -160,6 +160,33 @@ func (c *Config) YAML(v any) error {
 	return yaml.NewEncoder(c.Writer).Encode(v)
 }
 
+// listEnvelope wraps paginated list results with metadata for agent consumers.
+// nextPage and total are omitted when zero/nil.
+type listEnvelope struct {
+	Data     any    `json:"data" yaml:"data"`
+	NextPage *int32 `json:"nextPage,omitempty" yaml:"nextPage,omitempty"`
+	Total    int32  `json:"total,omitempty" yaml:"total,omitempty"`
+}
+
+// JSONList encodes data as a pagination envelope: {"data":[…],"nextPage":N,"total":N}.
+// nextPage is omitted when nil or zero; total is omitted when zero.
+func (c *Config) JSONList(data any, nextPage *int32, total int32) error {
+	env := listEnvelope{Data: data, Total: total}
+	if nextPage != nil && *nextPage != 0 {
+		env.NextPage = nextPage
+	}
+	return c.JSON(env)
+}
+
+// YAMLList encodes data as a pagination envelope in YAML.
+func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
+	env := listEnvelope{Data: data, Total: total}
+	if nextPage != nil && *nextPage != 0 {
+		env.NextPage = nextPage
+	}
+	return c.YAML(env)
+}
+
 // Table renders rows as a styled table. headers is the column header row.
 func (c *Config) Table(headers []string, rows [][]string) {
 	color := c.ColorEnabled()

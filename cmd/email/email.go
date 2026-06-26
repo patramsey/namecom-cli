@@ -86,12 +86,16 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	spin := out.StartSpinner("Fetching email forwardings…")
 	var page int32 = 1
 	var all []gen.EmailForwarding
 	var hasMore bool
+	var lastResult gen.ListEmailForwardingsResponseSchema
 	for {
 		params := &gen.ListEmailForwardingsParams{Page: &page}
 		resp, err := client.Gen().ListEmailForwardings(cmd.Context(), domain, params)
@@ -99,20 +103,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListEmailForwardingsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, result.EmailForwarding...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		all = append(all, lastResult.EmailForwarding...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching email forwardings… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -128,9 +131,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
-		return out.YAML(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
 			out.Empty("email forwarding", fmt.Sprintf("Run 'namecom email create %s <mailbox> --to dest@example.com' to add one", domain))
@@ -153,7 +164,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	stop := out.Spin("Fetching email forwarding…")
-	resp, err := client.Gen().GetEmailForwarding(cmd.Context(), args[0], args[1])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetEmailForwarding(cmd.Context(), domain, args[1])
 	stop()
 	if err != nil {
 		return err
@@ -181,7 +196,15 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, mailbox := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	mailbox := args[1]
+
+	if err := cmdutil.ValidEmailLocalPart(mailbox, "mailbox"); err != nil {
+		return err
+	}
 
 	if createEmailTo == "" {
 		if !output.IsInteractive() {
@@ -212,6 +235,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidEmail(createEmailTo, "to"); err != nil {
+		return err
 	}
 
 	body := gen.CreateEmailForwardingJSONRequestBody{
@@ -252,7 +279,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, mailbox := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	mailbox := args[1]
 
 	if updateEmailTo == "" {
 		if !output.IsInteractive() {
@@ -283,6 +314,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidEmail(updateEmailTo, "to"); err != nil {
+		return err
 	}
 
 	body := gen.UpdateEmailForwardingJSONRequestBody{
@@ -323,7 +358,11 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, mailbox := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	mailbox := args[1]
 
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain))
 	if err != nil {

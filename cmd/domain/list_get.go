@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,18 +58,27 @@ func init() {
 
 // isFiltered reports whether any server-side filter flag is set.
 func isFiltered(cmd *cobra.Command) bool {
-	for _, f := range []string{"filter", "tld", "expiring-after", "expiring-before"} {
-		if cmd.Flags().Changed(f) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc([]string{"filter", "tld", "expiring-after", "expiring-before"}, cmd.Flags().Changed)
 }
 
 func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
+
+	if listPage < 1 {
+		return fmt.Errorf("--page must be 1 or greater (got %d)", listPage)
+	}
+	if listExpiringAfter != "" {
+		if err := cmdutil.ValidDate(listExpiringAfter, "expiring-after"); err != nil {
+			return err
+		}
+	}
+	if listExpiringBefore != "" {
+		if err := cmdutil.ValidDate(listExpiringBefore, "expiring-before"); err != nil {
+			return err
+		}
+	}
 
 	// When a filter is active, auto-paginate — results are small and the user
 	// expects to see everything matching, not just the first page.
@@ -77,9 +87,6 @@ func runList(cmd *cobra.Command, _ []string) error {
 	spin := out.StartSpinner("Fetching domains…")
 	var domains []gen.DomainResponsePayload
 	page := listPage
-	if page < 1 {
-		page = 1
-	}
 	var lastResult gen.ListDomainsResponseSchema
 	var hasMore bool
 
@@ -140,9 +147,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(domains)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(domains, np, lastResult.TotalCount)
 	case output.FormatYAML:
-		return out.YAML(domains)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(domains, np, lastResult.TotalCount)
 	default:
 		if len(domains) == 0 {
 			if isFiltered(cmd) {
@@ -186,8 +201,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 	stop := out.Spin("Fetching domain…")
-	resp, err := client.Gen().GetDomain(cmd.Context(), args[0])
+	resp, err := client.Gen().GetDomain(cmd.Context(), domain)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {

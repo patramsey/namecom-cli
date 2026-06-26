@@ -3,6 +3,7 @@ package dns
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -154,10 +155,13 @@ func init() {
 
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	stop := out.Spin("Fetching DNS records…")
-	records, hasMore, err := fetchAllRecords(cmd, domain, listAll)
+	records, hasMore, nextPage, err := fetchAllRecords(cmd, domain, listAll)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
@@ -191,9 +195,9 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(records)
+		return out.JSONList(records, nextPage, 0)
 	case output.FormatYAML:
-		return out.YAML(records)
+		return out.YAMLList(records, nextPage, 0)
 	default:
 		if len(records) == 0 {
 			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
@@ -223,11 +227,35 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	// Guided form when interactive and required flags not supplied.
 	if output.IsInteractive() && !cmd.Flags().Changed("type") && !cmd.Flags().Changed("answer") {
 		if err := dnsCreateForm(cmd); err != nil {
+			return err
+		}
+	}
+
+	if createType == "" {
+		return fmt.Errorf("--type is required (A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT)")
+	}
+	if err := cmdutil.ValidDNSType(createType); err != nil {
+		return err
+	}
+	if err := cmdutil.ValidDNSHost(createHost); err != nil {
+		return err
+	}
+	if err := cmdutil.ValidDNSAnswer(createType, createHost, createAnswer); err != nil {
+		return err
+	}
+	for _, w := range cmdutil.DNSAnswerWarnings(createType, createAnswer, createPriority, cmd.Flags().Changed("priority")) {
+		out.Warn(w)
+	}
+	if cmd.Flags().Changed("ttl") {
+		if err := cmdutil.ValidTTL(createTTL); err != nil {
 			return err
 		}
 	}
@@ -272,7 +300,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	id, err := parseID(args[1])
 	if err != nil {
@@ -303,15 +334,35 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmd.Flags().Changed("type") {
+		if err := cmdutil.ValidDNSType(updateType); err != nil {
+			return err
+		}
 		body.Type = gen.DNSUpdateRecordBodyType(updateType)
 	}
-	if cmd.Flags().Changed("answer") {
-		body.Answer = updateAnswer
-	}
 	if cmd.Flags().Changed("host") {
+		if err := cmdutil.ValidDNSHost(updateHost); err != nil {
+			return err
+		}
 		body.Host = &updateHost
 	}
+	if cmd.Flags().Changed("answer") {
+		rtype := string(body.Type)
+		host := ""
+		if body.Host != nil {
+			host = *body.Host
+		}
+		if err := cmdutil.ValidDNSAnswer(rtype, host, updateAnswer); err != nil {
+			return err
+		}
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, updatePriority, cmd.Flags().Changed("priority")) {
+			out.Warn(w)
+		}
+		body.Answer = updateAnswer
+	}
 	if cmd.Flags().Changed("ttl") {
+		if err := cmdutil.ValidTTL(updateTTL); err != nil {
+			return err
+		}
 		body.Ttl = &updateTTL
 	}
 	if cmd.Flags().Changed("priority") {
@@ -349,7 +400,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	id, err := parseID(args[1])
 	if err != nil {
@@ -386,9 +440,12 @@ func runDelete(cmd *cobra.Command, args []string) error {
 
 func runExport(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
-	records, _, err := fetchAllRecords(cmd, domain, true)
+	records, _, _, err := fetchAllRecords(cmd, domain, true)
 	if err != nil {
 		return err
 	}
@@ -417,7 +474,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 func runImport(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 	dryRun := importDryRun || cmdutil.IsDryRun(cmd)
 
 	data, err := os.ReadFile(importFile)
@@ -464,34 +524,37 @@ func runImport(cmd *cobra.Command, args []string) error {
 }
 
 // fetchAllRecords pages through all DNS records for a domain.
-func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen.Record, hasMore bool, err error) {
+func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen.Record, hasMore bool, nextPage *int32, err error) {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 
 	var page int32 = 1
+	var last gen.ListRecordsResponseSchema
 
 	for {
 		params := &gen.ListRecordsParams{Page: &page}
 		resp, err2 := client.Gen().ListRecords(ctx, domain, params)
 		if err2 != nil {
-			return nil, false, err2
+			return nil, false, nil, err2
 		}
-		var result gen.ListRecordsResponseSchema
-		if err2 := api.Decode(resp, &result); err2 != nil {
-			return nil, false, err2
+		if err2 := api.Decode(resp, &last); err2 != nil {
+			return nil, false, nil, err2
 		}
-		records = append(records, result.Records...)
+		records = append(records, last.Records...)
 
-		if result.NextPage == nil || *result.NextPage == 0 {
+		if last.NextPage == nil || *last.NextPage == 0 {
 			break
 		}
 		if !all {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *last.NextPage
 	}
-	return records, hasMore, nil
+	if hasMore {
+		nextPage = last.NextPage
+	}
+	return records, hasMore, nextPage, nil
 }
 
 func recordRows(out *output.Config, records []gen.Record) [][]string {
@@ -604,7 +667,8 @@ func dnsCreateForm(cmd *cobra.Command) error {
 				Value(&createType),
 			huh.NewInput().
 				Title("Host (@ for apex)").
-				Value(&createHost),
+				Value(&createHost).
+				Validate(cmdutil.ValidDNSHost),
 			huh.NewInput().
 				Title("Answer / value").
 				Value(&createAnswer).
@@ -612,23 +676,36 @@ func dnsCreateForm(cmd *cobra.Command) error {
 					if strings.TrimSpace(s) == "" {
 						return fmt.Errorf("answer is required")
 					}
+					if createType != "" {
+						return cmdutil.ValidDNSAnswer(createType, createHost, s)
+					}
 					return nil
 				}),
 			huh.NewInput().
 				Title("TTL (seconds, min 300)").
-				Value(&ttlStr),
+				Value(&ttlStr).
+				Validate(func(s string) error {
+					n, err := strconv.ParseInt(s, 10, 64)
+					if err != nil {
+						return fmt.Errorf("TTL must be a number")
+					}
+					return cmdutil.ValidTTL(n)
+				}),
 		),
 	)
 
 	if err := form.Run(); err != nil {
-		if err == huh.ErrUserAborted {
+		if errors.Is(err, huh.ErrUserAborted) {
 			return fmt.Errorf("aborted")
 		}
 		return err
 	}
 
-	// Parse TTL back into the package-level var.
+	// Parse and validate TTL.
 	if n, err := strconv.ParseInt(ttlStr, 10, 64); err == nil {
+		if err := cmdutil.ValidTTL(n); err != nil {
+			return err
+		}
 		createTTL = n
 	}
 
@@ -642,7 +719,7 @@ func dnsCreateForm(cmd *cobra.Command) error {
 					Value(&priorityStr),
 			),
 		)
-		if err := priorityForm.Run(); err != nil && err != huh.ErrUserAborted {
+		if err := priorityForm.Run(); err != nil && !errors.Is(err, huh.ErrUserAborted) {
 			return err
 		}
 		if n, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {

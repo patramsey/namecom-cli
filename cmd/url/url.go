@@ -103,12 +103,16 @@ func init() {
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	spin := out.StartSpinner("Fetching URL forwardings…")
 	var page int32 = 1
 	var all []gen.URLForwardingResponseSchema
 	var hasMore bool
+	var lastResult gen.ListURLForwardingsResponseSchema
 	for {
 		params := &gen.ListURLForwardingsByDomainParams{Page: &page}
 		resp, err := client.Gen().ListURLForwardingsByDomain(cmd.Context(), domain, params)
@@ -116,20 +120,19 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		var result gen.ListURLForwardingsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
+		if err := api.Decode(resp, &lastResult); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, result.UrlForwarding...)
-		if result.NextPage == nil || *result.NextPage == 0 {
+		all = append(all, lastResult.UrlForwarding...)
+		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = *lastResult.NextPage
 		spin.Update(fmt.Sprintf("Fetching URL forwardings… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -147,9 +150,17 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
-		return out.YAML(all)
+		var np *int32
+		if hasMore {
+			np = lastResult.NextPage
+		}
+		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
 			out.Empty("URL forwarding", fmt.Sprintf("Run 'namecom url create %s --to https://example.com' to add one", domain))
@@ -177,7 +188,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Fetching URL forwarding…")
-	resp, err := client.Gen().GetURLForwardingById(cmd.Context(), args[0], id)
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetURLForwardingById(cmd.Context(), domain, id)
 	stop()
 	if err != nil {
 		return err
@@ -205,7 +220,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	if createForwardsTo == "" {
 		if !output.IsInteractive() {
@@ -242,6 +260,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+	}
+
+	if err := cmdutil.ValidURL(createForwardsTo, "to"); err != nil {
+		return err
+	}
+	if err := cmdutil.ValidURLForwardingType(createType, "type"); err != nil {
+		return err
 	}
 
 	fwdType := gen.URLForwardingType(createType)
@@ -294,7 +319,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	id, err := parseID(args[1])
 	if err != nil {
@@ -345,6 +373,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				out.Warn("aborted")
 				return nil
 			}
+			return err
+		}
+	}
+
+	if err := cmdutil.ValidURL(updateForwardsTo, "to"); err != nil {
+		return err
+	}
+	if cmd.Flags().Changed("type") {
+		if err := cmdutil.ValidURLForwardingType(updateType, "type"); err != nil {
 			return err
 		}
 	}
@@ -401,7 +438,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	id, err := parseID(args[1])
 	if err != nil {

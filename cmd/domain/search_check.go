@@ -20,8 +20,8 @@ func inlineRegister(cmd *cobra.Command, domainName string, purchasePrice *float6
 	body := gen.CreateDomainJSONRequestBody{
 		Domain: gen.DomainCreatePayload{
 			DomainName:       domainName,
-			AutorenewEnabled: ptr(false),
-			PrivacyEnabled:   ptr(false),
+			AutorenewEnabled: new(bool),
+			PrivacyEnabled:   new(bool),
 		},
 		Years: &years,
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/patramsey/namecom-cli/cmd/apicmd"
@@ -45,8 +46,9 @@ type globalFlags struct {
 	color    string
 	timeout  time.Duration
 	debug    bool
-	yes      bool
-	dryRun   bool
+	yes       bool
+	dryRun    bool
+	idempKey  string
 }
 
 var gf globalFlags
@@ -157,6 +159,7 @@ func init() {
 	pf.BoolVar(&gf.debug, "debug", false, "print HTTP requests/responses (token redacted)")
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "print the API request that would be sent without executing it")
+	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for safe retries of write operations")
 
 	// Mark --sandbox so we can detect explicit-false vs absent.
 	_ = pf.Lookup("sandbox").Value // exists — no error path needed
@@ -210,6 +213,27 @@ func initContext(cmd *cobra.Command) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// Check that an explicitly requested profile actually exists.
+	profileReq := gf.profile
+	if profileReq == "" {
+		profileReq = os.Getenv("NAMECOM_PROFILE")
+	}
+	if profileReq != "" && cfgFile != nil {
+		if _, ok := cfgFile.Profiles[profileReq]; !ok {
+			cfgPath, _ := config.Path()
+			names := make([]string, 0, len(cfgFile.Profiles))
+			for k := range cfgFile.Profiles {
+				names = append(names, k)
+			}
+			if len(names) > 0 {
+				return fmt.Errorf("profile %q not found in %s\n\nAvailable profiles: %s\nRun 'namecom auth login --profile %s' to create it",
+					profileReq, cfgPath, strings.Join(names, ", "), profileReq)
+			}
+			return fmt.Errorf("profile %q not found in %s (no profiles configured)\nRun 'namecom auth login --profile %s' to create it",
+				profileReq, cfgPath, profileReq)
+		}
+	}
+
 	creds, err := config.Resolve(cfgFile, ov)
 	if err != nil {
 		if errors.Is(err, config.ErrNoCredentials) {
@@ -237,6 +261,9 @@ func initContext(cmd *cobra.Command) error {
 	// Stash everything on the context so subcommands can retrieve them via
 	// the helpers below without threading parameters through every call.
 	ctx := cmd.Context()
+	if gf.idempKey != "" {
+		ctx = api.ContextWithIdempotencyKey(ctx, gf.idempKey)
+	}
 	ctx = context.WithValue(ctx, cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, apiClient)
 	ctx = context.WithValue(ctx, cmdutil.KeyConfig, cfgFile)
@@ -269,8 +296,7 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	var apiErr *api.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		switch apiErr.StatusCode {
 		case 401, 403:
 			return 3

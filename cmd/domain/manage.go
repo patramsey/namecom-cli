@@ -212,10 +212,18 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain := args[0]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 	ns := strings.Split(setNSList, ",")
 	for i := range ns {
 		ns[i] = strings.TrimSpace(ns[i])
+	}
+	for i, n := range ns {
+		if err := cmdutil.ValidNameserver(n, i); err != nil {
+			return err
+		}
 	}
 	if dryRun {
 		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/nameservers", domain), nil)
@@ -276,7 +284,11 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	resp, err := client.Gen().GetDomain(cmd.Context(), args[0])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetDomain(cmd.Context(), domain)
 	if err != nil {
 		return err
 	}
@@ -377,7 +389,11 @@ func runPricing(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	resp, err := client.Gen().GetPricingForDomain(cmd.Context(), args[0], &gen.GetPricingForDomainParams{})
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetPricingForDomain(cmd.Context(), domain, &gen.GetPricingForDomainParams{})
 	if err != nil {
 		return err
 	}
@@ -430,7 +446,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	dryRun := cmdutil.IsDryRun(cmd)
 
 	// Read-modify-write: fetch current state first.
-	getResp, err := client.Gen().GetDomain(cmd.Context(), args[0])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	getResp, err := client.Gen().GetDomain(cmd.Context(), domain)
 	if err != nil {
 		return err
 	}
@@ -439,23 +459,26 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	autorenew := bool(current.AutorenewEnabled)
+	privacy := bool(current.PrivacyEnabled)
+	locked := bool(current.Locked)
 	body := gen.UpdateDomainJSONRequestBody{
-		AutorenewEnabled: ptr(bool(current.AutorenewEnabled)),
-		PrivacyEnabled:   ptr(bool(current.PrivacyEnabled)),
-		Locked:           ptr(bool(current.Locked)),
+		AutorenewEnabled: &autorenew,
+		PrivacyEnabled:   &privacy,
+		Locked:           &locked,
 	}
 
 	if cmd.Flags().Changed("autorenew") {
 		v, _ := cmd.Flags().GetBool("autorenew")
-		body.AutorenewEnabled = ptr(v)
+		body.AutorenewEnabled = &v
 	}
 	if cmd.Flags().Changed("privacy") {
 		v, _ := cmd.Flags().GetBool("privacy")
-		body.PrivacyEnabled = ptr(v)
+		body.PrivacyEnabled = &v
 	}
 	if cmd.Flags().Changed("lock") {
 		v, _ := cmd.Flags().GetBool("lock")
-		body.Locked = ptr(v)
+		body.Locked = &v
 	}
 
 	if dryRun {
