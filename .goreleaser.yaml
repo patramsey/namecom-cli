@@ -41,6 +41,7 @@ brews:
     homepage: https://github.com/patramsey/namecom-cli
     description: CLI for the name.com domain registrar API
     license: MIT
+    directory: Formula
     repository:
       owner: patramsey
       name: homebrew-tap

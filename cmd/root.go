@@ -78,6 +78,19 @@ Run 'namecom <command> --help' for details on any command.`,
 
 // Execute is the entry point called from main.
 func Execute() {
+	// Resolve the effective version: ldflag value for release builds, module
+	// metadata for go install builds, "dev" for local builds.
+	Version = resolveVersion()
+	rootCmd.Version = Version
+	rootCmd.Long = "namecom " + Version + " — CLI for the name.com Core API\n\n" +
+		"Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.\n\n" +
+		"Quick start:\n" +
+		"  namecom auth login              # configure credentials\n" +
+		"  namecom domain list             # list your domains\n" +
+		"  namecom dns list example.com    # manage DNS records\n" +
+		"  namecom domain register foo.com # register a new domain\n\n" +
+		"Run 'namecom <command> --help' for details on any command."
+
 	// Start version check in background before the command runs, so there's
 	// a chance the network round-trip completes by the time we're done.
 	updateCh := make(chan string, 1)
