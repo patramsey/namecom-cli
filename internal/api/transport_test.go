@@ -55,8 +55,11 @@ func TestRetry5xxIdempotentOnly(t *testing.T) {
 		wantCalls int32
 	}{
 		{name: "GET retries", method: http.MethodGet, wantCalls: 4}, // 1 + 3 retries
+		// POST is never retried on 5xx regardless of idempotency key — only a
+		// handful of name.com endpoints document key support, so we can't
+		// safely assume the server will de-duplicate an arbitrary POST.
 		{name: "POST no key, no retry", method: http.MethodPost, wantCalls: 1},
-		{name: "POST with idempotency key retries", method: http.MethodPost, idemKey: true, wantCalls: 4},
+		{name: "POST with idempotency key, no retry", method: http.MethodPost, idemKey: true, wantCalls: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,7 +130,7 @@ func TestIdempotent(t *testing.T) {
 		"DELETE":   {http.MethodDelete, false, true},
 		"PUT":      {http.MethodPut, false, true},
 		"POST":     {http.MethodPost, false, false},
-		"POST+key": {http.MethodPost, true, true},
+		"POST+key": {http.MethodPost, true, false}, // key does not make POST idempotent for 5xx
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

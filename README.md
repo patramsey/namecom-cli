@@ -2,7 +2,7 @@
 
 # namecom
 
-**The official command-line interface for [name.com](https://www.name.com)**
+**The command-line interface for [name.com](https://www.name.com)**
 
 [![CI](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/patramsey/namecom-cli)](https://github.com/patramsey/namecom-cli/releases/latest)
@@ -32,7 +32,7 @@ $ namecom status
 
 ## Why
 
-The name.com web UI is great for one-offs. The CLI is for everything else:
+The name.com web UI is great for humans. The CLI is for agents and terminal wizards
 
 - **Automate** domain renewals, DNS changes, and email forwards in CI/CD pipelines
 - **Script** bulk operations across dozens of domains at once
@@ -237,7 +237,10 @@ namecom completion fish  > ~/.config/fish/completions/namecom.fish
 | `--sandbox` | | Target the sandbox API (`api.dev.name.com`) |
 | `--color` | `auto` | Colorize output: `auto`, `always`, `never` |
 | `--timeout` | `30s` | Per-request timeout |
-| `--debug` | | Print HTTP requests/responses (token redacted) |
+| `--debug` | | Log HTTP requests/responses to stderr (token redacted) |
+| `--debug-file` | | Log HTTP requests/responses to a file (appends; useful as an audit log) |
+| `--no-header` | | Omit the header row from table output |
+| `--idempotency-key` | auto-generated | Idempotency key for write operations — auto-generated per invocation; override to make cross-invocation retries safe |
 | `--username` | | API username (overrides config and `NAMECOM_USERNAME`) |
 | `--token` | | API token (overrides config and `NAMECOM_TOKEN`) |
 

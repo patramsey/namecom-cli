@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -23,10 +22,13 @@ type retryTransport struct {
 	base       http.RoundTripper
 	limiter    *rate.Limiter
 	maxRetries int
-	debug      bool
+	logw       io.Writer // nil = no debug logging; non-nil = write request/response log here
 	// baseDelay is the first-retry backoff; subsequent retries double it up to
 	// a 30s cap. Zero means the production default (1s). Tests set it small.
 	baseDelay time.Duration
+	// onRetry, when set, is called just before sleeping between attempts so the
+	// caller can surface "retrying…" feedback to the user.
+	onRetry func(attempt int, delay time.Duration)
 }
 
 // retryableStatus reports whether a status code warrants a retry.
@@ -42,15 +44,16 @@ func retryableStatus(code int) bool {
 	return false
 }
 
-// idempotent reports whether retrying req is safe. GET/HEAD/PUT/DELETE are
-// idempotent by definition; a POST is retryable only when it carries an
-// idempotency key, which the API uses to de-duplicate retried mutations.
+// idempotent reports whether retrying req on a 5xx is safe. GET/HEAD/PUT/DELETE
+// are idempotent by HTTP definition. POST is NOT included here: only a handful
+// of name.com endpoints document X-Idempotency-Key support, so we cannot safely
+// retry arbitrary POST requests on 5xx — the server may have already committed
+// the operation. 429 retries are handled separately (always safe: rejected means
+// not processed).
 func idempotent(req *http.Request) bool {
 	switch req.Method {
 	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete:
 		return true
-	case http.MethodPost:
-		return req.Header.Get("X-Idempotency-Key") != ""
 	}
 	return false
 }
@@ -96,7 +99,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// Network/transport error: retry only if the request is idempotent.
 		if err != nil {
 			if attempt < t.maxRetries && idempotent(req) {
-				if !t.sleepBackoff(ctx, attempt, nil) {
+				delay := t.backoffDelay(attempt, nil)
+				if t.onRetry != nil {
+					t.onRetry(attempt+1, delay)
+				}
+				if !t.sleep(ctx, delay) {
 					return nil, ctx.Err()
 				}
 				continue
@@ -114,7 +121,11 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				// Drain and close so the connection can be reused.
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				_ = resp.Body.Close()
-				if !t.sleepBackoff(ctx, attempt, retryAfter) {
+				delay := t.backoffDelay(attempt, retryAfter)
+				if t.onRetry != nil {
+					t.onRetry(attempt+1, delay)
+				}
+				if !t.sleep(ctx, delay) {
 					return nil, ctx.Err()
 				}
 				continue
@@ -125,24 +136,24 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return lastResp, lastErr
 }
 
-// sleepBackoff waits before the next attempt. If retryAfter is non-nil it is
-// honored; otherwise an exponential backoff with jitter is used. Returns false
-// if the context is cancelled while waiting.
-func (t *retryTransport) sleepBackoff(ctx context.Context, attempt int, retryAfter *time.Duration) bool {
-	var d time.Duration
+// backoffDelay computes the wait duration for the next attempt. If retryAfter
+// is non-nil it is honored; otherwise exponential backoff with jitter is used.
+func (t *retryTransport) backoffDelay(attempt int, retryAfter *time.Duration) time.Duration {
 	if retryAfter != nil {
-		d = *retryAfter
-	} else {
-		unit := t.baseDelay
-		if unit == 0 {
-			unit = time.Second
-		}
-		const maxBackoff = 30 * time.Second
-		// unit, 2*unit, 4*unit, ... capped, with ±20% jitter.
-		base := min(time.Duration(math.Pow(2, float64(attempt)))*unit, maxBackoff)
-		jitter := time.Duration(rand.Int63n(int64(base)/5 + 1)) //nolint:gosec // jitter, not crypto
-		d = base - base/10 + jitter
+		return *retryAfter
 	}
+	unit := t.baseDelay
+	if unit == 0 {
+		unit = time.Second
+	}
+	const maxBackoff = 30 * time.Second
+	base := min(time.Duration(math.Pow(2, float64(attempt)))*unit, maxBackoff)
+	jitter := time.Duration(rand.Int63n(int64(base)/5 + 1)) //nolint:gosec // jitter, not crypto
+	return base - base/10 + jitter
+}
+
+// sleep waits for d, returning false if ctx is cancelled first.
+func (t *retryTransport) sleep(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
@@ -167,7 +178,7 @@ func parseRetryAfter(v string) *time.Duration {
 }
 
 func (t *retryTransport) logRequest(req *http.Request, attempt int) {
-	if !t.debug {
+	if t.logw == nil {
 		return
 	}
 	prefix := "→"
@@ -175,13 +186,29 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int) {
 		prefix = fmt.Sprintf("→ (retry %d)", attempt)
 	}
 	// Authorization is intentionally never logged.
-	fmt.Fprintf(os.Stderr, "%s %s %s\n", prefix, req.Method, req.URL.String())
+	fmt.Fprintf(t.logw, "%s %s %s\n", prefix, req.Method, req.URL.String())
+	if req.Body != nil && req.GetBody != nil {
+		body, err := req.GetBody()
+		if err == nil {
+			data, _ := io.ReadAll(io.LimitReader(body, 4096))
+			_ = body.Close()
+			if len(data) > 0 {
+				fmt.Fprintf(t.logw, "  body: %s\n", data)
+			}
+		}
+	}
 }
 
-func (t *retryTransport) logResponse(resp *http.Response, attempt int) {
-	if !t.debug {
+func (t *retryTransport) logResponse(resp *http.Response, _ int) {
+	if t.logw == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "← %s\n", resp.Status)
-	_ = attempt
+	fmt.Fprintf(t.logw, "← %s\n", resp.Status)
+	// Buffer the body so we can log it and still hand it to the caller.
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	if len(data) > 0 {
+		fmt.Fprintf(t.logw, "  body: %s\n", data)
+	}
 }
