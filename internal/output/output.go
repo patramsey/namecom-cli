@@ -27,6 +27,7 @@ import (
 // Format is the output format selected by --output / -o.
 type Format string
 
+// Output format constants for the --output / -o flag.
 const (
 	FormatTable Format = "table"
 	FormatJSON  Format = "json"
@@ -36,6 +37,7 @@ const (
 // ColorMode maps to --color flag values.
 type ColorMode string
 
+// Color mode constants for the --color flag.
 const (
 	ColorAuto   ColorMode = "auto"
 	ColorAlways ColorMode = "always"
@@ -197,7 +199,7 @@ func (c *Config) Table(headers []string, rows [][]string) {
 		header = header.Foreground(lipgloss.Color("15")) // bright white
 	}
 
-	styleFunc := func(row, col int) lipgloss.Style {
+	styleFunc := func(row, _ int) lipgloss.Style {
 		if row == table.HeaderRow {
 			return header
 		}

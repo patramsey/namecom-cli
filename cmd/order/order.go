@@ -79,7 +79,7 @@ func init() {
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 
-func runList(cmd *cobra.Command, args []string) error {
+func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
@@ -217,7 +217,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runRefund(cmd *cobra.Command, args []string) error {
+func runRefund(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)

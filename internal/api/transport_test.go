@@ -24,7 +24,7 @@ func newTestClient(rt http.RoundTripper) *http.Client {
 
 func TestRetryOn429(t *testing.T) {
 	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if atomic.AddInt32(&calls, 1) < 3 {
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -64,7 +64,7 @@ func TestRetry5xxIdempotentOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&calls, 1)
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
@@ -88,7 +88,7 @@ func TestRetry5xxIdempotentOnly(t *testing.T) {
 
 func TestNoRetryOn4xx(t *testing.T) {
 	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusBadRequest)
 	}))

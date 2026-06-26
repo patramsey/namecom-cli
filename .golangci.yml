@@ -11,6 +11,12 @@ linters:
         source: "fmt\\.Fprint"
       - linters: [errcheck]
         source: "\\.Body\\.Close\\(\\)"
+      # api.APIError is intentional: renaming to api.Error would be confusing
+      # next to the error interface. The package is internal so external callers
+      # are not a concern.
+      - linters: [revive]
+        path: "internal/api/apierror.go"
+        text: "stutters"
 
 # Formatters are checked by `golangci-lint run` and applied by
 # `golangci-lint fmt`. Enabling gofmt here makes CI fail on formatting drift,

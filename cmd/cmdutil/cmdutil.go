@@ -14,6 +14,7 @@ import (
 
 type contextKey int
 
+// Context keys for values stored by cmd/root.go's PersistentPreRunE.
 const (
 	KeyOutput contextKey = iota
 	KeyClient

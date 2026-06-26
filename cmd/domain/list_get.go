@@ -206,9 +206,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 			rows = append(rows, []string{
 				d.DomainName,
 				out.ExpiryDate(d.ExpireDate),
-				out.BoolBadge(bool(d.AutorenewEnabled)),
-				out.BoolBadge(bool(d.Locked)),
-				out.BoolBadge(bool(d.PrivacyEnabled)),
+				out.BoolBadge(d.AutorenewEnabled),
+				out.BoolBadge(d.Locked),
+				out.BoolBadge(d.PrivacyEnabled),
 			})
 		}
 		out.Table(headers, rows)

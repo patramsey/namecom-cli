@@ -106,7 +106,7 @@ func init() {
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
-func runList(cmd *cobra.Command, args []string) error {
+func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
