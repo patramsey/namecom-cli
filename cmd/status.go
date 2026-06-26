@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/api/gen"
@@ -50,56 +52,101 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	stop := out.Spin("Fetching account status…")
 
-	// Fetch all domains (auto-page).
-	var domains []gen.DomainResponsePayload
-	var page int32 = 1
-	for {
-		params := &gen.ListDomainsParams{Page: &page}
-		resp, err := client.Gen().ListDomains(ctx, params)
+	// Run all queries in parallel — they are independent.
+	var (
+		totalDomains    int32
+		unlockedCount   int32
+		expiringDomains []gen.DomainResponsePayload
+		transfers       []gen.Transfer
+	)
+
+	now := time.Now()
+	expireEnd := now.AddDate(0, 0, 30).Format("2006-01-02")
+	falseVal := false
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	// Single page-1 request to get TotalCount — no need to page everything.
+	g.Go(func() error {
+		p := int32(1)
+		resp, err := client.Gen().ListDomains(gctx, &gen.ListDomainsParams{Page: &p})
 		if err != nil {
-			stop()
 			return err
 		}
 		var result gen.ListDomainsResponseSchema
 		if err := api.Decode(resp, &result); err != nil {
-			stop()
 			return err
 		}
-		domains = append(domains, result.Domains...)
-		if result.NextPage == nil || *result.NextPage == 0 {
-			break
-		}
-		page = *result.NextPage
-	}
+		totalDomains = result.TotalCount
+		return nil
+	})
 
-	// Fetch all transfer pages for an accurate pending count.
-	var transfers []gen.Transfer
-	for tPage := ptrInt32(1); ; {
-		tResp, err := client.Gen().ListTransfers(ctx, &gen.ListTransfersParams{Page: tPage})
+	// Count unlocked domains via the Locked=false filter.
+	g.Go(func() error {
+		p := int32(1)
+		resp, err := client.Gen().ListDomains(gctx, &gen.ListDomainsParams{Page: &p, Locked: &falseVal})
 		if err != nil {
-			break
+			return err
 		}
-		var tResult gen.ListTransfersResponseSchema
-		if api.Decode(tResp, &tResult) != nil {
-			break
+		var result gen.ListDomainsResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
+			return err
 		}
-		transfers = append(transfers, tResult.Transfers...)
-		if tResult.NextPage == nil || *tResult.NextPage == 0 {
-			break
+		unlockedCount = result.TotalCount
+		return nil
+	})
+
+	// Fetch only domains expiring in the next 30 days.
+	g.Go(func() error {
+		p := int32(1)
+		for {
+			params := &gen.ListDomainsParams{Page: &p, ExpireDateEnd: &expireEnd}
+			resp, err := client.Gen().ListDomains(gctx, params)
+			if err != nil {
+				return err
+			}
+			var result gen.ListDomainsResponseSchema
+			if err := api.Decode(resp, &result); err != nil {
+				return err
+			}
+			expiringDomains = append(expiringDomains, result.Domains...)
+			if result.NextPage == nil || *result.NextPage == 0 {
+				return nil
+			}
+			p = *result.NextPage
 		}
-		tPage = tResult.NextPage
+	})
+
+	// Fetch transfers for pending count.
+	g.Go(func() error {
+		for tPage := ptrInt32(1); ; {
+			tResp, err := client.Gen().ListTransfers(gctx, &gen.ListTransfersParams{Page: tPage})
+			if err != nil {
+				return nil // non-fatal: omit transfer count rather than failing status
+			}
+			var tResult gen.ListTransfersResponseSchema
+			if api.Decode(tResp, &tResult) != nil {
+				return nil
+			}
+			transfers = append(transfers, tResult.Transfers...)
+			if tResult.NextPage == nil || *tResult.NextPage == 0 {
+				return nil
+			}
+			tPage = tResult.NextPage
+		}
+	})
+
+	if err := g.Wait(); err != nil {
+		stop()
+		return err
 	}
 
 	stop()
 
-	// Compute stats.
-	now := time.Now()
-	var expCritical, expSoon, unlocked int
+	// Compute stats from the targeted results.
+	var expCritical, expSoon int
 	var expiringItems []expiryItem
-	for _, d := range domains {
-		if !bool(d.Locked) {
-			unlocked++
-		}
+	for _, d := range expiringDomains {
 		if d.ExpireDate == nil {
 			continue
 		}
@@ -107,7 +154,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		if days < 7 {
 			expCritical++
 			expiringItems = append(expiringItems, expiryItem{d.DomainName, d.ExpireDate.Format("2006-01-02"), days})
-		} else if days < 30 {
+		} else {
 			expSoon++
 			expiringItems = append(expiringItems, expiryItem{d.DomainName, d.ExpireDate.Format("2006-01-02"), days})
 		}
@@ -134,10 +181,10 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	summary := statusSummary{
 		Profile:          profileName,
 		Endpoint:         client.BaseURL(),
-		DomainsTotal:     len(domains),
+		DomainsTotal:     int(totalDomains),
 		ExpiringCritical: expCritical,
 		ExpiringSoon:     expSoon,
-		Unlocked:         unlocked,
+		Unlocked:         int(unlockedCount),
 		PendingTransfers: len(pendingDomains),
 		ExpiringDomains:  expiringItems,
 		PendingDomains:   pendingDomains,

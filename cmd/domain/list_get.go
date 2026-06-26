@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -85,53 +88,83 @@ func runList(cmd *cobra.Command, _ []string) error {
 	autoPage := listAll || isFiltered(cmd)
 
 	spin := out.StartSpinner("Fetching domains…")
-	var domains []gen.DomainResponsePayload
-	page := listPage
-	var lastResult gen.ListDomainsResponseSchema
-	var hasMore bool
 
-	for {
-		params := &gen.ListDomainsParams{Page: &page}
+	// Build query params from flags (shared across all page requests).
+	buildParams := func(page int32) *gen.ListDomainsParams {
+		p := &gen.ListDomainsParams{Page: &page}
 		if listSort != "" {
-			params.Sort = &listSort
+			p.Sort = &listSort
 		}
 		if listFilter != "" {
 			f := filterToWildcard(listFilter)
-			params.DomainName = &f
+			p.DomainName = &f
 		}
 		if listTLD != "" {
 			tld := strings.TrimPrefix(listTLD, ".")
-			params.Tld = &tld
+			p.Tld = &tld
 		}
 		if listExpiringAfter != "" {
-			params.ExpireDateStart = &listExpiringAfter
+			p.ExpireDateStart = &listExpiringAfter
 		}
 		if listExpiringBefore != "" {
-			params.ExpireDateEnd = &listExpiringBefore
+			p.ExpireDateEnd = &listExpiringBefore
 		}
+		return p
+	}
 
-		resp, err := client.Gen().ListDomains(ctx, params)
-		if err != nil {
-			spin.Stop()
-			return err
-		}
-		var result gen.ListDomainsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			spin.Stop()
-			return err
-		}
-		domains = append(domains, result.Domains...)
-		lastResult = result
+	var domains []gen.DomainResponsePayload
+	var lastResult gen.ListDomainsResponseSchema
+	var hasMore bool
 
-		if result.NextPage == nil || *result.NextPage == 0 {
-			break
-		}
+	// Fetch page 1 first to discover LastPage.
+	resp, err := client.Gen().ListDomains(ctx, buildParams(listPage))
+	if err != nil {
+		spin.Stop()
+		return err
+	}
+	if err := api.Decode(resp, &lastResult); err != nil {
+		spin.Stop()
+		return err
+	}
+	domains = append(domains, lastResult.Domains...)
+
+	if lastResult.NextPage != nil && *lastResult.NextPage != 0 {
 		if !autoPage {
 			hasMore = true
-			break
+		} else if lastResult.LastPage != nil && *lastResult.LastPage > 1 {
+			// Fetch all remaining pages in parallel.
+			last := int(*lastResult.LastPage)
+			pages := make([][]gen.DomainResponsePayload, last-1)
+			var mu sync.Mutex
+			g, gctx := errgroup.WithContext(ctx)
+			for p := 2; p <= last; p++ {
+				p := int32(p)
+				idx := int(p) - 2
+				g.Go(func() error {
+					r, err := client.Gen().ListDomains(gctx, buildParams(p))
+					if err != nil {
+						return err
+					}
+					var result gen.ListDomainsResponseSchema
+					if err := api.Decode(r, &result); err != nil {
+						return err
+					}
+					pages[idx] = result.Domains
+					mu.Lock()
+					lastResult = result
+					mu.Unlock()
+					return nil
+				})
+			}
+			spin.Update(fmt.Sprintf("Fetching domains… (%d pages in parallel)", last))
+			if err := g.Wait(); err != nil {
+				spin.Stop()
+				return err
+			}
+			for _, pg := range pages {
+				domains = append(domains, pg...)
+			}
 		}
-		page = *result.NextPage
-		spin.Update(fmt.Sprintf("Fetching domains… (page %d, %d so far)", page, len(domains)))
 	}
 
 	spin.Stop()

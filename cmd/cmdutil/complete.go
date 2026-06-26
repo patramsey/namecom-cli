@@ -9,9 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// CompleteDomains is a cobra ValidArgsFunction that returns all domain names
-// from the account for shell tab completion.
-func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+// CompleteDomains is a cobra ValidArgsFunction that returns domain names for
+// shell tab completion. It fetches one maximally-sized page (250); cobra
+// handles client-side prefix filtering from there.
+func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -19,25 +20,20 @@ func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]st
 	if !ok || client == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	var names []string
-	var page int32 = 1
-	for {
-		params := &gen.ListDomainsParams{Page: &page}
-		resp, err := client.Gen().ListDomains(cmd.Context(), params)
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveError
-		}
-		var result gen.ListDomainsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			return nil, cobra.ShellCompDirectiveError
-		}
-		for _, d := range result.Domains {
-			names = append(names, d.DomainName)
-		}
-		if result.NextPage == nil || *result.NextPage == 0 {
-			break
-		}
-		page = *result.NextPage
+	p := int32(1)
+	perPage := int32(250)
+	params := &gen.ListDomainsParams{Page: &p, PerPage: &perPage}
+	resp, err := client.Gen().ListDomains(cmd.Context(), params)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	var result gen.ListDomainsResponseSchema
+	if err := api.Decode(resp, &result); err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	names := make([]string, 0, len(result.Domains))
+	for _, d := range result.Domains {
+		names = append(names, d.DomainName)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
