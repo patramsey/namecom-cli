@@ -63,6 +63,7 @@ func domainServer(t *testing.T, pages [][]string) (*httptest.Server, *[]string) 
 			domains = append(domains, gen.DomainResponsePayload{DomainName: n})
 		}
 		var nextPage int32
+		lastPage := int32(len(pages))
 		if idx+1 < len(pages) {
 			nextPage = int32(idx + 2)
 		}
@@ -70,6 +71,7 @@ func domainServer(t *testing.T, pages [][]string) (*httptest.Server, *[]string) 
 		_ = json.NewEncoder(w).Encode(gen.ListDomainsResponseSchema{
 			Domains:  domains,
 			NextPage: &nextPage,
+			LastPage: &lastPage,
 		})
 	}))
 	t.Cleanup(srv.Close)
