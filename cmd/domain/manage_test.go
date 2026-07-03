@@ -110,7 +110,7 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 }
 
 // availabilityServer returns a server that responds to the CheckAvailability
-// endpoint with a single result whose Purchasable field is set to purchasable.
+// endpoint with a single result whose Purchasable field matches the given value.
 // Any other request causes the test to fail.
 func availabilityServer(t *testing.T, domain string, purchasable bool) *httptest.Server {
 	t.Helper()
@@ -144,8 +144,8 @@ func TestRegister_UnavailableDomain(t *testing.T) {
 func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 	// When the domain is available the flow continues past the availability check
 	// and reaches the pricing endpoint. We return 500 there to stop execution.
-	// Assertions: the availability endpoint was called, and the error is the
-	// expected pricing failure — not a false "not available" rejection.
+	// Assertions: CheckAvailability was called, and the error is the expected
+	// pricing failure — not a false "not available" rejection.
 	var checkCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/core/v1/domains:checkAvailability" {
@@ -164,7 +164,7 @@ func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 	cmd := cmdForRegister(t, srv)
 	err := runRegister(cmd, []string{"free.com"})
 	if !checkCalled {
-		t.Error("availability endpoint was never called")
+		t.Error("CheckAvailability endpoint was never called")
 	}
 	if err == nil {
 		t.Error("expected error from pricing stub, got nil")
@@ -176,6 +176,54 @@ func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 	// confirming execution passed the availability gate and reached pricing.
 	if !strings.Contains(err.Error(), "stop") {
 		t.Errorf("expected sentinel error from pricing stub, got: %v", err)
+	}
+}
+
+func TestRegister_DryRunSkipsAvailabilityCheck(t *testing.T) {
+	// Dry-run skips CheckAvailability and CreateDomain but still fetches pricing
+	// to show the user what they would be charged.
+	var checkAvailCalled bool
+	var createCalled bool
+	price := 12.99
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/core/v1/domains:checkAvailability":
+			checkAvailCalled = true
+			t.Error("CheckAvailability should not be called in dry-run mode")
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		case "/core/v1/domains/example.com:getPricing":
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		case "/core/v1/domains":
+			createCalled = true
+			t.Error("CreateDomain should not be called in dry-run mode")
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRegister(t, srv)
+	var dryRun bool
+	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "")
+	if err := cmd.PersistentFlags().Set("dry-run", "true"); err != nil {
+		t.Fatalf("setting dry-run flag: %v", err)
+	}
+	// --yes prevents confirm() from erroring in non-interactive mode.
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := runRegister(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("expected no error in dry-run, got: %v", err)
+	}
+	if checkAvailCalled {
+		t.Error("CheckAvailability was called in dry-run mode")
+	}
+	if createCalled {
+		t.Error("CreateDomain was called in dry-run mode")
 	}
 }
 

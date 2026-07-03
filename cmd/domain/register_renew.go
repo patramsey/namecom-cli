@@ -71,7 +71,10 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Check availability before collecting any further input.
+	// Check availability before collecting any further input. CheckAvailability
+	// is used here (not ZoneCheck) because it's authoritative — it includes
+	// pricing, premium status, and the reason a domain isn't available, all of
+	// which we can cross-check against the subsequent GetPricingForDomain call.
 	if !dryRun {
 		stop := out.Spin("Checking availability of " + domainName + "…")
 		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: []string{domainName}})
