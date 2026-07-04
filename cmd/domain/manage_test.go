@@ -53,6 +53,55 @@ func cmdForSetNS(t *testing.T, srv *httptest.Server) *cobra.Command {
 	return cmd
 }
 
+// contentTypeServer returns a server that asserts Content-Type: application/json
+// on every request and returns a minimal 200 response.
+func contentTypeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type: application/json, got %q for %s %s", ct, r.Method, r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func cmdForToggle(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	cmd := baseCmd(t, srv)
+	var yes bool
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	return cmd
+}
+
+func TestContentTypeHeader_AllToggleCommands(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*cobra.Command) error
+	}{
+		{"lock on", func(cmd *cobra.Command) error { return runLock(cmd, []string{"on", "example.com"}) }},
+		{"lock off", func(cmd *cobra.Command) error { return runLock(cmd, []string{"off", "example.com"}) }},
+		{"autorenew on", func(cmd *cobra.Command) error { return runAutorenew(cmd, []string{"on", "example.com"}) }},
+		{"autorenew off", func(cmd *cobra.Command) error { return runAutorenew(cmd, []string{"off", "example.com"}) }},
+		{"privacy on", func(cmd *cobra.Command) error { return runPrivacy(cmd, []string{"on", "example.com"}) }},
+		{"privacy off", func(cmd *cobra.Command) error { return runPrivacy(cmd, []string{"off", "example.com"}) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := cmdForToggle(t, contentTypeServer(t))
+			if err := tt.run(cmd); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestSetNS_InvalidNameserver(t *testing.T) {
 	tests := []struct {
 		desc, ns    string

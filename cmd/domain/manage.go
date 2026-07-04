@@ -42,7 +42,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
 			return nil
 		}
-		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{})
+		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{ContentType: gen.LockDomainParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 			out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
 			return nil
 		}
-		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{})
+		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{ContentType: gen.UnlockDomainParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -97,7 +97,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-autorenew", domainName), nil)
 			return nil
 		}
-		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{})
+		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{ContentType: gen.EnableAutorenewParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-autorenew", domainName), nil)
 			return nil
 		}
-		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{})
+		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{ContentType: gen.DisableAutorenewParamsContentTypeApplicationjson})
 		if e != nil {
 			return e
 		}
@@ -163,7 +163,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			out.Warn("aborted")
 			return nil
 		}
-		r, err := client.Gen().EnableWhoisPrivacy(cmd.Context(), domainName, &gen.EnableWhoisPrivacyParams{})
+		r, err := client.Gen().EnableWhoisPrivacy(cmd.Context(), domainName, &gen.EnableWhoisPrivacyParams{ContentType: gen.EnableWhoisPrivacyParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-privacy", domainName), nil)
 			return nil
 		}
-		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{})
+		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{ContentType: gen.DisableWhoisPrivacyParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
