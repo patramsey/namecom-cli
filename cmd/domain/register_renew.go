@@ -190,7 +190,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", created.Domain.DomainName, created.Order, created.TotalPaid))
 		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", created.Domain.DomainName))
 		if !registerAutorenew {
-			out.Hint(fmt.Sprintf("Run 'namecom domain autorenew %s on' to enable auto-renewal", created.Domain.DomainName))
+			out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", created.Domain.DomainName))
 		}
 	}
 	return nil

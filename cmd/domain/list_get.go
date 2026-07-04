@@ -164,6 +164,20 @@ func runList(cmd *cobra.Command, _ []string) error {
 			for _, pg := range pages {
 				domains = append(domains, pg...)
 			}
+		} else {
+			// LastPage unknown; walk sequentially via NextPage.
+			for lastResult.NextPage != nil && *lastResult.NextPage != 0 {
+				r, err := client.Gen().ListDomains(ctx, buildParams(*lastResult.NextPage))
+				if err != nil {
+					spin.Stop()
+					return err
+				}
+				if err := api.Decode(r, &lastResult); err != nil {
+					spin.Stop()
+					return err
+				}
+				domains = append(domains, lastResult.Domains...)
+			}
 		}
 	}
 
