@@ -204,6 +204,76 @@ func TestDomainList_TLDFilterPassedToAPI(t *testing.T) {
 	}
 }
 
+// domainServerNoLastPage serves paginated responses where LastPage is omitted
+// (nil), so only NextPage is available — exercises the sequential fallback path.
+func domainServerNoLastPage(t *testing.T, pages [][]string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageQ := r.URL.Query().Get("page")
+		pageNum := 1
+		if n, err := strconv.Atoi(pageQ); pageQ != "" && err == nil {
+			pageNum = n
+		}
+		idx := pageNum - 1
+		if idx < 0 || idx >= len(pages) {
+			http.Error(w, "page out of range", http.StatusNotFound)
+			return
+		}
+		var domains []gen.DomainResponsePayload
+		for _, name := range pages[idx] {
+			n := name
+			domains = append(domains, gen.DomainResponsePayload{DomainName: n})
+		}
+		var nextPage int32
+		if idx+1 < len(pages) {
+			nextPage = int32(idx + 2)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Deliberately omit LastPage to trigger the sequential fallback.
+		_ = json.NewEncoder(w).Encode(gen.ListDomainsResponseSchema{
+			Domains:  domains,
+			NextPage: &nextPage,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestDomainList_AllSequentialFallbackWhenNoLastPage(t *testing.T) {
+	srv := domainServerNoLastPage(t, [][]string{
+		{"alpha.com"}, // page 1 — NextPage=2, no LastPage
+		{"beta.com"},  // page 2 — NextPage=3, no LastPage
+		{"gamma.com"}, // page 3 — NextPage=0 (no more)
+	})
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+	if err := cmd.ParseFlags([]string{"--all"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	out := stdout.String()
+	for _, d := range []string{"alpha.com", "beta.com", "gamma.com"} {
+		if !contains(out, d) {
+			t.Errorf("output missing %q — sequential NextPage walk may be broken", d)
+		}
+	}
+}
+
+func TestDomainList_EmptyResult(t *testing.T) {
+	srv, _ := domainServer(t, [][]string{{}})
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
 		func() bool {

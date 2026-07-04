@@ -1,12 +1,15 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/internal/api/gen"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -138,6 +141,62 @@ func TestCheck_AuthoritativeBypassesZoneCheck(t *testing.T) {
 	}
 	if zoneCheckCalled {
 		t.Error("ZoneCheck was called despite --authoritative flag")
+	}
+}
+
+// ---- renderSearchResults ----------------------------------------------------
+
+func outWithFormat(format output.Format, buf *bytes.Buffer) *output.Config {
+	return &output.Config{Format: format, Color: output.ColorNever, Writer: buf, EWriter: &bytes.Buffer{}}
+}
+
+func TestRenderSearchResults_EmptyResults(t *testing.T) {
+	var buf bytes.Buffer
+	out := outWithFormat(output.FormatTable, &buf)
+	results := []gen.SearchResult{}
+	if err := renderSearchResults(out, &results); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenderSearchResults_JSONOutput(t *testing.T) {
+	price := 12.99
+	results := []gen.SearchResult{
+		{DomainName: "free.com", Purchasable: true, PurchasePrice: &price},
+		{DomainName: "taken.com", Purchasable: false},
+	}
+	var buf bytes.Buffer
+	out := outWithFormat(output.FormatJSON, &buf)
+	if err := renderSearchResults(out, &results); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded []gen.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(decoded) != 2 {
+		t.Errorf("expected 2 results in JSON, got %d", len(decoded))
+	}
+}
+
+func TestRenderSearchResults_QuietMode(t *testing.T) {
+	price := 9.99
+	results := []gen.SearchResult{
+		{DomainName: "available.com", Purchasable: true, PurchasePrice: &price},
+		{DomainName: "taken.com", Purchasable: false},
+	}
+	var buf bytes.Buffer
+	out := outWithFormat(output.FormatTable, &buf)
+	out.QuietMode = true
+	if err := renderSearchResults(out, &results); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "available.com") {
+		t.Errorf("quiet output missing available domain: %q", got)
+	}
+	if strings.Contains(got, "taken.com") {
+		t.Errorf("quiet output should exclude unavailable domains, got: %q", got)
 	}
 }
 
