@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -54,13 +55,20 @@ var searchCmd = &cobra.Command{
 	RunE: runSearch,
 }
 
+var checkAuthoritative bool
+
 var checkCmd = &cobra.Command{
 	Use:   "check <domain> [<domain>...]",
 	Short: "Check exact availability and price for one or more domains",
 	Example: `  namecom domain check example.com
-  namecom domain check example.com myidea.io coolname.dev`,
+  namecom domain check example.com myidea.io coolname.dev
+  namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly`,
 	Args: cmdutil.MinimumNArgs(1),
 	RunE: runCheck,
+}
+
+func init() {
+	checkCmd.Flags().BoolVar(&checkAuthoritative, "authoritative", false, "use registry check instead of DNS zone check (slower but authoritative)")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -84,33 +92,152 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	// --authoritative skips ZoneCheck and hits the registry directly.
+	if checkAuthoritative {
+		stop := out.Spin("Checking availability…")
+		resp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: args})
+		stop()
+		if err != nil {
+			return err
+		}
+		var result gen.SearchResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
+			return err
+		}
+		if err := renderSearchResults(out, result.Results); err != nil {
+			return err
+		}
+		if result.Results == nil || len(*result.Results) != 1 ||
+			!(*result.Results)[0].Purchasable ||
+			out.Format != output.FormatTable || out.QuietMode || !output.IsInteractive() {
+			return nil
+		}
+		r := (*result.Results)[0]
+		price := ""
+		if r.PurchasePrice != nil {
+			price = fmt.Sprintf(" for $%.2f/yr", *r.PurchasePrice)
+		}
+		ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Register %s%s?", r.DomainName, price))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			out.Warn("aborted")
+			return nil
+		}
+		return inlineRegister(cmd, r.DomainName, r.PurchasePrice)
+	}
+
+	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
+	// Available==true: available; Available==false: taken; Available==nil: TLD
+	// not supported by ZoneCheck, fall back to CheckAvailability for those.
 	stop := out.Spin("Checking availability…")
-	resp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: args})
+	zoneResp, err := client.Gen().ZoneCheck(cmd.Context(), gen.ZoneCheckJSONRequestBody{DomainNames: args})
 	stop()
 	if err != nil {
 		return err
 	}
-	var result gen.SearchResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
-		return err
-	}
-	if err := renderSearchResults(out, result.Results); err != nil {
+	var zoneResult gen.ZoneCheckResponseSchema
+	if err := api.Decode(zoneResp, &zoneResult); err != nil {
 		return err
 	}
 
-	// When checking a single domain in interactive table mode, offer to register it immediately
-	// if it's available — the price is already in the response so no extra API call is needed.
+	// Preserve input order in the final result slice.
+	finalResults := make([]gen.SearchResult, len(args))
+	argIdx := make(map[string]int, len(args))
+	for i, name := range args {
+		argIdx[name] = i
+	}
+
+	var unsupported []string
+	for _, r := range zoneResult.Results {
+		idx := argIdx[r.DomainName]
+		if r.Available == nil {
+			// Null means this TLD isn't supported by ZoneCheck.
+			unsupported = append(unsupported, r.DomainName)
+			continue
+		}
+		finalResults[idx] = gen.SearchResult{
+			DomainName:  r.DomainName,
+			Purchasable: *r.Available,
+		}
+	}
+
+	// Step 2: Fetch pricing in parallel for domains ZoneCheck says are available.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var pricingErr error
+
+	for _, r := range zoneResult.Results {
+		if r.Available == nil || !*r.Available {
+			continue
+		}
+		wg.Add(1)
+		go func(domainName string, idx int) {
+			defer wg.Done()
+			pResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{})
+			if err != nil {
+				mu.Lock()
+				pricingErr = err
+				mu.Unlock()
+				return
+			}
+			var pricing gen.PricingResponseSchema
+			if err := api.Decode(pResp, &pricing); err != nil {
+				mu.Lock()
+				pricingErr = err
+				mu.Unlock()
+				return
+			}
+			premium := pricing.Premium
+			mu.Lock()
+			finalResults[idx] = gen.SearchResult{
+				DomainName:    domainName,
+				Purchasable:   true,
+				PurchasePrice: pricing.PurchasePrice,
+				RenewalPrice:  pricing.RenewalPrice,
+				Premium:       &premium,
+			}
+			mu.Unlock()
+		}(r.DomainName, argIdx[r.DomainName])
+	}
+	wg.Wait()
+	if pricingErr != nil {
+		return fmt.Errorf("fetching pricing: %w", pricingErr)
+	}
+
+	// Step 3: CheckAvailability for TLDs ZoneCheck returned null for.
+	if len(unsupported) > 0 {
+		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: unsupported})
+		if err != nil {
+			return fmt.Errorf("checking availability: %w", err)
+		}
+		var checkResult gen.SearchResponseSchema
+		if err := api.Decode(checkResp, &checkResult); err != nil {
+			return err
+		}
+		if checkResult.Results != nil {
+			for _, r := range *checkResult.Results {
+				if idx, ok := argIdx[r.DomainName]; ok {
+					finalResults[idx] = r
+				}
+			}
+		}
+	}
+
+	if err := renderSearchResults(out, &finalResults); err != nil {
+		return err
+	}
+
+	// When checking a single domain in interactive table mode, offer to register
+	// it immediately if it's available.
 	if out.Format != output.FormatTable || out.QuietMode || !output.IsInteractive() {
 		return nil
 	}
-	results := result.Results
-	if results == nil || len(*results) != 1 {
+	if len(finalResults) != 1 || !finalResults[0].Purchasable {
 		return nil
 	}
-	r := (*results)[0]
-	if !r.Purchasable {
-		return nil
-	}
+	r := finalResults[0]
 	price := ""
 	if r.PurchasePrice != nil {
 		price = fmt.Sprintf(" for $%.2f/yr", *r.PurchasePrice)
