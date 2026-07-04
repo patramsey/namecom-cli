@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -142,6 +143,82 @@ func TestIdempotent(t *testing.T) {
 				t.Errorf("idempotent(%s) = %v, want %v", name, got, c.want)
 			}
 		})
+	}
+}
+
+// failingTransport returns network errors for the first `failures` calls,
+// then delegates to base for subsequent calls.
+type failingTransport struct {
+	base     http.RoundTripper
+	failures int32
+	calls    atomic.Int32
+}
+
+func (ft *failingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	n := ft.calls.Add(1)
+	if n <= ft.failures {
+		return nil, fmt.Errorf("simulated connection error (call %d)", n)
+	}
+	return ft.base.RoundTrip(req)
+}
+
+func TestNetworkErrorRetriedForIdempotentGET(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ft := &failingTransport{base: http.DefaultTransport, failures: 2}
+	client := newTestClient(ft)
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("expected success after retries, got: %v", err)
+	}
+	resp.Body.Close()
+	if got := ft.calls.Load(); got != 3 {
+		t.Errorf("calls = %d, want 3 (2 network errors then success)", got)
+	}
+}
+
+func TestNetworkErrorNotRetriedForPOST(t *testing.T) {
+	ft := &failingTransport{failures: 99} // always fail
+	client := newTestClient(ft)
+	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:1", strings.NewReader("{}"))
+	_, err := client.Do(req)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := ft.calls.Load(); got != 1 {
+		t.Errorf("calls = %d, want 1 (POST must not retry on network errors)", got)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantNil bool
+		wantSec int
+	}{
+		{"5", false, 5},
+		{"0", false, 0},
+		{"", true, 0},
+		{"Wed, 21 Oct 2015 07:28:00 GMT", true, 0}, // HTTP-date not supported
+		{"not-a-number", true, 0},
+		{"-1", true, 0}, // negative: rejected by secs >= 0 guard
+	}
+	for _, tt := range tests {
+		d := parseRetryAfter(tt.input)
+		if tt.wantNil {
+			if d != nil {
+				t.Errorf("parseRetryAfter(%q) = %v, want nil", tt.input, *d)
+			}
+		} else {
+			if d == nil {
+				t.Errorf("parseRetryAfter(%q) = nil, want %v", tt.input, time.Duration(tt.wantSec)*time.Second)
+			} else if *d != time.Duration(tt.wantSec)*time.Second {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.input, *d, time.Duration(tt.wantSec)*time.Second)
+			}
+		}
 	}
 }
 

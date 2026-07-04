@@ -149,6 +149,22 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestResolveNilFile(t *testing.T) {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("NAMECOM_USERNAME", "envuser")
+	t.Setenv("NAMECOM_TOKEN", "envtoken")
+
+	creds, err := Resolve(nil, Overrides{})
+	if err != nil {
+		t.Fatalf("Resolve(nil) unexpected error: %v", err)
+	}
+	if creds.Username != "envuser" || creds.Token != "envtoken" {
+		t.Errorf("creds = %+v, want envuser/envtoken", creds)
+	}
+}
+
 func TestLoadMissingFileIsEmpty(t *testing.T) {
 	t.Setenv("NAMECOM_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	f, err := Load()

@@ -529,7 +529,7 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen
 	ctx := cmd.Context()
 
 	var page int32 = 1
-	var last gen.ListRecordsResponseSchema
+	var lastNextPage *int32
 
 	for {
 		params := &gen.ListRecordsParams{Page: &page}
@@ -537,22 +537,27 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen
 		if err2 != nil {
 			return nil, false, nil, err2
 		}
-		if err2 := api.Decode(resp, &last); err2 != nil {
+		// Use a fresh variable each iteration: Go's JSON decoder reuses existing
+		// *string pointers in a slice's backing array, so reusing 'last' would
+		// cause page N's strings to silently overwrite page 1's record values.
+		var result gen.ListRecordsResponseSchema
+		if err2 := api.Decode(resp, &result); err2 != nil {
 			return nil, false, nil, err2
 		}
-		records = append(records, last.Records...)
+		records = append(records, result.Records...)
+		lastNextPage = result.NextPage
 
-		if last.NextPage == nil || *last.NextPage == 0 {
+		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
 		if !all {
 			hasMore = true
 			break
 		}
-		page = *last.NextPage
+		page = *result.NextPage
 	}
 	if hasMore {
-		nextPage = last.NextPage
+		nextPage = lastNextPage
 	}
 	return records, hasMore, nextPage, nil
 }

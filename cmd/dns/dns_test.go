@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -327,6 +328,135 @@ func TestDNSList_BadDomainArg(t *testing.T) {
 	err := runList(cmd, []string{"nodot"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestDNSList_HasMoreHint(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	records := []gen.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	// nextPage=2 signals there are more pages.
+	srv := recordServer(t, records, 2)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll, listType = false, ""
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "More records") {
+		t.Errorf("expected 'More records' hint when hasMore=true, got: %q", stdout.String())
+	}
+}
+
+func TestDNSList_EmptyRecords(t *testing.T) {
+	srv := recordServer(t, nil, 0)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll, listType = false, ""
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+}
+
+func TestDNSList_TypeFilter(t *testing.T) {
+	typeA := "A"
+	typeMX := "MX"
+	hostAt := "@"
+	answerA := "1.2.3.4"
+	answerMX := "mail.example.com"
+	records := []gen.Record{
+		{Host: &hostAt, Answer: &answerA, Type: &typeA},
+		{Host: &hostAt, Answer: &answerMX, Type: &typeMX},
+	}
+	srv := recordServer(t, records, 0)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll = false
+	if err := cmd.ParseFlags([]string{"--type", "A"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { listType = "" })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "1.2.3.4") {
+		t.Errorf("expected A record answer in filtered output, got: %q", out)
+	}
+	if strings.Contains(out, "mail.example.com") {
+		t.Errorf("MX record should be filtered out, but appears in output: %q", out)
+	}
+}
+
+// paginatedRecordServer serves multiple pages of DNS records. It routes
+// by the ?page= query param; pages[0] = page 1, pages[1] = page 2, etc.
+func paginatedRecordServer(t *testing.T, pages [][]gen.Record) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageNum := 1
+		if p := r.URL.Query().Get("page"); p != "" {
+			if n, err := strconv.Atoi(p); err == nil {
+				pageNum = n
+			}
+		}
+		idx := pageNum - 1
+		if idx < 0 || idx >= len(pages) {
+			http.Error(w, "page out of range", http.StatusNotFound)
+			return
+		}
+		var nextPage int32
+		if idx+1 < len(pages) {
+			nextPage = int32(idx + 2)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.ListRecordsResponseSchema{
+			Records:  pages[idx],
+			NextPage: &nextPage,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestDNSList_AllFetchesAllPages(t *testing.T) {
+	typeA := "A"
+	host1 := "www"
+	host2 := "mail"
+	ans1 := "1.2.3.4"
+	ans2 := "5.6.7.8"
+	pages := [][]gen.Record{
+		{{Host: &host1, Answer: &ans1, Type: &typeA}}, // page 1 — NextPage=2
+		{{Host: &host2, Answer: &ans2, Type: &typeA}}, // page 2 — NextPage=0
+	}
+	srv := paginatedRecordServer(t, pages)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listType = ""
+	if err := cmd.ParseFlags([]string{"--all"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { listAll = false })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "1.2.3.4") {
+		t.Errorf("output missing page 1 record: %q", out)
+	}
+	if !strings.Contains(out, "5.6.7.8") {
+		t.Errorf("output missing page 2 record: %q", out)
+	}
+	if strings.Contains(out, "More records") {
+		t.Errorf("should not show 'More records' hint when --all fetches everything: %q", out)
 	}
 }
 
