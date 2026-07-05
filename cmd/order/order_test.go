@@ -184,3 +184,47 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// ---- order get --------------------------------------------------------------
+
+func cmdForOrderGet(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var stdout bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestOrderGet_BadID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("API should not be called for pre-flight validation failure: %s %s", r.Method, r.URL)
+		http.Error(w, "unexpected call", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForOrderGet(t, srv)
+	if err := runGet(cmd, []string{"notanumber"}); err == nil {
+		t.Fatal("expected error for non-integer ID, got nil")
+	}
+}
+
+func TestOrderGet_Success(t *testing.T) {
+	var id int32 = 42
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.Order{Id: &id})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForOrderGet(t, srv)
+	if err := runGet(cmd, []string{"42"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}

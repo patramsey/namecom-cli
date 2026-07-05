@@ -205,7 +205,11 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domain, digest := args[0], args[1]
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	digest := args[1]
 
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain))
 	if err != nil {

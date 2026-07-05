@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -327,6 +329,303 @@ func TestDNSList_BadDomainArg(t *testing.T) {
 	err := runList(cmd, []string{"nodot"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestDNSList_HasMoreHint(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	records := []gen.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	// nextPage=2 signals there are more pages.
+	srv := recordServer(t, records, 2)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll, listType = false, ""
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "More records") {
+		t.Errorf("expected 'More records' hint when hasMore=true, got: %q", stdout.String())
+	}
+}
+
+func TestDNSList_EmptyRecords(t *testing.T) {
+	srv := recordServer(t, nil, 0)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll, listType = false, ""
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+}
+
+func TestDNSList_TypeFilter(t *testing.T) {
+	typeA := "A"
+	typeMX := "MX"
+	hostAt := "@"
+	answerA := "1.2.3.4"
+	answerMX := "mail.example.com"
+	records := []gen.Record{
+		{Host: &hostAt, Answer: &answerA, Type: &typeA},
+		{Host: &hostAt, Answer: &answerMX, Type: &typeMX},
+	}
+	srv := recordServer(t, records, 0)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll = false
+	if err := cmd.ParseFlags([]string{"--type", "A"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { listType = "" })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "1.2.3.4") {
+		t.Errorf("expected A record answer in filtered output, got: %q", out)
+	}
+	if strings.Contains(out, "mail.example.com") {
+		t.Errorf("MX record should be filtered out, but appears in output: %q", out)
+	}
+}
+
+// paginatedRecordServer serves multiple pages of DNS records. It routes
+// by the ?page= query param; pages[0] = page 1, pages[1] = page 2, etc.
+func paginatedRecordServer(t *testing.T, pages [][]gen.Record) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageNum := 1
+		if p := r.URL.Query().Get("page"); p != "" {
+			if n, err := strconv.Atoi(p); err == nil {
+				pageNum = n
+			}
+		}
+		idx := pageNum - 1
+		if idx < 0 || idx >= len(pages) {
+			http.Error(w, "page out of range", http.StatusNotFound)
+			return
+		}
+		var nextPage int32
+		if idx+1 < len(pages) {
+			nextPage = int32(idx + 2)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.ListRecordsResponseSchema{
+			Records:  pages[idx],
+			NextPage: &nextPage,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestDNSList_AllFetchesAllPages(t *testing.T) {
+	typeA := "A"
+	host1 := "www"
+	host2 := "mail"
+	ans1 := "1.2.3.4"
+	ans2 := "5.6.7.8"
+	pages := [][]gen.Record{
+		{{Host: &host1, Answer: &ans1, Type: &typeA}}, // page 1 — NextPage=2
+		{{Host: &host2, Answer: &ans2, Type: &typeA}}, // page 2 — NextPage=0
+	}
+	srv := paginatedRecordServer(t, pages)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listType = ""
+	if err := cmd.ParseFlags([]string{"--all"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { listAll = false })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "1.2.3.4") {
+		t.Errorf("output missing page 1 record: %q", out)
+	}
+	if !strings.Contains(out, "5.6.7.8") {
+		t.Errorf("output missing page 2 record: %q", out)
+	}
+	if strings.Contains(out, "More records") {
+		t.Errorf("should not show 'More records' hint when --all fetches everything: %q", out)
+	}
+}
+
+// ---- dns delete -------------------------------------------------------------
+
+func cmdForDelete(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	var yes bool
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	return cmd
+}
+
+func TestDNSDelete_BadID(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForDelete(t, srv)
+	err := runDelete(cmd, []string{"example.com", "notanumber"})
+	if err == nil {
+		t.Fatal("expected error for non-integer record ID, got nil")
+	}
+}
+
+func TestDNSDelete_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForDelete(t, srv)
+	err := runDelete(cmd, []string{"nodot", "123"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestDNSDelete_DomainNormalized(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDelete(t, srv)
+	if err := runDelete(cmd, []string{"EXAMPLE.COM", "123"}); err != nil {
+		t.Fatalf("runDelete: %v", err)
+	}
+	if strings.Contains(receivedPath, "EXAMPLE") {
+		t.Errorf("domain not normalized in DELETE path: %q", receivedPath)
+	}
+	if !strings.Contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in DELETE path, got: %q", receivedPath)
+	}
+}
+
+// ---- dns update -------------------------------------------------------------
+
+func cmdForUpdate(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().StringVar(&updateType, "type", "", "")
+	cmd.Flags().StringVar(&updateHost, "host", "@", "")
+	cmd.Flags().StringVar(&updateAnswer, "answer", "", "")
+	cmd.Flags().Int64Var(&updateTTL, "ttl", 300, "")
+	cmd.Flags().Int64Var(&updatePriority, "priority", 0, "")
+	t.Cleanup(func() { updateType = ""; updateHost = "@"; updateAnswer = ""; updateTTL = 300; updatePriority = 0 })
+	return cmd
+}
+
+// TestDNSUpdate_TypeChangeRejectedByExistingAnswer verifies that changing
+// --type without --answer validates the existing answer against the new type.
+// An A record's IPv4 answer must be rejected when the type is changed to AAAA.
+func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	recID := int32(123)
+	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Error("PUT should not be called when pre-flight validation fails")
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--type", "AAAA"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	updateAnswer = "" // not changed
+
+	err := runUpdate(cmd, []string{"example.com", "123"})
+	if err == nil {
+		t.Fatal("expected error when changing type to AAAA with existing IPv4 answer, got nil")
+	}
+	if !strings.Contains(err.Error(), "AAAA") {
+		t.Errorf("expected 'AAAA' in error, got: %v", err)
+	}
+}
+
+func TestDNSUpdate_SuccessPath(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	recID := int32(42)
+	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+
+	var putPath string
+	var putBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			putPath = r.URL.Path
+			putBody, _ = io.ReadAll(r.Body)
+			_ = json.NewEncoder(w).Encode(record)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--answer", "5.6.7.8"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runUpdate(cmd, []string{"example.com", "42"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if putPath == "" {
+		t.Fatal("PUT request was never made")
+	}
+	if !strings.Contains(putPath, "example.com") || !strings.Contains(putPath, "42") {
+		t.Errorf("unexpected PUT path: %q", putPath)
+	}
+	if !strings.Contains(string(putBody), "5.6.7.8") {
+		t.Errorf("expected updated answer '5.6.7.8' in PUT body, got: %s", putBody)
 	}
 }
 

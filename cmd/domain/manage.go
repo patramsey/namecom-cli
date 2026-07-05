@@ -34,15 +34,22 @@ func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	enable := strings.ToLower(args[0]) == "on"
-	domainName := args[1]
+	toggle := strings.ToLower(args[0])
+	if toggle != "on" && toggle != "off" {
+		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	}
+	enable := toggle == "on"
+	domainName, err := cmdutil.DomainArg(args, 1)
+	if err != nil {
+		return err
+	}
 
 	if enable {
 		if dryRun {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
 			return nil
 		}
-		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{})
+		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{ContentType: gen.LockDomainParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -56,7 +63,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 			out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
 			return nil
 		}
-		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{})
+		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{ContentType: gen.UnlockDomainParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -90,14 +97,21 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	enable := strings.ToLower(args[0]) == "on"
-	domainName := args[1]
+	toggle := strings.ToLower(args[0])
+	if toggle != "on" && toggle != "off" {
+		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	}
+	enable := toggle == "on"
+	domainName, err := cmdutil.DomainArg(args, 1)
+	if err != nil {
+		return err
+	}
 	if enable {
 		if dryRun {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-autorenew", domainName), nil)
 			return nil
 		}
-		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{})
+		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{ContentType: gen.EnableAutorenewParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -111,7 +125,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-autorenew", domainName), nil)
 			return nil
 		}
-		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{})
+		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{ContentType: gen.DisableAutorenewParamsContentTypeApplicationjson})
 		if e != nil {
 			return e
 		}
@@ -145,8 +159,15 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	enable := strings.ToLower(args[0]) == "on"
-	domainName := args[1]
+	toggle := strings.ToLower(args[0])
+	if toggle != "on" && toggle != "off" {
+		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	}
+	enable := toggle == "on"
+	domainName, err := cmdutil.DomainArg(args, 1)
+	if err != nil {
+		return err
+	}
 
 	if enable {
 		if dryRun {
@@ -163,7 +184,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			out.Warn("aborted")
 			return nil
 		}
-		r, err := client.Gen().EnableWhoisPrivacy(cmd.Context(), domainName, &gen.EnableWhoisPrivacyParams{})
+		r, err := client.Gen().EnableWhoisPrivacy(cmd.Context(), domainName, &gen.EnableWhoisPrivacyParams{ContentType: gen.EnableWhoisPrivacyParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -177,7 +198,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-privacy", domainName), nil)
 			return nil
 		}
-		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{})
+		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{ContentType: gen.DisableWhoisPrivacyParamsContentTypeApplicationjson})
 		if err != nil {
 			return err
 		}
@@ -312,6 +333,11 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+
 	f, err := os.ReadFile(contactsFile)
 	if err != nil {
 		return fmt.Errorf("reading contacts file: %w", err)
@@ -322,18 +348,18 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", args[0]), contacts)
+		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", domain), contacts)
 		return nil
 	}
 
-	resp, err := client.Gen().SetContacts(cmd.Context(), args[0], gen.SetContactsJSONRequestBody{Contacts: &contacts})
+	resp, err := client.Gen().SetContacts(cmd.Context(), domain, gen.SetContactsJSONRequestBody{Contacts: &contacts})
 	if err != nil {
 		return err
 	}
 	if err := api.Decode(resp, nil); err != nil {
 		return err
 	}
-	out.Success(fmt.Sprintf("Contacts updated for %s", args[0]))
+	out.Success(fmt.Sprintf("Contacts updated for %s", domain))
 	return nil
 }
 
@@ -353,7 +379,11 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	resp, err := client.Gen().GetAuthCodeForDomain(cmd.Context(), args[0])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetAuthCodeForDomain(cmd.Context(), domain)
 	if err != nil {
 		return err
 	}
@@ -368,7 +398,7 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Table([]string{"DOMAIN", "AUTH CODE"}, [][]string{{args[0], result.AuthCode}})
+		out.Table([]string{"DOMAIN", "AUTH CODE"}, [][]string{{domain, result.AuthCode}})
 	}
 	return nil
 }
@@ -482,11 +512,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", args[0]), body)
+		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", domain), body)
 		return nil
 	}
 
-	resp, err := client.Gen().UpdateDomain(cmd.Context(), args[0], body)
+	resp, err := client.Gen().UpdateDomain(cmd.Context(), domain, body)
 	if err != nil {
 		return err
 	}
@@ -501,8 +531,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(updated)
 	default:
-		out.Success(fmt.Sprintf("Updated %s", args[0]))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm the new settings", args[0]))
+		out.Success(fmt.Sprintf("Updated %s", domain))
+		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm the new settings", domain))
 	}
 	return nil
 }

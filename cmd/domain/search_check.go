@@ -150,8 +150,13 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	var unsupported []string
+	seen := make(map[string]bool, len(args))
 	for _, r := range zoneResult.Results {
-		idx := argIdx[r.DomainName]
+		idx, ok := argIdx[r.DomainName]
+		if !ok {
+			continue // API returned a domain we didn't request; ignore
+		}
+		seen[r.DomainName] = true
 		if r.Available == nil {
 			// Null means this TLD isn't supported by ZoneCheck.
 			unsupported = append(unsupported, r.DomainName)
@@ -160,6 +165,13 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		finalResults[idx] = gen.SearchResult{
 			DomainName:  r.DomainName,
 			Purchasable: *r.Available,
+		}
+	}
+	// Domains absent from ZoneCheck results entirely (pre-validation failure)
+	// fall back to CheckAvailability rather than rendering as a blank row.
+	for _, name := range args {
+		if !seen[name] {
+			unsupported = append(unsupported, name)
 		}
 	}
 
@@ -171,6 +183,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	for _, r := range zoneResult.Results {
 		if r.Available == nil || !*r.Available {
 			continue
+		}
+		idx, ok := argIdx[r.DomainName]
+		if !ok {
+			continue // unexpected domain from API; skip
 		}
 		wg.Add(1)
 		go func(domainName string, idx int) {
@@ -199,7 +215,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 				Premium:       &premium,
 			}
 			mu.Unlock()
-		}(r.DomainName, argIdx[r.DomainName])
+		}(r.DomainName, idx)
 	}
 	wg.Wait()
 	if pricingErr != nil {
