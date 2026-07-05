@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -460,6 +461,71 @@ func TestDNSList_AllFetchesAllPages(t *testing.T) {
 	}
 }
 
+// ---- dns delete -------------------------------------------------------------
+
+func cmdForDelete(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	var yes bool
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	return cmd
+}
+
+func TestDNSDelete_BadID(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForDelete(t, srv)
+	err := runDelete(cmd, []string{"example.com", "notanumber"})
+	if err == nil {
+		t.Fatal("expected error for non-integer record ID, got nil")
+	}
+}
+
+func TestDNSDelete_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForDelete(t, srv)
+	err := runDelete(cmd, []string{"nodot", "123"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestDNSDelete_DomainNormalized(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDelete(t, srv)
+	if err := runDelete(cmd, []string{"EXAMPLE.COM", "123"}); err != nil {
+		t.Fatalf("runDelete: %v", err)
+	}
+	if strings.Contains(receivedPath, "EXAMPLE") {
+		t.Errorf("domain not normalized in DELETE path: %q", receivedPath)
+	}
+	if !strings.Contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in DELETE path, got: %q", receivedPath)
+	}
+}
+
 // ---- dns update -------------------------------------------------------------
 
 func cmdForUpdate(t *testing.T, srv *httptest.Server) *cobra.Command {
@@ -520,6 +586,46 @@ func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "AAAA") {
 		t.Errorf("expected 'AAAA' in error, got: %v", err)
+	}
+}
+
+func TestDNSUpdate_SuccessPath(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	recID := int32(42)
+	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+
+	var putPath string
+	var putBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			putPath = r.URL.Path
+			putBody, _ = io.ReadAll(r.Body)
+			_ = json.NewEncoder(w).Encode(record)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--answer", "5.6.7.8"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runUpdate(cmd, []string{"example.com", "42"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if putPath == "" {
+		t.Fatal("PUT request was never made")
+	}
+	if !strings.Contains(putPath, "example.com") || !strings.Contains(putPath, "42") {
+		t.Errorf("unexpected PUT path: %q", putPath)
+	}
+	if !strings.Contains(string(putBody), "5.6.7.8") {
+		t.Errorf("expected updated answer '5.6.7.8' in PUT body, got: %s", putBody)
 	}
 }
 

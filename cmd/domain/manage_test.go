@@ -276,6 +276,86 @@ func TestRegister_DryRunSkipsAvailabilityCheck(t *testing.T) {
 	}
 }
 
+// ---- toggle commands (lock / autorenew / privacy) ---------------------------
+
+func TestToggle_BadValue(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*cobra.Command) error
+	}{
+		{"lock", func(cmd *cobra.Command) error { return runLock(cmd, []string{"yes", "example.com"}) }},
+		{"autorenew", func(cmd *cobra.Command) error { return runAutorenew(cmd, []string{"true", "example.com"}) }},
+		{"privacy", func(cmd *cobra.Command) error { return runPrivacy(cmd, []string{"enable", "example.com"}) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := neverCalledServer(t)
+			cmd := cmdForToggle(t, srv)
+			err := tt.run(cmd)
+			if err == nil {
+				t.Fatalf("expected error for non-on/off toggle value, got nil")
+			}
+			if !strings.Contains(err.Error(), "on") || !strings.Contains(err.Error(), "off") {
+				t.Errorf("expected error to mention 'on' and 'off', got: %v", err)
+			}
+		})
+	}
+}
+
+func TestToggle_BadDomain(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*cobra.Command) error
+	}{
+		{"lock", func(cmd *cobra.Command) error { return runLock(cmd, []string{"on", "nodot"}) }},
+		{"autorenew", func(cmd *cobra.Command) error { return runAutorenew(cmd, []string{"on", "nodot"}) }},
+		{"privacy", func(cmd *cobra.Command) error { return runPrivacy(cmd, []string{"on", "nodot"}) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := neverCalledServer(t)
+			cmd := cmdForToggle(t, srv)
+			err := tt.run(cmd)
+			if err == nil {
+				t.Fatalf("expected error for domain without dot, got nil")
+			}
+		})
+	}
+}
+
+func TestToggle_DomainNormalized(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*cobra.Command, string) error
+	}{
+		{"lock on", func(cmd *cobra.Command, domain string) error { return runLock(cmd, []string{"on", domain}) }},
+		{"autorenew on", func(cmd *cobra.Command, domain string) error { return runAutorenew(cmd, []string{"on", domain}) }},
+		{"privacy on", func(cmd *cobra.Command, domain string) error { return runPrivacy(cmd, []string{"on", domain}) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForToggle(t, srv)
+			if err := tt.run(cmd, "EXAMPLE.COM"); err != nil {
+				t.Fatalf("%s: %v", tt.name, err)
+			}
+			if strings.Contains(receivedPath, "EXAMPLE") {
+				t.Errorf("%s: domain not normalized in path: %q", tt.name, receivedPath)
+			}
+			if !strings.Contains(receivedPath, "example.com") {
+				t.Errorf("%s: expected 'example.com' in path, got: %q", tt.name, receivedPath)
+			}
+		})
+	}
+}
+
 // ---- domain update ----------------------------------------------------------
 
 func cmdForUpdate(t *testing.T, srv *httptest.Server) *cobra.Command {

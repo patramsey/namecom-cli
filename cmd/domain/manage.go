@@ -34,8 +34,15 @@ func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	enable := strings.ToLower(args[0]) == "on"
-	domainName := args[1]
+	toggle := strings.ToLower(args[0])
+	if toggle != "on" && toggle != "off" {
+		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	}
+	enable := toggle == "on"
+	domainName, err := cmdutil.DomainArg(args, 1)
+	if err != nil {
+		return err
+	}
 
 	if enable {
 		if dryRun {
@@ -90,8 +97,15 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	enable := strings.ToLower(args[0]) == "on"
-	domainName := args[1]
+	toggle := strings.ToLower(args[0])
+	if toggle != "on" && toggle != "off" {
+		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	}
+	enable := toggle == "on"
+	domainName, err := cmdutil.DomainArg(args, 1)
+	if err != nil {
+		return err
+	}
 	if enable {
 		if dryRun {
 			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-autorenew", domainName), nil)
@@ -145,8 +159,15 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	enable := strings.ToLower(args[0]) == "on"
-	domainName := args[1]
+	toggle := strings.ToLower(args[0])
+	if toggle != "on" && toggle != "off" {
+		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	}
+	enable := toggle == "on"
+	domainName, err := cmdutil.DomainArg(args, 1)
+	if err != nil {
+		return err
+	}
 
 	if enable {
 		if dryRun {
