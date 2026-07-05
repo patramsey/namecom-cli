@@ -13,6 +13,41 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ---- search -----------------------------------------------------------------
+
+func TestSearch_ShowsResults(t *testing.T) {
+	avail := true
+	price := 12.99
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		results := []gen.SearchResult{
+			{DomainName: "acme.com", Purchasable: avail, PurchasePrice: &price},
+			{DomainName: "acme.io", Purchasable: false},
+		}
+		_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	if err := runSearch(cmd, []string{"acme"}); err != nil {
+		t.Fatalf("runSearch: %v", err)
+	}
+}
+
+func TestSearch_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var empty []gen.SearchResult
+		_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &empty})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	if err := runSearch(cmd, []string{"zzznomatch"}); err != nil {
+		t.Fatalf("runSearch: %v", err)
+	}
+}
+
 func cmdForCheck(t *testing.T, srv *httptest.Server) *cobra.Command {
 	t.Helper()
 	cmd := baseCmd(t, srv)

@@ -255,6 +255,22 @@ func TestTransferGet_Success(t *testing.T) {
 	}
 }
 
+func TestTransferInternalIn_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com","status":"pending"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForInternalIn(t, srv)
+	if err := cmd.ParseFlags([]string{"--auth-code", "validcode123"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runInternalIn(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runInternalIn: %v", err)
+	}
+}
+
 func TestTransferCreate_DomainNormalized(t *testing.T) {
 	var receivedBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

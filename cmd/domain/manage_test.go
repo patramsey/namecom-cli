@@ -144,6 +144,79 @@ func TestSetNS_BadDomainArg(t *testing.T) {
 	}
 }
 
+func TestSetNS_Success(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForSetNS(t, srv)
+	if err := cmd.ParseFlags([]string{"--ns", "ns1.example.com,ns2.example.com"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runSetNS(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runSetNS: %v", err)
+	}
+	if !strings.Contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in request path, got: %q", receivedPath)
+	}
+}
+
+// ---- pricing ----------------------------------------------------------------
+
+func cmdForPricing(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestPricing_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForPricing(t, srv)
+	if err := runPricing(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestPricing_Success(t *testing.T) {
+	purchase, renewal, transfer := 12.99, 14.99, 9.99
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+			PurchasePrice: &purchase,
+			RenewalPrice:  &renewal,
+			TransferPrice: &transfer,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	var stdout bytes.Buffer
+	client, _ := api.New(api.Options{BaseURL: srv.URL})
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+
+	if err := runPricing(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runPricing: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "12.99") {
+		t.Errorf("expected purchase price in output, got: %q", stdout.String())
+	}
+}
+
 // ---- register years ---------------------------------------------------------
 
 func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
