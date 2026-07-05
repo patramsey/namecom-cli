@@ -133,6 +133,33 @@ func TestDNSSECCreate_DomainNormalized(t *testing.T) {
 	}
 }
 
+// ---- get --------------------------------------------------------------------
+
+func TestDNSSECGet_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := baseCmd(t, srv)
+	err := runGet(cmd, []string{"nodot", "abc123"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+	if !strings.Contains(err.Error(), "dot") {
+		t.Errorf("expected 'dot' in error, got: %v", err)
+	}
+}
+
+func TestDNSSECGet_ReturnsKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.DNSSEC{KeyTag: 1234, Digest: "abc123"})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	if err := runGet(cmd, []string{"example.com", "abc123"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}
+
 // ---- delete -----------------------------------------------------------------
 
 func TestDNSSECDelete_BadDomain(t *testing.T) {

@@ -3,6 +3,7 @@ package email
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -196,5 +198,183 @@ func TestEmailUpdate_BadDomainArg(t *testing.T) {
 	err := runUpdate(cmd, []string{"nodot", "info"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot in update, got nil")
+	}
+}
+
+// ---- email list -------------------------------------------------------------
+
+func cmdForEmailList(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	t.Cleanup(func() { listAll = false })
+	return cmd
+}
+
+func TestEmailList_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForEmailList(t, srv)
+	if err := runList(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestEmailList_Empty(t *testing.T) {
+	var nextPage int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.ListEmailForwardingsResponseSchema{NextPage: &nextPage})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailList(t, srv)
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+}
+
+func TestEmailList_ShowsEntries(t *testing.T) {
+	var nextPage int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		entries := []gen.EmailForwarding{
+			{EmailBox: "info", DomainName: "example.com", EmailTo: "dest@gmail.com"},
+		}
+		_ = json.NewEncoder(w).Encode(gen.ListEmailForwardingsResponseSchema{
+			EmailForwarding: entries,
+			NextPage:        &nextPage,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	var stdout bytes.Buffer
+	client, _ := api.New(api.Options{BaseURL: srv.URL})
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	t.Cleanup(func() { listAll = false })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "info") {
+		t.Errorf("expected 'info' in output, got: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "dest@gmail.com") {
+		t.Errorf("expected 'dest@gmail.com' in output, got: %q", stdout.String())
+	}
+}
+
+// ---- email get --------------------------------------------------------------
+
+func cmdForEmailGet(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestEmailGet_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForEmailGet(t, srv)
+	if err := runGet(cmd, []string{"nodot", "info"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestEmailGet_ReturnsEntry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.EmailForwarding{
+			EmailBox:   "info",
+			DomainName: "example.com",
+			EmailTo:    "dest@gmail.com",
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailGet(t, srv)
+	if err := runGet(cmd, []string{"example.com", "info"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}
+
+// ---- email delete -----------------------------------------------------------
+
+func cmdForEmailDelete(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	var yes bool
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	return cmd
+}
+
+func TestEmailDelete_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForEmailDelete(t, srv)
+	if err := runDelete(cmd, []string{"nodot", "info"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestEmailDelete_DeletesEntry(t *testing.T) {
+	var deletePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deletePath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailDelete(t, srv)
+	if err := runDelete(cmd, []string{"example.com", "info"}); err != nil {
+		t.Fatalf("runDelete: %v", err)
+	}
+	if !strings.Contains(deletePath, "example.com") || !strings.Contains(deletePath, "info") {
+		t.Errorf("unexpected delete path: %q", deletePath)
 	}
 }

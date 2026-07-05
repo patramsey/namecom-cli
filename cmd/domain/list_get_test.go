@@ -285,3 +285,85 @@ func contains(s, sub string) bool {
 			return false
 		}())
 }
+
+// ---- domain get -------------------------------------------------------------
+
+func cmdForDomainGet(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var stdout bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestDomainGet_BadDomain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("API should not be called for pre-flight validation failure: %s %s", r.Method, r.URL)
+		http.Error(w, "unexpected call", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDomainGet(t, srv)
+	if err := runGet(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestDomainGet_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDomainGet(t, srv)
+	if err := runGet(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}
+
+func TestDomainGet_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"not found","details":"domain not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDomainGet(t, srv)
+	err := runGet(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected error for 404 domain, got nil")
+	}
+	if !contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' in error, got: %v", err)
+	}
+}
+
+func TestDomainGet_DomainNormalized(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDomainGet(t, srv)
+	if err := runGet(cmd, []string{"EXAMPLE.COM"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+	if contains(receivedPath, "EXAMPLE") {
+		t.Errorf("domain not normalized in request path: %q", receivedPath)
+	}
+	if !contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in path, got: %q", receivedPath)
+	}
+}
