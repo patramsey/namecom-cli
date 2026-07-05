@@ -95,6 +95,73 @@ func TestTransferCreate_BadDomainArg(t *testing.T) {
 	}
 }
 
+// ---- internal-in ------------------------------------------------------------
+
+func cmdForInternalIn(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	var yes bool
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	cmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "")
+	t.Cleanup(func() { internalAuthCode = "" })
+	return cmd
+}
+
+func TestTransferInternalIn_EmptyAuthCode(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForInternalIn(t, srv)
+	if err := cmd.ParseFlags([]string{"--auth-code", ""}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runInternalIn(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected error for empty auth code in non-interactive mode, got nil")
+	}
+}
+
+func TestTransferInternalIn_AuthCodeTooShort(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForInternalIn(t, srv)
+	if err := cmd.ParseFlags([]string{"--auth-code", "abc"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runInternalIn(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected error for short auth code, got nil")
+	}
+	if !strings.Contains(err.Error(), "too short") {
+		t.Errorf("expected 'too short' in error, got: %v", err)
+	}
+}
+
+func TestTransferInternalIn_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForInternalIn(t, srv)
+	if err := cmd.ParseFlags([]string{"--auth-code", "validcode123"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runInternalIn(cmd, []string{"nodot"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
 func TestTransferCreate_DomainNormalized(t *testing.T) {
 	var receivedBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

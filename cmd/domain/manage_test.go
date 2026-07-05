@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -390,6 +392,180 @@ func TestDomainUpdate_NormalizesDomain(t *testing.T) {
 	}
 	if !strings.Contains(writePath, "example.com") {
 		t.Errorf("expected normalized domain in update path, got: %q", writePath)
+	}
+}
+
+// ---- renew ------------------------------------------------------------------
+
+func cmdForRenew(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	cmd := baseCmd(t, srv)
+	cmd.Flags().IntVar(&renewYears, "years", 1, "")
+	var yes bool
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	t.Cleanup(func() { renewYears = 1 })
+	return cmd
+}
+
+func TestRenew_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForRenew(t, srv)
+	err := runRenew(cmd, []string{"nodot"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestRenew_YearsOutOfRange(t *testing.T) {
+	for _, years := range []string{"0", "11"} {
+		t.Run("years="+years, func(t *testing.T) {
+			srv := neverCalledServer(t)
+			cmd := cmdForRenew(t, srv)
+			if err := cmd.ParseFlags([]string{"--years", years}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			err := runRenew(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatalf("expected error for --years %s, got nil", years)
+			}
+			if !strings.Contains(err.Error(), "years") {
+				t.Errorf("expected 'years' in error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestRenew_DomainNormalized(t *testing.T) {
+	price := 12.99
+	var renewPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{RenewalPrice: &price})
+		default:
+			renewPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(gen.RenewDomainResponseSchema{})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRenew(t, srv)
+	if err := runRenew(cmd, []string{"EXAMPLE.COM"}); err != nil {
+		t.Fatalf("runRenew: %v", err)
+	}
+	if strings.Contains(renewPath, "EXAMPLE") {
+		t.Errorf("domain not normalized in renew path: %q", renewPath)
+	}
+	if !strings.Contains(renewPath, "example.com") {
+		t.Errorf("expected 'example.com' in renew path, got: %q", renewPath)
+	}
+}
+
+// ---- contacts set -----------------------------------------------------------
+
+func cmdForContactsSet(t *testing.T, srv *httptest.Server, contactsJSON string) *cobra.Command {
+	t.Helper()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "contacts.json")
+	if err := os.WriteFile(f, []byte(contactsJSON), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	contactsFile = f
+	t.Cleanup(func() { contactsFile = "" })
+
+	cmd := baseCmd(t, srv)
+	cmd.Flags().StringVar(&contactsFile, "from-file", f, "")
+	return cmd
+}
+
+func TestContactsSet_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForContactsSet(t, srv, `{}`)
+	err := runContactsSet(cmd, []string{"nodot"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestContactsSet_DomainNormalized(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForContactsSet(t, srv, `{}`)
+	if err := runContactsSet(cmd, []string{"EXAMPLE.COM"}); err != nil {
+		t.Fatalf("runContactsSet: %v", err)
+	}
+	if strings.Contains(receivedPath, "EXAMPLE") {
+		t.Errorf("domain not normalized in contacts path: %q", receivedPath)
+	}
+	if !strings.Contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in contacts path, got: %q", receivedPath)
+	}
+}
+
+func TestContactsSet_BadFile(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := baseCmd(t, srv)
+	contactsFile = "/nonexistent/path/contacts.json"
+	t.Cleanup(func() { contactsFile = "" })
+	cmd.Flags().StringVar(&contactsFile, "from-file", contactsFile, "")
+
+	err := runContactsSet(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected error for missing contacts file, got nil")
+	}
+}
+
+func TestContactsSet_InvalidJSON(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForContactsSet(t, srv, `not json`)
+	err := runContactsSet(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON contacts file, got nil")
+	}
+	if !strings.Contains(err.Error(), "parsing") {
+		t.Errorf("expected 'parsing' in error, got: %v", err)
+	}
+}
+
+// ---- auth-code --------------------------------------------------------------
+
+func TestAuthCode_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := baseCmd(t, srv)
+	err := runAuthCode(cmd, []string{"nodot"})
+	if err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestAuthCode_DomainNormalized(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.AuthCodeResponseSchema{AuthCode: "SECRET123"})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	if err := runAuthCode(cmd, []string{"EXAMPLE.COM"}); err != nil {
+		t.Fatalf("runAuthCode: %v", err)
+	}
+	if strings.Contains(receivedPath, "EXAMPLE") {
+		t.Errorf("domain not normalized in auth-code path: %q", receivedPath)
+	}
+	if !strings.Contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in auth-code path, got: %q", receivedPath)
 	}
 }
 

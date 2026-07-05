@@ -333,6 +333,11 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+
 	f, err := os.ReadFile(contactsFile)
 	if err != nil {
 		return fmt.Errorf("reading contacts file: %w", err)
@@ -343,18 +348,18 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", args[0]), contacts)
+		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", domain), contacts)
 		return nil
 	}
 
-	resp, err := client.Gen().SetContacts(cmd.Context(), args[0], gen.SetContactsJSONRequestBody{Contacts: &contacts})
+	resp, err := client.Gen().SetContacts(cmd.Context(), domain, gen.SetContactsJSONRequestBody{Contacts: &contacts})
 	if err != nil {
 		return err
 	}
 	if err := api.Decode(resp, nil); err != nil {
 		return err
 	}
-	out.Success(fmt.Sprintf("Contacts updated for %s", args[0]))
+	out.Success(fmt.Sprintf("Contacts updated for %s", domain))
 	return nil
 }
 
@@ -374,7 +379,11 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	resp, err := client.Gen().GetAuthCodeForDomain(cmd.Context(), args[0])
+	domain, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Gen().GetAuthCodeForDomain(cmd.Context(), domain)
 	if err != nil {
 		return err
 	}
@@ -389,7 +398,7 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Table([]string{"DOMAIN", "AUTH CODE"}, [][]string{{args[0], result.AuthCode}})
+		out.Table([]string{"DOMAIN", "AUTH CODE"}, [][]string{{domain, result.AuthCode}})
 	}
 	return nil
 }

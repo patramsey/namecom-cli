@@ -235,7 +235,10 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
-	domainName := args[0]
+	domainName, err := cmdutil.DomainArg(args, 0)
+	if err != nil {
+		return err
+	}
 
 	if cmd.Flags().Changed("years") {
 		if err := cmdutil.ValidYears(renewYears); err != nil {
