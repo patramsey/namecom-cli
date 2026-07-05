@@ -482,11 +482,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", args[0]), body)
+		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", domain), body)
 		return nil
 	}
 
-	resp, err := client.Gen().UpdateDomain(cmd.Context(), args[0], body)
+	resp, err := client.Gen().UpdateDomain(cmd.Context(), domain, body)
 	if err != nil {
 		return err
 	}
@@ -501,8 +501,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(updated)
 	default:
-		out.Success(fmt.Sprintf("Updated %s", args[0]))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm the new settings", args[0]))
+		out.Success(fmt.Sprintf("Updated %s", domain))
+		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm the new settings", domain))
 	}
 	return nil
 }

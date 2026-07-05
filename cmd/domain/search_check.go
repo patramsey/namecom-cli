@@ -184,6 +184,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if r.Available == nil || !*r.Available {
 			continue
 		}
+		idx, ok := argIdx[r.DomainName]
+		if !ok {
+			continue // unexpected domain from API; skip
+		}
 		wg.Add(1)
 		go func(domainName string, idx int) {
 			defer wg.Done()
@@ -211,7 +215,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 				Premium:       &premium,
 			}
 			mu.Unlock()
-		}(r.DomainName, argIdx[r.DomainName])
+		}(r.DomainName, idx)
 	}
 	wg.Wait()
 	if pricingErr != nil {

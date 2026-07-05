@@ -358,6 +358,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			out.Warn(w)
 		}
 		body.Answer = updateAnswer
+	} else if cmd.Flags().Changed("type") {
+		// Type changed but answer kept from the existing record: re-validate the
+		// existing answer against the new type so the mismatch is caught client-side
+		// rather than returning a cryptic 422 from the API.
+		rtype := string(body.Type)
+		host := ""
+		if body.Host != nil {
+			host = *body.Host
+		}
+		if err := cmdutil.ValidDNSAnswer(rtype, host, body.Answer); err != nil {
+			return fmt.Errorf("existing answer %q is not valid for new type %s: %w", body.Answer, rtype, err)
+		}
 	}
 	if cmd.Flags().Changed("ttl") {
 		if err := cmdutil.ValidTTL(updateTTL); err != nil {

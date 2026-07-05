@@ -276,6 +276,43 @@ func TestRegister_DryRunSkipsAvailabilityCheck(t *testing.T) {
 	}
 }
 
+// ---- domain update ----------------------------------------------------------
+
+func cmdForUpdate(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	cmd := baseCmd(t, srv)
+	cmd.Flags().Bool("autorenew", false, "")
+	cmd.Flags().Bool("privacy", false, "")
+	cmd.Flags().Bool("lock", false, "")
+	return cmd
+}
+
+func TestDomainUpdate_NormalizesDomain(t *testing.T) {
+	var writePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+			writePath = r.URL.Path
+		}
+		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := runUpdate(cmd, []string{"EXAMPLE.COM"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if writePath == "" {
+		t.Fatal("update request (PUT/PATCH) was never made")
+	}
+	if strings.Contains(writePath, "EXAMPLE") {
+		t.Errorf("update path used raw args[0] instead of normalized domain: %q", writePath)
+	}
+	if !strings.Contains(writePath, "example.com") {
+		t.Errorf("expected normalized domain in update path, got: %q", writePath)
+	}
+}
+
 func TestRegister_YearsOutOfRange(t *testing.T) {
 	for _, years := range []string{"0", "11", "100"} {
 		t.Run("years="+years, func(t *testing.T) {

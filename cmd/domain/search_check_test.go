@@ -200,6 +200,41 @@ func TestRenderSearchResults_QuietMode(t *testing.T) {
 	}
 }
 
+func TestCheck_UnexpectedZoneCheckDomainSkippedForPricing(t *testing.T) {
+	avail := true
+	price := 12.99
+	var pricingCalls []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/core/v1/zonecheck":
+			// API returns the requested domain AND an extra one we didn't ask for.
+			results := []gen.ZoneCheckResult{
+				{DomainName: "free.com", Available: &avail},
+				{DomainName: "unexpected.com", Available: &avail},
+			}
+			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 2})
+		case "/core/v1/domains/free.com:getPricing":
+			pricingCalls = append(pricingCalls, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		default:
+			// Any request for "unexpected.com" pricing would land here.
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCheck(t, srv)
+	if err := runCheck(cmd, []string{"free.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	if len(pricingCalls) != 1 {
+		t.Errorf("expected exactly 1 pricing call (for free.com), got %d: %v", len(pricingCalls), pricingCalls)
+	}
+}
+
 func TestCheck_PricingPopulatedFromGetPricing(t *testing.T) {
 	avail := true
 	price := 12.99

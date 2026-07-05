@@ -460,6 +460,69 @@ func TestDNSList_AllFetchesAllPages(t *testing.T) {
 	}
 }
 
+// ---- dns update -------------------------------------------------------------
+
+func cmdForUpdate(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format:  output.FormatTable,
+		Color:   output.ColorNever,
+		Writer:  &bytes.Buffer{},
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().StringVar(&updateType, "type", "", "")
+	cmd.Flags().StringVar(&updateHost, "host", "@", "")
+	cmd.Flags().StringVar(&updateAnswer, "answer", "", "")
+	cmd.Flags().Int64Var(&updateTTL, "ttl", 300, "")
+	cmd.Flags().Int64Var(&updatePriority, "priority", 0, "")
+	t.Cleanup(func() { updateType = ""; updateHost = "@"; updateAnswer = ""; updateTTL = 300; updatePriority = 0 })
+	return cmd
+}
+
+// TestDNSUpdate_TypeChangeRejectedByExistingAnswer verifies that changing
+// --type without --answer validates the existing answer against the new type.
+// An A record's IPv4 answer must be rejected when the type is changed to AAAA.
+func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	recID := int32(123)
+	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Error("PUT should not be called when pre-flight validation fails")
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--type", "AAAA"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	updateAnswer = "" // not changed
+
+	err := runUpdate(cmd, []string{"example.com", "123"})
+	if err == nil {
+		t.Fatal("expected error when changing type to AAAA with existing IPv4 answer, got nil")
+	}
+	if !strings.Contains(err.Error(), "AAAA") {
+		t.Errorf("expected 'AAAA' in error, got: %v", err)
+	}
+}
+
 func TestDNSList_JSONEnvelope(t *testing.T) {
 	recType := "A"
 	recHost := "@"
