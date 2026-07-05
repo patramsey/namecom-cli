@@ -102,6 +102,31 @@ func TestVanityList_Empty(t *testing.T) {
 	}
 }
 
+// ---- get --------------------------------------------------------------------
+
+func TestVanityGet_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := baseCmd(t, srv)
+	if err := runGet(cmd, []string{"nodot", "ns1.example.com"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestVanityGet_ReturnsEntry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{
+			Hostname: "ns1.example.com",
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	if err := runGet(cmd, []string{"example.com", "ns1.example.com"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}
+
 // ---- create -----------------------------------------------------------------
 
 func TestVanityCreate_BadDomain(t *testing.T) {
@@ -145,6 +170,27 @@ func TestVanityUpdate_BadDomain(t *testing.T) {
 	err := runUpdate(cmd, []string{"nodot", "ns1.example.com"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestVanityUpdate_Success(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{
+			Hostname: "ns1.example.com",
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	updateIPs = "5.6.7.8"
+	if err := runUpdate(cmd, []string{"example.com", "ns1.example.com"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if !strings.Contains(receivedPath, "example.com") {
+		t.Errorf("expected 'example.com' in request path, got: %q", receivedPath)
 	}
 }
 

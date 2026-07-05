@@ -162,6 +162,99 @@ func TestTransferInternalIn_BadDomain(t *testing.T) {
 	}
 }
 
+// ---- transfer list ----------------------------------------------------------
+
+func cmdForTransferList(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	t.Cleanup(func() { listAll = false })
+	return cmd
+}
+
+func TestTransferList_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"transfers":[],"nextPage":0}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForTransferList(t, srv)
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+}
+
+func TestTransferList_ShowsEntries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"transfers":[{"domainName":"example.com","status":"pending"}],"nextPage":0}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	var stdout bytes.Buffer
+	client, _ := api.New(api.Options{BaseURL: srv.URL})
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	t.Cleanup(func() { listAll = false })
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "example.com") {
+		t.Errorf("expected 'example.com' in output, got: %q", stdout.String())
+	}
+}
+
+// ---- transfer get -----------------------------------------------------------
+
+func cmdForTransferGet(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestTransferGet_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForTransferGet(t, srv)
+	if err := runGet(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestTransferGet_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com","status":"pending"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForTransferGet(t, srv)
+	if err := runGet(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}
+
 func TestTransferCreate_DomainNormalized(t *testing.T) {
 	var receivedBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -569,6 +569,43 @@ func TestAuthCode_DomainNormalized(t *testing.T) {
 	}
 }
 
+// ---- contacts get -----------------------------------------------------------
+
+func cmdForContactsGet(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestContactsGet_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForContactsGet(t, srv)
+	if err := runContactsGet(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestContactsGet_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForContactsGet(t, srv)
+	if err := runContactsGet(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runContactsGet: %v", err)
+	}
+}
+
 func TestRegister_YearsOutOfRange(t *testing.T) {
 	for _, years := range []string{"0", "11", "100"} {
 		t.Run("years="+years, func(t *testing.T) {

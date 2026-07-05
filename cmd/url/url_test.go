@@ -51,6 +51,82 @@ func cmdForURLCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	return cmd
 }
 
+// ---- url list ---------------------------------------------------------------
+
+func cmdForURLList(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	t.Cleanup(func() { listAll = false })
+	return cmd
+}
+
+func TestURLList_BadDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForURLList(t, srv)
+	if err := runList(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+func TestURLList_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"urlForwarding":[],"nextPage":0}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForURLList(t, srv)
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+}
+
+// ---- url get ----------------------------------------------------------------
+
+func cmdForURLGet(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestURLGet_BadID(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForURLGet(t, srv)
+	if err := runGet(cmd, []string{"example.com", "notanumber"}); err == nil {
+		t.Fatal("expected error for non-integer ID, got nil")
+	}
+}
+
+func TestURLGet_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":7,"host":"@","forwardsTo":"https://example.com","type":"redirect"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForURLGet(t, srv)
+	if err := runGet(cmd, []string{"example.com", "7"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+}
+
 func TestURLCreate_MissingDestURL(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForURLCreate(t, srv)
@@ -239,6 +315,46 @@ func cmdForURLDelete(t *testing.T, srv *httptest.Server) *cobra.Command {
 		t.Fatalf("setting yes flag: %v", err)
 	}
 	return cmd
+}
+
+func TestURLUpdate_Success(t *testing.T) {
+	getJSON := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"redirect"}`
+	putJSON := `{"id":1,"host":"@","forwardsTo":"https://new.com","type":"redirect"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			_, _ = w.Write([]byte(putJSON))
+		} else {
+			_, _ = w.Write([]byte(getJSON))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForURLUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--to", "https://new.com"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+}
+
+func TestURLDelete_Success(t *testing.T) {
+	var deletePath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deletePath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForURLDelete(t, srv)
+	if err := runDelete(cmd, []string{"example.com", "5"}); err != nil {
+		t.Fatalf("runDelete: %v", err)
+	}
+	if !strings.Contains(deletePath, "5") {
+		t.Errorf("expected ID '5' in delete path, got: %q", deletePath)
+	}
 }
 
 func TestURLDelete_BadID(t *testing.T) {

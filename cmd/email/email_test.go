@@ -201,6 +201,26 @@ func TestEmailUpdate_BadDomainArg(t *testing.T) {
 	}
 }
 
+func TestEmailUpdate_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.EmailForwarding{
+			EmailBox:   "info",
+			DomainName: "example.com",
+			EmailTo:    "new@gmail.com",
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--to", "new@gmail.com"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "info"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+}
+
 // ---- email list -------------------------------------------------------------
 
 func cmdForEmailList(t *testing.T, srv *httptest.Server) *cobra.Command {
