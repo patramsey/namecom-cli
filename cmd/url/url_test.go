@@ -251,7 +251,7 @@ func TestURLUpdate_BadID(t *testing.T) {
 
 func TestURLUpdate_BadDestURL(t *testing.T) {
 	getResponse := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"redirect"}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(getResponse))
 	}))

@@ -49,7 +49,7 @@ func TestValidDNSHost(t *testing.T) {
 		"trailing-dot.",
 		"-starts-with-hyphen",
 		"ends-with-hyphen-",
-		string(make([]byte, 64)) + ".com",          // label > 63 chars
+		string(make([]byte, 64)) + ".com", // label > 63 chars
 		string(make([]byte, 250)) + ".example.com", // total > 253 chars
 	}
 	for _, s := range bad {
@@ -112,7 +112,7 @@ func TestDNSAnswerWarnings(t *testing.T) {
 		{"A", "172.16.0.1", 0, false, "private"},
 		{"A", "192.168.1.1", 0, false, "private"},
 		{"A", "8.8.8.8", 0, false, ""},
-		{"A", "::1", 0, false, ""},   // IPv6 addr: isPrivateIP returns false for non-IPv4
+		{"A", "::1", 0, false, ""}, // IPv6 addr: isPrivateIP returns false for non-IPv4
 		{"CNAME", "target.example.com", 0, false, "trailing dot"},
 		{"CNAME", "target.example.com.", 0, false, ""},
 		{"MX", "mail.example.com", 0, false, "priority"},
