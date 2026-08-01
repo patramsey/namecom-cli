@@ -34,7 +34,11 @@ type statusSummary struct {
 	ExpiringCritical int    `json:"expiring_critical"` // <7 days
 	ExpiringSoon     int    `json:"expiring_soon"`     // 7-30 days
 	Unlocked         int    `json:"unlocked"`
-	PendingTransfers int    `json:"pending_transfers"`
+	// PendingTransfers is nil when the lookup failed, for the same reason as
+	// Balance: reporting 0 asserts "no transfers are pending" on the basis of a
+	// request that never succeeded, and a script gating on that acts on a fact
+	// the CLI never established.
+	PendingTransfers *int `json:"pending_transfers,omitempty"`
 	// Balance is nil when the lookup failed. It must not default to 0:
 	// rendering a failed balance as $0.00 tells the user their account is
 	// empty, which is worse than telling them nothing.
@@ -62,6 +66,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		unlockedCount   int32
 		expiringDomains []gen.DomainResponsePayload
 		transfers       []gen.Transfer
+		transfersOK     bool
 		balance         *float64
 	)
 
@@ -143,7 +148,10 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		for tPage := ptrInt32(1); ; {
 			tResp, err := client.Gen().ListTransfers(gctx, &gen.ListTransfersParams{Page: tPage})
 			if err != nil {
-				return nil // non-fatal: omit transfer count rather than failing status
+				// Non-fatal: a status view is still useful without it. But leave
+				// transfersOK false so the count is reported as unknown rather
+				// than as zero.
+				return nil
 			}
 			var tResult gen.ListTransfersResponseSchema
 			if api.Decode(tResp, &tResult) != nil {
@@ -151,6 +159,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 			}
 			transfers = append(transfers, tResult.Transfers...)
 			if tResult.NextPage == nil || *tResult.NextPage == 0 {
+				transfersOK = true
 				return nil
 			}
 			tPage = tResult.NextPage
@@ -199,6 +208,13 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		profileName = ov.Profile
 	}
 
+	// Only claim a count if the fetch actually completed.
+	var pendingCount *int
+	if transfersOK {
+		n := len(pendingDomains)
+		pendingCount = &n
+	}
+
 	summary := statusSummary{
 		Profile:          profileName,
 		Endpoint:         client.BaseURL(),
@@ -206,7 +222,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		ExpiringCritical: expCritical,
 		ExpiringSoon:     expSoon,
 		Unlocked:         int(unlockedCount),
-		PendingTransfers: len(pendingDomains),
+		PendingTransfers: pendingCount,
 		ExpiringDomains:  expiringItems,
 		PendingDomains:   pendingDomains,
 		Balance:          balance,
@@ -241,8 +257,8 @@ func renderStatus(out *output.Config, s statusSummary) {
 		expPart = "  " + out.Amber(strconv.Itoa(s.ExpiringSoon)+" expiring within 30 days")
 	}
 	transferPart := ""
-	if s.PendingTransfers > 0 {
-		transferPart = "  " + out.Amber(strconv.Itoa(s.PendingTransfers)+" transfer pending")
+	if s.PendingTransfers != nil && *s.PendingTransfers > 0 {
+		transferPart = "  " + out.Amber(strconv.Itoa(*s.PendingTransfers)+" transfer pending")
 	}
 	unlockedPart := ""
 	if s.Unlocked > 0 {

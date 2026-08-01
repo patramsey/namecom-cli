@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,10 @@ import (
 // statusServer answers the calls runStatus makes. balanceStatus lets a test
 // make just the balance endpoint fail while everything else succeeds.
 func statusServer(t *testing.T, balanceStatus int, balanceBody string) *httptest.Server {
+	return statusServerWith(t, balanceStatus, balanceBody, http.StatusOK)
+}
+
+func statusServerWith(t *testing.T, balanceStatus int, balanceBody string, transferStatus int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -26,6 +31,11 @@ func statusServer(t *testing.T, balanceStatus int, balanceBody string) *httptest
 			w.WriteHeader(balanceStatus)
 			_, _ = w.Write([]byte(balanceBody))
 		case strings.Contains(r.URL.Path, "transfers"):
+			if transferStatus != http.StatusOK {
+				w.WriteHeader(transferStatus)
+				_, _ = w.Write([]byte(`{"message":"Permission Denied"}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"transfers":[],"nextPage":0}`))
 		default:
 			_, _ = w.Write([]byte(`{"domains":[],"totalCount":3,"nextPage":0}`))
@@ -91,4 +101,52 @@ func TestStatus_OmitsBalanceWhenUnavailable(t *testing.T) {
 		!strings.Contains(strings.ToLower(got), "unavailable") {
 		t.Errorf("if balance is mentioned at all it must be marked unavailable:\n%s", got)
 	}
+}
+
+// TestStatus_DistinguishesZeroTransfersFromUnavailable applies the same
+// reasoning as the balance handling to the pre-existing transfers fetch, which
+// swallowed its error and left PendingTransfers at 0.
+//
+// In table output that is merely invisible, but `status -o json` emitted
+// "pending_transfers": 0 — a positive claim that no transfers are pending, made
+// on the basis of a request that failed. A script gating on that value acts on
+// a fact the CLI never established.
+func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
+	t.Run("genuinely none reports zero", func(t *testing.T) {
+		srv := statusServerWith(t, http.StatusOK, `{"balance":10}`, http.StatusOK)
+		cmd, buf := statusCmdFor(t, srv)
+		cmdutil.Out(cmd).Format = output.FormatJSON
+
+		if err := runStatus(cmd, nil); err != nil {
+			t.Fatalf("runStatus: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+		}
+		v, present := got["pending_transfers"]
+		if !present {
+			t.Fatalf("a successful fetch of zero transfers must report 0, got: %s", buf.String())
+		}
+		if v != float64(0) {
+			t.Errorf("expected 0 pending transfers, got %#v", v)
+		}
+	})
+
+	t.Run("unavailable is not reported as zero", func(t *testing.T) {
+		srv := statusServerWith(t, http.StatusOK, `{"balance":10}`, http.StatusForbidden)
+		cmd, buf := statusCmdFor(t, srv)
+		cmdutil.Out(cmd).Format = output.FormatJSON
+
+		if err := runStatus(cmd, nil); err != nil {
+			t.Fatalf("a transfers failure should not fail status: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+		}
+		if v, present := got["pending_transfers"]; present {
+			t.Errorf("a failed transfers lookup must not claim a count, got %#v", v)
+		}
+	})
 }
