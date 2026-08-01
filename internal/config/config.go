@@ -259,6 +259,7 @@ func runTokenCmd(cmdline string) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
 	cmd.Stderr = os.Stderr
+	setProcessGroup(cmd)
 	// WaitDelay bounds how long Wait blocks AFTER the deadline kills the shell.
 	//
 	// CommandContext only kills the direct child. A helper written as a pipeline
