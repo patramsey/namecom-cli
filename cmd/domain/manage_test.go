@@ -1180,3 +1180,63 @@ func TestList_SortValidated(t *testing.T) {
 		t.Errorf("error should list the valid sort fields, got: %v", err)
 	}
 }
+
+// TestToggleCommands_UseUpdateDomain guards a deprecation migration. The spec
+// marks LockDomain, UnlockDomain, EnableAutorenew, DisableAutorenew,
+// EnableWhoisPrivacy and DisableWhoisPrivacy as `deprecated: true`, each saying
+// "deprecated in favor of the new UpdateDomain API. This will be removed in a
+// future release."
+//
+// All six back a user-facing command, so their removal breaks the CLI. The
+// replacement — PATCH /core/v1/domains/{name} — is already used by
+// `domain update` in this same package.
+//
+// Note PurchasePrivacy is deliberately NOT the migration target for
+// `privacy on`: it is a separate operation the spec describes as "a billable
+// action", whereas UpdateDomain carries no billing language and is the stated
+// successor to the deprecated toggles.
+func TestToggleCommands_UseUpdateDomain(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		run       func(*cobra.Command, []string) error
+		wantField string
+		wantValue bool
+	}{
+		{"lock on", []string{"on", "example.com"}, runLock, "locked", true},
+		{"lock off", []string{"off", "example.com"}, runLock, "locked", false},
+		{"autorenew on", []string{"on", "example.com"}, runAutorenew, "autorenewEnabled", true},
+		{"autorenew off", []string{"off", "example.com"}, runAutorenew, "autorenewEnabled", false},
+		{"privacy on", []string{"on", "example.com"}, runPrivacy, "privacyEnabled", true},
+		{"privacy off", []string{"off", "example.com"}, runPrivacy, "privacyEnabled", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var method, path string
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				method, path = r.Method, r.URL.Path
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"domainName":"example.com"}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForToggle(t, srv)
+			if err := tc.run(cmd, tc.args); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+
+			if method != http.MethodPatch {
+				t.Errorf("expected PATCH (UpdateDomain), got %s — still on a deprecated endpoint", method)
+			}
+			if path != "/core/v1/domains/example.com" {
+				t.Errorf("expected the UpdateDomain path, got %q", path)
+			}
+			if got, ok := body[tc.wantField]; !ok || got != tc.wantValue {
+				t.Errorf("expected body %s=%v, got %#v", tc.wantField, tc.wantValue, body)
+			}
+		})
+	}
+}

@@ -30,9 +30,38 @@ var lockCmd = &cobra.Command{
 	},
 }
 
+// applyDomainToggle performs a single-field UpdateDomain (PATCH).
+//
+// It replaces the deprecated :lock, :unlock, :enableAutorenew,
+// :disableAutorenew, :enableWhoisPrivacy and :disableWhoisPrivacy endpoints,
+// each of which the spec marks `deprecated: true` with "deprecated in favor of
+// the new UpdateDomain API. This will be removed in a future release."
+//
+// Only the field being changed is sent. All three body fields are *bool with
+// omitempty, and the schema combines them with anyOf, so a partial body is
+// valid and leaves the other two untouched — no read-modify-write needed.
+//
+// Note PurchasePrivacy is deliberately not used for `privacy on`: the spec
+// describes it as "a billable action" that purchases and enables, whereas
+// UpdateDomain is the documented successor to the deprecated toggle.
+func applyDomainToggle(cmd *cobra.Command, domainName string, body gen.UpdateDomainJSONRequestBody) error {
+	client := cmdutil.APIClient(cmd)
+	resp, err := client.Gen().UpdateDomain(cmd.Context(), domainName, body)
+	if err != nil {
+		return err
+	}
+	return api.Decode(resp, nil)
+}
+
+// toggleDryRun prints the UpdateDomain request a toggle would send.
+func toggleDryRun(out *output.Config, domainName string, body gen.UpdateDomainJSONRequestBody) {
+	out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domainName), body)
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
@@ -44,32 +73,18 @@ func runLock(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	body := gen.UpdateDomainJSONRequestBody{Locked: boolPtr(enable)}
+	if dryRun {
+		toggleDryRun(out, domainName, body)
+		return nil
+	}
+	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+		return err
+	}
 	if enable {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
-			return nil
-		}
-		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{ContentType: gen.LockDomainParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(resp, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Transfer lock enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm status", domainName))
 	} else {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:unlock", domainName), nil)
-			return nil
-		}
-		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{ContentType: gen.UnlockDomainParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(resp, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Transfer lock disabled for %s", domainName))
 		out.WarnBox("Lock removed — re-enable after transfers are complete to protect against unauthorized outbound transfers")
 	}
@@ -95,7 +110,6 @@ var autorenewCmd = &cobra.Command{
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
@@ -106,32 +120,18 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	body := gen.UpdateDomainJSONRequestBody{AutorenewEnabled: boolPtr(enable)}
+	if dryRun {
+		toggleDryRun(out, domainName, body)
+		return nil
+	}
+	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+		return err
+	}
 	if enable {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enableAutorenew", domainName), nil)
-			return nil
-		}
-		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{ContentType: gen.EnableAutorenewParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Auto-renewal enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm settings", domainName))
 	} else {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disableAutorenew", domainName), nil)
-			return nil
-		}
-		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{ContentType: gen.DisableAutorenewParamsContentTypeApplicationjson})
-		if e != nil {
-			return e
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Auto-renewal disabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Remember to renew manually before expiry — run 'namecom domain get %s' to check the expiry date", domainName))
 	}
@@ -157,7 +157,6 @@ var privacyCmd = &cobra.Command{
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
@@ -169,14 +168,15 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	body := gen.UpdateDomainJSONRequestBody{PrivacyEnabled: boolPtr(enable)}
+	if dryRun {
+		toggleDryRun(out, domainName, body)
+		return nil
+	}
+	// Enabling privacy can incur a charge on accounts without a bundled privacy
+	// plan, so confirm before doing it. Disabling never charges.
 	if enable {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enableWhoisPrivacy", domainName), nil)
-			return nil
-		}
-		// PurchasePrivacy may charge money — confirm first.
-		yes := cmdutil.IsYes(cmd)
-		ok, err := confirm(out, yes, fmt.Sprintf("Purchase WHOIS privacy for %s?", domainName))
+		ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domainName))
 		if err != nil {
 			return err
 		}
@@ -184,27 +184,14 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			out.Warn("aborted")
 			return nil
 		}
-		r, err := client.Gen().EnableWhoisPrivacy(cmd.Context(), domainName, &gen.EnableWhoisPrivacyParams{ContentType: gen.EnableWhoisPrivacyParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
+	}
+	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+		return err
+	}
+	if enable {
 		out.Success(fmt.Sprintf("WHOIS privacy enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm privacy status", domainName))
 	} else {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disableWhoisPrivacy", domainName), nil)
-			return nil
-		}
-		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{ContentType: gen.DisableWhoisPrivacyParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("WHOIS privacy disabled for %s", domainName))
 	}
 	return nil

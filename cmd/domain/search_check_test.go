@@ -599,3 +599,50 @@ func TestCheck_SandboxByProfileBypassesZoneCheck(t *testing.T) {
 		t.Error("ZoneCheck ran despite the resolved credentials being sandbox")
 	}
 }
+
+// TestCheck_NormalizesDomainArgs guards a silent wrong-answer bug. runCheck is
+// the only command that never runs its arguments through cmdutil.DomainArg,
+// which lowercases them. It keys argIdx on the raw argv string, so when the API
+// echoes the canonical form the lookup misses and the pre-sized result slot
+// stays zero-valued — rendering a blank row that reads as "taken", with exit 0.
+//
+// `namecom domain check Example.COM` is a completely ordinary thing to type.
+func TestCheck_NormalizesDomainArgs(t *testing.T) {
+	avail := true
+	price := 12.99
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "zonecheck"):
+			// The API answers with the canonical lowercase name.
+			results := []gen.ZoneCheckResult{{DomainName: "example.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := runCheck(cmd, []string{"Example.COM"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+
+	var got []gen.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result, got %d: %s", len(got), buf.String())
+	}
+	if got[0].DomainName == "" {
+		t.Fatalf("blank result row — the mixed-case argument never matched the API's canonical name: %s", buf.String())
+	}
+	if !got[0].Purchasable {
+		t.Errorf("Example.COM is available but was reported as taken: %s", buf.String())
+	}
+}

@@ -122,6 +122,20 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	// Normalize (and validate) every argument up front. This was the only
+	// command that skipped cmdutil.DomainArg, and the results below are keyed by
+	// domain name: with a mixed-case argument like "Example.COM" the API's
+	// canonical lowercase reply never matched, leaving a zero-valued slot that
+	// renders as a blank "taken" row — and exits 0. Same failure for an IDN
+	// entered as Unicode and returned as punycode.
+	for i := range args {
+		normalized, err := cmdutil.DomainArg(args, i)
+		if err != nil {
+			return err
+		}
+		args[i] = normalized
+	}
+
 	// ZoneCheck queries production DNS zone files and has no sandbox equivalent —
 	// the sandbox EPP registry is isolated from production zone data. Using both
 	// in the same check produces contradictory results in sandbox mode. Skip
