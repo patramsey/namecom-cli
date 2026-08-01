@@ -92,6 +92,14 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Parse --tld-requirement up front. It touches nothing but argv, and running
+	// it late meant a typo surfaced only AFTER the user had confirmed a purchase
+	// and possibly acknowledged a trademark notice.
+	tldReqs, err := parseTLDRequirements(registerTLDReqs)
+	if err != nil {
+		return err
+	}
+
 	// Check availability before collecting any further input. CheckAvailability
 	// is used here (not ZoneCheck) because it's authoritative — it includes
 	// pricing, premium status, and the reason a domain isn't available, all of
@@ -205,10 +213,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		body.Domain.Contacts = &contacts
 	}
 	body.Claims = claims
-	if reqs, rerr := parseTLDRequirements(registerTLDReqs); rerr != nil {
-		return rerr
-	} else if len(reqs) > 0 {
-		body.TldRequirements = &reqs
+	if len(tldReqs) > 0 {
+		body.TldRequirements = &tldReqs
 	}
 	body.PurchaseType = checkPurchaseType
 	if registerPrice > 0 {

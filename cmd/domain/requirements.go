@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -59,7 +60,17 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 	}
 
 	if out.QuietMode {
-		out.PrintQuiet([]string{tld})
+		// Echoing the TLD back tells the caller nothing they did not already
+		// type. The useful scriptable answer is which fields the registry
+		// requires, one per line, so `--tld-requirement` can be built from it.
+		var names []string
+		if result.Requirements.Fields != nil {
+			for name := range *result.Requirements.Fields {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+		}
+		out.PrintQuiet(names)
 		return nil
 	}
 

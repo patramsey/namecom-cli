@@ -1804,3 +1804,76 @@ func TestRegister_ClaimsCheckedForTheActualPurchaseType(t *testing.T) {
 			"the gate may not fire for the transaction actually being made", claimsPurchaseTypeSent)
 	}
 }
+
+// TestRegister_MalformedTLDRequirementFailsBeforeAnyPrompt guards the ordering
+// of a pure string parse.
+//
+// parseTLDRequirements ran after the confirmation prompt and after
+// resolveClaims — so a typo'd --tld-requirement made the user approve a charge,
+// and potentially acknowledge a trademark notice, before being told the flag
+// was malformed. It touches nothing but argv; it belongs before any prompt or
+// request.
+func TestRegister_MalformedTLDRequirementFailsBeforeAnyPrompt(t *testing.T) {
+	srv := neverCalledServer(t)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := cmd.Flags().Set("tld-requirement", "legal-type"); err != nil { // missing =value
+		t.Fatalf("setting tld-requirement: %v", err)
+	}
+
+	err := runRegister(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected an error for a malformed --tld-requirement")
+	}
+	if !strings.Contains(err.Error(), "key=value") {
+		t.Errorf("error should show the expected form, got: %v", err)
+	}
+}
+
+// TestRequirements_QuietListsRequiredFields guards that -q returns API data
+// rather than the caller's own argument.
+//
+// It previously echoed back the TLD that was typed in, which tells a script
+// nothing. The useful scriptable answer is the field names, one per line, so a
+// caller can build the matching --tld-requirement flags.
+func TestRequirements_QuietListsRequiredFields(t *testing.T) {
+	const resp = `{
+	  "tldInfo": {"allowedRegistrationYears":[1,2],"supportsDnssec":true,"supportsPrivacy":false,
+	              "supportsTransferLock":true,"supportsPremium":false,"supportsInternalTransfer":false},
+	  "requirements": {"fields": {"legal-type": {}, "birth-country": {}}},
+	  "contacts": {}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+		QuietMode: true, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+
+	if err := runRequirements(cmd, []string{"fr"}); err != nil {
+		t.Fatalf("runRequirements: %v", err)
+	}
+	got := strings.TrimSpace(buf.String())
+	if got == "fr" {
+		t.Fatal("--quiet echoed the argument back instead of returning API data")
+	}
+	for _, want := range []string{"birth-country", "legal-type"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected required field %q in quiet output, got: %q", want, got)
+		}
+	}
+}

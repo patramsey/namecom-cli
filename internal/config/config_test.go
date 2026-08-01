@@ -322,3 +322,66 @@ func TestRunTokenCmd_Succeeds(t *testing.T) {
 		t.Errorf("expected trimmed token %q, got %q", "s3cret", tok)
 	}
 }
+
+// TestActivePath_ReportsTheFileActuallyUsed guards the paths shown to users.
+//
+// Load and Save both resolve through resolveReadPath, which honours the legacy
+// ~/.namecom/config.yaml when no XDG file exists. But four call sites reported
+// config.Path() — always the XDG location — so a legacy user was told
+// "Credentials saved to ~/.config/namecom/config.yaml" while the write went
+// somewhere else entirely. Someone following that message looks in an empty or
+// nonexistent file.
+func TestActivePath_ReportsTheFileActuallyUsed(t *testing.T) {
+	t.Run("legacy file present", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		t.Setenv("NAMECOM_CONFIG", "")
+
+		legacyDir := filepath.Join(home, ".namecom")
+		if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+			t.Fatalf("creating legacy dir: %v", err)
+		}
+		legacy := filepath.Join(legacyDir, "config.yaml")
+		if err := os.WriteFile(legacy, []byte("default: a\nprofiles: {}\n"), 0o600); err != nil {
+			t.Fatalf("writing legacy config: %v", err)
+		}
+
+		got, err := ActivePath()
+		if err != nil {
+			t.Fatalf("ActivePath: %v", err)
+		}
+		if got != legacy {
+			t.Errorf("ActivePath() = %q, want the legacy file %q that Load and Save actually use", got, legacy)
+		}
+	})
+
+	t.Run("explicit NAMECOM_CONFIG wins", func(t *testing.T) {
+		explicit := filepath.Join(t.TempDir(), "explicit.yaml")
+		t.Setenv("NAMECOM_CONFIG", explicit)
+
+		got, err := ActivePath()
+		if err != nil {
+			t.Fatalf("ActivePath: %v", err)
+		}
+		if got != explicit {
+			t.Errorf("ActivePath() = %q, want %q", got, explicit)
+		}
+	})
+
+	t.Run("nothing on disk reports the canonical location", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		t.Setenv("NAMECOM_CONFIG", "")
+
+		got, err := ActivePath()
+		if err != nil {
+			t.Fatalf("ActivePath: %v", err)
+		}
+		want, _ := Path()
+		if got != want {
+			t.Errorf("with no file present ActivePath() should be the canonical path %q, got %q", want, got)
+		}
+	})
+}

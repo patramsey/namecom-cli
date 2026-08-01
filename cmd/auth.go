@@ -127,7 +127,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	path, _ := config.Path()
+	path, _ := config.ActivePath()
 	out.Success(fmt.Sprintf("Credentials saved to %s (profile: %s)", path, loginProfile))
 	out.Hint("Run 'namecom status' to see your account overview")
 	out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
@@ -177,7 +177,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		env = "sandbox"
 	}
 
-	cfgPath, _ := config.Path()
+	cfgPath, _ := config.ActivePath()
 
 	renderAuthStatus(out, [][]string{
 		{"Profile", profileName},

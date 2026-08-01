@@ -121,6 +121,18 @@ func resolveReadPath() (string, error) {
 	return primary, nil
 }
 
+// ActivePath returns the config file this process will actually read from and
+// write to.
+//
+// Path() reports the canonical (XDG) location, which is where NEW config is
+// created — but Load and Save both go through resolveReadPath, which prefers an
+// existing legacy ~/.namecom/config.yaml. Reporting Path() to the user in that
+// situation names a file the CLI is not using, so anyone following the message
+// looks in the wrong place.
+func ActivePath() (string, error) {
+	return resolveReadPath()
+}
+
 // Load reads and parses the config file. A missing file is not an error: it
 // returns an empty File so credentials can still come from flags or env.
 func Load() (*File, error) {

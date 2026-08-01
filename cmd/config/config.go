@@ -204,7 +204,7 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		tokenDisplay = out.Dim(fmt.Sprintf("(from token_cmd: %s)", tokenCmdSummary(p.TokenCmd)))
 	}
 
-	path, _ := config.Path()
+	path, _ := config.ActivePath()
 
 	switch out.Format {
 	case output.FormatJSON:

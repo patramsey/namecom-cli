@@ -284,7 +284,7 @@ func initContext(cmd *cobra.Command) error {
 	}
 	if profileReq != "" && cfgFile != nil {
 		if _, ok := cfgFile.Profiles[profileReq]; !ok {
-			cfgPath, _ := config.Path()
+			cfgPath, _ := config.ActivePath()
 			names := make([]string, 0, len(cfgFile.Profiles))
 			for k := range cfgFile.Profiles {
 				names = append(names, k)
