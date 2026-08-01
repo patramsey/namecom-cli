@@ -1439,3 +1439,171 @@ func TestRegister_UnclaimedDomainIsUnaffected(t *testing.T) {
 		t.Errorf("unclaimed registration must not send a claims field, got: %#v", gotCreate)
 	}
 }
+
+// TestRegisterRenew_MultiYearPromptIsNotLabelledPerYear guards a regression
+// introduced by wiring --years into GetPricingForDomain.
+//
+// The pricing endpoint returns the price for the REQUESTED TERM, not a per-year
+// rate — namecom.api.yaml:626: "You will need to get the single year pricing,
+// and then multiply the single year pricing by the number of years… 1 year
+// pricing = 349.95. 2 year pricing = 699.90". So labelling a multi-year figure
+// "/yr" shows the user several times what they will actually be charged, in the
+// one message whose job is to state the amount.
+//
+// This test drives runRegister/runRenew for real. An earlier version called the
+// formatTermPrice helper directly and discarded the run function — it passed
+// while runRegister still used the raw "/yr" format, which is precisely the
+// bug it was named after. The prompt text is asserted via the error returned by
+// cmdutil.Confirm in a non-interactive shell without --yes, which embeds the
+// full prompt string.
+func TestRegisterRenew_MultiYearPromptIsNotLabelledPerYear(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	tests := []struct {
+		name     string
+		years    string
+		wantYr   bool // "/yr" is correct only for a single-year term
+		register bool
+	}{
+		{"register single year keeps /yr", "1", true, true},
+		{"register multi-year must not say /yr", "3", false, true},
+		{"renew single year keeps /yr", "1", true, false},
+		{"renew multi-year must not say /yr", "2", false, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			price := 699.90
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "getPricing"):
+					_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+						PurchasePrice: &price, RenewalPrice: &price,
+					})
+				case strings.Contains(r.URL.Path, "checkAvailability"):
+					results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+					_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+				case strings.Contains(r.URL.Path, "claims"):
+					_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
+				default:
+					t.Errorf("no purchase should be made: %s %s", r.Method, r.URL)
+					http.Error(w, "unexpected", http.StatusInternalServerError)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			var cmd *cobra.Command
+			var run func(*cobra.Command, []string) error
+			if tc.register {
+				cmd, run = cmdForRegister(t, srv), runRegister
+			} else {
+				cmd, run = cmdForRenew(t, srv), runRenew
+			}
+			// Deliberately NOT setting --yes: non-interactively, Confirm returns
+			// an error carrying the prompt it would have shown, which is the only
+			// way to inspect the message without a TTY.
+			if err := cmd.PersistentFlags().Set("yes", "false"); err != nil {
+				t.Fatalf("setting yes flag: %v", err)
+			}
+			if err := cmd.Flags().Set("years", tc.years); err != nil {
+				t.Fatalf("setting years flag: %v", err)
+			}
+
+			err := run(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatal("expected the confirmation to fail non-interactively, exposing the prompt")
+			}
+			prompt := err.Error()
+
+			if !strings.Contains(prompt, "699.90") {
+				t.Fatalf("prompt should quote the price, got: %s", prompt)
+			}
+			if hasYr := strings.Contains(prompt, "/yr"); hasYr != tc.wantYr {
+				t.Errorf("years=%s prompt %q: /yr present=%v, want %v", tc.years, prompt, hasYr, tc.wantYr)
+			}
+			if !tc.wantYr && !strings.Contains(prompt, "total for "+tc.years) {
+				t.Errorf("multi-year prompt should state the term total, got: %s", prompt)
+			}
+		})
+	}
+}
+
+// TestUpdate_PrivacyPurchaseIsConfirmed guards a consistency hole with real
+// money behind it. `domain privacy on` deliberately confirms first, because
+// enabling WHOIS privacy can be billable on accounts without a bundled plan.
+// `domain update --privacy=true` reaches the identical API call — both now PATCH
+// /core/v1/domains/{name} with privacyEnabled — but asked nothing.
+//
+// Two ways to the same charge, only one of which paused.
+func TestUpdate_PrivacyPurchaseIsConfirmed(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patched = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com","privacyEnabled":false}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	// No --yes: non-interactively, a billable change must not proceed silently.
+	cmd := baseCmd(t, srv)
+	cmd.Flags().Bool("autorenew", false, "")
+	cmd.Flags().Bool("privacy", false, "")
+	cmd.Flags().Bool("lock", false, "")
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	root.AddCommand(cmd)
+	if err := cmd.Flags().Set("privacy", "true"); err != nil {
+		t.Fatalf("setting privacy flag: %v", err)
+	}
+
+	err := runUpdate(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("enabling privacy is billable and must be confirmed, like 'domain privacy on'")
+	}
+	if patched {
+		t.Error("the update was sent despite no confirmation")
+	}
+}
+
+// TestUpdate_NonBillableChangesDoNotPrompt is the counterweight: only the
+// billable field should gate. Turning autorenew on must stay frictionless.
+func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patched = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	cmd.Flags().Bool("autorenew", false, "")
+	cmd.Flags().Bool("privacy", false, "")
+	cmd.Flags().Bool("lock", false, "")
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	root.AddCommand(cmd)
+	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
+		t.Fatalf("setting autorenew flag: %v", err)
+	}
+
+	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("a non-billable update must not require confirmation: %v", err)
+	}
+	if !patched {
+		t.Error("the update was not sent")
+	}
+}

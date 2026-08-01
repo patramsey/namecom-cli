@@ -535,6 +535,23 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing import file: %w", err)
 	}
 
+	// Validate every record before writing any of them. `dns create` validates
+	// type/host/answer client-side; the import loop did not, and import is not
+	// transactional — so a file whose 4th record was malformed wrote 3 records
+	// and then failed on a server-side 422, leaving the zone half-updated.
+	for i, r := range records {
+		rtype, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
+		if err := cmdutil.ValidDNSType(rtype); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if err := cmdutil.ValidDNSHost(host); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+	}
+
 	created := 0
 	for _, r := range records {
 		body := gen.CreateRecordJSONRequestBody{

@@ -562,6 +562,31 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Enabling privacy can be billable, and `domain privacy on` confirms before
+	// doing it. This command reaches the identical API call, so it has to ask
+	// too — otherwise there are two routes to the same charge and only one of
+	// them pauses. Only gate on turning it ON: disabling never costs anything.
+	if cmd.Flags().Changed("privacy") {
+		if v, _ := cmd.Flags().GetBool("privacy"); v && !current.PrivacyEnabled {
+			ok, cerr := confirm(out, cmdutil.IsYes(cmd),
+				fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domain))
+			if cerr != nil {
+				return cerr
+			}
+			if !ok {
+				out.Warn("aborted")
+				return nil
+			}
+		}
+	}
+	// Removing the transfer lock has no cost but a real security consequence,
+	// so warn for the same reason `domain lock off` does.
+	if cmd.Flags().Changed("lock") {
+		if v, _ := cmd.Flags().GetBool("lock"); !v && current.Locked {
+			out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
+		}
+	}
+
 	resp, err := client.Gen().UpdateDomain(cmd.Context(), domain, body)
 	if err != nil {
 		return err

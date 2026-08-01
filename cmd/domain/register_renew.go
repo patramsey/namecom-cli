@@ -52,14 +52,28 @@ func init() {
 	registerCmd.Flags().BoolVar(&registerPrivacy, "privacy", false, "enable WHOIS privacy")
 	registerCmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "enable auto-renewal")
 	registerCmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "JSON file with contact data")
-	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "required for premium domains: confirmed purchase price in USD")
+	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "override the purchase price in USD (premium prices are filled in automatically; use this only to cap what you will pay)")
 	registerCmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false,
 		"acknowledge a trademark claim on this domain (required to register a claimed domain non-interactively; --yes does NOT cover this)")
 	registerCmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil,
 		"registry-required field as key=value; repeatable (see 'namecom domain requirements <tld>')")
 
 	renewCmd.Flags().IntVar(&renewYears, "years", 1, "number of years to renew")
-	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "required for premium domains: confirmed renewal price in USD")
+	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "override the renewal price in USD (premium prices are filled in automatically; use this only to cap what you will pay)")
+}
+
+// formatTermPrice renders a price for the term it actually covers.
+//
+// GetPricingForDomain returns the price for the REQUESTED period, not a
+// per-year rate: the spec's examples show purchasePrice 349.95 for one year and
+// 699.9 with years:2. Labelling a multi-year figure "/yr" therefore states
+// double (or triple) what the user will be charged, in the one message whose
+// job is to state the amount correctly.
+func formatTermPrice(price float64, years int) string {
+	if years <= 1 {
+		return fmt.Sprintf("$%.2f/yr", price)
+	}
+	return fmt.Sprintf("$%.2f total for %d years", price, years)
 }
 
 func runRegister(cmd *cobra.Command, args []string) error {
@@ -140,7 +154,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 
 	regPrice := ""
 	if pricing.PurchasePrice != nil {
-		regPrice = fmt.Sprintf("$%.2f/yr", *pricing.PurchasePrice)
+		regPrice = formatTermPrice(*pricing.PurchasePrice, registerYears)
 	}
 	// Skip the prompt entirely under --dry-run: the request body is assembled
 	// below, so the dry-run branch can't be hoisted above this point. Asking a
@@ -315,7 +329,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 
 	renewPriceStr := ""
 	if pricing.RenewalPrice != nil {
-		renewPriceStr = fmt.Sprintf("$%.2f/yr", *pricing.RenewalPrice)
+		renewPriceStr = formatTermPrice(*pricing.RenewalPrice, renewYears)
 	}
 	// See runRegister: --dry-run must not prompt, and must not hard-error in a
 	// non-interactive shell for an action it will never perform.
@@ -446,9 +460,22 @@ func renderClaimsNotice(out *output.Config, r gen.DomainClaimsCheckResponseSchem
 	lines := []string{"TRADEMARK CLAIM on " + r.Domain}
 	if r.ClaimsNotice != nil && *r.ClaimsNotice != "" {
 		lines = append(lines, *r.ClaimsNotice)
+	} else {
+		// The API's own documented claims_found example returns a claimId with
+		// an empty claims array and no claimsNotice key at all. Without a
+		// fallback the box would read only "TRADEMARK CLAIM on <domain>" while
+		// the prompt asks the user to confirm they have read "the notice above".
+		lines = append(lines,
+			"This domain matches a registered trademark. Proceeding with registration",
+			"acknowledges that you have received notice of this claim.")
 	}
 	for _, c := range r.Claims {
 		desc := c.Trademark
+		// Holder is a spec-required field and the most useful item in a
+		// trademark notice — whose mark this is.
+		if c.Holder != "" {
+			desc += " — " + c.Holder
+		}
 		if c.Jurisdiction != nil && *c.Jurisdiction != "" {
 			desc += " (" + *c.Jurisdiction
 			if c.RegistrationNumber != nil && *c.RegistrationNumber != "" {

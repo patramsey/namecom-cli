@@ -455,10 +455,15 @@ func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
 
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// inlineRegister now runs the same trademark check as `domain register`.
+		if strings.Contains(r.URL.Path, "claims") {
+			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decoding create body: %v", err)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
 	}))
 	t.Cleanup(srv.Close)
@@ -753,4 +758,157 @@ func TestArgMatcher(t *testing.T) {
 			t.Error("a reply about a domain we never asked about must not claim a slot")
 		}
 	})
+}
+
+// TestInlineRegister_ChecksTrademarkClaims closes a bypass of the legal gate.
+// `domain register` refuses to register a TMCH-matched name without an explicit
+// acknowledgement — and deliberately will not let --yes satisfy it. But
+// `domain check <domain>` offers to register the domain it just found available
+// and calls inlineRegister, which POSTed to /core/v1/domains with no claims
+// check and no Claims field at all.
+//
+// Same purchase, same legal notice requirement, no gate.
+func TestInlineRegister_ChecksTrademarkClaims(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var created bool
+	var claimsChecked bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "claims"):
+			claimsChecked = true
+			_, _ = w.Write([]byte(`{
+			  "domain":"tiktok.page","claimsProcessActive":true,
+			  "claimId":"abc123","notBefore":"2026-01-01T00:00:00Z","notAfter":"2026-12-31T00:00:00Z",
+			  "claimsNotice":"**This domain may infringe on a trademark claim.**",
+			  "claims":[{"trademark":"TIKTOK","jurisdiction":"US"}]
+			}`))
+		default:
+			created = true
+			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCheck(t, srv)
+	price := 12.99
+	err := inlineRegister(cmd, gen.SearchResult{
+		DomainName: "tiktok.page", Purchasable: true, PurchasePrice: &price,
+	})
+
+	if !claimsChecked {
+		t.Error("the inline register path must check for trademark claims like 'domain register' does")
+	}
+	if err == nil {
+		t.Error("a claimed domain must not be registered without an acknowledgement")
+	}
+	if created {
+		t.Error("BYPASS: a TMCH-matched domain was purchased with no claim notice and no acknowledgement")
+	}
+}
+
+// TestArgMatcher_DefectsFoundInReview covers four failure modes an adversarial
+// review found in the elimination heuristic. Each ends in a silently wrong
+// result with exit 0, which is the same class as the blank-row bug the matcher
+// was written to fix.
+func TestArgMatcher_DefectsFoundInReview(t *testing.T) {
+	t.Run("duplicate arguments leave the extra slot unclaimed, not mis-claimable", func(t *testing.T) {
+		// `check a.com a.com` is degenerate input. Idempotency wins over
+		// distributing duplicates: the zone pass and the pricing pass both look
+		// up the same API name and MUST resolve to the same slot, so a repeated
+		// lookup returns the cached index rather than advancing to the next
+		// duplicate. The leftover slot must then stay unclaimed — if elimination
+		// could later hand it to some unrelated reply, that reply's result would
+		// be rendered as though it answered the user's second argument.
+		m := newArgMatcher([]string{"a.com", "a.com"})
+		i, ok := m.match("a.com")
+		if !ok || i != 0 {
+			t.Fatalf("first lookup should claim slot 0, got %d ok=%v", i, ok)
+		}
+		if j, ok2 := m.match("a.com"); !ok2 || j != i {
+			t.Errorf("repeated lookup must be idempotent, got %d want %d", j, i)
+		}
+		// The duplicate slot is reported so runCheck can name it rather than
+		// emitting a blank row.
+		if got := m.unclaimed(); len(got) != 1 || got[0] != 1 {
+			t.Errorf("expected slot 1 to be reported unclaimed, got %v", got)
+		}
+		// And it must not be claimable by an unrelated ASCII reply.
+		if _, ok := m.match("something-else.com"); ok {
+			t.Error("an unrelated reply claimed the leftover duplicate slot")
+		}
+	})
+
+	t.Run("an unrequested reply never claims an ASCII argument", func(t *testing.T) {
+		// The API returning a name we did not ask about must not be assumed to
+		// be one of ours. b.com is plain ASCII: if it had been normalized we
+		// would have matched it exactly, so an unmatched reply is an anomaly,
+		// not a canonicalization.
+		m := newArgMatcher([]string{"a.com", "b.com"})
+		if _, ok := m.match("a.com"); !ok {
+			t.Fatal("exact match failed")
+		}
+		if _, ok := m.match("a.co"); ok {
+			t.Error("an unrequested reply claimed the slot of a domain the user asked about")
+		}
+	})
+
+	t.Run("elimination still works for a non-ASCII argument", func(t *testing.T) {
+		// The case the heuristic exists for: we cannot compute café.com's
+		// punycode locally, so an unmatched reply plausibly IS its canonical form.
+		m := newArgMatcher([]string{"a.com", "café.com"})
+		if _, ok := m.match("a.com"); !ok {
+			t.Fatal("exact match failed")
+		}
+		if i, ok := m.match("xn--caf-dma.com"); !ok || i != 1 {
+			t.Errorf("expected the IDN slot, got %d ok=%v", i, ok)
+		}
+	})
+
+	t.Run("two unresolvable IDNs are refused rather than swapped", func(t *testing.T) {
+		m := newArgMatcher([]string{"café.com", "résumé.com"})
+		if _, ok := m.match("xn--caf-dma.com"); ok {
+			t.Error("with two IDN arguments outstanding the pairing is ambiguous and must be refused")
+		}
+	})
+}
+
+// TestCheck_UnverifiedDomainIsNotReportedAsTaken is the safety net that makes
+// the above survivable. Whatever the matcher can or cannot resolve, a domain
+// the CLI never got an answer for must never render as "taken" — that is the
+// original bug, and reporting an available domain as unavailable is the
+// expensive direction to be wrong in.
+func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "zonecheck"):
+			// Two IDN args, replies in canonical form: unresolvable by elimination.
+			_, _ = w.Write([]byte(`{"results":[
+			  {"domainName":"xn--caf-dma.com","available":true},
+			  {"domainName":"xn--rsum-bpad.com","available":true}
+			],"total":2}`))
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := runCheck(cmd, []string{"café.com", "résumé.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+
+	var got []gen.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	for i, r := range got {
+		if r.DomainName == "" {
+			t.Errorf("result %d is a blank row — an unchecked domain must still be named: %s", i, buf.String())
+		}
+	}
 }

@@ -59,6 +59,16 @@ func inlineRegister(cmd *cobra.Command, r gen.SearchResult) error {
 	}
 	body.PurchaseType, _ = nonDefaultPurchaseType(r)
 
+	// Same trademark gate as `domain register`. This path offers to buy a domain
+	// too, so skipping the check here would let `domain check <name>` acquire a
+	// TMCH-matched name with no notice shown and no acknowledgement sent —
+	// walking straight around the gate the register command enforces.
+	claims, err := resolveClaims(cmd, out, domainName, false)
+	if err != nil {
+		return err
+	}
+	body.Claims = claims
+
 	stop := out.Spin(fmt.Sprintf("Registering %s…", domainName))
 	resp, err := client.Gen().CreateDomain(cmd.Context(), &gen.CreateDomainParams{}, body)
 	stop()
@@ -281,6 +291,21 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Safety net: any argument no reply resolved to would otherwise render as a
+	// zero-valued row — blank name, Purchasable false — which reads as "taken".
+	// Reporting an available domain as unavailable is the expensive direction to
+	// be wrong in, and it is the exact bug this whole path was fixed for. Name
+	// the domain the user asked about and leave it explicitly unpurchasable
+	// rather than silently asserting it is gone.
+	for _, i := range matcher.unclaimed() {
+		if finalResults[i].DomainName == "" {
+			sld, tld, _ := strings.Cut(args[i], ".")
+			finalResults[i] = gen.SearchResult{DomainName: args[i], Sld: sld, Tld: tld}
+			out.Warn(fmt.Sprintf("could not determine availability for %s — run "+
+				"'namecom domain check --authoritative %s' to query the registry directly", args[i], args[i]))
+		}
+	}
+
 	if err := renderSearchResults(out, &finalResults); err != nil {
 		return err
 	}
@@ -388,57 +413,85 @@ func renderSearchResults(out *output.Config, results *[]gen.SearchResult) error 
 // argument that asked about it.
 //
 // The API normalizes names server-side and replies "in its canonical (ASCII /
-// punycode) form", so the reply is not always spelled the way the user typed
-// it. Arguments are already lowercased before we get here, which covers case
-// differences; what remains is punycode. Encoding punycode locally would mean
-// depending on golang.org/x/net/idna — ~9MB of module for one edge case — so
-// instead the reply is resolved by elimination.
+// punycode) form", so a reply is not always spelled the way the user typed it.
+// Arguments are lowercased before we get here, which covers case; what remains
+// is punycode. Encoding it locally would mean depending on
+// golang.org/x/net/idna, so an unrecognized reply is instead resolved by
+// elimination — but only under conditions that make the pairing safe:
 //
-// The rule is deliberately conservative: an unrecognized reply is paired with a
-// pending argument ONLY when exactly one of each remains, which makes the
-// pairing unambiguous. With two or more outstanding on either side the reply is
-// left unmatched and falls through to the CheckAvailability path, because
-// guessing could report one domain's availability under another's name — worse
-// than the blank row it would replace.
+//   - exactly one argument may be outstanding, so the pairing is unambiguous;
+//   - that argument must contain non-ASCII characters. An all-ASCII argument
+//     would have matched exactly if it were ours, so an unmatched reply is an
+//     anomaly (a domain we never asked about), not a canonicalization — and
+//     claiming a slot for it would report a result under the wrong name.
+//
+// Anything else is refused. runCheck then names the unresolved argument itself
+// rather than emitting a blank row, so an unchecked domain is never presented
+// as taken.
 type argMatcher struct {
-	idx     map[string]int
+	args    []string
 	claimed []bool
+	// alias remembers resolutions so repeated lookups (the zone pass and the
+	// pricing pass both ask) return the same slot.
+	alias map[string]int
 }
 
 func newArgMatcher(args []string) *argMatcher {
-	m := &argMatcher{idx: make(map[string]int, len(args)), claimed: make([]bool, len(args))}
-	for i, name := range args {
-		m.idx[name] = i
-	}
-	return m
+	return &argMatcher{args: args, claimed: make([]bool, len(args)), alias: map[string]int{}}
 }
 
-// match resolves an API-returned name to an argument index. It is idempotent:
-// asking about the same name twice (the zone-check pass and the pricing pass
-// both do) returns the same slot.
+// match resolves an API-returned name to an argument index.
 func (m *argMatcher) match(apiName string) (int, bool) {
-	if i, ok := m.idx[apiName]; ok {
-		m.claimed[i] = true
+	if i, ok := m.alias[apiName]; ok {
 		return i, true
 	}
+	// First unclaimed argument with this exact name. Scanning rather than using
+	// a name->index map keeps duplicate arguments (`check a.com a.com`) from
+	// collapsing onto one slot and orphaning the other.
+	for i, a := range m.args {
+		if !m.claimed[i] && a == apiName {
+			m.claimed[i] = true
+			m.alias[apiName] = i
+			return i, true
+		}
+	}
 
-	// Unrecognized spelling. Pair it only if exactly one argument is still
-	// unaccounted for.
+	// Unrecognized spelling: eliminate only if exactly one argument is pending
+	// AND it is one whose canonical form we could not have computed.
 	pending := -1
 	for i, done := range m.claimed {
 		if done {
 			continue
 		}
 		if pending != -1 {
-			return 0, false // ambiguous — refuse to guess
+			return 0, false // ambiguous
 		}
 		pending = i
 	}
-	if pending == -1 {
+	if pending == -1 || isASCII(m.args[pending]) {
 		return 0, false
 	}
 	m.claimed[pending] = true
-	// Remember the alias so the second pass resolves identically.
-	m.idx[apiName] = pending
+	m.alias[apiName] = pending
 	return pending, true
+}
+
+// unclaimed returns the indexes of arguments no reply was matched to.
+func (m *argMatcher) unclaimed() []int {
+	var out []int
+	for i, done := range m.claimed {
+		if !done {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 127 {
+			return false
+		}
+	}
+	return true
 }

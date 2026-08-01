@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -116,9 +117,22 @@ func TestContextCancelStopsRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	start := time.Now()
 	_, err := newTestClient(http.DefaultTransport).Do(req)
+	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+
+	// Assert the cancellation actually short-circuited the backoff. Checking
+	// only err != nil passes even if sleep() ignores ctx entirely and blocks for
+	// the full retry schedule — verified: replacing the ctx.Done() select with a
+	// bare <-timer.C left this green while the call took 30s instead of 0.1s.
+	if elapsed > 2*time.Second {
+		t.Errorf("cancellation did not interrupt the backoff: took %v", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Errorf("expected a context error, got %v", err)
 	}
 }
 
@@ -375,5 +389,60 @@ func TestMaxRetriesCanBeDisabled(t *testing.T) {
 					tc.maxRetries, got, tc.wantCalls, tc.description)
 			}
 		})
+	}
+}
+
+// TestRetriesEOF covers a regression introduced when retries were narrowed to
+// net.Error: a peer closing a FRESH connection surfaces as bare io.EOF, which
+// does not satisfy net.Error. That is the single most common transient failure
+// in practice — a load balancer draining, a server restarting, a proxy
+// recycling — and net/http's own internal retry does not absorb it either
+// (shouldRetryRequest short-circuits unless the connection was reused).
+//
+// Failing to retry a transient error costs reliability; retrying a permanent
+// one only costs time. The classification must not be so tight that the common
+// case falls through.
+func TestRetriesEOF(t *testing.T) {
+	// Accept connections and close them immediately for the first N attempts,
+	// then hand off to a real handler.
+	var attempts atomic.Int32
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			if attempts.Add(1) <= 2 {
+				_ = c.Close() // peer sees EOF
+				continue
+			}
+			go func(conn net.Conn) {
+				defer func() { _ = conn.Close() }()
+				buf := make([]byte, 1024)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"))
+			}(c)
+		}
+	}()
+
+	base := "http://" + ln.Addr().String()
+	c, err := New(Options{BaseURL: base, MaxRetries: 4})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	resp, err := c.HTTPClient().Get(base + "/core/v1/domains")
+	if err != nil {
+		t.Fatalf("an EOF on a fresh connection must be retried, got: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := attempts.Load(); got < 3 {
+		t.Errorf("expected retries past the closed connections, got %d attempt(s)", got)
 	}
 }

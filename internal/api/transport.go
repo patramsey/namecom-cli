@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -47,15 +48,44 @@ func retryableStatus(code int) bool {
 
 // transientErr reports whether err might succeed on a retry.
 //
-// net.Error covers the genuinely transient failures — connection refused,
-// timeouts, DNS hiccups, resets. Everything else reaching us from RoundTrip is
-// a client-side construction problem (an invalid header value, an unsupported
-// scheme, a malformed method): net/http rejects those before writing a byte, so
-// every retry fails identically. Retrying them only made the user wait out the
-// full backoff schedule — about 7 seconds — for a verdict available immediately.
+// The classification defaults to RETRY, deliberately. Failing to retry a
+// transient failure costs reliability; retrying a permanent one only costs a
+// little time. An earlier version inverted that — allowing only net.Error —
+// which silently stopped retrying bare io.EOF, the shape a peer closing a fresh
+// connection produces (load balancer draining, server restart, proxy recycling)
+// and the single most common transient failure in practice. net/http does not
+// absorb it either: its internal retry short-circuits unless the connection was
+// reused.
+//
+// Only request-construction failures are treated as permanent. net/http rejects
+// those before writing a byte, so every attempt fails identically — retrying
+// them just made the user wait out the full backoff for a verdict available
+// immediately.
 func transientErr(err error) bool {
+	// Network-layer failures: refused, reset, timeout, DNS.
 	var netErr net.Error
-	return errors.As(err, &netErr)
+	if errors.As(err, &netErr) {
+		return true
+	}
+	// A closed connection surfaces as a bare EOF, which is not a net.Error.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	// Client-side construction problems, which no retry can fix. Matched on
+	// message because net/http returns unexported error values for these.
+	msg := err.Error()
+	for _, permanent := range []string{
+		"invalid header field",
+		"unsupported protocol scheme",
+		"invalid method",
+		"no Host in request URL",
+		"http: nil Request",
+	} {
+		if strings.Contains(msg, permanent) {
+			return false
+		}
+	}
+	return true
 }
 
 // idempotent reports whether retrying req on a 5xx is safe. GET/HEAD/PUT/DELETE

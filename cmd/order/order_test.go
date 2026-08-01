@@ -334,7 +334,9 @@ func cmdForRefund(t *testing.T, srv *httptest.Server, dryRun bool) *cobra.Comman
 func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 	const resp = `{}`
 
+	var dryRunHits int
 	dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dryRunHits++
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(resp))
 	}))
@@ -343,6 +345,12 @@ func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 	if err := runRefund(dcmd, nil); err != nil {
 		t.Fatalf("dry-run invocation: %v", err)
 	}
+	// The whole promise of --dry-run on an irreversible money operation is that
+	// nothing happens. Comparing only the printed method and path would not
+	// notice a missing `return` that printed the preview AND then refunded.
+	if dryRunHits != 0 {
+		t.Errorf("--dry-run issued %d real request(s) — a refund cannot be undone", dryRunHits)
+	}
 	buf, ok := cmdutil.Out(dcmd).Writer.(*bytes.Buffer)
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
@@ -350,8 +358,10 @@ func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 	printed := dryRunLine(t, buf.String())
 
 	var last string
+	var sentBody map[string]any
 	lsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		last = r.Method + " " + r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&sentBody)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(resp))
 	}))
@@ -366,6 +376,42 @@ func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 
 	if printed != last {
 		t.Errorf("--dry-run reports %q but the command actually sends %q", printed, last)
+	}
+
+	// Assert the refund targets what the flags asked for. Matching only the
+	// endpoint would let the order ID or item IDs be wrong — refunding the wrong
+	// items on the wrong order, invisibly.
+	if got := sentBody["orderId"]; got != float64(42) {
+		t.Errorf("refund sent orderId %#v, want 42", got)
+	}
+	items, ok := sentBody["orderItemIds"].([]any)
+	if !ok || len(items) != 1 || items[0] != float64(7) {
+		t.Errorf("refund sent orderItemIds %#v, want [7]", sentBody["orderItemIds"])
+	}
+}
+
+// TestRefund_DeclinedConfirmationDoesNotRefund pins the other irreversible
+// path: answering "no" must not spend money. Nothing covered the declined
+// branch, so discarding confirmRefund's answer went unnoticed.
+func TestRefund_DeclinedConfirmationDoesNotRefund(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	// No --yes and no TTY: Confirm refuses rather than assuming consent.
+	cmd := cmdForRefund(t, srv, false)
+	cmd.Root().PersistentFlags().Set("yes", "false") //nolint:errcheck // test setup
+	if err := runRefund(cmd, nil); err == nil {
+		t.Fatal("expected refusal without confirmation")
+	}
+	if hits != 0 {
+		t.Errorf("a refund was issued without confirmation (%d request(s))", hits)
 	}
 }
 

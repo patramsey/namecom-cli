@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -124,44 +125,72 @@ func TestAPI_ReturnsAPIErrorForExitCode(t *testing.T) {
 	}
 }
 
-// TestAPI_PathCannotRedirectToAnotherHost is a credential-exfiltration guard.
-// `namecom api` takes an arbitrary path and now attaches the account's
-// Authorization header to it (the raw passthrough previously sent no auth at
-// all, so there was nothing to leak). If a crafted path could retarget the
-// request at another host — via a protocol-relative "//evil.example", an
-// absolute URL, or ../ traversal above the base — the token would be sent
-// straight to it.
-func TestAPI_PathCannotRedirectToAnotherHost(t *testing.T) {
-	paths := []string{
+// TestBuildAPIURL_CannotRetargetAnotherHost is a credential-exfiltration guard.
+//
+// `namecom api` takes an arbitrary path from argv and the resulting request
+// carries the account's Authorization header. If a crafted path could move the
+// request to another host, the credential goes with it.
+//
+// This asserts on the URL that gets BUILT, deliberately. An earlier version
+// stood up an httptest server and checked what its handler observed — which is
+// no check at all: if a hostile path really does retarget the request, the local
+// handler never runs and every assertion passes vacuously. It was verified to
+// pass against a knowingly vulnerable implementation (url.ResolveReference)
+// while real requests carrying the credential went to an external host. Even
+// asserting "the call returned an error" is too weak, because a DNS failure
+// produces an error only AFTER the connection was attempted.
+func TestBuildAPIURL_CannotRetargetAnotherHost(t *testing.T) {
+	const base = "https://api.name.com"
+
+	hostile := []string{
 		"//evil.example/steal",
 		"https://evil.example/steal",
 		"http://evil.example/steal",
 		"../../../../evil.example/steal",
 		"/core/v1/../../../evil.example",
 		`\\evil.example\steal`,
+		"https://user:pass@evil.example/steal",
+		"//evil.example",
 	}
-
-	for _, p := range paths {
+	for _, p := range hostile {
 		t.Run(p, func(t *testing.T) {
-			var gotHost, gotAuth string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotHost, gotAuth = r.Host, r.Header.Get("Authorization")
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{}`))
-			}))
-			t.Cleanup(srv.Close)
-
-			cmd, _ := apiCmd(t, srv)
-			// An error is a perfectly good outcome; reaching another host is not.
-			_ = runAPI(cmd, []string{"GET", p})
-
-			if gotAuth != "" && !strings.Contains(srv.URL, gotHost) {
-				t.Errorf("credential sent to unexpected host %q for path %q", gotHost, p)
+			got, err := buildAPIURL(base, p)
+			if err != nil {
+				return // refusing outright is a fine outcome
 			}
-			if strings.Contains(gotHost, "evil.example") {
-				t.Errorf("path %q retargeted the request to %q", p, gotHost)
+			u, perr := url.Parse(got)
+			if perr != nil {
+				t.Fatalf("built an unparseable URL %q: %v", got, perr)
+			}
+			if u.Host != "api.name.com" {
+				t.Errorf("path %q built %q — host %q, credential would be sent off-site",
+					p, got, u.Host)
+			}
+			if u.Scheme != "https" {
+				t.Errorf("path %q downgraded the scheme to %q", p, u.Scheme)
 			}
 		})
+	}
+}
+
+// TestBuildAPIURL_KeepsLegitimatePaths is the counterweight: the guard must not
+// break ordinary use.
+func TestBuildAPIURL_KeepsLegitimatePaths(t *testing.T) {
+	const base = "https://api.name.com"
+	cases := map[string]string{
+		"/core/v1/domains":             "https://api.name.com/core/v1/domains",
+		"core/v1/domains":              "https://api.name.com/core/v1/domains",
+		"/core/v1/domains/example.com": "https://api.name.com/core/v1/domains/example.com",
+	}
+	for in, want := range cases {
+		got, err := buildAPIURL(base, in)
+		if err != nil {
+			t.Errorf("buildAPIURL(%q) errored: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("buildAPIURL(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

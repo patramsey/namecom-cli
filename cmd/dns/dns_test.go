@@ -1097,3 +1097,56 @@ func TestDNSList_TypeFilterSearchesAllPages(t *testing.T) {
 		t.Errorf("--type MX must find the MX record on page 2, got: %s", buf.String())
 	}
 }
+
+// TestDNSImport_ValidatesBeforeWriting guards the one bulk-write path that
+// performed no client-side validation. dns create checks type/host/answer
+// before sending; the import loop sent whatever the file contained.
+//
+// That combines badly with import not being transactional: a file whose 4th
+// record is malformed writes 3 records, then fails on a server-side 422. Every
+// record is validated up front so a bad file is rejected before anything is
+// written.
+func TestDNSImport_ValidatesBeforeWriting(t *testing.T) {
+	// Third record has an invalid A answer; the first two are fine.
+	payload := `[
+	  {"type":"A","host":"one","answer":"1.1.1.1","ttl":300},
+	  {"type":"A","host":"two","answer":"2.2.2.2","ttl":300},
+	  {"type":"A","host":"bad","answer":"not-an-ip","ttl":300}
+	]`
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	var writes int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writes++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	importFile, importDryRun = path, false
+	t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+	err = runImport(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected an error for a malformed record")
+	}
+	if writes != 0 {
+		t.Errorf("a malformed file must be rejected before any record is written, got %d write(s)", writes)
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error should identify the offending record, got: %v", err)
+	}
+}
