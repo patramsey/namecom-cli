@@ -240,3 +240,51 @@ func TestDNSSECList_JSONUsesDataEnvelope(t *testing.T) {
 		t.Errorf("expected digest ABCD, got %q", env.Data[0].Digest)
 	}
 }
+
+// TestDNSSECCreate_SendsEachFieldToItsOwnKey covers a request body that had no
+// guard at all: nothing decoded what `dnssec create` sends, so swapping
+// Algorithm with KeyTag — or blanking the digest — left all nine tests green.
+//
+// The values are deliberately distinct so a transposition cannot pass. DNSSEC
+// key material is submitted to the registry; a silently mis-mapped field
+// produces a DS record that does not validate, which breaks resolution for the
+// zone rather than merely erroring.
+func TestDNSSECCreate_SendsEachFieldToItsOwnKey(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"digest":"ABC123"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCreate(t, srv)
+	if err := cmd.ParseFlags([]string{
+		"--algorithm", "8",
+		"--digest-type", "2",
+		"--key-tag", "54321",
+		"--digest", "ABC123DEF456",
+	}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	if got == nil {
+		t.Fatal("create request was never sent")
+	}
+
+	for key, want := range map[string]any{
+		"algorithm":  float64(8),
+		"digestType": float64(2),
+		"keyTag":     float64(54321),
+		"digest":     "ABC123DEF456",
+	} {
+		if got[key] != want {
+			t.Errorf("body[%q] = %#v, want %#v (full body: %#v)", key, got[key], want, got)
+		}
+	}
+}

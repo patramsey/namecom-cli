@@ -36,6 +36,11 @@ func neverCalledServer(t *testing.T) *httptest.Server {
 // with the same flags that runCreate inspects via cmd.Flags().Changed().
 func cmdForCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	t.Helper()
+	// runCreate branches on output.IsInteractive(). Under `go test` stdin is not
+	// a TTY so it happens to be false, but that is ambient state, not a
+	// controlled input: every test built from this helper silently depended on
+	// the environment. Pin it.
+	t.Cleanup(output.StubInteractive(false))
 	client, err := api.New(api.Options{BaseURL: srv.URL})
 	if err != nil {
 		t.Fatalf("api.New: %v", err)

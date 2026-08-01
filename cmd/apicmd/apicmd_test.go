@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -243,5 +245,90 @@ func TestAPI_CredentialNotForwardedOnCrossHostRedirect(t *testing.T) {
 
 	if attackerSawAuth != "" {
 		t.Errorf("Authorization header followed a cross-host redirect: %q", attackerSawAuth)
+	}
+}
+
+// TestAPI_PropagatesMethodPathAndBody covers what `namecom api` is FOR: passing
+// the caller's method, path, and body through untouched. Nothing asserted any
+// of it — hardcoding runAPI to a bodyless GET left every apicmd test green,
+// because they only checked headers and error types.
+//
+// This is the raw escape hatch. If it quietly rewrites the request, a user
+// debugging an API problem is debugging the wrong request.
+func TestAPI_PropagatesMethodPathAndBody(t *testing.T) {
+	tests := []struct {
+		name, method, path, data string
+	}{
+		{"GET with no body", "GET", "/core/v1/domains", ""},
+		{"POST with a JSON body", "POST", "/core/v1/domains/example.com/records", `{"host":"@","type":"A"}`},
+		{"PATCH with a body", "PATCH", "/core/v1/domains/example.com", `{"locked":true}`},
+		{"DELETE with no body", "DELETE", "/core/v1/domains/example.com/records/7", ""},
+		{"lowercase method is upcased", "post", "/core/v1/domains", `{}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotMethod, gotPath, gotBody string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath = r.Method, r.URL.Path
+				b, _ := io.ReadAll(r.Body)
+				gotBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd, _ := apiCmd(t, srv)
+			apiBody = tc.data
+			if err := runAPI(cmd, []string{tc.method, tc.path}); err != nil {
+				t.Fatalf("runAPI: %v", err)
+			}
+
+			if want := strings.ToUpper(tc.method); gotMethod != want {
+				t.Errorf("method: got %q, want %q", gotMethod, want)
+			}
+			if gotPath != tc.path {
+				t.Errorf("path: got %q, want %q", gotPath, tc.path)
+			}
+			if gotBody != tc.data {
+				t.Errorf("body: got %q, want %q", gotBody, tc.data)
+			}
+		})
+	}
+}
+
+// TestAPI_ReadsBodyFromStdin covers `--data -`, which the command's own help
+// advertises. Nothing exercised it.
+func TestAPI_ReadsBodyFromStdin(t *testing.T) {
+	const payload = `{"host":"www","type":"CNAME"}`
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	go func() {
+		defer func() { _ = w.Close() }()
+		_, _ = w.WriteString(payload)
+	}()
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig; _ = r.Close() })
+
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		b, _ := io.ReadAll(req.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, _ := apiCmd(t, srv)
+	apiBody = "-"
+	if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	if gotBody != payload {
+		t.Errorf("--data - should stream stdin as the body: got %q, want %q", gotBody, payload)
 	}
 }

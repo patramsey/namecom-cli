@@ -446,3 +446,48 @@ func TestRetriesEOF(t *testing.T) {
 		t.Errorf("expected retries past the closed connections, got %d attempt(s)", got)
 	}
 }
+
+// TestRateLimiterPacesRequests covers the client-side rate limiter, which had
+// no test at all: newTestClient installs rate.Inf, so every existing test
+// bypasses it. The limiter exists to stay under the API's published ceiling and
+// to leave headroom for other consumers on the same account — deleting it would
+// have been invisible.
+//
+// Uses a deliberately high RPS so the test stays fast while the pacing is still
+// measurable.
+func TestRateLimiterPacesRequests(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// 50 rps with a burst of 1: the first request goes immediately, each
+	// subsequent one waits ~20ms.
+	const rps, burst, n = 50, 1, 5
+	c, err := New(Options{BaseURL: srv.URL, RPS: rps, Burst: burst})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		resp, gerr := c.HTTPClient().Get(srv.URL)
+		if gerr != nil {
+			t.Fatalf("request %d: %v", i, gerr)
+		}
+		_ = resp.Body.Close()
+	}
+	elapsed := time.Since(start)
+
+	if got := hits.Load(); got != n {
+		t.Fatalf("expected %d requests to reach the server, got %d", n, got)
+	}
+	// (n-1) intervals at 1/rps each, with slack for scheduling.
+	minExpected := time.Duration(n-1) * time.Second / rps / 2
+	if elapsed < minExpected {
+		t.Errorf("requests were not rate limited: %d requests in %v, expected at least %v",
+			n, elapsed, minExpected)
+	}
+}
