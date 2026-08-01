@@ -67,7 +67,16 @@ func ErrorFromResponse(statusCode int, body []byte) *APIError {
 		}
 	}
 	if statusCode == http.StatusUnauthorized {
-		e.Details = strings.TrimSpace(e.Details + " (note: sandbox uses a separate API token from production)")
+		// Error() already renders details as "message (details)", so the note
+		// must not carry its own parentheses — that produced
+		// "Unauthorized ((note: …))". Join to any API-supplied details rather
+		// than nesting a second parenthetical inside the first.
+		const note = "note: sandbox uses a separate API token from production"
+		if d := strings.TrimSpace(e.Details); d != "" {
+			e.Details = d + "; " + note
+		} else {
+			e.Details = note
+		}
 	}
 	return e
 }

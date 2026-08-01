@@ -72,6 +72,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if listPage < 1 {
 		return fmt.Errorf("--page must be 1 or greater (got %d)", listPage)
 	}
+	if err := cmdutil.ValidSortField(listSort); err != nil {
+		return err
+	}
 	if listExpiringAfter != "" {
 		if err := cmdutil.ValidDate(listExpiringAfter, "expiring-after"); err != nil {
 			return err
@@ -279,6 +282,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	var d gen.DomainResponsePayload
 	if err := api.Decode(resp, &d); err != nil {
 		return err
+	}
+
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		out.PrintQuiet([]string{d.DomainName})
+		return nil
 	}
 
 	switch out.Format {

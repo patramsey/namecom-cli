@@ -392,6 +392,14 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --quiet prints just the code, so it can be captured directly:
+	//   CODE=$(namecom domain auth-code example.com -q)
+	// Detail commands ignored --quiet entirely and printed a bordered table.
+	if out.QuietMode {
+		out.PrintQuiet([]string{result.AuthCode})
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(result)

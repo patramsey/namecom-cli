@@ -209,6 +209,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		id := ""
+		if entry.Id != nil {
+			id = strconv.Itoa(int(*entry.Id))
+		}
+		out.PrintQuiet([]string{id})
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(entry)

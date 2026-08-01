@@ -193,6 +193,17 @@ func ValidNameserver(ns string, idx int) error {
 	return nil
 }
 
+// ValidSortField checks a --sort value against the fields the API accepts.
+// It was the only enum flag with no client-side check, so a typo surfaced as a
+// raw API error rather than a list of what's allowed.
+func ValidSortField(field string) error {
+	switch field {
+	case "", "domainName", "expireDate", "createDate":
+		return nil
+	}
+	return fmt.Errorf("invalid --sort %q: valid fields are domainName, expireDate, createDate", field)
+}
+
 // ValidYears checks that n is a valid domain registration/renewal period.
 func ValidYears(n int) error {
 	if n < 1 || n > 10 {

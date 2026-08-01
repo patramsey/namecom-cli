@@ -1090,3 +1090,93 @@ func TestDryRunMatchesRealRequest_Domain(t *testing.T) {
 		})
 	}
 }
+
+// TestQuietMode_DetailCommands guards a scripting gap: --quiet was implemented
+// only in list commands. Every detail command ignored it and printed a full
+// table, so the obvious scripting invocations did not work.
+//
+// `domain auth-code <domain> -q` is the clearest case — the whole point is to
+// capture the code into a variable for a transfer:
+//
+//	CODE=$(namecom domain auth-code example.com -q)
+//
+// Instead it emitted a bordered table.
+func TestQuietMode_DetailCommands(t *testing.T) {
+	tests := []struct {
+		name string
+		resp string
+		run  func(*cobra.Command, []string) error
+		args []string
+		want string
+	}{
+		{
+			name: "auth-code prints just the code",
+			resp: `{"authCode":"SECRET-EPP-CODE"}`,
+			run:  runAuthCode,
+			args: []string{"example.com"},
+			want: "SECRET-EPP-CODE",
+		},
+		{
+			name: "domain get prints just the name",
+			resp: `{"domainName":"example.com","locked":true}`,
+			run:  runGet,
+			args: []string{"example.com"},
+			want: "example.com",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.resp))
+			}))
+			t.Cleanup(srv.Close)
+
+			client, err := api.New(api.Options{BaseURL: srv.URL})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			var buf bytes.Buffer
+			out := &output.Config{
+				Format: output.FormatTable, Color: output.ColorNever,
+				QuietMode: true, Writer: &buf, EWriter: &bytes.Buffer{},
+			}
+			cmd := &cobra.Command{}
+			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+			cmd.SetContext(ctx)
+
+			if err := tc.run(cmd, tc.args); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			got := strings.TrimSpace(buf.String())
+			if got != tc.want {
+				t.Errorf("--quiet should print exactly %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+// TestList_SortValidated guards the one enum flag that wasn't checked
+// client-side. Every other enum (--type, --status, --output, forwarding type)
+// validates before the request; --sort passed a typo straight through and the
+// user got a raw API error instead of the list of valid fields.
+func TestList_SortValidated(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := baseCmd(t, srv)
+	cmd.Flags().StringVar(&listSort, "sort", "", "")
+	cmd.Flags().Int32Var(&listPage, "page", 1, "")
+	t.Cleanup(func() { listSort = ""; listPage = 1 })
+	if err := cmd.ParseFlags([]string{"--sort", "expiryDate"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	err := runList(cmd, nil)
+	if err == nil {
+		t.Fatal("expected a client-side error for an invalid --sort field")
+	}
+	if !strings.Contains(err.Error(), "expireDate") {
+		t.Errorf("error should list the valid sort fields, got: %v", err)
+	}
+}

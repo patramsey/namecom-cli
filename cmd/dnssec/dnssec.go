@@ -143,6 +143,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		out.PrintQuiet([]string{key.Digest})
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(key)

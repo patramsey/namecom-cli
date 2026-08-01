@@ -57,7 +57,11 @@ var gf globalFlags
 // rootCmd is the top-level `namecom` command. It configures the API client and
 // output renderer and stashes them on the context for every subcommand.
 var rootCmd = &cobra.Command{
-	Use:   "namecom",
+	// "[command]" in Use so the rendered usage line reads
+	// "namecom [command] [flags]". The custom help template builds it from
+	// UseLine(), which only appends "[flags]" — so root help read as though the
+	// tool took no subcommand at all. cmd.Name() still resolves to "namecom".
+	Use:   "namecom [command]",
 	Short: "CLI for the name.com Core API",
 	Long: `namecom — CLI for the name.com Core API
 
