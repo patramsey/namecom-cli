@@ -678,3 +678,64 @@ func TestURLList_PaginationIsNotAliased(t *testing.T) {
 		}
 	}
 }
+
+// TestURLUpdate_TypeOnlyWithoutTo guards a scripting dead end: runUpdate
+// required --to whenever stdin was not a TTY, so
+// `namecom url update example.com 1 --type masked` failed in any script with
+// "--to is required" — even though the command is already a read-modify-write
+// that fetches the current entry and carefully preserves type/title/meta.
+// The --to help reads "new destination URL", not "(required)".
+func TestURLUpdate_TypeOnlyWithoutTo(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	const getResponse = `{"id":1,"host":"@","forwardsTo":"https://keep-me.example","type":"redirect","title":"T","meta":"M"}`
+	var gotBody map[string]any
+	srv := captureUpdateBody(t, getResponse, &gotBody)
+
+	cmd := cmdForURLUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--type", "masked"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("changing only --type should not require --to, got: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("update request was never sent")
+	}
+	if got := gotBody["type"]; got != "masked" {
+		t.Errorf("expected type masked, got %#v", got)
+	}
+	if got := gotBody["forwardsTo"]; got != "https://keep-me.example" {
+		t.Errorf("existing destination must be preserved, got %#v", got)
+	}
+}
+
+// TestURLUpdate_TitleOnlyPreservesType covers a case the old "--to is required"
+// guard made unreachable. The type-selection logic keyed off
+// `!cmd.Flags().Changed("to")` as a proxy for "the interactive form ran", so
+// with --title alone it fell through to updateType — the flag's DEFAULT of
+// "redirect" — silently converting a masked forwarding into a 301.
+func TestURLUpdate_TitleOnlyPreservesType(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	const getResponse = `{"id":1,"host":"@","forwardsTo":"https://keep.example","type":"masked","title":"Old","meta":"M"}`
+	var gotBody map[string]any
+	srv := captureUpdateBody(t, getResponse, &gotBody)
+
+	cmd := cmdForURLUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--title", "New Title"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("update request was never sent")
+	}
+	if got := gotBody["type"]; got != "masked" {
+		t.Errorf("changing only --title must not reset the forwarding type: got %#v, want masked", got)
+	}
+	if got := gotBody["title"]; got != "New Title" {
+		t.Errorf("expected the new title, got %#v", got)
+	}
+}

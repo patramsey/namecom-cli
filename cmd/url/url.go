@@ -349,9 +349,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if updateForwardsTo == "" {
+		// This is a read-modify-write: an unset --to means "keep the current
+		// destination", exactly as unset --type/--title/--meta do. Demanding it
+		// made `url update <domain> <id> --type masked` impossible in a script,
+		// even though every other field is already preserved from `current`.
+		if cmd.Flags().Changed("type") || cmd.Flags().Changed("title") || cmd.Flags().Changed("meta") {
+			updateForwardsTo = current.ForwardsTo
+		} else if !output.IsInteractive() {
+			return fmt.Errorf("--to is required (or pass --type/--title/--meta to change those instead)")
+		}
+	}
+
+	formRan := false
+	if updateForwardsTo == "" {
 		if !output.IsInteractive() {
 			return fmt.Errorf("--to is required")
 		}
+		formRan = true
 		typeOptions := []huh.Option[string]{
 			huh.NewOption("redirect (301 permanent)", "redirect"),
 			huh.NewOption("302 temporary redirect", "302"),
@@ -393,10 +407,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Preserve current type when --type wasn't explicitly passed and the
-	// interactive form didn't run (form always lets the user pick a type).
+	// Preserve the current type unless the user actually chose one: either via
+	// --type, or through the interactive form (which always asks).
+	//
+	// This previously keyed off `!cmd.Flags().Changed("to")` as a stand-in for
+	// "the form ran". That inference was wrong for any invocation that set
+	// neither --to nor --type — e.g. `--title X` — which then fell through to
+	// updateType's DEFAULT of "redirect" and silently converted a masked
+	// forwarding into a 301.
 	fwdTypeStr := string(current.Type)
-	if cmd.Flags().Changed("type") || !cmd.Flags().Changed("to") {
+	if cmd.Flags().Changed("type") || formRan {
 		fwdTypeStr = updateType
 	}
 

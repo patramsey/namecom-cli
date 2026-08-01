@@ -265,7 +265,22 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s?", domain))
+	// Quote the transfer before asking. register/renew both show the amount in
+	// their prompt; transfer asked only "Initiate transfer of X?", so the user
+	// approved a charge they had never seen. A pricing failure must not block
+	// the transfer — fall back to an unpriced prompt.
+	priceMsg := ""
+	if pricingResp, perr := client.Gen().GetPricingForDomain(cmd.Context(), domain, &gen.GetPricingForDomainParams{}); perr == nil {
+		var pricing gen.PricingResponseSchema
+		if api.Decode(pricingResp, &pricing) == nil && pricing.TransferPrice != nil {
+			priceMsg = fmt.Sprintf(" for $%.2f", *pricing.TransferPrice)
+			if createPrivacy {
+				priceMsg += " plus WHOIS privacy"
+			}
+		}
+	}
+
+	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg))
 	if err != nil {
 		return err
 	}
@@ -302,11 +317,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Render the result, then fall through to --watch. These branches used to
+	// `return` directly, which made --watch unreachable in JSON/YAML mode — i.e.
+	// in every pipe, since JSON is the default for non-TTY stdout. The flag
+	// exists for automation and did nothing in exactly the automation case.
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(result)
+		if err := out.JSON(result); err != nil {
+			return err
+		}
 	case output.FormatYAML:
-		return out.YAML(result)
+		if err := out.YAML(result); err != nil {
+			return err
+		}
 	default:
 		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total $%.2f)",
 			domain, result.Order, result.TotalPaid))

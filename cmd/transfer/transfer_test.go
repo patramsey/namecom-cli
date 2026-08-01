@@ -502,3 +502,45 @@ func TestTransferCreate_ShowsAPIWarnings(t *testing.T) {
 		t.Errorf("transfer status must be shown, got: %q", combined)
 	}
 }
+
+// TestTransferCreate_QuotesPriceBeforeCharging guards a money-transparency gap.
+// Unlike `domain register` and `domain renew`, which call GetPricingForDomain
+// and put the amount in the confirmation prompt, `transfer create` asked only
+// "Initiate transfer of example.com?" — so the user approved a charge they had
+// never been shown. (The total appears in the success line, but that is printed
+// after the money has already moved.)
+//
+// The property under test is ordering: pricing must be fetched BEFORE the
+// create request, so the figure can reach the prompt.
+func TestTransferCreate_QuotesPriceBeforeCharging(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "getPricing") {
+			calls = append(calls, "pricing")
+			_, _ = w.Write([]byte(`{"transferPrice":11.99,"renewalPrice":13.99}`))
+			return
+		}
+		calls = append(calls, "create")
+		_, _ = w.Write([]byte(`{"order":1,"totalPaid":11.99,"transfer":{"domainName":"example.com","status":"pending"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForTransferCreate(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := cmd.ParseFlags([]string{"--auth-code", "ABC123"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+
+	if len(calls) < 2 || calls[0] != "pricing" {
+		t.Errorf("transfer price must be fetched before the transfer is created, call order was: %v", calls)
+	}
+}

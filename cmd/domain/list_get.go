@@ -26,7 +26,7 @@ var listCmd = &cobra.Command{
   namecom domain list --tld io                    # filter by TLD
   namecom domain list --expiring-before 2026-09-01
   namecom domain list --sort expireDate
-  namecom domain list --all -o json | jq -r '.[].domainName'`,
+  namecom domain list --all -o json | jq -r '.data[].domainName'   # JSON is wrapped in a "data" envelope`,
 	RunE: runList,
 }
 

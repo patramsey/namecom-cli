@@ -218,6 +218,18 @@ func runGet(cmd *cobra.Command, args []string) error {
 			[]string{"ID", "STATUS", "DATE", "TOTAL"},
 			orderRows(out, []gen.Order{o}),
 		)
+		// Show the line items. Their IDs are the required input to
+		// `order refund --item-ids`, and sharing list's renderer meant a single
+		// order rendered exactly like a list row — leaving no way to discover
+		// them without dropping to `-o json | jq`.
+		if o.OrderItems != nil && len(*o.OrderItems) > 0 {
+			out.Table(
+				[]string{"ITEM ID", "NAME", "TYPE", "PRICE", "REFUNDABLE"},
+				orderItemRows(out, *o.OrderItems, o.Currency),
+			)
+			out.Hint("Run 'namecom order refund --order-id " +
+				strconv.Itoa(int(derefInt32(o.Id))) + " --item-ids <ITEM ID>' to refund a refundable item")
+		}
 		out.Hint("Run 'namecom order list' to see all orders")
 	}
 	return nil
@@ -286,6 +298,38 @@ func formatAmount(amount float32, currency *string) string {
 		return fmt.Sprintf("$%.2f", amount)
 	}
 	return fmt.Sprintf("%.2f %s", amount, strings.ToUpper(*currency))
+}
+
+func derefInt32(n *int32) int32 {
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+// orderItemRows renders an order's line items. Item IDs are what
+// `order refund --item-ids` consumes, and IsRefundable says whether a refund
+// is even possible — so both belong in the default view.
+func orderItemRows(out *output.Config, items []gen.OrderItem, currency *string) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, it := range items {
+		name := ""
+		if it.Name != nil {
+			name = *it.Name
+		}
+		refundable := out.Dim("—")
+		if it.IsRefundable {
+			refundable = out.BoolBadge(true)
+		}
+		rows = append(rows, []string{
+			strconv.Itoa(int(it.Id)),
+			name,
+			it.Type,
+			formatAmount(it.Price, currency),
+			refundable,
+		})
+	}
+	return rows
 }
 
 func orderRows(out *output.Config, orders []gen.Order) [][]string {

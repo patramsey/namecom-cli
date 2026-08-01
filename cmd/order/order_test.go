@@ -368,3 +368,51 @@ func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 		t.Errorf("--dry-run reports %q but the command actually sends %q", printed, last)
 	}
 }
+
+// TestOrderGet_ShowsOrderItems guards a workflow dead end: `order get` shared
+// orderRows with `order list`, rendering the same four columns (ID/STATUS/
+// DATE/TOTAL) and dropping Order.OrderItems entirely.
+//
+// But orderItems[].id is the required input to `order refund --item-ids`, so in
+// table mode there was no way to discover it — you had to already know to run
+// `-o json | jq`. Fetching a single order exists precisely to see its items.
+func TestOrderGet_ShowsOrderItems(t *testing.T) {
+	const resp = `{
+		"id": 12345, "status": "success", "createDate": "2026-01-15", "finalAmount": 29.98,
+		"orderItems": [
+			{"id": 555, "name": "acme.io", "price": 19.99, "isRefundable": true, "type": "registration", "status": "success", "duration": 1, "quantity": 1},
+			{"id": 556, "name": "acme.dev", "price": 9.99, "isRefundable": false, "type": "renewal", "status": "success", "duration": 1, "quantity": 1}
+		]
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+
+	if err := runGet(cmd, []string{"12345"}); err != nil {
+		t.Fatalf("runGet: %v", err)
+	}
+	got := buf.String()
+
+	for _, want := range []string{"555", "556", "acme.io", "acme.dev"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("order get should show item %q so it can be passed to --item-ids; output:\n%s", want, got)
+		}
+	}
+	// Refundability decides whether a refund can even be attempted.
+	if !strings.Contains(strings.ToLower(got), "refundable") {
+		t.Errorf("order get should indicate which items are refundable; output:\n%s", got)
+	}
+}
