@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolvePrecedence(t *testing.T) {
@@ -282,5 +283,42 @@ func TestSaveRepairsUnsafePermissions(t *testing.T) {
 	}
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Errorf("config holding a token should be 0600 after save, got %04o", mode)
+	}
+}
+
+// TestRunTokenCmd_TimesOut guards a CI hang: runTokenCmd used exec.Command with
+// no context and no deadline, so a credential helper blocked on a locked vault,
+// an expired SSO session, or a prompt with no TTY kept the CLI alive forever.
+// --timeout is HTTP-only and does not cover this.
+func TestRunTokenCmd_TimesOut(t *testing.T) {
+	// Shorten the bound so the test is fast; the production default is longer to
+	// allow an interactive unlock.
+	prev := tokenCmdTimeout
+	tokenCmdTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { tokenCmdTimeout = prev })
+
+	start := time.Now()
+	_, err := runTokenCmd("sleep 30")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error from a hanging token_cmd")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("token_cmd was not bounded: took %v", elapsed)
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error should say it timed out so the user knows why, got: %v", err)
+	}
+}
+
+// TestRunTokenCmd_Succeeds pins the normal path still works.
+func TestRunTokenCmd_Succeeds(t *testing.T) {
+	tok, err := runTokenCmd("echo '  s3cret  '")
+	if err != nil {
+		t.Fatalf("runTokenCmd: %v", err)
+	}
+	if tok != "s3cret" {
+		t.Errorf("expected trimmed token %q, got %q", "s3cret", tok)
 	}
 }

@@ -1043,3 +1043,57 @@ func TestDNSImport_PartialFailureReportsProgress(t *testing.T) {
 		t.Errorf("error should name the record that failed, got: %q", err.Error())
 	}
 }
+
+// TestDNSList_TypeFilterSearchesAllPages guards a wrong-results bug: --type
+// filters client-side (dns.go) but did NOT imply auto-pagination, so it only
+// ever saw page 1. `domain list` and `order list` both auto-page when any
+// filter is active; dns did not.
+//
+// The failure is silent and actively misleading: a zone whose MX records live
+// on page 2 reported "No DNS records found." plus a hint to create "the first
+// record" — three false statements at once.
+func TestDNSList_TypeFilterSearchesAllPages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`{"records":[{"id":22,"type":"MX","host":"@","answer":"mail.example.com.","ttl":300,"priority":10}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"records":[{"id":11,"type":"A","host":"@","answer":"1.2.3.4","ttl":300}],"nextPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatJSON, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	cmd.Flags().StringVar(&listType, "type", "", "")
+	if err := cmd.Flags().Set("type", "MX"); err != nil {
+		t.Fatalf("setting type flag: %v", err)
+	}
+	listType = "MX"
+	t.Cleanup(func() { listAll = false; listType = "" })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+
+	var env struct {
+		Data []struct {
+			ID int32 `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(env.Data) != 1 || env.Data[0].ID != 22 {
+		t.Errorf("--type MX must find the MX record on page 2, got: %s", buf.String())
+	}
+}

@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -175,7 +176,17 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	profileName := cfgFile.Default
+	// Honor the same profile selection every other command uses: --profile,
+	// then NAMECOM_PROFILE, then the file's default. Reading only the default
+	// meant `config show --profile sandbox` — the command's own documented
+	// example — reported the production profile's endpoint instead.
+	profileName := cmdutil.Overrides(cmd).Profile
+	if profileName == "" {
+		profileName = os.Getenv("NAMECOM_PROFILE")
+	}
+	if profileName == "" {
+		profileName = cfgFile.Default
+	}
 	if profileName == "" {
 		profileName = "default"
 	}

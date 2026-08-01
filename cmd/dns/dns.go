@@ -161,8 +161,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --type filters client-side, so it must see every page: filtering only
+	// page 1 silently reports "no records" for a zone that has them. Matches
+	// `domain list` and `order list`, which auto-page whenever a filter is set.
+	autoPage := listAll || listType != ""
+
 	stop := out.Spin("Fetching DNS records…")
-	records, hasMore, nextPage, err := fetchAllRecords(cmd, domain, listAll)
+	records, hasMore, nextPage, err := fetchAllRecords(cmd, domain, autoPage)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
@@ -201,6 +206,15 @@ func runList(cmd *cobra.Command, args []string) error {
 		return out.YAMLList(records, nextPage, 0)
 	default:
 		if len(records) == 0 {
+			// Distinguish "this zone is empty" from "nothing matched the filter".
+			// The generic message claimed the zone had no records at all and
+			// suggested creating "the first record" with a type the user hadn't
+			// asked about — three wrong statements for a filtered search.
+			if listType != "" {
+				out.Empty(strings.ToUpper(listType)+" record",
+					fmt.Sprintf("Run 'namecom dns list %s' to see records of all types", domain))
+				return nil
+			}
 			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
 			return nil
 		}

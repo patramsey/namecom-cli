@@ -295,8 +295,28 @@ func (c *Config) SandboxTag() string {
 	return "[sandbox] "
 }
 
-// Success prints a ✓ success message to stdout.
+// Success reports that a mutating command completed.
+//
+// Many mutating commands (deletes, toggles, imports) have no format switch of
+// their own and call only this. Printing "✓ <msg>" unconditionally meant
+// `namecom dns delete … -o json | jq .` received a checkmark line and failed to
+// parse — and since DefaultConfig() selects JSON whenever stdout is not a TTY,
+// that was the default in every pipe. So structured modes get a structured
+// envelope here, matching Hint/Step/Count/Empty, which already gate on format.
 func (c *Config) Success(msg string) {
+	if c.QuietMode {
+		return
+	}
+	switch c.Format {
+	case FormatJSON:
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"success": true, "message": msg})
+		return
+	case FormatYAML:
+		_ = yaml.NewEncoder(c.Writer).Encode(map[string]any{"success": true, "message": msg})
+		return
+	}
 	if c.ColorEnabled() {
 		fmt.Fprintln(c.Writer, styleSuccess.Render("✓")+" "+c.SandboxTag()+msg)
 	} else {

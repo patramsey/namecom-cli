@@ -13,6 +13,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -230,12 +232,26 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 	return creds, nil
 }
 
+// tokenCmdTimeout bounds how long a credential helper may run. Generous enough
+// for an interactive unlock (biometric prompt, hardware key touch) but finite:
+// unbounded, a helper blocked on a locked vault or a prompt with no TTY hung
+// the CLI forever, and --timeout covers only HTTP. Overridable in tests.
+var tokenCmdTimeout = 15 * time.Second
+
 // runTokenCmd executes the token command through the shell and returns its
 // trimmed stdout.
 func runTokenCmd(cmdline string) (string, error) {
-	cmd := exec.Command("sh", "-c", cmdline)
+	ctx, cancel := context.WithTimeout(context.Background(), tokenCmdTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		// Report the deadline explicitly. The bare exec error here is a killed
+		// signal, which surfaced as a misleading "produced empty output".
+		return "", fmt.Errorf("timed out after %s (is it waiting on a prompt?)", tokenCmdTimeout)
+	}
 	if err != nil {
 		return "", err
 	}

@@ -117,3 +117,38 @@ func TestShow_NeverLeaksToken(t *testing.T) {
 		})
 	}
 }
+
+// TestShow_HonorsProfileSelection guards a wrong-answer bug: runShow read
+// cfgFile.Default only, ignoring --profile and NAMECOM_PROFILE — even though
+// the command's own Example is `namecom config show --profile sandbox`.
+//
+// `config show` is the command you run to answer "which endpoint will this
+// profile hit?", and it answered about a different profile. With a production
+// default and a sandbox profile selected, it reported api.name.com.
+func TestShow_HonorsProfileSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contents := "default: prod\nprofiles:\n" +
+		"  prod:\n    username: alice\n    token: T1\n" +
+		"  sandy:\n    username: bob\n    token: T2\n    sandbox: true\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+	t.Setenv("NAMECOM_PROFILE", "sandy")
+
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatJSON, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.WithValue(context.Background(), cmdutil.KeyOutput, out))
+
+	if err := runShow(cmd, nil); err != nil {
+		t.Fatalf("runShow: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "sandy") {
+		t.Errorf("expected the selected profile 'sandy', got: %s", got)
+	}
+	if !strings.Contains(got, "api.dev.name.com") {
+		t.Errorf("expected the sandbox endpoint for a sandbox profile, got: %s", got)
+	}
+}
