@@ -104,9 +104,12 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(result.Dnssec)
+		// Use the same {"data":[…]} envelope every other list command emits, so
+		// scripts can treat list output uniformly. ListDNSSECsResponseSchema has
+		// no pagination fields, hence the nil/0 arguments.
+		return out.JSONList(result.Dnssec, nil, 0)
 	case output.FormatYAML:
-		return out.YAML(result.Dnssec)
+		return out.YAMLList(result.Dnssec, nil, 0)
 	default:
 		if len(result.Dnssec) == 0 {
 			out.Empty("DNSSEC key", fmt.Sprintf("Run 'namecom dnssec create %s --algorithm 8 --digest-type 2 --key-tag N --digest HEX' to add one", domain))
@@ -138,6 +141,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	var key gen.DNSSEC
 	if err := api.Decode(resp, &key); err != nil {
 		return err
+	}
+
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		out.PrintQuiet([]string{key.Digest})
+		return nil
 	}
 
 	switch out.Format {
@@ -211,17 +220,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	digest := args[1]
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest), nil)
+		return nil
+	}
+
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest), nil)
 		return nil
 	}
 

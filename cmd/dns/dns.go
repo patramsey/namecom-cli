@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -160,8 +161,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --type filters client-side, so it must see every page: filtering only
+	// page 1 silently reports "no records" for a zone that has them. Matches
+	// `domain list` and `order list`, which auto-page whenever a filter is set.
+	autoPage := listAll || listType != ""
+
 	stop := out.Spin("Fetching DNS records…")
-	records, hasMore, nextPage, err := fetchAllRecords(cmd, domain, listAll)
+	records, hasMore, nextPage, err := fetchAllRecords(cmd, domain, autoPage)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
@@ -200,6 +206,15 @@ func runList(cmd *cobra.Command, args []string) error {
 		return out.YAMLList(records, nextPage, 0)
 	default:
 		if len(records) == 0 {
+			// Distinguish "this zone is empty" from "nothing matched the filter".
+			// The generic message claimed the zone had no records at all and
+			// suggested creating "the first record" with a type the user hadn't
+			// asked about — three wrong statements for a filtered search.
+			if listType != "" {
+				out.Empty(strings.ToUpper(listType)+" record",
+					fmt.Sprintf("Run 'namecom dns list %s' to see records of all types", domain))
+				return nil
+			}
 			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
 			return nil
 		}
@@ -266,7 +281,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Answer: createAnswer,
 		Ttl:    &createTTL,
 	}
-	if createPriority != 0 {
+	// Gate on the flag, not the value: 0 is a valid MX/SRV priority, so deciding
+	// by value makes `--priority 0` unsettable. The warning above already keys
+	// off Changed(), and runUpdate/runImport do the same.
+	if cmd.Flags().Changed("priority") {
 		body.Priority = &createPriority
 	}
 
@@ -332,6 +350,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if current.Priority != nil {
 		body.Priority = current.Priority
 	}
+	// Merge --priority before anything reads body.Priority, so the warnings
+	// below reason about the value we will actually send rather than an unset
+	// flag variable.
+	if cmd.Flags().Changed("priority") {
+		body.Priority = &updatePriority
+	}
 
 	if cmd.Flags().Changed("type") {
 		if err := cmdutil.ValidDNSType(updateType); err != nil {
@@ -354,7 +378,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSAnswer(rtype, host, updateAnswer); err != nil {
 			return err
 		}
-		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, updatePriority, cmd.Flags().Changed("priority")) {
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, derefInt64(body.Priority), body.Priority != nil) {
 			out.Warn(w)
 		}
 		body.Answer = updateAnswer
@@ -377,10 +401,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body.Ttl = &updateTTL
 	}
-	if cmd.Flags().Changed("priority") {
-		body.Priority = &updatePriority
-	}
-
 	if dryRun {
 		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), body)
 		return nil
@@ -422,17 +442,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), nil)
+		return nil
+	}
+
 	ok, err := confirmDelete(out, yes, fmt.Sprintf("Delete DNS record %d from %s?", id, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), nil)
 		return nil
 	}
 
@@ -466,9 +486,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 		for _, r := range records {
 			rtype := derefStr(r.Type)
 			rdata := derefStr(r.Answer)
-			// MX and SRV records require priority prepended to rdata.
-			if (rtype == "MX" || rtype == "SRV") && r.Priority != nil {
-				rdata = fmt.Sprintf("%d %s", *r.Priority, rdata)
+			switch rtype {
+			case "MX", "SRV":
+				// MX and SRV require priority prepended to rdata. Emit 0 when the
+				// record has none — omitting it yields a line with the wrong field
+				// count, which zone parsers reject.
+				rdata = fmt.Sprintf("%d %s", derefInt64(r.Priority), rdata)
+			case "TXT":
+				// TXT rdata is a character-string: unquoted, a value containing
+				// spaces (SPF, DKIM) parses as several separate strings and no
+				// longer describes the same record.
+				rdata = quoteTXT(rdata)
 			}
 			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
 				derefStr(r.Fqdn), r.Ttl, rtype, rdata)
@@ -476,8 +504,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := out.JSON(records); err != nil {
-		return err
+	switch out.Format {
+	case output.FormatYAML:
+		return out.YAML(records)
+	default:
+		if err := out.JSON(records); err != nil {
+			return err
+		}
 	}
 	out.Hint(fmt.Sprintf("Use --zone for RFC 1035 zone-file format, or pipe to a file: namecom dns export %s > records.json", domain))
 	return nil
@@ -492,7 +525,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	dryRun := importDryRun || cmdutil.IsDryRun(cmd)
 
-	data, err := os.ReadFile(importFile)
+	data, err := readImportData(importFile)
 	if err != nil {
 		return fmt.Errorf("reading import file: %w", err)
 	}
@@ -500,6 +533,23 @@ func runImport(cmd *cobra.Command, args []string) error {
 	var records []gen.Record
 	if err := json.Unmarshal(data, &records); err != nil {
 		return fmt.Errorf("parsing import file: %w", err)
+	}
+
+	// Validate every record before writing any of them. `dns create` validates
+	// type/host/answer client-side; the import loop did not, and import is not
+	// transactional — so a file whose 4th record was malformed wrote 3 records
+	// and then failed on a server-side 422, leaving the zone half-updated.
+	for i, r := range records {
+		rtype, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
+		if err := cmdutil.ValidDNSType(rtype); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if err := cmdutil.ValidDNSHost(host); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
 	}
 
 	created := 0
@@ -519,11 +569,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 
 		resp, err := client.Gen().CreateRecord(cmd.Context(), domain, body)
-		if err != nil {
-			return fmt.Errorf("creating %s %s: %w", body.Type, body.Host, err)
+		if err == nil {
+			err = api.Decode(resp, nil)
 		}
-		if err := api.Decode(resp, nil); err != nil {
-			return fmt.Errorf("creating %s %s: %w", body.Type, body.Host, err)
+		if err != nil {
+			// Report what already landed. Import is not transactional, so bailing
+			// out with only the failure left the user unable to tell whether a
+			// retry would duplicate the records written so far.
+			if created > 0 {
+				out.Warn(fmt.Sprintf("%d of %d record(s) were already created on %s before this failure — "+
+					"remove them from the file or delete them before retrying, or the retry will duplicate them",
+					created, len(records), domain))
+			}
+			return fmt.Errorf("creating %s %s (after %d of %d succeeded): %w",
+				body.Type, body.Host, created, len(records), err)
 		}
 		created++
 	}
@@ -774,4 +833,32 @@ func derefInt32(n *int32) int32 {
 		return 0
 	}
 	return *n
+}
+
+func derefInt64(n *int64) int64 {
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+// quoteTXT wraps TXT rdata in a quoted character-string, escaping embedded
+// backslashes and quotes, unless it is already quoted.
+func quoteTXT(s string) string {
+	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+		return s
+	}
+	escaped := strings.ReplaceAll(s, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
+}
+
+// readImportData reads the import payload from a path, or from stdin when the
+// path is "-". The help examples advertise `dns export old.com | dns import
+// new.com --file -`, so the pipe form has to work. Mirrors cmd/apicmd.
+func readImportData(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }

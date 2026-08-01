@@ -120,19 +120,26 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		if err := api.Decode(resp, &lastResult); err != nil {
+		// Fresh variable each iteration: the JSON decoder reuses the existing
+		// slice backing array and the pointers inside it, so reusing one target
+		// lets page N overwrite values page 1 already appended. It also leaves a
+		// stale non-nil NextPage when the final page omits the key, which never
+		// terminates. See the same pattern in cmd/dns/dns.go.
+		var result gen.ListURLForwardingsResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, lastResult.UrlForwarding...)
-		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
+		all = append(all, result.UrlForwarding...)
+		lastResult = result
+		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *lastResult.NextPage
+		page = *result.NextPage
 		spin.Update(fmt.Sprintf("Fetching URL forwardings… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -200,6 +207,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	var entry gen.URLForwardingResponseSchema
 	if err := api.Decode(resp, &entry); err != nil {
 		return err
+	}
+
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		id := ""
+		if entry.Id != nil {
+			id = strconv.Itoa(int(*entry.Id))
+		}
+		out.PrintQuiet([]string{id})
+		return nil
 	}
 
 	switch out.Format {
@@ -342,9 +359,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if updateForwardsTo == "" {
+		// This is a read-modify-write: an unset --to means "keep the current
+		// destination", exactly as unset --type/--title/--meta do. Demanding it
+		// made `url update <domain> <id> --type masked` impossible in a script,
+		// even though every other field is already preserved from `current`.
+		if cmd.Flags().Changed("type") || cmd.Flags().Changed("title") || cmd.Flags().Changed("meta") {
+			updateForwardsTo = current.ForwardsTo
+		} else if !output.IsInteractive() {
+			return fmt.Errorf("--to is required (or pass --type/--title/--meta to change those instead)")
+		}
+	}
+
+	formRan := false
+	if updateForwardsTo == "" {
 		if !output.IsInteractive() {
 			return fmt.Errorf("--to is required")
 		}
+		formRan = true
 		typeOptions := []huh.Option[string]{
 			huh.NewOption("redirect (301 permanent)", "redirect"),
 			huh.NewOption("302 temporary redirect", "302"),
@@ -386,16 +417,28 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Preserve current type when --type wasn't explicitly passed and the
-	// interactive form didn't run (form always lets the user pick a type).
+	// Preserve the current type unless the user actually chose one: either via
+	// --type, or through the interactive form (which always asks).
+	//
+	// This previously keyed off `!cmd.Flags().Changed("to")` as a stand-in for
+	// "the form ran". That inference was wrong for any invocation that set
+	// neither --to nor --type — e.g. `--title X` — which then fell through to
+	// updateType's DEFAULT of "redirect" and silently converted a masked
+	// forwarding into a 301.
 	fwdTypeStr := string(current.Type)
-	if cmd.Flags().Changed("type") || !cmd.Flags().Changed("to") {
+	if cmd.Flags().Changed("type") || formRan {
 		fwdTypeStr = updateType
 	}
 
+	// Title and Meta have no `omitempty` in the request body, so leaving them
+	// nil transmits an explicit `"title":null` — the server reads that as a
+	// deliberate clear, not an omission. Seed both from the current entry so
+	// an unset flag preserves what's already there.
 	body := gen.UpdateURLForwardingByIdJSONRequestBody{
 		ForwardsTo: updateForwardsTo,
 		Type:       gen.UpdateURLForwardingBodyType(fwdTypeStr),
+		Title:      current.Title,
+		Meta:       current.Meta,
 	}
 	if updateTitle != "" {
 		body.Title = &updateTitle
@@ -405,7 +448,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/url/forwarding/%d", domain, id), nil)
+		out.DryRun("PATCH", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
 		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", updateForwardsTo, updateType)
 		return nil
 	}
@@ -448,17 +491,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
+		return nil
+	}
+
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/url/forwarding/%d", domain, id), nil)
 		return nil
 	}
 

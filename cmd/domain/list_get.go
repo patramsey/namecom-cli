@@ -26,7 +26,7 @@ var listCmd = &cobra.Command{
   namecom domain list --tld io                    # filter by TLD
   namecom domain list --expiring-before 2026-09-01
   namecom domain list --sort expireDate
-  namecom domain list --all -o json | jq -r '.[].domainName'`,
+  namecom domain list --all -o json | jq -r '.data[].domainName'   # JSON is wrapped in a "data" envelope`,
 	RunE: runList,
 }
 
@@ -43,6 +43,7 @@ var (
 	listFilter         string
 	listTLD            string
 	listSort           string
+	listSortDir        string
 	listAll            bool
 	listPage           int32
 	listExpiringAfter  string
@@ -52,7 +53,8 @@ var (
 func init() {
 	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter by domain name (supports * wildcard, e.g. '*acme*')")
 	listCmd.Flags().StringVar(&listTLD, "tld", "", "filter by TLD (e.g. com, io)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "sort field: domainName, expireDate, createDate")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "sort by a domain property (e.g. domainName, expireDate, createDate)")
+	listCmd.Flags().StringVar(&listSortDir, "sort-dir", "", "sort direction: asc (default) or desc")
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (use with --output json for scripting)")
@@ -71,6 +73,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	if listPage < 1 {
 		return fmt.Errorf("--page must be 1 or greater (got %d)", listPage)
+	}
+	if err := cmdutil.ValidSortDir(listSortDir); err != nil {
+		return err
 	}
 	if listExpiringAfter != "" {
 		if err := cmdutil.ValidDate(listExpiringAfter, "expiring-after"); err != nil {
@@ -94,6 +99,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 		p := &gen.ListDomainsParams{Page: &page}
 		if listSort != "" {
 			p.Sort = &listSort
+		}
+		if listSortDir != "" {
+			p.Dir = &listSortDir
 		}
 		if listFilter != "" {
 			f := filterToWildcard(listFilter)
@@ -131,15 +139,23 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if lastResult.NextPage != nil && *lastResult.NextPage != 0 {
 		if !autoPage {
 			hasMore = true
-		} else if lastResult.LastPage != nil && *lastResult.LastPage > 1 {
-			// Fetch all remaining pages in parallel.
+		} else if lastResult.LastPage != nil && *lastResult.LastPage > listPage {
+			// Fetch the remaining pages in parallel, continuing from the page we
+			// already fetched. Starting at 2 unconditionally meant `--all --page 5`
+			// refetched page 5 (duplicating it) and pulled in pages 2-4 the user
+			// asked to skip — while the printed count still matched totalCount, so
+			// it looked correct.
+			start := int(listPage)
 			last := int(*lastResult.LastPage)
-			pages := make([][]gen.DomainResponsePayload, last-1)
+			pages := make([][]gen.DomainResponsePayload, last-start)
 			var mu sync.Mutex
 			g, gctx := errgroup.WithContext(ctx)
-			for p := 2; p <= last; p++ {
+			// Bound concurrency: an account with many pages would otherwise queue
+			// every request at once behind the shared rate limiter.
+			g.SetLimit(5)
+			for p := start + 1; p <= last; p++ {
 				p := int32(p)
-				idx := int(p) - 2
+				idx := int(p) - start - 1
 				g.Go(func() error {
 					r, err := client.Gen().ListDomains(gctx, buildParams(p))
 					if err != nil {
@@ -165,18 +181,25 @@ func runList(cmd *cobra.Command, _ []string) error {
 				domains = append(domains, pg...)
 			}
 		} else {
-			// LastPage unknown; walk sequentially via NextPage.
-			for lastResult.NextPage != nil && *lastResult.NextPage != 0 {
-				r, err := client.Gen().ListDomains(ctx, buildParams(*lastResult.NextPage))
+			// LastPage unknown; walk sequentially via NextPage. Decode into a
+			// fresh variable each iteration — reusing one target lets the JSON
+			// decoder overwrite pointers in already-appended pages, and leaves a
+			// stale non-nil NextPage when the last page omits the key, which
+			// never terminates. Same hazard as cmd/dns/dns.go documents.
+			next := lastResult.NextPage
+			for next != nil && *next != 0 {
+				r, err := client.Gen().ListDomains(ctx, buildParams(*next))
 				if err != nil {
 					spin.Stop()
 					return err
 				}
-				if err := api.Decode(r, &lastResult); err != nil {
+				var result gen.ListDomainsResponseSchema
+				if err := api.Decode(r, &result); err != nil {
 					spin.Stop()
 					return err
 				}
-				domains = append(domains, lastResult.Domains...)
+				domains = append(domains, result.Domains...)
+				next = result.NextPage
 			}
 		}
 	}
@@ -264,6 +287,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	var d gen.DomainResponsePayload
 	if err := api.Decode(resp, &d); err != nil {
 		return err
+	}
+
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		out.PrintQuiet([]string{d.DomainName})
+		return nil
 	}
 
 	switch out.Format {

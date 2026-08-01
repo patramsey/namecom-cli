@@ -34,7 +34,42 @@ LIST_ITEM = re.compile(r"^\s*-\s*(.+?)\s*$")
 # A bare null-type member of a oneOf/anyOf list, e.g. `- type: 'null'`.
 # 3.0 has no standalone null type; the field's nullability is conveyed by its
 # description and Go's nil zero-value, so we drop the member entirely.
-NULL_ONEOF_MEMBER = re.compile(r"^\s*-\s*type:\s*'null'\s*$")
+# Accepts the three ways YAML can spell null so an upstream restyle doesn't
+# silently slip past us.
+NULL_ONEOF_MEMBER = re.compile(r"^(\s*)-\s*type:\s*(?:'null'|\"null\"|null)\s*$")
+
+# Any null spelling as a union member.
+NULL_MEMBER = re.compile(r"^(?:'null'|\"null\"|null)$")
+
+
+class UnsupportedSpec(Exception):
+    """The spec uses a construct this line-based transform cannot handle.
+
+    Raised rather than passing the construct through untouched. A 3.1 union
+    that reaches oapi-codegen unconverted does not fail the build — it silently
+    generates the wrong Go type, which is far more expensive to discover than a
+    failed `make generate`.
+    """
+
+
+# `format: float` on a `type: number` makes oapi-codegen emit float32 — roughly
+# 7 significant decimal digits. That is fine for ordinary prices but silently
+# wrong for the seven-figure sums premium domain sales reach: 1234567.89 becomes
+# 1234567.88 when formatted and 1234567.9 when re-marshalled. Widening to
+# `double` (float64) is loss-free — every float32 value is exactly representable
+# — and makes the client echo the API's own figures faithfully.
+FLOAT_FORMAT = re.compile(r"^(\s*)format:\s*float\s*$")
+
+
+def widen_floats(lines):
+    out = []
+    for line in lines:
+        m = FLOAT_FORMAT.match(line)
+        if m:
+            out.append(f"{m.group(1)}format: double\n")
+            continue
+        out.append(line)
+    return out
 
 
 def convert(lines):
@@ -43,20 +78,49 @@ def convert(lines):
     n = len(lines)
     while i < n:
         line = lines[i]
-        if NULL_ONEOF_MEMBER.match(line):
+
+        m_null = NULL_ONEOF_MEMBER.match(line)
+        if m_null:
+            # `- type: null` carrying sibling keys (a description, a title)
+            # cannot be dropped line-wise: removing it orphans the siblings and
+            # produces structurally invalid YAML. Refuse rather than corrupt.
+            dash_indent = len(m_null.group(1))
+            if i + 1 < n:
+                nxt = lines[i + 1]
+                if nxt.strip() and not nxt.lstrip().startswith("-"):
+                    if len(nxt) - len(nxt.lstrip()) > dash_indent:
+                        raise UnsupportedSpec(
+                            f"line {i + 1}: `- type: null` has sibling keys "
+                            f"({nxt.strip()!r}); dropping the member line alone "
+                            f"would emit invalid YAML"
+                        )
             i += 1
             continue
+
         m = TYPE_HEADER.match(line)
-        if m and i + 2 < n:
-            first = LIST_ITEM.match(lines[i + 1])
-            second = LIST_ITEM.match(lines[i + 2])
-            if first and second and second.group(1) == "'null'":
-                indent = m.group(1)
-                base = first.group(1)
-                out.append(f"{indent}type: {base}\n")
-                out.append(f"{indent}nullable: true\n")
-                i += 3
+        if m:
+            # Collect the full list of union members.
+            members, j = [], i + 1
+            while j < n:
+                item = LIST_ITEM.match(lines[j])
+                if not item:
+                    break
+                members.append(item.group(1))
+                j += 1
+
+            if members:
+                nulls = [x for x in members if NULL_MEMBER.match(x)]
+                non_null = [x for x in members if not NULL_MEMBER.match(x)]
+                if len(members) != 2 or len(nulls) != 1:
+                    raise UnsupportedSpec(
+                        f"line {i + 1}: union type {members} is not the "
+                        f"supported two-element [<type>, null] shape"
+                    )
+                out.append(f"{m.group(1)}type: {non_null[0]}\n")
+                out.append(f"{m.group(1)}nullable: true\n")
+                i = j
                 continue
+
         out.append(line)
         i += 1
     return out
@@ -125,13 +189,24 @@ def main():
     response_schemas = collect_response_schemas(lines)
     lines = rename_response_schemas(lines, response_schemas)
 
-    converted = convert(lines)
+    lines = widen_floats(lines)
+
+    try:
+        converted = convert(lines)
+    except UnsupportedSpec as e:
+        sys.exit(
+            f"{sys.argv[0]}: {src}: {e}\n"
+            "The vendored spec uses an OpenAPI 3.1 construct this line-based "
+            "transform does not handle. Extend convert() rather than letting it "
+            "through: an unconverted 3.1 union does not fail codegen, it silently "
+            "generates the wrong Go type."
+        )
     with open(dst, "w", encoding="utf-8") as f:
         f.writelines(converted)
 
     print(
         f"renamed {len(response_schemas)} *Response schemas; "
-        f"converted nullable unions; wrote {dst}"
+        f"converted nullable unions; widened float->double; wrote {dst}"
     )
 
 

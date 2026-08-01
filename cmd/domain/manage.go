@@ -30,9 +30,38 @@ var lockCmd = &cobra.Command{
 	},
 }
 
+// applyDomainToggle performs a single-field UpdateDomain (PATCH).
+//
+// It replaces the deprecated :lock, :unlock, :enableAutorenew,
+// :disableAutorenew, :enableWhoisPrivacy and :disableWhoisPrivacy endpoints,
+// each of which the spec marks `deprecated: true` with "deprecated in favor of
+// the new UpdateDomain API. This will be removed in a future release."
+//
+// Only the field being changed is sent. All three body fields are *bool with
+// omitempty, and the schema combines them with anyOf, so a partial body is
+// valid and leaves the other two untouched — no read-modify-write needed.
+//
+// Note PurchasePrivacy is deliberately not used for `privacy on`: the spec
+// describes it as "a billable action" that purchases and enables, whereas
+// UpdateDomain is the documented successor to the deprecated toggle.
+func applyDomainToggle(cmd *cobra.Command, domainName string, body gen.UpdateDomainJSONRequestBody) error {
+	client := cmdutil.APIClient(cmd)
+	resp, err := client.Gen().UpdateDomain(cmd.Context(), domainName, body)
+	if err != nil {
+		return err
+	}
+	return api.Decode(resp, nil)
+}
+
+// toggleDryRun prints the UpdateDomain request a toggle would send.
+func toggleDryRun(out *output.Config, domainName string, body gen.UpdateDomainJSONRequestBody) {
+	out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domainName), body)
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
@@ -44,32 +73,18 @@ func runLock(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	body := gen.UpdateDomainJSONRequestBody{Locked: boolPtr(enable)}
+	if dryRun {
+		toggleDryRun(out, domainName, body)
+		return nil
+	}
+	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+		return err
+	}
 	if enable {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
-			return nil
-		}
-		resp, err := client.Gen().LockDomain(cmd.Context(), domainName, &gen.LockDomainParams{ContentType: gen.LockDomainParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(resp, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Transfer lock enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm status", domainName))
 	} else {
-		if dryRun {
-			out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
-			return nil
-		}
-		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{ContentType: gen.UnlockDomainParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(resp, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Transfer lock disabled for %s", domainName))
 		out.WarnBox("Lock removed — re-enable after transfers are complete to protect against unauthorized outbound transfers")
 	}
@@ -95,7 +110,6 @@ var autorenewCmd = &cobra.Command{
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
@@ -106,32 +120,18 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	body := gen.UpdateDomainJSONRequestBody{AutorenewEnabled: boolPtr(enable)}
+	if dryRun {
+		toggleDryRun(out, domainName, body)
+		return nil
+	}
+	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+		return err
+	}
 	if enable {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-autorenew", domainName), nil)
-			return nil
-		}
-		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{ContentType: gen.EnableAutorenewParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Auto-renewal enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm settings", domainName))
 	} else {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-autorenew", domainName), nil)
-			return nil
-		}
-		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{ContentType: gen.DisableAutorenewParamsContentTypeApplicationjson})
-		if e != nil {
-			return e
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("Auto-renewal disabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Remember to renew manually before expiry — run 'namecom domain get %s' to check the expiry date", domainName))
 	}
@@ -157,7 +157,6 @@ var privacyCmd = &cobra.Command{
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
@@ -169,14 +168,15 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	body := gen.UpdateDomainJSONRequestBody{PrivacyEnabled: boolPtr(enable)}
+	if dryRun {
+		toggleDryRun(out, domainName, body)
+		return nil
+	}
+	// Enabling privacy can incur a charge on accounts without a bundled privacy
+	// plan, so confirm before doing it. Disabling never charges.
 	if enable {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-privacy", domainName), nil)
-			return nil
-		}
-		// PurchasePrivacy may charge money — confirm first.
-		yes := cmdutil.IsYes(cmd)
-		ok, err := confirm(out, yes, fmt.Sprintf("Purchase WHOIS privacy for %s?", domainName))
+		ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domainName))
 		if err != nil {
 			return err
 		}
@@ -184,27 +184,14 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			out.Warn("aborted")
 			return nil
 		}
-		r, err := client.Gen().EnableWhoisPrivacy(cmd.Context(), domainName, &gen.EnableWhoisPrivacyParams{ContentType: gen.EnableWhoisPrivacyParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
+	}
+	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+		return err
+	}
+	if enable {
 		out.Success(fmt.Sprintf("WHOIS privacy enabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm privacy status", domainName))
 	} else {
-		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-privacy", domainName), nil)
-			return nil
-		}
-		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{ContentType: gen.DisableWhoisPrivacyParamsContentTypeApplicationjson})
-		if err != nil {
-			return err
-		}
-		if err := api.Decode(r, nil); err != nil {
-			return err
-		}
 		out.Success(fmt.Sprintf("WHOIS privacy disabled for %s", domainName))
 	}
 	return nil
@@ -247,7 +234,7 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/nameservers", domain), nil)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain), nil)
 		fmt.Fprintf(out.Writer, "  ns=%s\n", setNSList)
 		return nil
 	}
@@ -324,8 +311,51 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(d.Contacts)
 	default:
-		return out.JSON(d.Contacts)
+		if err := out.JSON(d.Contacts); err != nil {
+			return err
+		}
+		warnUnverifiedContacts(out, d.Contacts)
+		return nil
 	}
+}
+
+// warnUnverifiedContacts calls out contacts pending ICANN verification.
+//
+// The consequence is severe and time-boxed: the spec states that if a contact
+// record is not verified by its deadline "the domain may become locked by the
+// registry", typically 15 days from creation. Both `domain register` and
+// `domain contacts set` can trigger verification, and until now the CLI never
+// mentioned it — the isVerified flag was buried in a raw JSON dump.
+//
+// GetDomain already returns this, so no extra request is made.
+func warnUnverifiedContacts(out *output.Config, c gen.Contacts) {
+	var pending []string
+	check := func(role string, verified *bool) {
+		if verified != nil && !*verified {
+			pending = append(pending, role)
+		}
+	}
+	if c.Registrant != nil {
+		check("registrant", c.Registrant.IsVerified)
+	}
+	if c.Admin != nil {
+		check("admin", c.Admin.IsVerified)
+	}
+	if c.Tech != nil {
+		check("tech", c.Tech.IsVerified)
+	}
+	if c.Billing != nil {
+		check("billing", c.Billing.IsVerified)
+	}
+	if len(pending) == 0 {
+		return
+	}
+	out.WarnBox(
+		fmt.Sprintf("Unverified contact(s): %s", strings.Join(pending, ", ")),
+		"ICANN requires contact verification. If it is not completed by the deadline",
+		"(typically 15 days from when it was triggered) the registry may LOCK the domain.",
+		"Check the inbox for the verification email — name.com can resend it.",
+	)
 }
 
 func runContactsSet(cmd *cobra.Command, args []string) error {
@@ -348,7 +378,7 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", domain), contacts)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setContacts", domain), contacts)
 		return nil
 	}
 
@@ -360,6 +390,14 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Contacts updated for %s", domain))
+	// Updating the registrant can start an ICANN verification clock. The spec:
+	// "When registrant contact information is updated, validation may be
+	// triggered if the new contact information has not been previously
+	// validated. This validation is required by ICANN for all TLDs except
+	// country-code TLDs (ccTLDs)." Missing the deadline can get the domain
+	// registry-locked, so say so at the moment the clock may have started.
+	out.Hint("If this changed the registrant, ICANN may require email verification — " +
+		fmt.Sprintf("run 'namecom domain contacts get %s' to check", domain))
 	return nil
 }
 
@@ -390,6 +428,14 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	var result gen.AuthCodeResponseSchema
 	if err := api.Decode(resp, &result); err != nil {
 		return err
+	}
+
+	// --quiet prints just the code, so it can be captured directly:
+	//   CODE=$(namecom domain auth-code example.com -q)
+	// Detail commands ignored --quiet entirely and printed a bordered table.
+	if out.QuietMode {
+		out.PrintQuiet([]string{result.AuthCode})
+		return nil
 	}
 
 	switch out.Format {
@@ -512,8 +558,33 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", domain), body)
+		out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domain), body)
 		return nil
+	}
+
+	// Enabling privacy can be billable, and `domain privacy on` confirms before
+	// doing it. This command reaches the identical API call, so it has to ask
+	// too — otherwise there are two routes to the same charge and only one of
+	// them pauses. Only gate on turning it ON: disabling never costs anything.
+	if cmd.Flags().Changed("privacy") {
+		if v, _ := cmd.Flags().GetBool("privacy"); v && !current.PrivacyEnabled {
+			ok, cerr := confirm(out, cmdutil.IsYes(cmd),
+				fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domain))
+			if cerr != nil {
+				return cerr
+			}
+			if !ok {
+				out.Warn("aborted")
+				return nil
+			}
+		}
+	}
+	// Removing the transfer lock has no cost but a real security consequence,
+	// so warn for the same reason `domain lock off` does.
+	if cmd.Flags().Changed("lock") {
+		if v, _ := cmd.Flags().GetBool("lock"); !v && current.Locked {
+			out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
+		}
 	}
 
 	resp, err := client.Gen().UpdateDomain(cmd.Context(), domain, body)

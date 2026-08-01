@@ -22,7 +22,10 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -race ./...
+        # -count=1 disables the test cache. internal/api/gen shells out to
+        # scripts/spec_to_30.py and reads namecom.api.yaml; Go's cache tracks
+        # neither, so a cached pass can hide a broken preprocessor.
+        run: go test -race -count=1 ./...
 
   lint:
     name: Lint

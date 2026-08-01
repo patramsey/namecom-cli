@@ -20,14 +20,14 @@ func ExactArgs(n int) cobra.PositionalArgs {
 		}
 		names := argNames(cmd.Use)
 		if len(args) > n {
-			return fmt.Errorf("too many arguments — expected: %s", joinNames(names))
+			return NewUsageError(fmt.Errorf("too many arguments — expected: %s", joinNames(names)))
 		}
 		// One or more missing — name only the ones still needed.
 		missing := names
 		if len(args) < len(names) {
 			missing = names[len(args):]
 		}
-		return fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine())
+		return NewUsageError(fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine()))
 	}
 }
 
@@ -42,7 +42,7 @@ func MinimumNArgs(n int) cobra.PositionalArgs {
 		if len(args) < len(names) {
 			missing = names[len(args):]
 		}
-		return fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine())
+		return NewUsageError(fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine()))
 	}
 }
 

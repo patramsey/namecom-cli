@@ -73,8 +73,24 @@ func DefaultConfig() *Config {
 
 // IsInteractive reports whether stdin is a TTY — i.e., a human is present.
 // Command code uses this to decide whether to show prompts.
-func IsInteractive() bool {
+//
+// It is a variable rather than a plain function so tests can simulate a human
+// at the terminal. Several money-spending code paths are reachable only when
+// this returns true, and they were untestable — and consequently untested —
+// while it read the real TTY unconditionally. Tests must restore the original
+// value; see output.StubInteractive.
+var IsInteractive = func() bool {
 	return isStdinTTY()
+}
+
+// StubInteractive forces IsInteractive to return v and returns a function that
+// restores the previous implementation. Intended for tests:
+//
+//	defer output.StubInteractive(true)()
+func StubInteractive(v bool) func() {
+	prev := IsInteractive
+	IsInteractive = func() bool { return v }
+	return func() { IsInteractive = prev }
 }
 
 // ColorEnabled reports whether ANSI colors should be emitted for this config.
@@ -227,6 +243,14 @@ func (c *Config) Table(headers []string, rows [][]string) {
 
 // KVTable renders a headerless two-column key-value table with styled field names.
 func (c *Config) KVTable(rows [][]string) {
+	// Structured modes get their data from the caller's own JSON/YAML encoding;
+	// emitting an ASCII table here would append a second, unparseable document.
+	// Every sibling renderer (Success, Hint, Step, Count, Empty, Title) already
+	// gates on format — this one did not, which is how `auth status -o json`
+	// came to print an envelope followed by a table.
+	if c.Format == FormatJSON || c.Format == FormatYAML || c.QuietMode {
+		return
+	}
 	color := c.ColorEnabled()
 
 	valueStyle := lipgloss.NewStyle().Padding(0, 1)
@@ -279,8 +303,28 @@ func (c *Config) SandboxTag() string {
 	return "[sandbox] "
 }
 
-// Success prints a ✓ success message to stdout.
+// Success reports that a mutating command completed.
+//
+// Many mutating commands (deletes, toggles, imports) have no format switch of
+// their own and call only this. Printing "✓ <msg>" unconditionally meant
+// `namecom dns delete … -o json | jq .` received a checkmark line and failed to
+// parse — and since DefaultConfig() selects JSON whenever stdout is not a TTY,
+// that was the default in every pipe. So structured modes get a structured
+// envelope here, matching Hint/Step/Count/Empty, which already gate on format.
 func (c *Config) Success(msg string) {
+	if c.QuietMode {
+		return
+	}
+	switch c.Format {
+	case FormatJSON:
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"success": true, "message": msg})
+		return
+	case FormatYAML:
+		_ = yaml.NewEncoder(c.Writer).Encode(map[string]any{"success": true, "message": msg})
+		return
+	}
 	if c.ColorEnabled() {
 		fmt.Fprintln(c.Writer, styleSuccess.Render("✓")+" "+c.SandboxTag()+msg)
 	} else {
@@ -320,10 +364,17 @@ type hintable interface {
 func (c *Config) Error(err error) {
 	hint := errorHint(err)
 
-	if c.Format == FormatJSON {
+	// Structured modes get a machine-readable envelope. The plain-text fallback
+	// emits "error: <msg>", which looks like YAML but stops parsing as soon as
+	// the message contains ": " — which nearly every wrapped error does.
+	if c.Format == FormatJSON || c.Format == FormatYAML {
 		env := map[string]any{"error": map[string]string{"message": err.Error()}}
 		if hint != "" {
 			env["hint"] = hint
+		}
+		if c.Format == FormatYAML {
+			_ = yaml.NewEncoder(c.EWriter).Encode(env)
+			return
 		}
 		enc := json.NewEncoder(c.EWriter)
 		enc.SetIndent("", "  ")

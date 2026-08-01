@@ -158,6 +158,18 @@ func TestDNSSECGet_ReturnsKey(t *testing.T) {
 	if err := runGet(cmd, []string{"example.com", "abc123"}); err != nil {
 		t.Fatalf("runGet: %v", err)
 	}
+
+	// See the note in cmd/url: err == nil says nothing about what was rendered.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	for _, want := range []string{"1234", "abc123"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("get output is missing %q:\n%s", want, got)
+		}
+	}
 }
 
 // ---- delete -----------------------------------------------------------------
@@ -192,5 +204,99 @@ func TestDNSSECDelete_DomainNormalized(t *testing.T) {
 	}
 	if !strings.Contains(receivedPath, "example.com") {
 		t.Errorf("expected normalized 'example.com' in DELETE path, got: %q", receivedPath)
+	}
+}
+
+// TestDNSSECList_JSONUsesDataEnvelope pins dnssec list to the same output shape
+// as every other list command (email, url, vanity, transfer, order), which all
+// emit {"data":[…]} via out.JSONList. dnssec emitted a bare array, so a script
+// written as `namecom email list -o json | jq '.data[]'` silently produced
+// nothing when pointed at dnssec.
+func TestDNSSECList_JSONUsesDataEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.ListDNSSECsResponseSchema{
+			Dnssec: []gen.DNSSEC{{KeyTag: 1234, Algorithm: 8, DigestType: 2, Digest: "ABCD"}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	var buf bytes.Buffer
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format: output.FormatJSON, Color: output.ColorNever,
+		Writer: &buf, EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+
+	var env struct {
+		Data []gen.DNSSEC `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("output is not a data envelope: %v\noutput: %s", err, buf.String())
+	}
+	if len(env.Data) != 1 {
+		t.Fatalf("expected 1 key under .data, got %d: %s", len(env.Data), buf.String())
+	}
+	if env.Data[0].Digest != "ABCD" {
+		t.Errorf("expected digest ABCD, got %q", env.Data[0].Digest)
+	}
+}
+
+// TestDNSSECCreate_SendsEachFieldToItsOwnKey covers a request body that had no
+// guard at all: nothing decoded what `dnssec create` sends, so swapping
+// Algorithm with KeyTag — or blanking the digest — left all nine tests green.
+//
+// The values are deliberately distinct so a transposition cannot pass. DNSSEC
+// key material is submitted to the registry; a silently mis-mapped field
+// produces a DS record that does not validate, which breaks resolution for the
+// zone rather than merely erroring.
+func TestDNSSECCreate_SendsEachFieldToItsOwnKey(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"digest":"ABC123"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCreate(t, srv)
+	if err := cmd.ParseFlags([]string{
+		"--algorithm", "8",
+		"--digest-type", "2",
+		"--key-tag", "54321",
+		"--digest", "ABC123DEF456",
+	}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	if got == nil {
+		t.Fatal("create request was never sent")
+	}
+
+	for key, want := range map[string]any{
+		"algorithm":  float64(8),
+		"digestType": float64(2),
+		"keyTag":     float64(54321),
+		"digest":     "ABC123DEF456",
+	} {
+		if got[key] != want {
+			t.Errorf("body[%q] = %#v, want %#v (full body: %#v)", key, got[key], want, got)
+		}
 	}
 }

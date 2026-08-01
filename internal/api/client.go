@@ -55,8 +55,12 @@ type Options struct {
 	OnRetry func(attempt int, delay time.Duration)
 
 	// Advanced knobs; zero values fall back to the defaults above.
-	RPS        float64
-	Burst      int
+	RPS   float64
+	Burst int
+	// MaxRetries is the number of retries AFTER the initial attempt.
+	// Zero means "use the default"; a negative value disables retries so the
+	// first failure is returned immediately. Without the negative case there
+	// was no way to express fail-fast, since 0 was already taken by the default.
 	MaxRetries int
 }
 
@@ -65,6 +69,10 @@ type Client struct {
 	gen        *gen.Client
 	baseURL    string
 	httpClient *http.Client
+	// editor applies the standard headers. It is registered on the generated
+	// client and also exposed via Prepare for callers that build their own
+	// requests; keeping one implementation stops the two paths from drifting.
+	editor gen.RequestEditorFn
 }
 
 // New builds a Client from the resolved credentials and options.
@@ -86,8 +94,16 @@ func New(opts Options) (*Client, error) {
 		burst = defaultBurst
 	}
 	maxRetries := opts.MaxRetries
-	if maxRetries == 0 {
+	switch {
+	case maxRetries == 0:
 		maxRetries = defaultRetries
+	case maxRetries < 0:
+		// Explicit fail-fast. Clamp to 0 rather than passing the negative
+		// through: the retry loop is `for attempt := 0; attempt <= maxRetries`,
+		// so a negative skipped the body entirely and returned (nil, nil) —
+		// which net/http reports as "RoundTripper returned a nil *Response with
+		// a nil error".
+		maxRetries = 0
 	}
 	timeout := opts.Timeout
 	if timeout == 0 {
@@ -113,10 +129,24 @@ func New(opts Options) (*Client, error) {
 		[]byte(opts.Creds.Username+":"+opts.Creds.Token))
 
 	editor := func(ctx context.Context, req *http.Request) error {
-		req.Header.Set("Authorization", authHeader)
-		req.Header.Set("User-Agent", ua)
-		req.Header.Set("Accept", "application/json")
+		// Don't clobber headers the caller set deliberately — `namecom api
+		// --header 'Authorization: …'` is a supported escape hatch.
+		if req.Header.Get("Authorization") == "" {
+			req.Header.Set("Authorization", authHeader)
+		}
+		if req.Header.Get("User-Agent") == "" {
+			req.Header.Set("User-Agent", ua)
+		}
+		if req.Header.Get("Accept") == "" {
+			req.Header.Set("Accept", "application/json")
+		}
+		// Only supply the per-invocation key when the caller hasn't set one.
+		// Editors run AFTER the generated request builder, so an unconditional
+		// Set() here silently overwrote a key the user passed explicitly —
+		// meaning a retried write sent a different key each attempt and could
+		// double-charge, which is precisely what the key exists to prevent.
 		if key, _ := ctx.Value(idempKeyCtxKey{}).(string); key != "" &&
+			req.Header.Get("X-Idempotency-Key") == "" &&
 			(req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodDelete) {
 			req.Header.Set("X-Idempotency-Key", key)
 		}
@@ -130,7 +160,21 @@ func New(opts Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building API client: %w", err)
 	}
-	return &Client{gen: gc, baseURL: baseURL, httpClient: httpClient}, nil
+	return &Client{gen: gc, baseURL: baseURL, httpClient: httpClient, editor: editor}, nil
+}
+
+// Prepare applies the standard headers — auth, User-Agent, Accept, and the
+// per-invocation idempotency key — to a hand-built request.
+//
+// The generated client applies these through a request editor, which only runs
+// inside generated endpoint methods. Anything that builds its own request and
+// sends it via HTTPClient() (notably `namecom api`) must call this, or the
+// request goes out unauthenticated. Headers already present are left alone.
+func (c *Client) Prepare(req *http.Request) error {
+	if c.editor == nil {
+		return nil
+	}
+	return c.editor(req.Context(), req)
 }
 
 // Gen returns the underlying generated client for calling typed endpoint

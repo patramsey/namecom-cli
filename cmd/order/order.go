@@ -4,6 +4,7 @@ package order
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -25,7 +26,6 @@ var Cmd = &cobra.Command{
 var (
 	refundOrderID int32
 	refundItemIDs []int32
-	refundIdemKey string
 
 	listAll    bool
 	listDomain string
@@ -39,10 +39,10 @@ var listCmd = &cobra.Command{
 	Short: "List orders",
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
-  namecom order list --since 2026-01-01               # orders from this year
-  namecom order list --domain acme.io                 # orders for one domain
+  namecom order list --since 2026-01-01                # orders from this year
+  namecom order list --domain acme.io                  # orders for one domain
   namecom order list --status success
-  namecom order list --all -o json | jq '.[].domainName'`,
+  namecom order list --all -o json | jq '.data[].id'   # JSON output is wrapped in a "data" envelope`,
 	Args: cobra.NoArgs,
 	RunE: runList,
 }
@@ -72,7 +72,6 @@ func init() {
 
 	refundCmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "order ID (required)")
 	refundCmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "comma-separated order item IDs (required)")
-	refundCmd.Flags().StringVar(&refundIdemKey, "idempotency-key", "", "idempotency key for safe retries")
 	_ = refundCmd.MarkFlagRequired("order-id")
 	_ = refundCmd.MarkFlagRequired("item-ids")
 
@@ -124,19 +123,26 @@ func runList(cmd *cobra.Command, _ []string) error {
 			spin.Stop()
 			return err
 		}
-		if err := api.Decode(resp, &lastResult); err != nil {
+		// Fresh variable each iteration: the JSON decoder reuses the existing
+		// slice backing array and the pointers inside it, so reusing one target
+		// lets page N overwrite values page 1 already appended. It also leaves a
+		// stale non-nil NextPage when the final page omits the key, which never
+		// terminates. See the same pattern in cmd/dns/dns.go.
+		var result gen.ListOrdersResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
 			spin.Stop()
 			return err
 		}
-		orders = append(orders, lastResult.Orders...)
-		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
+		orders = append(orders, result.Orders...)
+		lastResult = result
+		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
 		if !autoPage {
 			hasMore = true
 			break
 		}
-		page = *lastResult.NextPage
+		page = *result.NextPage
 		spin.Update(fmt.Sprintf("Fetching orders… (page %d, %d so far)", page, len(orders)))
 	}
 	spin.Stop()
@@ -212,6 +218,18 @@ func runGet(cmd *cobra.Command, args []string) error {
 			[]string{"ID", "STATUS", "DATE", "TOTAL"},
 			orderRows(out, []gen.Order{o}),
 		)
+		// Show the line items. Their IDs are the required input to
+		// `order refund --item-ids`, and sharing list's renderer meant a single
+		// order rendered exactly like a list row — leaving no way to discover
+		// them without dropping to `-o json | jq`.
+		if o.OrderItems != nil && len(*o.OrderItems) > 0 {
+			out.Table(
+				[]string{"ITEM ID", "NAME", "TYPE", "PRICE", "REFUNDABLE"},
+				orderItemRows(out, *o.OrderItems, o.Currency),
+			)
+			out.Hint("Run 'namecom order refund --order-id " +
+				strconv.Itoa(int(derefInt32(o.Id))) + " --item-ids <ITEM ID>' to refund a refundable item")
+		}
 		out.Hint("Run 'namecom order list' to see all orders")
 	}
 	return nil
@@ -222,6 +240,12 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
+
+	if dryRun {
+		out.DryRun("POST", "/core/v1/refund", nil)
+		fmt.Fprintf(out.Writer, "  orderId=%d itemIds=%v\n", refundOrderID, refundItemIDs)
+		return nil
+	}
 
 	ok, err := confirmRefund(out, yes, refundOrderID, refundItemIDs)
 	if err != nil {
@@ -240,16 +264,9 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		OrderItemIds: itemIDs,
 	}
 
+	// The root --idempotency-key (or an auto-generated one) is applied by the
+	// client request editor; no per-command flag is needed or wanted here.
 	params := &gen.ProcessRefundParams{}
-	if refundIdemKey != "" {
-		params.XIdempotencyKey = &refundIdemKey
-	}
-
-	if dryRun {
-		out.DryRun("POST", "/core/v1/orders:refund", nil)
-		fmt.Fprintf(out.Writer, "  orderId=%d itemIds=%v\n", refundOrderID, refundItemIDs)
-		return nil
-	}
 
 	resp, err := client.Gen().ProcessRefund(cmd.Context(), params, body)
 	if err != nil {
@@ -272,6 +289,49 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// formatAmount renders a monetary value in the order's currency. Orders can be
+// placed in non-USD currencies ('USD', 'CNY'), so a bare "$" would misreport
+// them. USD keeps the familiar symbol; anything else is suffixed with its code
+// rather than guessing at a symbol we may not have.
+func formatAmount(amount float64, currency *string) string {
+	if currency == nil || *currency == "" || strings.EqualFold(*currency, "USD") {
+		return fmt.Sprintf("$%.2f", amount)
+	}
+	return fmt.Sprintf("%.2f %s", amount, strings.ToUpper(*currency))
+}
+
+func derefInt32(n *int32) int32 {
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+// orderItemRows renders an order's line items. Item IDs are what
+// `order refund --item-ids` consumes, and IsRefundable says whether a refund
+// is even possible — so both belong in the default view.
+func orderItemRows(out *output.Config, items []gen.OrderItem, currency *string) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, it := range items {
+		name := ""
+		if it.Name != nil {
+			name = *it.Name
+		}
+		refundable := out.Dim("—")
+		if it.IsRefundable {
+			refundable = out.BoolBadge(true)
+		}
+		rows = append(rows, []string{
+			strconv.Itoa(int(it.Id)),
+			name,
+			it.Type,
+			formatAmount(it.Price, currency),
+			refundable,
+		})
+	}
+	return rows
+}
+
 func orderRows(out *output.Config, orders []gen.Order) [][]string {
 	rows := make([][]string, 0, len(orders))
 	for _, o := range orders {
@@ -289,7 +349,7 @@ func orderRows(out *output.Config, orders []gen.Order) [][]string {
 		}
 		total := ""
 		if o.FinalAmount != nil {
-			total = fmt.Sprintf("$%.2f", *o.FinalAmount)
+			total = formatAmount(*o.FinalAmount, o.Currency)
 		}
 		rows = append(rows, []string{id, status, date, total})
 	}

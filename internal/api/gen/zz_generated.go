@@ -1089,7 +1089,7 @@ type NotFound404 struct {
 // Order Order contains all the data for an order.
 type Order struct {
 	// AuthAmount AuthAmount is the amount authorized to complete the order purchase.
-	AuthAmount *float32 `json:"authAmount,omitempty"`
+	AuthAmount *float64 `json:"authAmount,omitempty"`
 
 	// CreateDate CreateDate is the date the order was placed.
 	CreateDate *string `json:"createDate,omitempty"`
@@ -1098,10 +1098,10 @@ type Order struct {
 	Currency *string `json:"currency,omitempty"`
 
 	// CurrencyRate CurrencyRate is the conversion rate from USD to order's currency.  This field is only populated if order's currency is non-USD.
-	CurrencyRate *float32 `json:"currencyRate,omitempty"`
+	CurrencyRate *float64 `json:"currencyRate,omitempty"`
 
 	// FinalAmount FinalAmount is the final amount of the order, after discounts and refunds.
-	FinalAmount *float32 `json:"finalAmount,omitempty"`
+	FinalAmount *float64 `json:"finalAmount,omitempty"`
 	Id          *int32   `json:"id,omitempty"`
 
 	// OrderItems OrderItems is the collection of 1 or more items in the order.
@@ -1114,10 +1114,10 @@ type Order struct {
 	Status *string `json:"status,omitempty"`
 
 	// TotalCapture TotalCapture is the amount captured.
-	TotalCapture *float32 `json:"totalCapture,omitempty"`
+	TotalCapture *float64 `json:"totalCapture,omitempty"`
 
 	// TotalRefund TotalRefund is the amount, if any, refunded. Default is 0.00.
-	TotalRefund *float32 `json:"totalRefund,omitempty"`
+	TotalRefund *float64 `json:"totalRefund,omitempty"`
 }
 
 // OrderItem OrderItem contains all the order item data.
@@ -1136,13 +1136,13 @@ type OrderItem struct {
 	Name *string `json:"name"`
 
 	// OriginalPrice OriginalPrice is the original price of the item before discounts.
-	OriginalPrice *float32 `json:"originalPrice"`
+	OriginalPrice *float64 `json:"originalPrice"`
 
 	// Price Price is the final price of the item.
-	Price float32 `json:"price"`
+	Price float64 `json:"price"`
 
 	// PriceNonUsd PriceNonUsd is the price of the item if order has non-usd currency.
-	PriceNonUsd *float32 `json:"priceNonUsd,omitempty"`
+	PriceNonUsd *float64 `json:"priceNonUsd,omitempty"`
 
 	// Quantity Quantity is the number of items.
 	Quantity int32 `json:"quantity"`
@@ -1151,7 +1151,7 @@ type OrderItem struct {
 	Status string `json:"status"`
 
 	// TaxAmount TaxAmount is the tax charged for this item, if applicable.
-	TaxAmount *float32 `json:"taxAmount"`
+	TaxAmount *float64 `json:"taxAmount"`
 
 	// Tld Tld is (optional) tld of domain name, if applicable ('ninja').
 	Tld *string `json:"tld"`
@@ -1250,7 +1250,7 @@ type RefundItemResult struct {
 	OrderItemStatus RefundItemResultOrderItemStatus `json:"orderItemStatus"`
 
 	// RefundAmount The amount refunded for this order item in USD.
-	RefundAmount float32 `json:"refundAmount"`
+	RefundAmount float64 `json:"refundAmount"`
 }
 
 // RefundItemResultOrderItemStatus The status of the refund operation for this item.
@@ -1272,7 +1272,7 @@ type RefundResponseSchema struct {
 	Results []RefundItemResult `json:"results"`
 
 	// TotalRefundAmount The total amount refunded across all order items in USD.
-	TotalRefundAmount float32 `json:"totalRefundAmount"`
+	TotalRefundAmount float64 `json:"totalRefundAmount"`
 }
 
 // RegistrantContact Contact contains all relevant contact data for a domain registrant. This schema is used for API responses and may contain null values for legacy data. For creating or updating contacts, use RegistrantContactRequest which enforces all validation requirements.
@@ -1723,7 +1723,7 @@ type TldPriceListResponseSchema struct {
 // TrademarkClaim Information about a specific trademark claim
 type TrademarkClaim struct {
 	// Confidence Confidence score for the trademark match (0.0 to 1.0)
-	Confidence *float32 `json:"confidence,omitempty"`
+	Confidence *float64 `json:"confidence,omitempty"`
 
 	// Description Additional description of the trademark
 	Description *string `json:"description,omitempty"`

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,9 +117,22 @@ func TestContextCancelStopsRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	start := time.Now()
 	_, err := newTestClient(http.DefaultTransport).Do(req)
+	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+
+	// Assert the cancellation actually short-circuited the backoff. Checking
+	// only err != nil passes even if sleep() ignores ctx entirely and blocks for
+	// the full retry schedule — verified: replacing the ctx.Done() select with a
+	// bare <-timer.C left this green while the call took 30s instead of 0.1s.
+	if elapsed > 2*time.Second {
+		t.Errorf("cancellation did not interrupt the backoff: took %v", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Errorf("expected a context error, got %v", err)
 	}
 }
 
@@ -157,7 +172,15 @@ type failingTransport struct {
 func (ft *failingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	n := ft.calls.Add(1)
 	if n <= ft.failures {
-		return nil, fmt.Errorf("simulated connection error (call %d)", n)
+		// Return the shape a real connection failure has — *net.OpError, which
+		// satisfies net.Error. A plain fmt.Errorf is indistinguishable from a
+		// permanent client-side construction failure (an invalid header, a bad
+		// scheme), which the transport deliberately does NOT retry.
+		return nil, &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: fmt.Errorf("simulated connection error (call %d)", n),
+		}
 	}
 	return ft.base.RoundTrip(req)
 }
@@ -248,5 +271,223 @@ func TestParseErrorUnauthorizedHint(t *testing.T) {
 	e := parseError(resp)
 	if !strings.Contains(e.Details, "sandbox") {
 		t.Errorf("expected sandbox hint, got %q", e.Details)
+	}
+}
+
+// TestNoRetryOnPermanentRequestError guards wasted backoff. The transport
+// retries ANY error from the underlying RoundTrip when the method is
+// idempotent — but client-side request-construction failures (an invalid
+// header value, an unsupported scheme, a bad method) can never succeed on a
+// second attempt. Retrying them burns the full backoff schedule before
+// surfacing a failure the caller could have had immediately: a typo'd
+// `namecom api --header` took over 7 seconds to report.
+func TestNoRetryOnPermanentRequestError(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	// An invalid header value: net/http refuses to write this, every time.
+	req.Header["X-Bad"] = []string{"value\r\nX-Injected: yes"}
+
+	start := time.Now()
+	_, err = c.HTTPClient().Do(req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error for an invalid header value")
+	}
+	if attempts != 0 {
+		t.Errorf("request should never have reached the server, got %d attempts", attempts)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("permanent request error was retried with backoff: took %v", elapsed)
+	}
+}
+
+// TestStillRetriesTransientNetworkError is the counterpart to
+// TestNoRetryOnPermanentRequestError: narrowing the retry condition must not
+// disable retries for the failures it exists to absorb. A connection refused
+// surfaces as *net.OpError (a net.Error) and must still be retried.
+func TestStillRetriesTransientNetworkError(t *testing.T) {
+	// Bind then immediately close, so the port is almost certainly refusing.
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	var retries int
+	c, err := New(Options{
+		BaseURL:    deadURL,
+		MaxRetries: 2,
+		OnRetry:    func(int, time.Duration) { retries++ },
+	})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, deadURL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if _, err := c.HTTPClient().Do(req); err == nil {
+		t.Fatal("expected a connection error against a closed listener")
+	}
+	if retries == 0 {
+		t.Error("a transient network error must still be retried")
+	}
+}
+
+// TestMaxRetriesCanBeDisabled covers the gap in Options.MaxRetries: 0 means
+// "use the default", so there was no value that meant "don't retry". Callers
+// wanting fail-fast behaviour — a health check, a test, an interactive command
+// that would rather surface an error than stall — had no way to ask for it.
+// A negative value now disables retries entirely.
+func TestMaxRetriesCanBeDisabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxRetries  int
+		wantCalls   int32
+		description string
+	}{
+		{"zero means default", 0, 4, "1 attempt + 3 retries"},
+		{"explicit count", 1, 2, "1 attempt + 1 retry"},
+		{"negative disables", -1, 1, "single attempt, no retries"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusInternalServerError) // retryable for GET
+			}))
+			defer srv.Close()
+
+			c, err := New(Options{BaseURL: srv.URL, MaxRetries: tc.maxRetries})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			resp, err := c.HTTPClient().Get(srv.URL)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			_ = resp.Body.Close()
+
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Errorf("MaxRetries=%d: got %d call(s), want %d (%s)",
+					tc.maxRetries, got, tc.wantCalls, tc.description)
+			}
+		})
+	}
+}
+
+// TestRetriesEOF covers a regression introduced when retries were narrowed to
+// net.Error: a peer closing a FRESH connection surfaces as bare io.EOF, which
+// does not satisfy net.Error. That is the single most common transient failure
+// in practice — a load balancer draining, a server restarting, a proxy
+// recycling — and net/http's own internal retry does not absorb it either
+// (shouldRetryRequest short-circuits unless the connection was reused).
+//
+// Failing to retry a transient error costs reliability; retrying a permanent
+// one only costs time. The classification must not be so tight that the common
+// case falls through.
+func TestRetriesEOF(t *testing.T) {
+	// Accept connections and close them immediately for the first N attempts,
+	// then hand off to a real handler.
+	var attempts atomic.Int32
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			if attempts.Add(1) <= 2 {
+				_ = c.Close() // peer sees EOF
+				continue
+			}
+			go func(conn net.Conn) {
+				defer func() { _ = conn.Close() }()
+				buf := make([]byte, 1024)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"))
+			}(c)
+		}
+	}()
+
+	base := "http://" + ln.Addr().String()
+	c, err := New(Options{BaseURL: base, MaxRetries: 4})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	resp, err := c.HTTPClient().Get(base + "/core/v1/domains")
+	if err != nil {
+		t.Fatalf("an EOF on a fresh connection must be retried, got: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := attempts.Load(); got < 3 {
+		t.Errorf("expected retries past the closed connections, got %d attempt(s)", got)
+	}
+}
+
+// TestRateLimiterPacesRequests covers the client-side rate limiter, which had
+// no test at all: newTestClient installs rate.Inf, so every existing test
+// bypasses it. The limiter exists to stay under the API's published ceiling and
+// to leave headroom for other consumers on the same account — deleting it would
+// have been invisible.
+//
+// Uses a deliberately high RPS so the test stays fast while the pacing is still
+// measurable.
+func TestRateLimiterPacesRequests(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// 50 rps with a burst of 1: the first request goes immediately, each
+	// subsequent one waits ~20ms.
+	const rps, burst, n = 50, 1, 5
+	c, err := New(Options{BaseURL: srv.URL, RPS: rps, Burst: burst})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		resp, gerr := c.HTTPClient().Get(srv.URL)
+		if gerr != nil {
+			t.Fatalf("request %d: %v", i, gerr)
+		}
+		_ = resp.Body.Close()
+	}
+	elapsed := time.Since(start)
+
+	if got := hits.Load(); got != n {
+		t.Fatalf("expected %d requests to reach the server, got %d", n, got)
+	}
+	// (n-1) intervals at 1/rps each, with slack for scheduling.
+	minExpected := time.Duration(n-1) * time.Second / rps / 2
+	if elapsed < minExpected {
+		t.Errorf("requests were not rate limited: %d requests in %v, expected at least %v",
+			n, elapsed, minExpected)
 	}
 }

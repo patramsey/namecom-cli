@@ -39,7 +39,10 @@ verify-spec:
 		|| { echo "ERROR: $(SPEC) does not match recorded SHA256. Re-vendor deliberately and update SPEC_SHA in the Makefile."; exit 1; }
 
 test:
-	go test ./...
+	# -count=1 disables the test cache. internal/api/gen shells out to
+	# scripts/spec_to_30.py and reads namecom.api.yaml; Go's cache tracks
+	# neither, so a plain `go test` reports a stale pass after either changes.
+	go test -count=1 ./...
 
 # Integration suite against the sandbox API. Requires sandbox credentials.
 test-int:

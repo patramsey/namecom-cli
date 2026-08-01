@@ -193,6 +193,21 @@ func ValidNameserver(ns string, idx int) error {
 	return nil
 }
 
+// ValidSortDir checks a --sort-dir value. Unlike `sort`, the spec DOES
+// enumerate this one — "Possible values are 'asc' (default) or 'desc'" — so a
+// typo is worth catching before the round trip.
+//
+// There is deliberately no equivalent for `sort`: the spec declares it as a
+// bare string with no enum, and an invented allowlist here blocked fields the
+// server accepts while claiming they were invalid.
+func ValidSortDir(dir string) error {
+	switch dir {
+	case "", "asc", "desc":
+		return nil
+	}
+	return NewUsageError(fmt.Errorf("invalid --sort-dir %q: valid values are asc, desc", dir))
+}
+
 // ValidYears checks that n is a valid domain registration/renewal period.
 func ValidYears(n int) error {
 	if n < 1 || n > 10 {
@@ -253,11 +268,26 @@ func ValidEmailLocalPart(s, argName string) error {
 
 // DomainArg validates and normalizes (lowercases) a domain name positional argument.
 func DomainArg(args []string, n int) (string, error) {
-	d := strings.ToLower(args[n])
+	d := CanonicalDomain(args[n])
 	if err := ValidDomainName(d); err != nil {
 		return "", err
 	}
 	return d, nil
+}
+
+// CanonicalDomain normalizes a domain name for comparison and transmission.
+//
+// It lowercases and trims. It deliberately does NOT convert Unicode labels to
+// punycode: the API "normalizes punycode server-side, so either ASCII or UTF-8
+// is accepted" on input, and encoding locally would mean depending on
+// golang.org/x/net/idna for one edge case.
+//
+// Responses do come back in canonical punycode, so anything matching a reply
+// against a request must cope with the spellings differing — see argMatcher in
+// cmd/domain/search_check.go, which resolves that by elimination rather than by
+// re-encoding.
+func CanonicalDomain(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // ValidAuthCode checks that a transfer auth code is plausibly non-trivial.

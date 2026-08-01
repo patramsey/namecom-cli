@@ -99,3 +99,35 @@ func TestAPIError_UserHint(t *testing.T) {
 		}
 	}
 }
+
+// TestAPIError_UnauthorizedNoteFormatting guards doubled parentheses. Error()
+// renders details as "message (details)", and the 401 note was itself wrapped
+// in parens, producing:
+//
+//	Unauthorized ((note: sandbox uses a separate API token from production))
+//
+// When the API supplies its own details the note must join them readably rather
+// than nest another parenthetical inside.
+func TestAPIError_UnauthorizedNoteFormatting(t *testing.T) {
+	t.Run("no api details", func(t *testing.T) {
+		e := ErrorFromResponse(401, []byte(`{"message":"Unauthorized"}`))
+		got := e.Error()
+		if strings.Contains(got, "((") || strings.Contains(got, "))") {
+			t.Errorf("doubled parentheses in error: %q", got)
+		}
+		if !strings.Contains(got, "sandbox uses a separate API token") {
+			t.Errorf("expected the sandbox hint, got: %q", got)
+		}
+	})
+
+	t.Run("with api details", func(t *testing.T) {
+		e := ErrorFromResponse(401, []byte(`{"message":"Unauthorized","details":"token expired"}`))
+		got := e.Error()
+		if strings.Contains(got, "((") || strings.Contains(got, "))") {
+			t.Errorf("doubled parentheses in error: %q", got)
+		}
+		if !strings.Contains(got, "token expired") {
+			t.Errorf("API's own details must be preserved, got: %q", got)
+		}
+	})
+}

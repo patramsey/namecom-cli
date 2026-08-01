@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -43,9 +44,9 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	rawPath := args[1]
 
 	base := client.BaseURL()
-	u, err := url.JoinPath(base, rawPath)
+	u, err := buildAPIURL(base, rawPath)
 	if err != nil {
-		return fmt.Errorf("building URL: %w", err)
+		return err
 	}
 
 	var bodyReader io.Reader
@@ -70,7 +71,14 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
 	}
 
-	// Use the raw http.Client from the generated client to apply auth/rate-limiting.
+	// HTTPClient() supplies rate limiting and retries via its transport, but auth
+	// headers come from the generated client's request editor, which only runs
+	// inside generated endpoint methods. Apply them explicitly — without this
+	// every raw request goes out unauthenticated. Prepare leaves any header set
+	// above (including --header overrides) untouched.
+	if err := client.Prepare(req); err != nil {
+		return fmt.Errorf("preparing request: %w", err)
+	}
 	resp, err := client.HTTPClient().Do(req)
 	if err != nil {
 		return err
@@ -86,9 +94,47 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
 		_, _ = os.Stderr.Write(body)
 		fmt.Fprintln(os.Stderr)
-		return fmt.Errorf("API error: HTTP %d", resp.StatusCode)
+		// Return the normalized error type so root.go's exit-code mapping and
+		// UserHint apply here too. A plain fmt.Errorf collapsed every failure to
+		// exit 1, hiding the documented auth/rate-limit codes from scripts.
+		return api.ErrorFromResponse(resp.StatusCode, body)
 	}
 
 	fmt.Fprintf(out.Writer, "%s\n", body)
 	return nil
+}
+
+// buildAPIURL joins a user-supplied path onto the API base URL.
+//
+// This is a security boundary, which is why it is a separate function: the path
+// comes straight from argv and the resulting request carries the account's
+// credential. url.JoinPath escapes the path and cleans traversal, so a
+// protocol-relative "//evil.example", an absolute URL, or "../.." cannot
+// retarget the request. (url.ResolveReference, the obvious alternative, does
+// NOT — it honours all three.)
+//
+// It is factored out so the property can be tested on the constructed URL
+// rather than by observing network behaviour. Asserting "the attacker's server
+// wasn't contacted" is not a real check: if a hostile path DOES retarget the
+// request, the local test server simply never runs and the assertions pass
+// vacuously — and even a failed connection means the credential already left.
+func buildAPIURL(base, rawPath string) (string, error) {
+	u, err := url.JoinPath(base, rawPath)
+	if err != nil {
+		return "", fmt.Errorf("building URL: %w", err)
+	}
+	baseParsed, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("building URL: %w", err)
+	}
+	joined, err := url.Parse(u)
+	if err != nil {
+		return "", fmt.Errorf("building URL: %w", err)
+	}
+	// Belt and braces: refuse anything that moved off the configured host.
+	if joined.Host != baseParsed.Host || joined.Scheme != baseParsed.Scheme {
+		return "", fmt.Errorf("path %q would send the request to %s://%s, not %s — refusing",
+			rawPath, joined.Scheme, joined.Host, base)
+	}
+	return u, nil
 }

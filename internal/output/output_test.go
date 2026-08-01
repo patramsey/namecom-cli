@@ -2,9 +2,13 @@ package output
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // noColor returns a Config with color disabled — tests the pure string logic.
@@ -250,4 +254,115 @@ func TestTitle_NoSandboxTagInProduction(t *testing.T) {
 	if got := buf.String(); strings.Contains(got, "[sandbox]") {
 		t.Errorf("Title() output = %q, want no '[sandbox]' tag in production", got)
 	}
+}
+
+// TestError_StructuredFormats pins that errors are machine-readable in every
+// structured output mode. Error() had a JSON branch but no YAML one, so
+// `-o yaml` emitted a decorated plain-text line that no parser could consume —
+// a silent asymmetry between two formats the CLI advertises equally.
+func TestError_StructuredFormats(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(errors.New("something broke"))
+		var env map[string]any
+		if err := json.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("JSON error output is not parseable: %v\n%s", err, ew.String())
+		}
+		if env["error"] == nil {
+			t.Errorf("expected an \"error\" key, got: %s", ew.String())
+		}
+	})
+
+	// Use a message containing a colon — the overwhelmingly common shape, since
+	// every wrapped error is fmt.Errorf("...: %w"). The plain-text fallback
+	// emits a bare "error: <msg>" line, which parses as YAML only by accident
+	// and stops doing so the moment the message itself contains ": ".
+	realistic := errors.New("creating A www: Invalid answer (details: out of range)")
+
+	t.Run("yaml", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatYAML, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(realistic)
+		got := ew.String()
+		var env map[string]any
+		if err := yaml.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("YAML error output is not parseable: %v\n%s", err, got)
+		}
+		if env["error"] == nil {
+			t.Errorf("expected an \"error\" key, got: %s", got)
+		}
+	})
+
+	t.Run("json with colons", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(realistic)
+		var env map[string]any
+		if err := json.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("JSON error output is not parseable: %v\n%s", err, ew.String())
+		}
+	})
+}
+
+// TestSuccess_StructuredFormats guards a scripting bug. Success printed
+// "✓ <msg>" to STDOUT unconditionally, and the mutating commands that have no
+// format switch of their own — domain lock/autorenew/privacy/set-ns/contacts
+// set, dns delete, dns import, dnssec delete, email delete, url delete,
+// vanity-ns delete, transfer cancel, auth status, config use — call only
+// Success. Since DefaultConfig() picks JSON whenever stdout is not a TTY,
+// `namecom dns delete d.com 123 -y | jq .` received "✓ Deleted record 123"
+// and failed to parse.
+//
+// Its siblings Hint, Step, Count, Empty and Spin all already guard on format;
+// Success was the one that did not.
+func TestSuccess_StructuredFormats(t *testing.T) {
+	t.Run("json is parseable", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w, EWriter: &bytes.Buffer{}}
+		c.Success("Deleted record 123 from example.com")
+
+		var env map[string]any
+		if err := json.Unmarshal(w.Bytes(), &env); err != nil {
+			t.Fatalf("success output is not parseable JSON: %v\n%s", err, w.String())
+		}
+		if env["success"] != true {
+			t.Errorf(`expected "success": true, got: %s`, w.String())
+		}
+		if env["message"] != "Deleted record 123 from example.com" {
+			t.Errorf("message not preserved, got: %s", w.String())
+		}
+	})
+
+	t.Run("yaml is parseable", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatYAML, Color: ColorNever, Writer: &w, EWriter: &bytes.Buffer{}}
+		c.Success("Deleted record 123")
+
+		var env map[string]any
+		if err := yaml.Unmarshal(w.Bytes(), &env); err != nil {
+			t.Fatalf("success output is not parseable YAML: %v\n%s", err, w.String())
+		}
+		if env["success"] != true {
+			t.Errorf(`expected success: true, got: %s`, w.String())
+		}
+	})
+
+	t.Run("table keeps the human form", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &w, EWriter: &bytes.Buffer{}}
+		c.Success("Deleted record 123")
+		if !strings.Contains(w.String(), "✓ Deleted record 123") {
+			t.Errorf("table mode should keep the checkmark line, got: %q", w.String())
+		}
+	})
+
+	t.Run("quiet emits nothing", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, QuietMode: true, Writer: &w, EWriter: &bytes.Buffer{}}
+		c.Success("Deleted record 123")
+		if w.Len() != 0 {
+			t.Errorf("--quiet should emit nothing on success, got: %q", w.String())
+		}
+	})
 }

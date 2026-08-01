@@ -4,6 +4,8 @@ package transfer
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -59,8 +61,16 @@ var createCmd = &cobra.Command{
 }
 
 var internalCmd = &cobra.Command{
-	Use:     "internal-in <domain>",
-	Short:   "Move a domain between name.com accounts (no EPP wait required)",
+	Use:   "internal-in <domain>",
+	Short: "Move a domain between name.com accounts (enterprise resellers only)",
+	Long: `Move a domain between name.com accounts without the usual EPP transfer wait.
+
+Requires an approved enterprise reseller account: the spec states "Restricted to
+approved enterprise resellers; other callers receive 403 Forbidden." Contact
+name.com support to request access.
+
+The losing account must unlock the domain and supply the authorization code from
+the name.com dashboard first — this command cannot do either.`,
 	Example: `  namecom transfer internal-in example.com --auth-code XXXXXX`,
 	Args:    cmdutil.ExactArgs(1),
 	RunE:    runInternalIn,
@@ -122,19 +132,26 @@ func runList(cmd *cobra.Command, _ []string) error {
 			spin.Stop()
 			return err
 		}
-		if err := api.Decode(resp, &lastResult); err != nil {
+		// Fresh variable each iteration: the JSON decoder reuses the existing
+		// slice backing array and the pointers inside it, so reusing one target
+		// lets page N overwrite values page 1 already appended. It also leaves a
+		// stale non-nil NextPage when the final page omits the key, which never
+		// terminates. See the same pattern in cmd/dns/dns.go.
+		var result gen.ListTransfersResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
 			spin.Stop()
 			return err
 		}
-		transfers = append(transfers, lastResult.Transfers...)
-		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
+		transfers = append(transfers, result.Transfers...)
+		lastResult = result
+		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *lastResult.NextPage
+		page = *result.NextPage
 		spin.Update(fmt.Sprintf("Fetching transfers… (page %d, %d so far)", page, len(transfers)))
 	}
 	spin.Stop()
@@ -200,6 +217,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		out.PrintQuiet([]string{t.DomainName})
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(t)
@@ -257,7 +280,22 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s?", domain))
+	// Quote the transfer before asking. register/renew both show the amount in
+	// their prompt; transfer asked only "Initiate transfer of X?", so the user
+	// approved a charge they had never seen. A pricing failure must not block
+	// the transfer — fall back to an unpriced prompt.
+	priceMsg := ""
+	if pricingResp, perr := client.Gen().GetPricingForDomain(cmd.Context(), domain, &gen.GetPricingForDomainParams{}); perr == nil {
+		var pricing gen.PricingResponseSchema
+		if api.Decode(pricingResp, &pricing) == nil && pricing.TransferPrice != nil {
+			priceMsg = fmt.Sprintf(" for $%.2f", *pricing.TransferPrice)
+			if createPrivacy {
+				priceMsg += " plus WHOIS privacy"
+			}
+		}
+	}
+
+	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg))
 	if err != nil {
 		return err
 	}
@@ -294,14 +332,36 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Render the result, then fall through to --watch. These branches used to
+	// `return` directly, which made --watch unreachable in JSON/YAML mode — i.e.
+	// in every pipe, since JSON is the default for non-TTY stdout. The flag
+	// exists for automation and did nothing in exactly the automation case.
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(result)
+		if err := out.JSON(result); err != nil {
+			return err
+		}
 	case output.FormatYAML:
-		return out.YAML(result)
+		if err := out.YAML(result); err != nil {
+			return err
+		}
 	default:
 		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total $%.2f)",
 			domain, result.Order, result.TotalPaid))
+		if s := string(result.Transfer.Status); s != "" {
+			fmt.Fprintf(out.Writer, "  status: %s\n", out.StatusBadge(s))
+		}
+		// The API flags non-blocking registry statuses that may still stall the
+		// transfer. JSON output carried these; table output silently dropped them,
+		// so a TTY user saw an unqualified success.
+		if w := result.Warnings; w != nil {
+			if w.Message != nil && *w.Message != "" {
+				out.Warn(*w.Message)
+			}
+			if w.Statuses != nil && len(*w.Statuses) > 0 {
+				out.Warn("registry statuses: " + strings.Join(*w.Statuses, ", "))
+			}
+		}
 		out.Hint("Transfers typically take 3–5 days — the gaining registrar and current owner must approve")
 		out.Hint(fmt.Sprintf("Run 'namecom transfer get %s' to check status", domain))
 	}
@@ -311,13 +371,35 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// isTerminalTransferStatus reports whether a transfer status is final, using
+// the split the spec defines on TransferStatus. Two are counterintuitive and
+// worth stating explicitly: `rejected` is NON-terminal (the losing registrar
+// rejected it, but the transfer may still progress), while
+// `canceled_pending_refund` IS terminal (canceled; only the refund is
+// outstanding).
+func isTerminalTransferStatus(status string) bool {
+	switch gen.TransferStatus(status) {
+	case gen.TransferStatusCompleted,
+		gen.TransferStatusFailed,
+		gen.TransferStatusCanceled,
+		gen.TransferStatusCanceledPendingRefund:
+		return true
+	}
+	return false
+}
+
 // watchTransfer polls GetTransfer every 5 minutes until it reaches a terminal
 // state. Useful in CI/automation — for interactive use the hint is enough.
 func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, domain string) error {
-	terminalStates := map[string]bool{
-		"completed": true, "canceled": true, "failed": true, "rejected": true,
+	// Progress commentary goes to stderr, not stdout. --watch is reachable in
+	// JSON/YAML mode (that is the automation case it exists for), and stdout
+	// already carries the create response as a structured document — writing
+	// human progress lines into that stream makes it unparseable.
+	progress := out.Writer
+	if out.Format != output.FormatTable {
+		progress = out.EWriter
 	}
-	fmt.Fprintf(out.Writer, "\nWatching transfer status — checking every 5 minutes (Ctrl+C to stop)\n")
+	fmt.Fprintf(progress, "\nWatching transfer status — checking every 5 minutes (Ctrl+C to stop)\n")
 
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -340,8 +422,8 @@ func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, d
 			continue
 		}
 		status := string(t.Status)
-		fmt.Fprintf(out.Writer, "  %s  %s\n", time.Now().Format("15:04"), out.StatusBadge(status))
-		if terminalStates[status] {
+		fmt.Fprintf(progress, "  %s  %s\n", time.Now().Format("15:04"), out.StatusBadge(status))
+		if isTerminalTransferStatus(status) {
 			if status == "completed" {
 				out.Success(fmt.Sprintf("Transfer of %s completed", domain))
 			} else {
@@ -409,7 +491,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", "/core/v1/transfers:internal-in", nil)
+		out.DryRun("POST", "/core/v1/transfers/internal/in", nil)
 		fmt.Fprintf(out.Writer, "  domain=%s authCode=[redacted]\n", domain)
 		return nil
 	}
@@ -420,6 +502,15 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	}
 	var t gen.Transfer
 	if err := api.Decode(resp, &t); err != nil {
+		// A 403 here almost always means the account is not on the enterprise
+		// allowlist rather than that the credentials are wrong. Say so, instead
+		// of letting the generic "check your credentials" hint send the user off
+		// to re-enter a token that was fine.
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("internal transfer-in requires an approved enterprise reseller account "+
+				"— contact name.com support to request access (original error: %w)", err)
+		}
 		return err
 	}
 
@@ -445,17 +536,17 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/%s:cancel", domain), nil)
+		return nil
+	}
+
 	ok, err := confirm(out, yes, fmt.Sprintf("Cancel transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/transfers/%s", domain), nil)
 		return nil
 	}
 
@@ -483,17 +574,17 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/external/out/%s:cancel", domain), nil)
+		return nil
+	}
+
 	ok, err := confirm(out, yes, fmt.Sprintf("Cancel outbound transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:cancel-transfer-out", domain), nil)
 		return nil
 	}
 
@@ -549,7 +640,12 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 			{result.DomainName, out.BoolBadge(result.AtName), out.BoolBadge(result.SupportsInternalTransfer)},
 		})
 		if result.AtName {
-			out.Hint(fmt.Sprintf("Run 'namecom transfer internal-in %s --auth-code XXXXXX' to transfer", domain))
+			// supportsInternalTransfer is a TLD-level flag. The spec is explicit
+			// that it "does not reflect per-account allowlist eligibility" — so
+			// recommending this unconditionally sent ordinary users to a command
+			// that returns 403 for everyone outside the enterprise allowlist.
+			out.Hint(fmt.Sprintf("Run 'namecom transfer internal-in %s --auth-code XXXXXX' to transfer "+
+				"(requires enterprise reseller approval)", domain))
 		} else {
 			out.Hint(fmt.Sprintf("Run 'namecom transfer create %s --auth-code XXXXXX' to initiate transfer", domain))
 		}

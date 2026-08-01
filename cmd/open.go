@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os/exec"
 	"runtime"
 
@@ -25,12 +24,16 @@ func init() {
 	rootCmd.AddCommand(openCmd)
 }
 
-func runOpen(_ *cobra.Command, args []string) error {
+func runOpen(cmd *cobra.Command, args []string) error {
+	out := cmdutil.Out(cmd)
 	url := "https://www.name.com/account/domain/"
 	if len(args) == 1 {
 		url = "https://www.name.com/account/domain/details#?domain=" + args[0]
 	}
-	fmt.Println("Opening " + url)
+	// Route through the output config rather than bare fmt.Println: this is
+	// commentary, not data, and writing it to raw stdout corrupts a pipe. Hint
+	// already suppresses itself outside table mode.
+	out.Hint("Opening " + url)
 	return openBrowser(url)
 }
 

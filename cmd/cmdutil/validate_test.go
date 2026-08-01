@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -324,5 +325,157 @@ func TestDomainArg_Normalization(t *testing.T) {
 				t.Errorf("DomainArg(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		}
+	}
+}
+
+// TestCanonicalDomain pins the normalization every command's domain argument
+// goes through: lowercase and trim, nothing more.
+//
+// It deliberately does NOT punycode-encode. The API accepts UTF-8 on input and
+// normalizes server-side, so encoding locally would buy nothing on the request
+// path — it would only help match the canonical form the API replies with, and
+// that is handled by argMatcher in cmd/domain rather than by taking on
+// golang.org/x/net/idna (~9MB of module) for one edge case.
+func TestCanonicalDomain(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"example.com", "example.com"},
+		{"EXAMPLE.COM", "example.com"},
+		{"  example.com  ", "example.com"},
+		// Unicode is lowercased but left as UTF-8 — the API accepts it.
+		{"CAFÉ.COM", "café.com"},
+		// Already-punycode input is untouched, never double-encoded.
+		{"xn--caf-dma.com", "xn--caf-dma.com"},
+		{"XN--CAF-DMA.COM", "xn--caf-dma.com"},
+	}
+	for _, tc := range tests {
+		if got := CanonicalDomain(tc.in); got != tc.want {
+			t.Errorf("CanonicalDomain(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestCanonicalDomain_Idempotent guards against double-encoding: running the
+// result through again must be a no-op, since commands may normalize a name
+// that has already been normalized.
+func TestCanonicalDomain_Idempotent(t *testing.T) {
+	for _, in := range []string{"example.com", "café.com", "xn--caf-dma.com", "ÄPFEL.de"} {
+		once := CanonicalDomain(in)
+		if twice := CanonicalDomain(once); twice != once {
+			t.Errorf("CanonicalDomain not idempotent for %q: %q -> %q", in, once, twice)
+		}
+	}
+}
+
+// TestValidationMessagesAreActionable guards the substance of every validation
+// error, not merely that one occurred.
+//
+// The sibling tables in this file assert `wantErr bool` only. That is a weak
+// contract for a validation package, where the message IS the product — a
+// review demonstrated it by replacing every fmt.Errorf in validate.go with
+// fmt.Errorf("invalid") and watching all 27 tests pass. A user told only
+// "invalid" learns nothing; the whole reason these checks run client-side
+// instead of letting the API 422 is that they can say what to do instead.
+//
+// Expected substrings are quoted from the real messages, not invented.
+func TestValidationMessagesAreActionable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want []string // every substring must be present
+	}{
+		{
+			name: "CNAME at apex names the alternative",
+			err:  ValidDNSAnswer("CNAME", "@", "target.example.com."),
+			want: []string{"apex", "ANAME"},
+		},
+		{
+			name: "A record with IPv6 says which family is wanted",
+			err:  ValidDNSAnswer("A", "@", "::1"),
+			want: []string{"IPv4"},
+		},
+		{
+			name: "AAAA record with IPv4 says which family is wanted",
+			err:  ValidDNSAnswer("AAAA", "@", "1.2.3.4"),
+			want: []string{"IPv6"},
+		},
+		{
+			name: "SRV format error shows the expected shape",
+			err:  ValidDNSAnswer("SRV", "@", "onlyone"),
+			want: []string{"SRV", "port", "target"},
+		},
+		{
+			name: "CAA tag error lists the permitted tags",
+			err:  ValidDNSAnswer("CAA", "@", "0 badtag letsencrypt.org"),
+			want: []string{"issue", "issuewild", "iodef"},
+		},
+		{
+			name: "unknown record type lists the supported types",
+			err:  ValidDNSType("BOGUS"),
+			want: []string{"BOGUS", "A", "CNAME", "TXT"},
+		},
+		{
+			name: "TTL error states the minimum and what was given",
+			err:  ValidTTL(60),
+			want: []string{"300", "60"},
+		},
+		{
+			name: "host with spaces quotes the offending value",
+			err:  ValidDNSHost("has space"),
+			want: []string{"has space", "space"},
+		},
+		{
+			name: "domain without a dot explains what is missing",
+			err:  ValidDomainName("nodot"),
+			want: []string{"nodot", "dot"},
+		},
+		{
+			name: "nameserver error shows an example",
+			err:  ValidNameserver("ns1nodot", 0),
+			want: []string{"fully-qualified", "ns1."},
+		},
+		{
+			name: "years error states the permitted range",
+			err:  ValidYears(11),
+			want: []string{"1", "10", "11"},
+		},
+		{
+			name: "URL without a scheme says which schemes are wanted",
+			err:  ValidURL("example.com", "to"),
+			want: []string{"--to", "http"},
+		},
+		{
+			name: "auth code error states the minimum length",
+			err:  ValidAuthCode("abc"),
+			want: []string{"too short", "6"},
+		},
+		{
+			name: "forwarding type error lists valid types",
+			err:  ValidURLForwardingType("permanent", "type"),
+			want: []string{"redirect", "302", "masked"},
+		},
+		{
+			name: "date error shows the expected format",
+			err:  ValidDate("01/02/2026", "since"),
+			want: []string{"--since", "YYYY-MM-DD"},
+		},
+		{
+			name: "sort-dir error lists the valid values",
+			err:  ValidSortDir("descending"),
+			want: []string{"asc", "desc"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.err == nil {
+				t.Fatal("expected an error for this input")
+			}
+			msg := tc.err.Error()
+			for _, want := range tc.want {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message should mention %q so the user knows what to do; got: %s", want, msg)
+				}
+			}
+		})
 	}
 }

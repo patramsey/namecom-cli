@@ -75,7 +75,7 @@ var deleteCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
 
-	createCmd.Flags().StringVar(&createHostname, "hostname", "", "fully-qualified nameserver hostname (required)")
+	createCmd.Flags().StringVar(&createHostname, "hostname", "", "nameserver hostname, either fully-qualified (ns1.example.com) or bare label (ns1) (required)")
 	createCmd.Flags().StringVar(&createIPs, "ips", "", "comma-separated IP addresses (required)")
 	_ = createCmd.MarkFlagRequired("hostname")
 	_ = createCmd.MarkFlagRequired("ips")
@@ -106,19 +106,26 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return err
 		}
-		if err := api.Decode(resp, &lastResult); err != nil {
+		// Fresh variable each iteration: the JSON decoder reuses the existing
+		// slice backing array and the pointers inside it, so reusing one target
+		// lets page N overwrite values page 1 already appended. It also leaves a
+		// stale non-nil NextPage when the final page omits the key, which never
+		// terminates. See the same pattern in cmd/dns/dns.go.
+		var result gen.ListVanityNameserversResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
 			spin.Stop()
 			return err
 		}
-		all = append(all, lastResult.VanityNameservers...)
-		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
+		all = append(all, result.VanityNameservers...)
+		lastResult = result
+		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *lastResult.NextPage
+		page = *result.NextPage
 		spin.Update(fmt.Sprintf("Fetching vanity nameservers… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()
@@ -181,6 +188,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --quiet prints the identifying value only, matching list commands.
+	if out.QuietMode {
+		out.PrintQuiet([]string{ns.Hostname})
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(ns)
@@ -195,6 +208,31 @@ func runGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// vanityLabel converts a nameserver hostname into the form the create endpoint
+// expects. That endpoint takes only the subdomain portion — "ns1", deriving the
+// rest from the URL path — while get/update/delete take the full hostname. Our
+// help text documents the FQDN spelling everywhere, which is right for three of
+// the four commands, so accept either form here rather than making create the
+// odd one out.
+func vanityLabel(hostname, domain string) (string, error) {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
+	if h == "" {
+		return "", fmt.Errorf("--hostname is required")
+	}
+	if !strings.Contains(h, ".") {
+		return h, nil // already a bare label
+	}
+	suffix := "." + domain
+	if !strings.HasSuffix(h, suffix) {
+		return "", fmt.Errorf("--hostname %q must be a subdomain of %s (e.g. ns1.%s)", hostname, domain, domain)
+	}
+	label := strings.TrimSuffix(h, suffix)
+	if label == "" {
+		return "", fmt.Errorf("--hostname %q must include a subdomain (e.g. ns1.%s)", hostname, domain)
+	}
+	return label, nil
+}
+
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
@@ -204,15 +242,20 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	label, err := vanityLabel(createHostname, domain)
+	if err != nil {
+		return err
+	}
+
 	ips := splitIPs(createIPs)
 	body := gen.CreateVanityNameserverJSONRequestBody{
-		Hostname: createHostname,
+		Hostname: label,
 		Ips:      ips,
 	}
 
 	if dryRun {
 		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers", domain), nil)
-		fmt.Fprintf(out.Writer, "  hostname=%s ips=%s\n", createHostname, createIPs)
+		fmt.Fprintf(out.Writer, "  hostname=%s ips=%s\n", label, createIPs)
 		return nil
 	}
 
@@ -294,17 +337,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	hostname := args[1]
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname), nil)
+		return nil
+	}
+
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname), nil)
 		return nil
 	}
 
@@ -333,10 +376,17 @@ func vanityRows(nss []gen.VanityNameserverResponseSchema) [][]string {
 	return rows
 }
 
+// splitIPs parses the --ips flag. It always returns a non-nil slice so an empty
+// value marshals as [] rather than null: the API documents "Providing an empty
+// array will remove all existing IPs", so `--ips ""` is the supported way to
+// clear glue records. strings.Split("", ",") yields [""], which would send a
+// blank address instead.
 func splitIPs(s string) []string {
-	parts := strings.Split(s, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	ips := []string{}
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			ips = append(ips, p)
+		}
 	}
-	return parts
+	return ips
 }

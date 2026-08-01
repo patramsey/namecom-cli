@@ -13,6 +13,8 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -20,7 +22,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -100,6 +104,13 @@ func resolveReadPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// An explicit NAMECOM_CONFIG is absolute: never fall back to the legacy
+	// location. That variable exists to isolate a run (CI, tests, a scratch
+	// profile), and falling back on a missing file silently pointed those runs
+	// at the user's real — possibly production — credentials.
+	if os.Getenv("NAMECOM_CONFIG") != "" {
+		return primary, nil
+	}
 	if _, err := os.Stat(primary); err == nil {
 		return primary, nil
 	}
@@ -109,6 +120,18 @@ func resolveReadPath() (string, error) {
 		}
 	}
 	return primary, nil
+}
+
+// ActivePath returns the config file this process will actually read from and
+// write to.
+//
+// Path() reports the canonical (XDG) location, which is where NEW config is
+// created — but Load and Save both go through resolveReadPath, which prefers an
+// existing legacy ~/.namecom/config.yaml. Reporting Path() to the user in that
+// situation names a file the CLI is not using, so anyone following the message
+// looks in the wrong place.
+func ActivePath() (string, error) {
+	return resolveReadPath()
 }
 
 // Load reads and parses the config file. A missing file is not an error: it
@@ -125,9 +148,12 @@ func Load() (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
-	// Warn (but do not fail) if the file is group/world accessible — it may
-	// hold a plaintext token.
-	if info.Mode().Perm()&0o077 != 0 {
+	// Warn (but do not fail) if the file is group/world accessible — it may hold
+	// a plaintext token. Only when stderr is a terminal: this is raw text
+	// written ahead of the structured error envelope, so emitting it into a
+	// pipe corrupts stderr for anything parsing it. A human sees it; a script
+	// gets clean output. (Save() now repairs the mode on the next write.)
+	if info.Mode().Perm()&0o077 != 0 && term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprintf(os.Stderr, "warning: %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
 			path, info.Mode().Perm(), path)
 	}
@@ -145,22 +171,34 @@ func Load() (*File, error) {
 	return &f, nil
 }
 
-// Save writes the config file to the primary (XDG) path with 0600 permissions,
-// creating the parent directory as needed.
+// Save writes the config file with 0600 permissions, creating the parent
+// directory as needed.
+//
+// It writes back to the same file Load reads. Writing unconditionally to the
+// XDG path while Load honored the legacy fallback forked the config in two:
+// `auth logout` removed a profile, wrote an empty file to the XDG path, and
+// reported success while the credential stayed readable in the legacy file —
+// now invisible, because the new empty file shadowed it.
 func Save(f *File) error {
-	path, err := Path()
+	path, err := resolveReadPath()
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	data, err := yaml.Marshal(f)
+	data, err := encodeConfig(path, f)
 	if err != nil {
-		return fmt.Errorf("encoding config: %w", err)
+		return err
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("writing config %s: %w", path, err)
+	}
+	// WriteFile only applies its mode when creating the file, so an existing
+	// world-readable config stayed that way — and we'd just written a token into
+	// it. Load warns about loose permissions; this is what actually fixes them.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("securing config %s: %w", path, err)
 	}
 	return nil
 }
@@ -207,12 +245,36 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 	return creds, nil
 }
 
+// tokenCmdTimeout bounds how long a credential helper may run. Generous enough
+// for an interactive unlock (biometric prompt, hardware key touch) but finite:
+// unbounded, a helper blocked on a locked vault or a prompt with no TTY hung
+// the CLI forever, and --timeout covers only HTTP. Overridable in tests.
+var tokenCmdTimeout = 15 * time.Second
+
 // runTokenCmd executes the token command through the shell and returns its
 // trimmed stdout.
 func runTokenCmd(cmdline string) (string, error) {
-	cmd := exec.Command("sh", "-c", cmdline)
+	ctx, cancel := context.WithTimeout(context.Background(), tokenCmdTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
 	cmd.Stderr = os.Stderr
+	setProcessGroup(cmd)
+	// WaitDelay bounds how long Wait blocks AFTER the deadline kills the shell.
+	//
+	// CommandContext only kills the direct child. A helper written as a pipeline
+	// — `op read … | tr -d '\n'`, `vault read … | jq -r .token`, which is how
+	// most of them are written — forks grandchildren that inherit the stdout
+	// pipe, and cmd.Output() keeps reading that pipe long after sh is gone.
+	// Without this the timeout bounded nothing for exactly the common case: it
+	// only appeared to work when the shell exec'd itself into a single command.
+	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		// Report the deadline explicitly. The bare exec error here is a killed
+		// signal, which surfaced as a misleading "produced empty output".
+		return "", fmt.Errorf("timed out after %s (is it waiting on a prompt?)", tokenCmdTimeout)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -235,4 +297,138 @@ func firstNonEmpty(vals ...string) string {
 func truthy(s string) bool {
 	b, err := strconv.ParseBool(strings.TrimSpace(s))
 	return err == nil && b
+}
+
+// encodeConfig serializes f, preserving anything already in the file that the
+// File struct does not model.
+//
+// Marshalling the struct directly discards every key it does not know about —
+// comments, a `theme` used by the sibling TUI, per-profile fields written by
+// other tooling — the first time the CLI writes the file. The user is never
+// told; the data is just gone on the next `auth login` or `config use`.
+//
+// So the existing document is decoded into a node tree, the keys this package
+// owns are updated in place, and the rest is written back untouched. If the
+// file is absent or unparseable there is nothing to preserve, and a plain
+// marshal is correct.
+func encodeConfig(path string, f *File) ([]byte, error) {
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return marshalConfig(f)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(existing, &doc); err != nil || len(doc.Content) == 0 {
+		return marshalConfig(f)
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return marshalConfig(f)
+	}
+
+	// Re-encode the managed fields, then graft each one onto the existing tree.
+	managed, err := marshalConfig(f)
+	if err != nil {
+		return nil, err
+	}
+	var newDoc yaml.Node
+	if err := yaml.Unmarshal(managed, &newDoc); err != nil || len(newDoc.Content) == 0 {
+		return marshalConfig(f)
+	}
+	newRoot := newDoc.Content[0]
+
+	for i := 0; i+1 < len(newRoot.Content); i += 2 {
+		key, val := newRoot.Content[i], newRoot.Content[i+1]
+		if key.Value == "profiles" {
+			// Merge profile-by-profile so per-profile keys we do not model
+			// (region, notes, whatever) survive on profiles that still exist.
+			mergeProfiles(root, val)
+			continue
+		}
+		setMapValue(root, key.Value, val)
+	}
+	// Profiles removed from f (e.g. by `auth logout`) must disappear from the
+	// file too, or a "deleted" credential stays on disk.
+	pruneProfiles(root, f.Profiles)
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, fmt.Errorf("encoding config: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("encoding config: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func marshalConfig(f *File) ([]byte, error) {
+	data, err := yaml.Marshal(f)
+	if err != nil {
+		return nil, fmt.Errorf("encoding config: %w", err)
+	}
+	return data, nil
+}
+
+// setMapValue replaces the value for key, or appends the pair if absent.
+// Replacing the value node in place keeps the key's own comments attached.
+func setMapValue(mapping *yaml.Node, key string, val *yaml.Node) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			// Carry over any comments already on the value being replaced.
+			val.HeadComment = mapping.Content[i+1].HeadComment
+			val.LineComment = mapping.Content[i+1].LineComment
+			val.FootComment = mapping.Content[i+1].FootComment
+			mapping.Content[i+1] = val
+			return
+		}
+	}
+	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
+	mapping.Content = append(mapping.Content, k, val)
+}
+
+// mergeProfiles updates each profile's managed fields while leaving unknown
+// per-profile keys in place.
+func mergeProfiles(root, newProfiles *yaml.Node) {
+	existing := mapValue(root, "profiles")
+	if existing == nil || existing.Kind != yaml.MappingNode {
+		setMapValue(root, "profiles", newProfiles)
+		return
+	}
+	for i := 0; i+1 < len(newProfiles.Content); i += 2 {
+		name, fields := newProfiles.Content[i], newProfiles.Content[i+1]
+		target := mapValue(existing, name.Value)
+		if target == nil || target.Kind != yaml.MappingNode {
+			setMapValue(existing, name.Value, fields)
+			continue
+		}
+		for j := 0; j+1 < len(fields.Content); j += 2 {
+			setMapValue(target, fields.Content[j].Value, fields.Content[j+1])
+		}
+	}
+}
+
+// pruneProfiles removes profiles that are no longer in f, so `auth logout`
+// actually deletes the credential rather than leaving it behind.
+func pruneProfiles(root *yaml.Node, keep map[string]Profile) {
+	profiles := mapValue(root, "profiles")
+	if profiles == nil || profiles.Kind != yaml.MappingNode {
+		return
+	}
+	var kept []*yaml.Node
+	for i := 0; i+1 < len(profiles.Content); i += 2 {
+		if _, ok := keep[profiles.Content[i].Value]; ok {
+			kept = append(kept, profiles.Content[i], profiles.Content[i+1])
+		}
+	}
+	profiles.Content = kept
+}
+
+func mapValue(mapping *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
 }

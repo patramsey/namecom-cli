@@ -169,7 +169,7 @@ namecom domain set-ns acme.io --ns ns1.acme.io,ns2.acme.io
 **Scripting and automation:**
 ```bash
 # List all domains expiring within 60 days
-namecom domain list --output json | jq -r '.[] | select(.expireDate != null and .expireDate < "2026-08-01") | .domainName'
+namecom domain list --output json | jq -r '.data[] | select(.expireDate != null and .expireDate < "2026-08-01") | .domainName'
 
 # Bulk-create an A record across all domains
 namecom domain list -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4

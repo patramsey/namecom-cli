@@ -50,28 +50,41 @@ type errorEnvelope struct {
 	Details string `json:"details"`
 }
 
-// parseError builds an APIError from a non-2xx response, reading and closing
-// the body. The caller should only invoke this for non-2xx responses.
-func parseError(resp *http.Response) *APIError {
-	e := &APIError{StatusCode: resp.StatusCode}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	_ = resp.Body.Close()
-
+// ErrorFromResponse builds an *APIError from a status code and an
+// already-read response body. Callers that read the body themselves — the raw
+// `namecom api` passthrough — use this so their failures carry the same type,
+// exit-code mapping, and user hints as every generated endpoint call.
+func ErrorFromResponse(statusCode int, body []byte) *APIError {
+	e := &APIError{StatusCode: statusCode}
 	var env errorEnvelope
 	if err := json.Unmarshal(body, &env); err == nil && env.Message != "" {
 		e.Message = env.Message
 		e.Details = env.Details
 	} else {
-		// Non-JSON or unexpected body: surface a trimmed snippet.
 		e.Message = strings.TrimSpace(string(body))
 		if e.Message == "" {
-			e.Message = http.StatusText(resp.StatusCode)
+			e.Message = http.StatusText(statusCode)
 		}
 	}
-
-	// Add an actionable hint for the most common credential mistake.
-	if resp.StatusCode == http.StatusUnauthorized {
-		e.Details = strings.TrimSpace(e.Details + " (note: sandbox uses a separate API token from production)")
+	if statusCode == http.StatusUnauthorized {
+		// Error() already renders details as "message (details)", so the note
+		// must not carry its own parentheses — that produced
+		// "Unauthorized ((note: …))". Join to any API-supplied details rather
+		// than nesting a second parenthetical inside the first.
+		const note = "note: sandbox uses a separate API token from production"
+		if d := strings.TrimSpace(e.Details); d != "" {
+			e.Details = d + "; " + note
+		} else {
+			e.Details = note
+		}
 	}
 	return e
+}
+
+// parseError builds an APIError from a non-2xx response, reading and closing
+// the body. The caller should only invoke this for non-2xx responses.
+func parseError(resp *http.Response) *APIError {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	_ = resp.Body.Close()
+	return ErrorFromResponse(resp.StatusCode, body)
 }
