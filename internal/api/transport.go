@@ -3,9 +3,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -41,6 +43,19 @@ func retryableStatus(code int) bool {
 		return true
 	}
 	return false
+}
+
+// transientErr reports whether err might succeed on a retry.
+//
+// net.Error covers the genuinely transient failures — connection refused,
+// timeouts, DNS hiccups, resets. Everything else reaching us from RoundTrip is
+// a client-side construction problem (an invalid header value, an unsupported
+// scheme, a malformed method): net/http rejects those before writing a byte, so
+// every retry fails identically. Retrying them only made the user wait out the
+// full backoff schedule — about 7 seconds — for a verdict available immediately.
+func transientErr(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // idempotent reports whether retrying req on a 5xx is safe. GET/HEAD/PUT/DELETE
@@ -95,9 +110,10 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp, err := t.base.RoundTrip(req)
 		lastResp, lastErr = resp, err
 
-		// Network/transport error: retry only if the request is idempotent.
+		// Network/transport error: retry only if the request is idempotent AND
+		// the failure could plausibly be transient.
 		if err != nil {
-			if attempt < t.maxRetries && idempotent(req) {
+			if attempt < t.maxRetries && idempotent(req) && transientErr(err) {
 				delay := t.backoffDelay(attempt, nil)
 				if t.onRetry != nil {
 					t.onRetry(attempt+1, delay)

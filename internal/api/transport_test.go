@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -157,7 +158,15 @@ type failingTransport struct {
 func (ft *failingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	n := ft.calls.Add(1)
 	if n <= ft.failures {
-		return nil, fmt.Errorf("simulated connection error (call %d)", n)
+		// Return the shape a real connection failure has — *net.OpError, which
+		// satisfies net.Error. A plain fmt.Errorf is indistinguishable from a
+		// permanent client-side construction failure (an invalid header, a bad
+		// scheme), which the transport deliberately does NOT retry.
+		return nil, &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: fmt.Errorf("simulated connection error (call %d)", n),
+		}
 	}
 	return ft.base.RoundTrip(req)
 }
@@ -248,5 +257,79 @@ func TestParseErrorUnauthorizedHint(t *testing.T) {
 	e := parseError(resp)
 	if !strings.Contains(e.Details, "sandbox") {
 		t.Errorf("expected sandbox hint, got %q", e.Details)
+	}
+}
+
+// TestNoRetryOnPermanentRequestError guards wasted backoff. The transport
+// retries ANY error from the underlying RoundTrip when the method is
+// idempotent — but client-side request-construction failures (an invalid
+// header value, an unsupported scheme, a bad method) can never succeed on a
+// second attempt. Retrying them burns the full backoff schedule before
+// surfacing a failure the caller could have had immediately: a typo'd
+// `namecom api --header` took over 7 seconds to report.
+func TestNoRetryOnPermanentRequestError(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	// An invalid header value: net/http refuses to write this, every time.
+	req.Header["X-Bad"] = []string{"value\r\nX-Injected: yes"}
+
+	start := time.Now()
+	_, err = c.HTTPClient().Do(req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error for an invalid header value")
+	}
+	if attempts != 0 {
+		t.Errorf("request should never have reached the server, got %d attempts", attempts)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("permanent request error was retried with backoff: took %v", elapsed)
+	}
+}
+
+// TestStillRetriesTransientNetworkError is the counterpart to
+// TestNoRetryOnPermanentRequestError: narrowing the retry condition must not
+// disable retries for the failures it exists to absorb. A connection refused
+// surfaces as *net.OpError (a net.Error) and must still be retried.
+func TestStillRetriesTransientNetworkError(t *testing.T) {
+	// Bind then immediately close, so the port is almost certainly refusing.
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	var retries int
+	c, err := New(Options{
+		BaseURL:    deadURL,
+		MaxRetries: 2,
+		OnRetry:    func(int, time.Duration) { retries++ },
+	})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, deadURL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if _, err := c.HTTPClient().Do(req); err == nil {
+		t.Fatal("expected a connection error against a closed listener")
+	}
+	if retries == 0 {
+		t.Error("a transient network error must still be retried")
 	}
 }

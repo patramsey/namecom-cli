@@ -646,3 +646,49 @@ func TestCheck_NormalizesDomainArgs(t *testing.T) {
 		t.Errorf("Example.COM is available but was reported as taken: %s", buf.String())
 	}
 }
+
+// TestCheck_MatchesPunycodeResponse extends the normalization guard to IDNs.
+// The spec says punycode "is normalized server-side, so either ASCII or UTF-8
+// is accepted" on input, but results come back "in its canonical (ASCII /
+// punycode) form". runCheck keys its result slots by the argument string, so a
+// Unicode argument never matches the punycode reply — the same blank-row,
+// exit-0 failure as the mixed-case bug, and lowercasing alone does not fix it.
+func TestCheck_MatchesPunycodeResponse(t *testing.T) {
+	avail := true
+	price := 29.99
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "zonecheck"):
+			// Canonical punycode reply for the Unicode name we asked about.
+			results := []gen.ZoneCheckResult{{DomainName: "xn--caf-dma.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := runCheck(cmd, []string{"café.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+
+	var got []gen.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result, got %d: %s", len(got), buf.String())
+	}
+	if got[0].DomainName == "" {
+		t.Fatalf("blank row — the Unicode argument never matched the punycode reply: %s", buf.String())
+	}
+	if !got[0].Purchasable {
+		t.Errorf("café.com is available but was reported as taken: %s", buf.String())
+	}
+}

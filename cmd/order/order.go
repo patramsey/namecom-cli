@@ -293,7 +293,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 // placed in non-USD currencies ('USD', 'CNY'), so a bare "$" would misreport
 // them. USD keeps the familiar symbol; anything else is suffixed with its code
 // rather than guessing at a symbol we may not have.
-func formatAmount(amount float32, currency *string) string {
+func formatAmount(amount float64, currency *string) string {
 	if currency == nil || *currency == "" || strings.EqualFold(*currency, "USD") {
 		return fmt.Sprintf("$%.2f", amount)
 	}

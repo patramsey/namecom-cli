@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -120,5 +121,98 @@ func TestAPI_ReturnsAPIErrorForExitCode(t *testing.T) {
 	}
 	if apiErr.Message != "Permission Denied" {
 		t.Errorf("API's own message should be preserved, got %q", apiErr.Message)
+	}
+}
+
+// TestAPI_PathCannotRedirectToAnotherHost is a credential-exfiltration guard.
+// `namecom api` takes an arbitrary path and now attaches the account's
+// Authorization header to it (the raw passthrough previously sent no auth at
+// all, so there was nothing to leak). If a crafted path could retarget the
+// request at another host — via a protocol-relative "//evil.example", an
+// absolute URL, or ../ traversal above the base — the token would be sent
+// straight to it.
+func TestAPI_PathCannotRedirectToAnotherHost(t *testing.T) {
+	paths := []string{
+		"//evil.example/steal",
+		"https://evil.example/steal",
+		"http://evil.example/steal",
+		"../../../../evil.example/steal",
+		"/core/v1/../../../evil.example",
+		`\\evil.example\steal`,
+	}
+
+	for _, p := range paths {
+		t.Run(p, func(t *testing.T) {
+			var gotHost, gotAuth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotHost, gotAuth = r.Host, r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd, _ := apiCmd(t, srv)
+			// An error is a perfectly good outcome; reaching another host is not.
+			_ = runAPI(cmd, []string{"GET", p})
+
+			if gotAuth != "" && !strings.Contains(srv.URL, gotHost) {
+				t.Errorf("credential sent to unexpected host %q for path %q", gotHost, p)
+			}
+			if strings.Contains(gotHost, "evil.example") {
+				t.Errorf("path %q retargeted the request to %q", p, gotHost)
+			}
+		})
+	}
+}
+
+// TestAPI_HeaderInjectionRejected pins that --header cannot smuggle extra
+// headers or a request line via embedded CRLF.
+func TestAPI_HeaderInjectionRejected(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, _ := apiCmd(t, srv)
+	apiHeaders = []string{"X-Probe: ok\r\nX-Injected: yes"}
+	// Either a rejection or a sanitized send is fine; a smuggled header is not.
+	_ = runAPI(cmd, []string{"GET", "/core/v1/domains"})
+
+	if got.Get("X-Injected") != "" {
+		t.Errorf("CRLF in --header smuggled an additional header: %v", got)
+	}
+}
+
+// TestAPI_CredentialNotForwardedOnCrossHostRedirect guards the other direction:
+// the path is safe, but a response can still try to move the request. Go's
+// http.Client strips sensitive headers when a redirect crosses hosts — this
+// pins that behavior so a future custom CheckRedirect cannot silently undo it.
+func TestAPI_CredentialNotForwardedOnCrossHostRedirect(t *testing.T) {
+	var attackerSawAuth string
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerSawAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(attacker.Close)
+
+	// httptest binds 127.0.0.1; Go compares redirect hosts by NAME (ports are
+	// ignored), so two httptest servers look like the same domain and the header
+	// is legitimately copied. Point the redirect at "localhost" instead — same
+	// machine, genuinely different hostname — to exercise the cross-domain path.
+	attackerHost := strings.Replace(attacker.URL, "127.0.0.1", "localhost", 1)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attackerHost+"/steal", http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+
+	cmd, _ := apiCmd(t, origin)
+	_ = runAPI(cmd, []string{"GET", "/core/v1/domains"})
+
+	if attackerSawAuth != "" {
+		t.Errorf("Authorization header followed a cross-host redirect: %q", attackerSawAuth)
 	}
 }

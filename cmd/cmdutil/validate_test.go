@@ -326,3 +326,39 @@ func TestDomainArg_Normalization(t *testing.T) {
 		}
 	}
 }
+
+// TestCanonicalDomain pins the normalization every command's domain argument
+// goes through. The API accepts either UTF-8 or punycode on input but always
+// replies in canonical ASCII, so anything matching a response to a request has
+// to canonicalize locally.
+func TestCanonicalDomain(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"example.com", "example.com"},
+		{"EXAMPLE.COM", "example.com"},
+		{"  example.com  ", "example.com"},
+		{"café.com", "xn--caf-dma.com"},
+		{"CAFÉ.COM", "xn--caf-dma.com"},
+		// Already punycode — must be left alone, not double-encoded.
+		{"xn--caf-dma.com", "xn--caf-dma.com"},
+		{"ÄPFEL.de", "xn--pfel-koa.de"},
+		// Mixed ASCII/Unicode labels: only the non-ASCII label is encoded.
+		{"shop.café.com", "shop.xn--caf-dma.com"},
+	}
+	for _, tc := range tests {
+		if got := CanonicalDomain(tc.in); got != tc.want {
+			t.Errorf("CanonicalDomain(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestCanonicalDomain_Idempotent guards against double-encoding: running the
+// result through again must be a no-op, since commands may normalize a name
+// that has already been normalized.
+func TestCanonicalDomain_Idempotent(t *testing.T) {
+	for _, in := range []string{"example.com", "café.com", "xn--caf-dma.com", "ÄPFEL.de"} {
+		once := CanonicalDomain(in)
+		if twice := CanonicalDomain(once); twice != once {
+			t.Errorf("CanonicalDomain not idempotent for %q: %q -> %q", in, once, twice)
+		}
+	}
+}

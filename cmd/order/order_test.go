@@ -236,7 +236,7 @@ func TestOrderGet_Success(t *testing.T) {
 // overstating it by the exchange rate.
 func TestOrderRows_Currency(t *testing.T) {
 	usd, cny := "USD", "CNY"
-	amount := float32(100)
+	amount := float64(100)
 
 	tests := []struct {
 		name        string
@@ -414,5 +414,44 @@ func TestOrderGet_ShowsOrderItems(t *testing.T) {
 	// Refundability decides whether a refund can even be attempted.
 	if !strings.Contains(strings.ToLower(got), "refundable") {
 		t.Errorf("order get should indicate which items are refundable; output:\n%s", got)
+	}
+}
+
+// TestOrderRows_LargeAmountPrecision guards money precision. The spec declares
+// the monetary fields as `type: number, format: float`, which oapi-codegen
+// faithfully maps to float32 — about 7 significant decimal digits. That is
+// enough for ordinary prices but not for the seven-figure sums premium domain
+// sales reach: 1234567.89 stored as float32 formats as 1234567.88, a cent off,
+// and re-marshals to 1234567.9 in `-o json`.
+//
+// The CLI performs no arithmetic on money, so nothing compounds — but it must
+// at least echo the API's own figures faithfully.
+func TestOrderRows_LargeAmountPrecision(t *testing.T) {
+	const raw = `{"id":1,"status":"success","createDate":"2026-01-15","finalAmount":1234567.89}`
+
+	var o gen.Order
+	if err := json.Unmarshal([]byte(raw), &o); err != nil {
+		t.Fatalf("decoding order: %v", err)
+	}
+
+	out := &output.Config{
+		Format: output.FormatTable, Color: output.ColorNever,
+		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{},
+	}
+	rows := orderRows(out, []gen.Order{o})
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if got := rows[0][3]; got != "$1234567.89" {
+		t.Errorf("large order total lost precision: got %q, want %q", got, "$1234567.89")
+	}
+
+	// And it must survive a JSON round-trip unchanged.
+	b, err := json.Marshal(o)
+	if err != nil {
+		t.Fatalf("marshalling order: %v", err)
+	}
+	if !strings.Contains(string(b), "1234567.89") {
+		t.Errorf("amount did not round-trip through JSON: %s", b)
 	}
 }
