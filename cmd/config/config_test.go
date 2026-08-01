@@ -28,6 +28,10 @@ func configCmd(t *testing.T, format output.Format) (*cobra.Command, *bytes.Buffe
 		t.Fatalf("writing config: %v", err)
 	}
 	t.Setenv("NAMECOM_CONFIG", path)
+	// Neutralize ambient profile selection: runShow honours NAMECOM_PROFILE, so
+	// a developer with it exported saw these tests fail against a profile the
+	// fixture never defines.
+	t.Setenv("NAMECOM_PROFILE", "")
 
 	var buf bytes.Buffer
 	out := &output.Config{Format: format, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
@@ -78,6 +82,10 @@ func TestShow_DoesNotExposeTokenCmdArguments(t *testing.T) {
 		t.Fatalf("writing config: %v", err)
 	}
 	t.Setenv("NAMECOM_CONFIG", path)
+	// Neutralize ambient profile selection: runShow honours NAMECOM_PROFILE, so
+	// a developer with it exported saw these tests fail against a profile the
+	// fixture never defines.
+	t.Setenv("NAMECOM_PROFILE", "")
 
 	var buf bytes.Buffer
 	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
@@ -134,6 +142,10 @@ func TestShow_HonorsProfileSelection(t *testing.T) {
 		t.Fatalf("writing config: %v", err)
 	}
 	t.Setenv("NAMECOM_CONFIG", path)
+	// Neutralize ambient profile selection: runShow honours NAMECOM_PROFILE, so
+	// a developer with it exported saw these tests fail against a profile the
+	// fixture never defines.
+	t.Setenv("NAMECOM_PROFILE", "")
 	t.Setenv("NAMECOM_PROFILE", "sandy")
 
 	var buf bytes.Buffer

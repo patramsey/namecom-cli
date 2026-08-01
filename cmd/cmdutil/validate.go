@@ -193,15 +193,19 @@ func ValidNameserver(ns string, idx int) error {
 	return nil
 }
 
-// ValidSortField checks a --sort value against the fields the API accepts.
-// It was the only enum flag with no client-side check, so a typo surfaced as a
-// raw API error rather than a list of what's allowed.
-func ValidSortField(field string) error {
-	switch field {
-	case "", "domainName", "expireDate", "createDate":
+// ValidSortDir checks a --sort-dir value. Unlike `sort`, the spec DOES
+// enumerate this one — "Possible values are 'asc' (default) or 'desc'" — so a
+// typo is worth catching before the round trip.
+//
+// There is deliberately no equivalent for `sort`: the spec declares it as a
+// bare string with no enum, and an invented allowlist here blocked fields the
+// server accepts while claiming they were invalid.
+func ValidSortDir(dir string) error {
+	switch dir {
+	case "", "asc", "desc":
 		return nil
 	}
-	return fmt.Errorf("invalid --sort %q: valid fields are domainName, expireDate, createDate", field)
+	return NewUsageError(fmt.Errorf("invalid --sort-dir %q: valid values are asc, desc", dir))
 }
 
 // ValidYears checks that n is a valid domain registration/renewal period.

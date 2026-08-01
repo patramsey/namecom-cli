@@ -517,6 +517,21 @@ func TestDryRunMatchesRealRequest_URL(t *testing.T) {
 			args:  []string{"example.com", "1"},
 			run:   runDelete,
 		},
+		{
+			// create was missing from this table, so its dry-run line was the one
+			// URL path with no drift protection — in the very test that exists to
+			// prevent drift.
+			name: "create",
+			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForURLCreate(t, srv)
+				if err := cmd.ParseFlags([]string{"--to", "https://dest.example"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
+			},
+			args: []string{"example.com"},
+			run:  runCreate,
+		},
 	}
 
 	for _, tc := range tests {

@@ -43,6 +43,7 @@ var (
 	listFilter         string
 	listTLD            string
 	listSort           string
+	listSortDir        string
 	listAll            bool
 	listPage           int32
 	listExpiringAfter  string
@@ -52,7 +53,8 @@ var (
 func init() {
 	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter by domain name (supports * wildcard, e.g. '*acme*')")
 	listCmd.Flags().StringVar(&listTLD, "tld", "", "filter by TLD (e.g. com, io)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "sort field: domainName, expireDate, createDate")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "sort by a domain property (e.g. domainName, expireDate, createDate)")
+	listCmd.Flags().StringVar(&listSortDir, "sort-dir", "", "sort direction: asc (default) or desc")
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (use with --output json for scripting)")
@@ -72,7 +74,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if listPage < 1 {
 		return fmt.Errorf("--page must be 1 or greater (got %d)", listPage)
 	}
-	if err := cmdutil.ValidSortField(listSort); err != nil {
+	if err := cmdutil.ValidSortDir(listSortDir); err != nil {
 		return err
 	}
 	if listExpiringAfter != "" {
@@ -97,6 +99,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 		p := &gen.ListDomainsParams{Page: &page}
 		if listSort != "" {
 			p.Sort = &listSort
+		}
+		if listSortDir != "" {
+			p.Dir = &listSortDir
 		}
 		if listFilter != "" {
 			f := filterToWildcard(listFilter)

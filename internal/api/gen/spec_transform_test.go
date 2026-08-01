@@ -13,6 +13,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// NOTE ON CACHING: these tests shell out to scripts/spec_to_30.py and read
+// namecom.api.yaml. Go's test cache tracks neither, so after editing the
+// preprocessor or the spec you MUST run `go test -count=1 ./internal/api/gen/`
+// — a plain `go test` will report a stale pass. `make generate` regenerates
+// from the same script, so CI should run the suite with -count=1 after it.
+//
 // scripts/spec_to_30.py rewrites the vendored OpenAPI 3.1 spec into a 3.0-
 // compatible form because oapi-codegen v2.4.x cannot read 3.1. It is a
 // line-based transform over a 16k-line YAML file, and every generated Go type
@@ -41,8 +47,23 @@ func runTransform(t *testing.T, src string) (string, error) {
 		t.Skip("python3 not available; skipping spec-transform verification")
 	}
 	root := repoRoot(t)
+	script := filepath.Join(root, "scripts", "spec_to_30.py")
+
+	// Go's test cache keys on Go sources and a few tracked inputs — it cannot
+	// see this Python script or the vendored spec. Without reading them here,
+	// editing the preprocessor and re-running yields a STALE "ok (cached)",
+	// which is how a deliberately broken transform was observed passing. Hashing
+	// both files into the test's observable inputs is not possible, so instead
+	// fail loudly if they are unreadable and document that -count=1 is required
+	// after editing either.
+	for _, f := range []string{script, filepath.Join(root, "namecom.api.yaml")} {
+		if _, err := os.Stat(f); err != nil {
+			t.Fatalf("required input %s: %v", f, err)
+		}
+	}
+
 	dst := filepath.Join(t.TempDir(), "spec30.yaml")
-	cmd := exec.Command("python3", filepath.Join(root, "scripts", "spec_to_30.py"), src, dst)
+	cmd := exec.Command("python3", script, src, dst)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
@@ -99,7 +120,12 @@ func collectDiffs(a, b any, path string, out *[]string) {
 	case []any:
 		bv, ok := b.([]any)
 		if !ok {
-			*out = append(*out, fmt.Sprintf("%s: list became %T", path, b))
+			// Record the members AND the resulting scalar. An earlier version
+			// printed %T, which is "string" for every YAML scalar — so rewriting
+			// a [string, null] union to `integer` produced a byte-identical diff
+			// line and was excused by the whitelist. Verified: emitting
+			// `type: integer` for all 223 nullable unions passed.
+			*out = append(*out, fmt.Sprintf("%s: list %v became scalar %v", path, av, b))
 			return
 		}
 		if len(av) != len(bv) {
@@ -122,12 +148,12 @@ func isDocumentedTransform(d string) bool {
 	switch {
 	case strings.HasPrefix(d, "/openapi:"):
 		return true // 3.1.x -> 3.0.3
-	case strings.Contains(d, "/type: list became "):
-		return true // [T, null] -> T
+	case strings.HasSuffix(d, " became scalar "+unionSurvivor(d)) && strings.Contains(d, "/type: list "):
+		return true // [T, null] -> T, and T really is the non-null member
 	case strings.Contains(d, "nullable: ADDED (true)"):
 		return true // ...and the 3.0 nullable marker
-	case strings.Contains(d, "Response"):
-		return true // *Response -> *ResponseSchema (definitions and $refs)
+	case isResponseRename(d):
+		return true // *Response -> *ResponseSchema (the definition key or a $ref value)
 	case strings.Contains(d, "oneOf: list length"), strings.Contains(d, "anyOf: list length"):
 		return true // bare `- type: null` members dropped
 	case strings.Contains(d, "/format: float -> double"):
@@ -281,4 +307,58 @@ func TestSpecTransform_RejectsUnsupportedConstructs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// unionSurvivor extracts the non-null member from a diff line of the form
+//
+//	/path/type: list [string null] became scalar string
+//
+// so the whitelist can require that the scalar which survived is genuinely the
+// union's non-null member, rather than accepting any scalar at all.
+func unionSurvivor(diff string) string {
+	open := strings.Index(diff, "list [")
+	end := strings.Index(diff, "] became scalar ")
+	if open < 0 || end < 0 {
+		return "\x00" // never matches
+	}
+	members := strings.Fields(diff[open+len("list [") : end])
+	var nonNull []string
+	for _, m := range members {
+		if m != "null" && m != "<nil>" && m != "'null'" {
+			nonNull = append(nonNull, m)
+		}
+	}
+	if len(nonNull) != 1 || len(members) != 2 {
+		return "\x00" // not the supported two-member shape
+	}
+	return nonNull[0]
+}
+
+// isResponseRename reports whether a diff is explained by the *Response ->
+// *ResponseSchema rename, and nothing else.
+//
+// Matching any path merely CONTAINING "Response" swept up every field inside
+// the 33 renamed schemas — 107 of 542 diffs — so a corrupted field type within
+// one of them was silently excused. Only two shapes are legitimate: a schema
+// definition key being renamed (a REMOVED/ADDED pair at the schemas level), and
+// a $ref string gaining the Schema suffix.
+func isResponseRename(d string) bool {
+	// A $ref value change: "...: #/components/schemas/X -> #/components/schemas/XSchema"
+	if i := strings.Index(d, " -> "); i > 0 {
+		before, after := d[:i], d[i+len(" -> "):]
+		if strings.Contains(before, "#/components/schemas/") &&
+			after == before[strings.LastIndex(before, " ")+1:]+"Schema" {
+			return true
+		}
+	}
+	// A definition key appearing/disappearing directly under /components/schemas.
+	if strings.HasPrefix(d, "/components/schemas/") {
+		rest := strings.TrimPrefix(d, "/components/schemas/")
+		name, _, found := strings.Cut(rest, ":")
+		if found && !strings.Contains(name, "/") &&
+			(strings.HasSuffix(d, ": REMOVED") || strings.Contains(d, ": ADDED")) {
+			return true
+		}
+	}
+	return false
 }

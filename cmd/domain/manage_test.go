@@ -1164,27 +1164,90 @@ func TestQuietMode_DetailCommands(t *testing.T) {
 	}
 }
 
-// TestList_SortValidated guards the one enum flag that wasn't checked
-// client-side. Every other enum (--type, --status, --output, forwarding type)
-// validates before the request; --sort passed a typo straight through and the
-// user got a raw API error instead of the list of valid fields.
-func TestList_SortValidated(t *testing.T) {
-	srv := neverCalledServer(t)
+// TestList_SortAcceptsAnyServerSideField reverts a client-side allowlist that
+// was invented rather than derived.
+//
+// namecom.api.yaml:349-353 declares `sort` as a bare `type: string` with no
+// enum — "Sort specifies which domain property to order by" — and no list of
+// permitted fields appears anywhere in the spec. The CLI had been rejecting
+// everything outside a guessed set of three, so any other field the server
+// supports was blocked by the client with an error asserting it was invalid.
+// The server is the authority here.
+func TestList_SortAcceptsAnyServerSideField(t *testing.T) {
+	var gotSort string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSort = r.URL.Query().Get("sort")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domains":[],"totalCount":0,"nextPage":0}`))
+	}))
+	t.Cleanup(srv.Close)
+
 	cmd := baseCmd(t, srv)
 	cmd.Flags().StringVar(&listSort, "sort", "", "")
+	cmd.Flags().StringVar(&listSortDir, "sort-dir", "", "")
 	cmd.Flags().Int32Var(&listPage, "page", 1, "")
-	t.Cleanup(func() { listSort = ""; listPage = 1 })
-	if err := cmd.ParseFlags([]string{"--sort", "expiryDate"}); err != nil {
+	t.Cleanup(func() { listSort = ""; listSortDir = ""; listPage = 1 })
+	if err := cmd.ParseFlags([]string{"--sort", "renewalPrice"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 
-	err := runList(cmd, nil)
-	if err == nil {
-		t.Fatal("expected a client-side error for an invalid --sort field")
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("a sort field outside the old guessed set must reach the server: %v", err)
 	}
-	if !strings.Contains(err.Error(), "expireDate") {
-		t.Errorf("error should list the valid sort fields, got: %v", err)
+	if gotSort != "renewalPrice" {
+		t.Errorf("sort field should be forwarded verbatim, got %q", gotSort)
 	}
+}
+
+// TestList_SortDirection covers the `dir` query parameter, which the spec
+// documents ("Possible values are 'asc' (default) or 'desc'") but the CLI never
+// exposed — making "soonest expiring first" unreachable.
+func TestList_SortDirection(t *testing.T) {
+	t.Run("forwarded when set", func(t *testing.T) {
+		var gotDir string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotDir = r.URL.Query().Get("dir")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"domains":[],"totalCount":0,"nextPage":0}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		cmd := baseCmd(t, srv)
+		cmd.Flags().StringVar(&listSort, "sort", "", "")
+		cmd.Flags().StringVar(&listSortDir, "sort-dir", "", "")
+		cmd.Flags().Int32Var(&listPage, "page", 1, "")
+		t.Cleanup(func() { listSort = ""; listSortDir = ""; listPage = 1 })
+		if err := cmd.ParseFlags([]string{"--sort", "expireDate", "--sort-dir", "desc"}); err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
+		if err := runList(cmd, nil); err != nil {
+			t.Fatalf("runList: %v", err)
+		}
+		if gotDir != "desc" {
+			t.Errorf("expected dir=desc, got %q", gotDir)
+		}
+	})
+
+	t.Run("rejected when not asc or desc", func(t *testing.T) {
+		// Unlike sort, dir DOES have documented values, so a typo is worth
+		// catching before the round trip.
+		srv := neverCalledServer(t)
+		cmd := baseCmd(t, srv)
+		cmd.Flags().StringVar(&listSort, "sort", "", "")
+		cmd.Flags().StringVar(&listSortDir, "sort-dir", "", "")
+		cmd.Flags().Int32Var(&listPage, "page", 1, "")
+		t.Cleanup(func() { listSort = ""; listSortDir = ""; listPage = 1 })
+		if err := cmd.ParseFlags([]string{"--sort-dir", "descending"}); err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
+		err := runList(cmd, nil)
+		if err == nil {
+			t.Fatal("expected an error for an invalid --sort-dir")
+		}
+		if !strings.Contains(err.Error(), "desc") {
+			t.Errorf("error should name the valid values, got: %v", err)
+		}
+	})
 }
 
 // TestToggleCommands_UseUpdateDomain guards a deprecation migration. The spec

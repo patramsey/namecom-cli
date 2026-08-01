@@ -6,11 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -332,11 +336,21 @@ func TestIsTerminalTransferStatus(t *testing.T) {
 		}
 	}
 
-	// Every value in the generated enum must be classified — a new status added
-	// by a spec regen should fail here rather than silently default to polling.
-	all := append(append([]string{}, terminal...), nonTerminal...)
-	if len(all) != 12 {
-		t.Errorf("TransferStatus enum has 12 values; test covers %d", len(all))
+	// Every value in the generated enum must be classified. The previous version
+	// counted the test's OWN literals (4+8 is always 12), so adding a 13th value
+	// to the generated enum did not fail it — the guard could not do what its
+	// comment claimed. Enumerate the generated constants instead, so a spec
+	// regen that introduces a status forces a decision here rather than letting
+	// it silently default to non-terminal (i.e. --watch polls forever).
+	classified := map[string]bool{}
+	for _, s := range append(append([]string{}, terminal...), nonTerminal...) {
+		classified[s] = true
+	}
+	for _, s := range allTransferStatuses() {
+		if !classified[s] {
+			t.Errorf("TransferStatus %q is not classified as terminal or non-terminal — "+
+				"--watch would treat it as non-terminal and poll indefinitely", s)
+		}
 	}
 }
 
@@ -542,5 +556,47 @@ func TestTransferCreate_QuotesPriceBeforeCharging(t *testing.T) {
 
 	if len(calls) < 2 || calls[0] != "pricing" {
 		t.Errorf("transfer price must be fetched before the transfer is created, call order was: %v", calls)
+	}
+}
+
+// allTransferStatuses lists every value of the generated TransferStatus enum.
+//
+// Go has no reflection over untyped constant sets, so this is maintained by
+// hand — but it is verified against the generated source at test time by
+// countTransferStatusConstants below, which fails if the two drift.
+func allTransferStatuses() []string {
+	return []string{
+		string(gen.TransferStatusCanceled),
+		string(gen.TransferStatusCanceledPendingRefund),
+		string(gen.TransferStatusCompleted),
+		string(gen.TransferStatusFailed),
+		string(gen.TransferStatusPending),
+		string(gen.TransferStatusPendingInsert),
+		string(gen.TransferStatusPendingNewAuthCode),
+		string(gen.TransferStatusPendingRegistryUnlock),
+		string(gen.TransferStatusPendingTransfer),
+		string(gen.TransferStatusPendingUnlock),
+		string(gen.TransferStatusRejected),
+		string(gen.TransferStatusSubmittingTransfer),
+	}
+}
+
+// TestAllTransferStatusesIsComplete keeps allTransferStatuses honest by
+// counting the TransferStatus constants in the generated source. Without this,
+// a regen that adds a status would leave the hand-written list short and the
+// classification guard would silently stop covering it.
+func TestAllTransferStatusesIsComplete(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "internal", "api", "gen", "zz_generated.go"))
+	if err != nil {
+		t.Fatalf("reading generated source: %v", err)
+	}
+	re := regexp.MustCompile(`(?m)^\tTransferStatus\w+\s+TransferStatus = `)
+	got := len(re.FindAllString(string(src), -1))
+	if got == 0 {
+		t.Fatal("found no TransferStatus constants — has the generated layout changed?")
+	}
+	if want := len(allTransferStatuses()); got != want {
+		t.Errorf("generated source declares %d TransferStatus constants but allTransferStatuses lists %d — "+
+			"a spec regen added or removed one; classify it in TestIsTerminalTransferStatus", got, want)
 	}
 }
