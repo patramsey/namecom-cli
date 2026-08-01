@@ -481,17 +481,17 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/%s:cancel", domain), nil)
+		return nil
+	}
+
 	ok, err := confirm(out, yes, fmt.Sprintf("Cancel transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/%s:cancel", domain), nil)
 		return nil
 	}
 
@@ -519,17 +519,17 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/external/out/%s:cancel", domain), nil)
+		return nil
+	}
+
 	ok, err := confirm(out, yes, fmt.Sprintf("Cancel outbound transfer of %s?", domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/external/out/%s:cancel", domain), nil)
 		return nil
 	}
 

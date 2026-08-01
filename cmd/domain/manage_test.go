@@ -962,3 +962,131 @@ func TestIdempotencyKeyFlagIsNotShadowed(t *testing.T) {
 		})
 	}
 }
+
+// ---- dry-run / real request drift -------------------------------------------
+
+var httpMethods = map[string]bool{
+	"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true,
+}
+
+func dryRunLine(t *testing.T, s string) string {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && httpMethods[f[0]] && strings.HasPrefix(f[1], "/") {
+			return f[0] + " " + f[1]
+		}
+	}
+	t.Fatalf("no dry-run METHOD/path line found in output: %q", s)
+	return ""
+}
+
+// domainDryRunCmd builds a command wired to srv, with a root carrying --yes and
+// optionally --dry-run, plus whatever local flags the target command reads.
+func domainDryRunCmd(t *testing.T, srv *httptest.Server, dryRun bool, register func(*cobra.Command)) *cobra.Command {
+	t.Helper()
+	cmd := baseCmd(t, srv)
+	if register != nil {
+		register(cmd)
+	}
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := root.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if dryRun {
+		if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
+			t.Fatalf("setting dry-run flag: %v", err)
+		}
+	}
+	root.AddCommand(cmd)
+	return cmd
+}
+
+// TestDryRunMatchesRealRequest_Domain runs each mutating domain command twice —
+// once with --dry-run to capture what we PRINT, once live to capture what we
+// SEND — and asserts they agree.
+//
+// Eight of these nine had drifted. The name.com API uses `:verb` action suffixes
+// (`:unlock`, `:enableAutorenew`) that are easy to guess wrong, and the
+// hand-written dry-run strings had guessed wrong in every case except `lock on`.
+// --dry-run exists so users can learn the API before scripting it with
+// `namecom api`; every wrong line sent someone to a 404.
+func TestDryRunMatchesRealRequest_Domain(t *testing.T) {
+	const resp = `{"domainName":"example.com","locked":false,"autorenewEnabled":false,"privacyEnabled":false,"nameservers":["ns1.example.com"],"contacts":{}}`
+
+	tests := []struct {
+		name     string
+		register func(*cobra.Command)
+		args     []string
+		run      func(*cobra.Command, []string) error
+	}{
+		{"lock on", nil, []string{"on", "example.com"}, runLock},
+		{"lock off", nil, []string{"off", "example.com"}, runLock},
+		{"autorenew on", nil, []string{"on", "example.com"}, runAutorenew},
+		{"autorenew off", nil, []string{"off", "example.com"}, runAutorenew},
+		{"privacy on", nil, []string{"on", "example.com"}, runPrivacy},
+		{"privacy off", nil, []string{"off", "example.com"}, runPrivacy},
+		{
+			name:     "set-ns",
+			register: func(c *cobra.Command) { c.Flags().StringVar(&setNSList, "ns", "ns1.example.com,ns2.example.com", "") },
+			args:     []string{"example.com"},
+			run:      runSetNS,
+		},
+		{
+			// update is read-modify-write, so the live run issues GET then PATCH;
+			// captureRealRequest keeps the last request, which is the mutation.
+			name: "update",
+			register: func(c *cobra.Command) {
+				c.Flags().Bool("autorenew", false, "")
+				c.Flags().Bool("privacy", false, "")
+				c.Flags().Bool("lock", false, "")
+				if err := c.Flags().Set("autorenew", "true"); err != nil {
+					t.Fatalf("setting autorenew flag: %v", err)
+				}
+			},
+			args: []string{"example.com"},
+			run:  runUpdate,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(resp))
+			}))
+			t.Cleanup(dsrv.Close)
+			dcmd := domainDryRunCmd(t, dsrv, true, tc.register)
+			if err := tc.run(dcmd, tc.args); err != nil {
+				t.Fatalf("dry-run invocation: %v", err)
+			}
+			buf, ok := cmdutil.Out(dcmd).Writer.(*bytes.Buffer)
+			if !ok {
+				t.Fatal("output writer is not a *bytes.Buffer")
+			}
+			printed := dryRunLine(t, buf.String())
+
+			var last string
+			lsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				last = r.Method + " " + r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(resp))
+			}))
+			t.Cleanup(lsrv.Close)
+			lcmd := domainDryRunCmd(t, lsrv, false, tc.register)
+			if err := tc.run(lcmd, tc.args); err != nil {
+				t.Fatalf("live invocation: %v", err)
+			}
+			if last == "" {
+				t.Fatal("no request was made")
+			}
+
+			if printed != last {
+				t.Errorf("--dry-run reports %q but the command actually sends %q", printed, last)
+			}
+		})
+	}
+}

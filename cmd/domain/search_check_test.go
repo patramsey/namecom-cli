@@ -559,3 +559,43 @@ func TestCheck_DryRunDoesNotPurchase(t *testing.T) {
 		t.Error("MONEY BUG: `domain check --dry-run --yes` performed a real purchase")
 	}
 }
+
+// TestCheck_SandboxByProfileBypassesZoneCheck guards a hole in the sandbox fix.
+// cmdutil.IsSandbox only inspected the --sandbox FLAG, but sandbox mode is also
+// reachable via a profile's `sandbox: true` or NAMECOM_SANDBOX. Those users got
+// a sandbox client while runCheck still took the production-only ZoneCheck path
+// — producing exactly the contradictory results the fix exists to prevent.
+// out.Sandbox is the resolved value root.go computes from all three sources.
+func TestCheck_SandboxByProfileBypassesZoneCheck(t *testing.T) {
+	avail := true
+	price := 9.99
+	var zoneCheckCalled bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "zonecheck"):
+			zoneCheckCalled = true
+			t.Error("ZoneCheck must not run when the resolved profile is sandbox")
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			results := []gen.SearchResult{{DomainName: "example.com", Purchasable: avail, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCheck(t, srv)
+	// No --sandbox flag; sandbox came from the profile, as root.go resolves it.
+	cmdutil.Out(cmd).Sandbox = true
+
+	if err := runCheck(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	if zoneCheckCalled {
+		t.Error("ZoneCheck ran despite the resolved credentials being sandbox")
+	}
+}

@@ -461,17 +461,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
+		return nil
+	}
+
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
 		return nil
 	}
 

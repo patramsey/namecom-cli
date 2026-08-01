@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -173,5 +174,113 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 	}
 	if len(f.Profiles) != 0 {
 		t.Errorf("expected empty profiles, got %+v", f.Profiles)
+	}
+}
+
+// TestExplicitConfigPathIsNotOverridden guards a production-safety bug:
+// resolveReadPath stat'd the primary path and, on a miss, fell back to the
+// legacy ~/.namecom/config.yaml. Because NAMECOM_CONFIG *is* the primary path
+// when set, pointing it at a nonexistent file silently loaded the user's real
+// credentials instead. Isolation is the entire reason that variable exists — a
+// CI job or test harness that set it to a scratch path was quietly running
+// against production.
+func TestExplicitConfigPathIsNotOverridden(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	legacyDir := filepath.Join(home, ".namecom")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("creating legacy dir: %v", err)
+	}
+	legacy := filepath.Join(legacyDir, "config.yaml")
+	if err := os.WriteFile(legacy, []byte("default: real\nprofiles:\n  real:\n    username: prod\n    token: PRODUCTION-TOKEN\n"), 0o600); err != nil {
+		t.Fatalf("writing legacy config: %v", err)
+	}
+
+	t.Setenv("NAMECOM_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+
+	f, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := f.Profiles["real"]; ok {
+		t.Error("NAMECOM_CONFIG pointing at a missing file fell back to the real config — isolation broken")
+	}
+	if len(f.Profiles) != 0 {
+		t.Errorf("expected an empty config, got %d profiles", len(f.Profiles))
+	}
+}
+
+// TestSaveWritesBackToLoadedFile guards a credential-persistence bug: Load read
+// via the legacy fallback while Save always wrote the XDG path. So `auth logout`
+// deleted the profile from the in-memory copy, wrote an empty file to a new
+// location, reported success — and left the token sitting in the legacy file,
+// now invisible because the new empty file shadowed it.
+func TestSaveWritesBackToLoadedFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("NAMECOM_CONFIG", "")
+
+	legacyDir := filepath.Join(home, ".namecom")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("creating legacy dir: %v", err)
+	}
+	legacy := filepath.Join(legacyDir, "config.yaml")
+	if err := os.WriteFile(legacy, []byte("default: old\nprofiles:\n  old:\n    username: alice\n    token: LEGACY-TOKEN\n"), 0o600); err != nil {
+		t.Fatalf("writing legacy config: %v", err)
+	}
+
+	f, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := f.Profiles["old"]; !ok {
+		t.Fatalf("legacy config was not loaded: %+v", f.Profiles)
+	}
+
+	// Simulate `auth logout`.
+	delete(f.Profiles, "old")
+	f.Default = ""
+	if err := Save(f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	data, err := os.ReadFile(legacy)
+	if err != nil {
+		t.Fatalf("reading legacy config after save: %v", err)
+	}
+	if strings.Contains(string(data), "LEGACY-TOKEN") {
+		t.Errorf("token still on disk after logout — Save wrote elsewhere:\n%s", string(data))
+	}
+}
+
+// TestSaveRepairsUnsafePermissions guards a credential-exposure gap: os.WriteFile
+// only applies its mode when CREATING a file, so a config that was already
+// 0644 stayed world-readable forever. Load warns about it but nothing ever fixed
+// it, so `auth login` wrote a freshly entered token into a readable file.
+func TestSaveRepairsUnsafePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("default: a\nprofiles: {}\n"), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+
+	f, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f.Profiles = map[string]Profile{"a": {Username: "alice", Token: "NEW-TOKEN"}}
+	if err := Save(f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("config holding a token should be 0600 after save, got %04o", mode)
 	}
 }

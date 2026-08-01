@@ -214,17 +214,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	digest := args[1]
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest), nil)
+		return nil
+	}
+
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest), nil)
 		return nil
 	}
 

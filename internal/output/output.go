@@ -336,10 +336,17 @@ type hintable interface {
 func (c *Config) Error(err error) {
 	hint := errorHint(err)
 
-	if c.Format == FormatJSON {
+	// Structured modes get a machine-readable envelope. The plain-text fallback
+	// emits "error: <msg>", which looks like YAML but stops parsing as soon as
+	// the message contains ": " — which nearly every wrapped error does.
+	if c.Format == FormatJSON || c.Format == FormatYAML {
 		env := map[string]any{"error": map[string]string{"message": err.Error()}}
 		if hint != "" {
 			env["hint"] = hint
+		}
+		if c.Format == FormatYAML {
+			_ = yaml.NewEncoder(c.EWriter).Encode(env)
+			return
 		}
 		enc := json.NewEncoder(c.EWriter)
 		enc.SetIndent("", "  ")

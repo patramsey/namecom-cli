@@ -428,17 +428,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), nil)
+		return nil
+	}
+
 	ok, err := confirmDelete(out, yes, fmt.Sprintf("Delete DNS record %d from %s?", id, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), nil)
 		return nil
 	}
 
@@ -538,11 +538,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 
 		resp, err := client.Gen().CreateRecord(cmd.Context(), domain, body)
-		if err != nil {
-			return fmt.Errorf("creating %s %s: %w", body.Type, body.Host, err)
+		if err == nil {
+			err = api.Decode(resp, nil)
 		}
-		if err := api.Decode(resp, nil); err != nil {
-			return fmt.Errorf("creating %s %s: %w", body.Type, body.Host, err)
+		if err != nil {
+			// Report what already landed. Import is not transactional, so bailing
+			// out with only the failure left the user unable to tell whether a
+			// retry would duplicate the records written so far.
+			if created > 0 {
+				out.Warn(fmt.Sprintf("%d of %d record(s) were already created on %s before this failure — "+
+					"remove them from the file or delete them before retrying, or the retry will duplicate them",
+					created, len(records), domain))
+			}
+			return fmt.Errorf("creating %s %s (after %d of %d succeeded): %w",
+				body.Type, body.Host, created, len(records), err)
 		}
 		created++
 	}

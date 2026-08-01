@@ -60,7 +60,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm status", domainName))
 	} else {
 		if dryRun {
-			out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s:lock", domainName), nil)
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:unlock", domainName), nil)
 			return nil
 		}
 		resp, err := client.Gen().UnlockDomain(cmd.Context(), domainName, &gen.UnlockDomainParams{ContentType: gen.UnlockDomainParamsContentTypeApplicationjson})
@@ -108,7 +108,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	}
 	if enable {
 		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-autorenew", domainName), nil)
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enableAutorenew", domainName), nil)
 			return nil
 		}
 		r, err := client.Gen().EnableAutorenew(cmd.Context(), domainName, &gen.EnableAutorenewParams{ContentType: gen.EnableAutorenewParamsContentTypeApplicationjson})
@@ -122,7 +122,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm settings", domainName))
 	} else {
 		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-autorenew", domainName), nil)
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disableAutorenew", domainName), nil)
 			return nil
 		}
 		r, e := client.Gen().DisableAutorenew(cmd.Context(), domainName, &gen.DisableAutorenewParams{ContentType: gen.DisableAutorenewParamsContentTypeApplicationjson})
@@ -171,7 +171,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 
 	if enable {
 		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enable-privacy", domainName), nil)
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:enableWhoisPrivacy", domainName), nil)
 			return nil
 		}
 		// PurchasePrivacy may charge money — confirm first.
@@ -195,7 +195,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm privacy status", domainName))
 	} else {
 		if dryRun {
-			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disable-privacy", domainName), nil)
+			out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:disableWhoisPrivacy", domainName), nil)
 			return nil
 		}
 		r, err := client.Gen().DisableWhoisPrivacy(cmd.Context(), domainName, &gen.DisableWhoisPrivacyParams{ContentType: gen.DisableWhoisPrivacyParamsContentTypeApplicationjson})
@@ -247,7 +247,7 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/nameservers", domain), nil)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain), nil)
 		fmt.Fprintf(out.Writer, "  ns=%s\n", setNSList)
 		return nil
 	}
@@ -348,7 +348,7 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/contacts", domain), contacts)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setContacts", domain), contacts)
 		return nil
 	}
 
@@ -512,7 +512,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s", domain), body)
+		out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domain), body)
 		return nil
 	}
 

@@ -135,14 +135,21 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	if pricing.PurchasePrice != nil {
 		regPrice = fmt.Sprintf("$%.2f/yr", *pricing.PurchasePrice)
 	}
-	promptMsg := fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, registerYears, regPrice)
-	ok, err := confirm(out, yes, promptMsg)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
+	// Skip the prompt entirely under --dry-run: the request body is assembled
+	// below, so the dry-run branch can't be hoisted above this point. Asking a
+	// human to confirm an action that will not happen is noise, and in a script
+	// Confirm hard-errors ("pass --yes to confirm in non-interactive mode"),
+	// which made --dry-run unusable in CI.
+	if !dryRun {
+		promptMsg := fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, registerYears, regPrice)
+		ok, err := confirm(out, yes, promptMsg)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			out.Warn("aborted")
+			return nil
+		}
 	}
 
 	years := int32(registerYears)
@@ -282,14 +289,18 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	if pricing.RenewalPrice != nil {
 		renewPriceStr = fmt.Sprintf("$%.2f/yr", *pricing.RenewalPrice)
 	}
-	promptMsg := fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, renewYears, renewPriceStr)
-	ok, err := confirm(out, yes, promptMsg)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
+	// See runRegister: --dry-run must not prompt, and must not hard-error in a
+	// non-interactive shell for an action it will never perform.
+	if !dryRun {
+		promptMsg := fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, renewYears, renewPriceStr)
+		ok, err := confirm(out, yes, promptMsg)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			out.Warn("aborted")
+			return nil
+		}
 	}
 
 	years := int32(renewYears)

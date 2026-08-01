@@ -229,6 +229,12 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 
+	if dryRun {
+		out.DryRun("POST", "/core/v1/refund", nil)
+		fmt.Fprintf(out.Writer, "  orderId=%d itemIds=%v\n", refundOrderID, refundItemIDs)
+		return nil
+	}
+
 	ok, err := confirmRefund(out, yes, refundOrderID, refundItemIDs)
 	if err != nil {
 		return err
@@ -249,12 +255,6 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	// The root --idempotency-key (or an auto-generated one) is applied by the
 	// client request editor; no per-command flag is needed or wanted here.
 	params := &gen.ProcessRefundParams{}
-
-	if dryRun {
-		out.DryRun("POST", "/core/v1/refund", nil)
-		fmt.Fprintf(out.Writer, "  orderId=%d itemIds=%v\n", refundOrderID, refundItemIDs)
-		return nil
-	}
 
 	resp, err := client.Gen().ProcessRefund(cmd.Context(), params, body)
 	if err != nil {

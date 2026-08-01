@@ -2,9 +2,13 @@ package output
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // noColor returns a Config with color disabled — tests the pure string logic.
@@ -250,4 +254,53 @@ func TestTitle_NoSandboxTagInProduction(t *testing.T) {
 	if got := buf.String(); strings.Contains(got, "[sandbox]") {
 		t.Errorf("Title() output = %q, want no '[sandbox]' tag in production", got)
 	}
+}
+
+// TestError_StructuredFormats pins that errors are machine-readable in every
+// structured output mode. Error() had a JSON branch but no YAML one, so
+// `-o yaml` emitted a decorated plain-text line that no parser could consume —
+// a silent asymmetry between two formats the CLI advertises equally.
+func TestError_StructuredFormats(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(errors.New("something broke"))
+		var env map[string]any
+		if err := json.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("JSON error output is not parseable: %v\n%s", err, ew.String())
+		}
+		if env["error"] == nil {
+			t.Errorf("expected an \"error\" key, got: %s", ew.String())
+		}
+	})
+
+	// Use a message containing a colon — the overwhelmingly common shape, since
+	// every wrapped error is fmt.Errorf("...: %w"). The plain-text fallback
+	// emits a bare "error: <msg>" line, which parses as YAML only by accident
+	// and stops doing so the moment the message itself contains ": ".
+	realistic := errors.New("creating A www: Invalid answer (details: out of range)")
+
+	t.Run("yaml", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatYAML, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(realistic)
+		got := ew.String()
+		var env map[string]any
+		if err := yaml.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("YAML error output is not parseable: %v\n%s", err, got)
+		}
+		if env["error"] == nil {
+			t.Errorf("expected an \"error\" key, got: %s", got)
+		}
+	})
+
+	t.Run("json with colons", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(realistic)
+		var env map[string]any
+		if err := json.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("JSON error output is not parseable: %v\n%s", err, ew.String())
+		}
+	})
 }

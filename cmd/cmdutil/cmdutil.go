@@ -62,10 +62,18 @@ func Overrides(cmd *cobra.Command) config.Overrides {
 	return config.Overrides{}
 }
 
-// IsSandbox reports whether --sandbox was passed on the root command.
+// IsSandbox reports whether this invocation targets the sandbox API.
+//
+// Sandbox mode has three sources — the --sandbox flag, NAMECOM_SANDBOX, and a
+// profile's `sandbox: true` — and root.go resolves all three into the output
+// config. Reading only the flag meant sandbox-by-profile users were silently
+// treated as production by callers relying on this. Fall back to the flag for
+// contexts where the output config hasn't been built yet.
 func IsSandbox(cmd *cobra.Command) bool {
-	root := cmd.Root()
-	f := root.PersistentFlags().Lookup("sandbox")
+	if out := Out(cmd); out != nil && out.Sandbox {
+		return true
+	}
+	f := cmd.Root().PersistentFlags().Lookup("sandbox")
 	return f != nil && f.Value.String() == "true"
 }
 

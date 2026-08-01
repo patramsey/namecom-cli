@@ -96,8 +96,18 @@ func Execute() {
 	updateCh := make(chan string, 1)
 	go func() { updateCh <- update.Check(Version) }()
 
+	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
+	// usage errors so they exit 2 rather than collapsing into the generic 1.
+	// Applies to every subcommand, not just root.
+	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return cmdutil.NewUsageError(err)
+	})
+
 	if err := rootCmd.Execute(); err != nil {
-		cfg := output.DefaultConfig()
+		cfg := resolvedOut
+		if cfg == nil {
+			cfg = output.DefaultConfig()
+		}
 		cfg.Error(err)
 		code := exitCode(err)
 		if code == 3 {
@@ -190,7 +200,15 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	if skipClientInit(cmd) {
 		return nil
 	}
-	return initContext(cmd)
+	err := initContext(cmd)
+	// Dynamic completion wants the API client (to suggest domain names) but must
+	// never fail the shell when credentials are absent. The completion functions
+	// already return no suggestions when the client is missing, so swallow the
+	// error and let TAB stay quiet instead of printing a credential error.
+	if err != nil && cmd.Name() == cobra.ShellCompRequestCmd {
+		return nil
+	}
+	return err
 }
 
 // initOutputContext applies --output, --color, --quiet, and --no-header to the
@@ -198,25 +216,38 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 // credential setup (auth, version, etc.).
 func initOutputContext(cmd *cobra.Command) error {
 	out := output.DefaultConfig()
+	// Bad --output/--color values are invocation mistakes, not runtime failures:
+	// classify them so they exit 2 like any other usage error.
 	if gf.output != "" {
 		f, err := output.ParseFormat(gf.output)
 		if err != nil {
-			return err
+			return cmdutil.NewUsageError(err)
 		}
 		out.Format = f
 	}
 	if gf.color != "auto" {
 		cm, err := output.ParseColorMode(gf.color)
 		if err != nil {
-			return err
+			return cmdutil.NewUsageError(err)
 		}
 		out.Color = cm
 	}
 	out.QuietMode = gf.quiet
 	out.NoHeader = gf.noHeader
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
+	// Remember it for Execute's error path. That path ran before this config
+	// existed and fell back to output.DefaultConfig(), which decides format by
+	// TTY detection alone — so `-o json` in a terminal printed a plain-text
+	// error instead of the documented JSON envelope, and `-o table` in a pipe
+	// printed the envelope anyway. --color was ignored for errors entirely.
+	resolvedOut = out
 	return nil
 }
+
+// resolvedOut is the output config built by initOutputContext, retained so the
+// top-level error handler can honor --output/--color. Nil until flags are
+// parsed (e.g. a malformed flag), in which case the default config applies.
+var resolvedOut *output.Config
 
 // initContext builds the API client and config file from the resolved
 // flags/env and stores them on the command's context. Output config is
@@ -264,11 +295,13 @@ func initContext(cmd *cobra.Command) error {
 	if err != nil {
 		if errors.Is(err, config.ErrNoCredentials) {
 			if output.IsInteractive() {
-				return fmt.Errorf("no credentials configured — run 'namecom auth login' to set them up")
+				return cmdutil.NewAuthError(fmt.Errorf("no credentials configured — run 'namecom auth login' to set them up"))
 			}
-			return fmt.Errorf("no credentials configured (set NAMECOM_USERNAME and NAMECOM_TOKEN, or run 'namecom auth login')")
+			return cmdutil.NewAuthError(fmt.Errorf("no credentials configured (set NAMECOM_USERNAME and NAMECOM_TOKEN, or run 'namecom auth login')"))
 		}
-		return err
+		// A credential helper that failed is also an auth problem, not a
+		// generic runtime one.
+		return cmdutil.NewAuthError(err)
 	}
 
 	out.Sandbox = creds.Sandbox
@@ -325,7 +358,11 @@ func IsDryRun() bool { return gf.dryRun }
 func skipClientInit(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		switch c.Name() {
-		case "auth", "config", "open", "version":
+		// completion and help emit static text. Requiring credentials for them
+		// was a bootstrap trap: `auth login` ends by suggesting shell
+		// completion, and `source <(namecom completion zsh)` in a shell rc broke
+		// every new shell until credentials existed.
+		case "auth", "config", "open", "version", "completion", "help":
 			return true
 		}
 	}
@@ -338,6 +375,14 @@ func skipClientInit(cmd *cobra.Command) bool {
 func exitCode(err error) int {
 	if err == nil {
 		return 0
+	}
+	// Classification set by the failing path itself. Checked before the API
+	// error so a wrapped auth failure still reports 3.
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); ok {
+		return 2
+	}
+	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
+		return 3
 	}
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		switch apiErr.StatusCode {

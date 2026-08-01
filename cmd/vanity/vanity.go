@@ -331,17 +331,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	hostname := args[1]
 
+	if dryRun {
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname), nil)
+		return nil
+	}
+
 	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		out.Warn("aborted")
-		return nil
-	}
-
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname), nil)
 		return nil
 	}
 

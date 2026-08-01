@@ -928,3 +928,118 @@ func TestDNSExport_ZoneMXWithoutPriority(t *testing.T) {
 		t.Errorf("expected default priority 0, got %q in %q", fields[4], got)
 	}
 }
+
+// TestDNSDelete_DryRunWorksNonInteractively guards an ordering bug that made
+// --dry-run unusable in exactly the setting it exists for. confirmDelete ran
+// BEFORE the dryRun branch, and cmdutil.Confirm errors out when stdin is not a
+// TTY and --yes was not passed. So a scripted `dns delete … --dry-run` exited
+// nonzero with "pass --yes to confirm in non-interactive mode" — demanding the
+// user consent to an action the dry run was never going to perform.
+//
+// Interactively it was just as wrong: it prompted a human about a deletion that
+// would not happen. `domain privacy on` already checked dryRun first, which is
+// what makes this an inconsistency rather than a convention.
+func TestDNSDelete_DryRunWorksNonInteractively(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
+		t.Fatalf("setting dry-run flag: %v", err)
+	}
+	root.AddCommand(cmd)
+
+	// No --yes: a dry run must not require consent for something it won't do.
+	if err := runDelete(cmd, []string{"example.com", "123"}); err != nil {
+		t.Fatalf("--dry-run without --yes should succeed non-interactively, got: %v", err)
+	}
+	if called {
+		t.Error("--dry-run issued a real request")
+	}
+	if !strings.Contains(buf.String(), "/core/v1/domains/example.com/records/123") {
+		t.Errorf("expected the dry-run request line, got: %q", buf.String())
+	}
+}
+
+// TestDNSImport_PartialFailureReportsProgress guards a data-safety gap: the
+// import loop returned immediately on the first API error and discarded the
+// `created` count, so a failure on record 3 of 5 surfaced as a bare
+// "creating A www: ..." with no indication that two records were already
+// written. Re-running the same file then duplicated them.
+//
+// The user needs to know exactly what landed before they retry.
+func TestDNSImport_PartialFailureReportsProgress(t *testing.T) {
+	payload := `[
+	  {"type":"A","host":"one","answer":"1.1.1.1","ttl":300},
+	  {"type":"A","host":"two","answer":"2.2.2.2","ttl":300},
+	  {"type":"A","host":"boom","answer":"3.3.3.3","ttl":300},
+	  {"type":"A","host":"four","answer":"4.4.4.4","ttl":300}
+	]`
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		if attempts == 3 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"Invalid answer"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &stderr}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	importFile = path
+	importDryRun = false
+	t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+	err = runImport(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected an error when a record fails to import")
+	}
+
+	combined := err.Error() + stdout.String() + stderr.String()
+	// The two records that succeeded before the failure must be reported.
+	if !strings.Contains(combined, "2") {
+		t.Errorf("partial import must report how many records were already created; got error %q and output %q",
+			err.Error(), stdout.String()+stderr.String())
+	}
+	if !strings.Contains(combined, "boom") {
+		t.Errorf("error should name the record that failed, got: %q", err.Error())
+	}
+}

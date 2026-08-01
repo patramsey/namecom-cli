@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -100,6 +101,13 @@ func resolveReadPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// An explicit NAMECOM_CONFIG is absolute: never fall back to the legacy
+	// location. That variable exists to isolate a run (CI, tests, a scratch
+	// profile), and falling back on a missing file silently pointed those runs
+	// at the user's real — possibly production — credentials.
+	if os.Getenv("NAMECOM_CONFIG") != "" {
+		return primary, nil
+	}
 	if _, err := os.Stat(primary); err == nil {
 		return primary, nil
 	}
@@ -125,9 +133,12 @@ func Load() (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
-	// Warn (but do not fail) if the file is group/world accessible — it may
-	// hold a plaintext token.
-	if info.Mode().Perm()&0o077 != 0 {
+	// Warn (but do not fail) if the file is group/world accessible — it may hold
+	// a plaintext token. Only when stderr is a terminal: this is raw text
+	// written ahead of the structured error envelope, so emitting it into a
+	// pipe corrupts stderr for anything parsing it. A human sees it; a script
+	// gets clean output. (Save() now repairs the mode on the next write.)
+	if info.Mode().Perm()&0o077 != 0 && term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprintf(os.Stderr, "warning: %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
 			path, info.Mode().Perm(), path)
 	}
@@ -145,10 +156,16 @@ func Load() (*File, error) {
 	return &f, nil
 }
 
-// Save writes the config file to the primary (XDG) path with 0600 permissions,
-// creating the parent directory as needed.
+// Save writes the config file with 0600 permissions, creating the parent
+// directory as needed.
+//
+// It writes back to the same file Load reads. Writing unconditionally to the
+// XDG path while Load honored the legacy fallback forked the config in two:
+// `auth logout` removed a profile, wrote an empty file to the XDG path, and
+// reported success while the credential stayed readable in the legacy file —
+// now invisible, because the new empty file shadowed it.
 func Save(f *File) error {
-	path, err := Path()
+	path, err := resolveReadPath()
 	if err != nil {
 		return err
 	}
@@ -161,6 +178,12 @@ func Save(f *File) error {
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("writing config %s: %w", path, err)
+	}
+	// WriteFile only applies its mode when creating the file, so an existing
+	// world-readable config stayed that way — and we'd just written a token into
+	// it. Load warns about loose permissions; this is what actually fixes them.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("securing config %s: %w", path, err)
 	}
 	return nil
 }
