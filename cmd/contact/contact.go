@@ -112,7 +112,11 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
-		if !listAll {
+		// --quiet is for scripting, and the "showing first page" hint lives in
+		// the table branch that quiet mode returns before reaching — so stopping
+		// early here truncates silently. Page fully whenever the caller cannot
+		// be told there is more.
+		if !listAll && !out.QuietMode {
 			hasMore = true
 			break
 		}
@@ -211,20 +215,33 @@ func runResend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The API reports throttling as HTTP 200 with sent=false. Returning nil for
+	// that made a throttled record indistinguishable from a resent one — same
+	// exit code, and nothing on stdout under --quiet. The command's own example
+	// pipes `contact unverified -q` into xargs, so "I resent them all" has to be
+	// true or a domain silently misses its verification deadline.
+	if !result.Sent {
+		if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
+			// Still emit the payload so a script can read nextEligibleAt, then
+			// fail so it cannot mistake this for a send.
+			if out.Format == output.FormatJSON {
+				_ = out.JSON(result)
+			} else {
+				_ = out.YAML(result)
+			}
+		}
+		return fmt.Errorf("verification email not sent for record %d — throttled until %s "+
+			"(the API allows one resend per record every 15 minutes)",
+			result.VerificationId, result.NextEligibleAt.Format(time.RFC3339))
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(result)
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		if result.Sent {
-			out.Success(fmt.Sprintf("Verification email resent for record %d", result.VerificationId))
-		} else {
-			// The API reports throttling as a successful response with sent=false,
-			// so a bare "done" would be misleading.
-			out.Warn(fmt.Sprintf("Not sent — throttled until %s",
-				result.NextEligibleAt.Format(time.RFC3339)))
-		}
+		out.Success(fmt.Sprintf("Verification email resent for record %d", result.VerificationId))
 		out.Hint("The contact must click the link in the email; it cannot be confirmed from here")
 	}
 	return nil

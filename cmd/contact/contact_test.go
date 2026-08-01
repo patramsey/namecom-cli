@@ -128,30 +128,6 @@ func TestUnverified_WarnsAboutRegistryLock(t *testing.T) {
 	}
 }
 
-// TestResend_ThrottledIsNotReportedAsSuccess guards a misleading-output case:
-// the API answers a throttled resend with HTTP 200 and sent=false, so treating
-// a 2xx as "email sent" would tell the user something untrue.
-func TestResend_ThrottledIsNotReportedAsSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"sent":false,"verificationId":9911,"nextEligibleAt":"2026-08-01T12:15:00Z"}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	cmd, stdout, stderr := contactCmd(t, srv, output.FormatTable)
-	if err := runResend(cmd, []string{"9911"}); err != nil {
-		t.Fatalf("runResend: %v", err)
-	}
-	combined := stdout.String() + stderr.String()
-
-	if strings.Contains(combined, "✓") {
-		t.Errorf("a throttled resend must not render as success: %s", combined)
-	}
-	if !strings.Contains(combined, "2026-08-01") {
-		t.Errorf("output should say when a retry is allowed: %s", combined)
-	}
-}
-
 // TestParseVerificationID_RejectsOutOfRange covers a width mismatch in the API:
 // UnverifiedContact.VerificationId is int64, but the resend and verify
 // operations take int32. Truncating silently would send a request for a
@@ -165,5 +141,78 @@ func TestParseVerificationID_RejectsOutOfRange(t *testing.T) {
 	}
 	if _, err := parseVerificationID("abc"); err == nil {
 		t.Error("a non-numeric id must be rejected")
+	}
+}
+
+// TestResend_ThrottledIsNotAnExitZero guards the pipeline this command's own
+// help advertises:
+//
+//	namecom contact unverified -q | xargs -I{} namecom contact resend {}
+//
+// The API reports throttling as HTTP 200 with sent=false, and runResend
+// returned nil either way — so every throttled record looked like a success.
+// The warning goes to stderr, and --quiet suppresses out.Success entirely, so a
+// sent and a throttled resend were indistinguishable on stdout AND by exit
+// code. On a path whose stated stake is registry lock, "I resent them all" has
+// to be true.
+func TestResend_ThrottledIsNotAnExitZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sent":false,"verificationId":9911,"nextEligibleAt":"2026-08-01T12:15:00Z"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, _, _ := contactCmd(t, srv, output.FormatTable)
+	err := runResend(cmd, []string{"9911"})
+	if err == nil {
+		t.Fatal("a throttled resend must not exit 0 — a script cannot tell it apart from success")
+	}
+	if !strings.Contains(err.Error(), "2026-08-01") {
+		t.Errorf("error should say when a retry is allowed, got: %v", err)
+	}
+}
+
+// TestResend_SentIsSuccess is the counterweight: an actual send must still
+// succeed, or the xargs pipeline fails on every record.
+func TestResend_SentIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sent":true,"verificationId":9911,"nextEligibleAt":"2026-08-01T12:15:00Z"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, _, _ := contactCmd(t, srv, output.FormatTable)
+	if err := runResend(cmd, []string{"9911"}); err != nil {
+		t.Fatalf("a successful resend must exit 0: %v", err)
+	}
+}
+
+// TestUnverified_QuietFetchesEveryPage guards the same pipeline from the other
+// end. runUnverified only paged with --all, and the "more pages exist" hint
+// lived in the table branch that --quiet returns before reaching — so an
+// account with more than one page of pending verifications silently resent for
+// the first page only, with nothing on stdout or stderr to say so.
+func TestUnverified_QuietFetchesEveryPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`{"unverifiedContacts":[{"verificationId":2,"email":"b@example.com"}],"totalCount":2}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"unverifiedContacts":[{"verificationId":1,"email":"a@example.com"}],"totalCount":2,"nextPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, stdout, _ := contactCmd(t, srv, output.FormatTable)
+	cmdutil.Out(cmd).QuietMode = true
+
+	if err := runUnverified(cmd, nil); err != nil {
+		t.Fatalf("runUnverified: %v", err)
+	}
+	got := stdout.String()
+	for _, id := range []string{"1", "2"} {
+		if !strings.Contains(got, id) {
+			t.Errorf("--quiet must emit every pending verification, missing %q; got: %q", id, got)
+		}
 	}
 }

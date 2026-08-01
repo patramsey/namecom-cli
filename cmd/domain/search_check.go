@@ -63,7 +63,11 @@ func inlineRegister(cmd *cobra.Command, r gen.SearchResult) error {
 	// too, so skipping the check here would let `domain check <name>` acquire a
 	// TMCH-matched name with no notice shown and no acknowledgement sent —
 	// walking straight around the gate the register command enforces.
-	claims, err := resolveClaims(cmd, out, domainName, false)
+	// Pass the purchase type through so the claims check matches the transaction
+	// actually being made — an aftermarket or landrush acquisition can have
+	// different claims applicability than a plain registration.
+	claimsPT, _ := nonDefaultPurchaseType(r)
+	claims, err := resolveClaims(cmd, out, domainName, claimsPT, false)
 	if err != nil {
 		return err
 	}

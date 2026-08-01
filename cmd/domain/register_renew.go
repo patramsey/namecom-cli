@@ -103,7 +103,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	var checkPurchaseType *string
 	var checkPrice *float64
 
-	if !dryRun {
+	{
 		stop := out.Spin("Checking availability of " + domainName + "…")
 		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: []string{domainName}})
 		stop()
@@ -177,7 +177,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// claims (as determined by the Domain Claims Check endpoint), you must
 	// include the claims acknowledgment data in the domain creation request."
 	// Without this the CLI simply could not register a TMCH-matched name.
-	claims, err := resolveClaims(cmd, out, domainName, dryRun)
+	claims, err := resolveClaims(cmd, out, domainName, checkPurchaseType, dryRun)
 	if err != nil {
 		return err
 	}
@@ -406,14 +406,21 @@ func runRenew(cmd *cobra.Command, args []string) error {
 //
 // Returns nil when the domain has no claims, which is the overwhelmingly common
 // case and leaves the request body untouched.
-func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, dryRun bool) (*gen.DomainClaimsInfo, error) {
-	if dryRun {
-		// A dry run makes no purchase, so there is nothing to acknowledge.
-		return nil, nil
-	}
+func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, purchaseType *string, dryRun bool) (*gen.DomainClaimsInfo, error) {
 	client := cmdutil.APIClient(cmd)
 
-	resp, err := client.Gen().CheckDomainClaims(cmd.Context(), domainName, gen.CheckDomainClaimsJSONRequestBody{})
+	// Claims applicability is per-purchase-type: ResellerTldInfo.claimsCheckRequired
+	// is "Array of valid purchase types if claims check is required for the TLD".
+	// Sending an empty body defaults the API to "registration", so a landrush or
+	// aftermarket acquisition of a trademarked name could report no claim — and
+	// the gate would silently not fire for the transaction actually being made.
+	body := gen.CheckDomainClaimsJSONRequestBody{}
+	if purchaseType != nil && *purchaseType != "" {
+		pt := gen.DomainClaimsCheckRequestPurchaseType(*purchaseType)
+		body.PurchaseType = &pt
+	}
+
+	resp, err := client.Gen().CheckDomainClaims(cmd.Context(), domainName, body)
 	if err != nil {
 		return nil, fmt.Errorf("checking trademark claims: %w", err)
 	}
@@ -428,6 +435,18 @@ func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, dr
 	}
 
 	renderClaimsNotice(out, result)
+
+	if dryRun {
+		// Nothing is purchased, so there is nothing to acknowledge — but the
+		// preview must still show the claims block that the real request would
+		// carry, which is the whole point of inspecting it first.
+		out.Hint("This domain has a trademark claim; registering it will require --acknowledge-claim")
+		return &gen.DomainClaimsInfo{
+			ClaimId:   result.ClaimId,
+			NotBefore: result.NotBefore,
+			NotAfter:  result.NotAfter,
+		}, nil
+	}
 
 	if !registerAckClaim {
 		if !output.IsInteractive() {

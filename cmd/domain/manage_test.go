@@ -305,51 +305,66 @@ func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 	}
 }
 
-func TestRegister_DryRunSkipsAvailabilityCheck(t *testing.T) {
-	// Dry-run skips CheckAvailability and CreateDomain but still fetches pricing
-	// to show the user what they would be charged.
-	var checkAvailCalled bool
-	var createCalled bool
+// TestRegister_DryRunMakesReadsButNeverWrites pins the rule --dry-run follows:
+// perform the read-only lookups, never the write.
+//
+// This replaces TestRegister_DryRunSkipsAvailabilityCheck, which asserted that
+// dry-run skipped CheckAvailability — while its own comment noted that pricing
+// WAS still fetched. Both are read-only; skipping one and not the other was
+// arbitrary, and the consequence was a preview missing purchaseType and the
+// aftermarket price, the very fields a dry run exists to reveal.
+func TestRegister_DryRunMakesReadsButNeverWrites(t *testing.T) {
+	var availChecked, pricingChecked, claimsChecked, created bool
 	price := 12.99
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/core/v1/domains:checkAvailability":
-			checkAvailCalled = true
-			t.Error("CheckAvailability should not be called in dry-run mode")
-			http.Error(w, "unexpected", http.StatusInternalServerError)
-		case "/core/v1/domains/example.com:getPricing":
+		switch {
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			availChecked = true
+			results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		case strings.Contains(r.URL.Path, "getPricing"):
+			pricingChecked = true
 			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
-		case "/core/v1/domains":
-			createCalled = true
-			t.Error("CreateDomain should not be called in dry-run mode")
-			http.Error(w, "unexpected", http.StatusInternalServerError)
+		case strings.Contains(r.URL.Path, "claims"):
+			claimsChecked = true
+			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			created = true
+			t.Error("CreateDomain must never be called in dry-run mode")
 			http.Error(w, "unexpected", http.StatusInternalServerError)
 		}
 	}))
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForRegister(t, srv)
-	var dryRun bool
-	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "")
-	if err := cmd.PersistentFlags().Set("dry-run", "true"); err != nil {
-		t.Fatalf("setting dry-run flag: %v", err)
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	for _, f := range []string{"dry-run", "yes"} {
+		if err := root.PersistentFlags().Set(f, "true"); err != nil {
+			t.Fatalf("setting %s: %v", f, err)
+		}
 	}
-	// --yes prevents confirm() from erroring in non-interactive mode.
-	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
-		t.Fatalf("setting yes flag: %v", err)
-	}
+	root.AddCommand(cmd)
+
 	if err := runRegister(cmd, []string{"example.com"}); err != nil {
-		t.Fatalf("expected no error in dry-run, got: %v", err)
+		t.Fatalf("runRegister: %v", err)
 	}
-	if checkAvailCalled {
-		t.Error("CheckAvailability was called in dry-run mode")
+
+	if created {
+		t.Error("dry-run performed a real registration")
 	}
-	if createCalled {
-		t.Error("CreateDomain was called in dry-run mode")
+	for name, done := range map[string]bool{
+		"availability": availChecked,
+		"pricing":      pricingChecked,
+		"claims":       claimsChecked,
+	} {
+		if !done {
+			t.Errorf("dry-run skipped the read-only %s lookup, so the preview cannot be accurate", name)
+		}
 	}
 }
 
@@ -1668,5 +1683,124 @@ func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	}
 	if !patched {
 		t.Error("the update was not sent")
+	}
+}
+
+// TestRegister_DryRunPreviewsTheRealBody guards what --dry-run is for.
+//
+// runRegister wrapped its availability check in `if !dryRun`, and resolveClaims
+// returned early on dry-run — so the previewed body omitted purchaseType, the
+// aftermarket purchasePrice, and claims. Those are precisely the fields someone
+// runs --dry-run to inspect on a premium or trademark-claimed name.
+//
+// Skipping the CHARGE is the point; skipping the two read-only lookups that
+// determine the body is not.
+func TestRegister_DryRunPreviewsTheRealBody(t *testing.T) {
+	price := 450.00
+	var created bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			ptype := gen.SearchPurchaseType("aftermarket_b")
+			results := []gen.SearchResult{{
+				DomainName: "example.com", Purchasable: true,
+				PurchasePrice: &price, PurchaseType: &ptype,
+			}}
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		case strings.Contains(r.URL.Path, "claims"):
+			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		default:
+			created = true
+			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRegister(t, srv)
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	for _, f := range []string{"dry-run", "yes"} {
+		if err := root.PersistentFlags().Set(f, "true"); err != nil {
+			t.Fatalf("setting %s: %v", f, err)
+		}
+	}
+	root.AddCommand(cmd)
+
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	if err := runRegister(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runRegister: %v", err)
+	}
+
+	if created {
+		t.Fatal("--dry-run performed a real registration")
+	}
+	preview := buf.String()
+	if !strings.Contains(preview, "aftermarket_b") {
+		t.Errorf("dry-run body omits purchaseType — the field that decides what kind of purchase this is:\n%s", preview)
+	}
+	if !strings.Contains(preview, "450") {
+		t.Errorf("dry-run body omits the aftermarket purchasePrice:\n%s", preview)
+	}
+}
+
+// TestRegister_ClaimsCheckedForTheActualPurchaseType guards a case where the
+// trademark gate silently does not fire.
+//
+// resolveClaims sent an empty body, which the API defaults to
+// purchaseType "registration". But claims applicability is per-purchase-type —
+// ResellerTldInfo.claimsCheckRequired is documented as "Array of valid purchase
+// types if claims check is required" — and runRegister already knows the real
+// type from the availability check. For a landrush or aftermarket acquisition
+// of a trademarked name, checking the wrong type can report no claim, so no
+// notice is shown and no acknowledgement is collected.
+func TestRegister_ClaimsCheckedForTheActualPurchaseType(t *testing.T) {
+	price := 450.00
+	var claimsPurchaseTypeSent string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			ptype := gen.SearchPurchaseType("landrush_eap")
+			results := []gen.SearchResult{{
+				DomainName: "example.com", Purchasable: true,
+				PurchasePrice: &price, PurchaseType: &ptype,
+			}}
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		case strings.Contains(r.URL.Path, "claims"):
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if v, ok := body["purchaseType"].(string); ok {
+				claimsPurchaseTypeSent = v
+			}
+			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		default:
+			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := runRegister(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runRegister: %v", err)
+	}
+
+	if claimsPurchaseTypeSent != "landrush_eap" {
+		t.Errorf("claims check used purchaseType %q, but the purchase is landrush_eap — "+
+			"the gate may not fire for the transaction actually being made", claimsPurchaseTypeSent)
 	}
 }
