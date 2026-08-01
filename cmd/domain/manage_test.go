@@ -227,7 +227,6 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "")
 	cmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "")
 	cmd.Flags().Float64Var(&registerPrice, "price", 0, "")
-	cmd.Flags().StringVar(&registerIdemKey, "idempotency-key", "", "")
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	return cmd
@@ -938,5 +937,28 @@ func TestRegister_PlainRegistrationOmitsPurchaseType(t *testing.T) {
 	}
 	if _, ok := gotBody["purchasePrice"]; ok {
 		t.Errorf("non-premium registration should omit purchasePrice, got: %#v", gotBody)
+	}
+}
+
+// TestIdempotencyKeyFlagIsNotShadowed guards the second half of the
+// double-charge bug. registerCmd defined its own --idempotency-key, which
+// shadows the root persistent flag of the same name: pflag keeps the local one,
+// so the root variable stayed empty and root.go minted a fresh uuid.New() per
+// invocation. The user's key was therefore ignored no matter where it appeared
+// on the command line. The root flag already applies to every subcommand, so a
+// local redefinition can only break it.
+func TestIdempotencyKeyFlagIsNotShadowed(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{"domain register", registerCmd},
+		{"domain renew", renewCmd},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if f := c.cmd.Flags().Lookup("idempotency-key"); f != nil {
+				t.Errorf("%s defines a local --idempotency-key that shadows the root persistent flag", c.name)
+			}
+		})
 	}
 }

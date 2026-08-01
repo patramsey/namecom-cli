@@ -26,7 +26,6 @@ var Cmd = &cobra.Command{
 var (
 	refundOrderID int32
 	refundItemIDs []int32
-	refundIdemKey string
 
 	listAll    bool
 	listDomain string
@@ -73,7 +72,6 @@ func init() {
 
 	refundCmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "order ID (required)")
 	refundCmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "comma-separated order item IDs (required)")
-	refundCmd.Flags().StringVar(&refundIdemKey, "idempotency-key", "", "idempotency key for safe retries")
 	_ = refundCmd.MarkFlagRequired("order-id")
 	_ = refundCmd.MarkFlagRequired("item-ids")
 
@@ -125,19 +123,26 @@ func runList(cmd *cobra.Command, _ []string) error {
 			spin.Stop()
 			return err
 		}
-		if err := api.Decode(resp, &lastResult); err != nil {
+		// Fresh variable each iteration: the JSON decoder reuses the existing
+		// slice backing array and the pointers inside it, so reusing one target
+		// lets page N overwrite values page 1 already appended. It also leaves a
+		// stale non-nil NextPage when the final page omits the key, which never
+		// terminates. See the same pattern in cmd/dns/dns.go.
+		var result gen.ListOrdersResponseSchema
+		if err := api.Decode(resp, &result); err != nil {
 			spin.Stop()
 			return err
 		}
-		orders = append(orders, lastResult.Orders...)
-		if lastResult.NextPage == nil || *lastResult.NextPage == 0 {
+		orders = append(orders, result.Orders...)
+		lastResult = result
+		if result.NextPage == nil || *result.NextPage == 0 {
 			break
 		}
 		if !autoPage {
 			hasMore = true
 			break
 		}
-		page = *lastResult.NextPage
+		page = *result.NextPage
 		spin.Update(fmt.Sprintf("Fetching orders… (page %d, %d so far)", page, len(orders)))
 	}
 	spin.Stop()
@@ -241,10 +246,9 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		OrderItemIds: itemIDs,
 	}
 
+	// The root --idempotency-key (or an auto-generated one) is applied by the
+	// client request editor; no per-command flag is needed or wanted here.
 	params := &gen.ProcessRefundParams{}
-	if refundIdemKey != "" {
-		params.XIdempotencyKey = &refundIdemKey
-	}
 
 	if dryRun {
 		out.DryRun("POST", "/core/v1/refund", nil)

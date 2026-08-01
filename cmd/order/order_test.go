@@ -306,11 +306,10 @@ func cmdForRefund(t *testing.T, srv *httptest.Server, dryRun bool) *cobra.Comman
 	cmd.SetContext(ctx)
 	cmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "")
 	cmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "")
-	cmd.Flags().StringVar(&refundIdemKey, "idempotency-key", "", "")
 	if err := cmd.ParseFlags([]string{"--order-id", "42", "--item-ids", "7"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
-	t.Cleanup(func() { refundOrderID = 0; refundItemIDs = nil; refundIdemKey = "" })
+	t.Cleanup(func() { refundOrderID = 0; refundItemIDs = nil })
 
 	root := &cobra.Command{Use: "namecom"}
 	var dr, yes bool

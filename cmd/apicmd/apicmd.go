@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -70,7 +71,14 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
 	}
 
-	// Use the raw http.Client from the generated client to apply auth/rate-limiting.
+	// HTTPClient() supplies rate limiting and retries via its transport, but auth
+	// headers come from the generated client's request editor, which only runs
+	// inside generated endpoint methods. Apply them explicitly — without this
+	// every raw request goes out unauthenticated. Prepare leaves any header set
+	// above (including --header overrides) untouched.
+	if err := client.Prepare(req); err != nil {
+		return fmt.Errorf("preparing request: %w", err)
+	}
 	resp, err := client.HTTPClient().Do(req)
 	if err != nil {
 		return err
@@ -86,7 +94,10 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
 		_, _ = os.Stderr.Write(body)
 		fmt.Fprintln(os.Stderr)
-		return fmt.Errorf("API error: HTTP %d", resp.StatusCode)
+		// Return the normalized error type so root.go's exit-code mapping and
+		// UserHint apply here too. A plain fmt.Errorf collapsed every failure to
+		// exit 1, hiding the documented auth/rate-limit codes from scripts.
+		return api.ErrorFromResponse(resp.StatusCode, body)
 	}
 
 	fmt.Fprintf(out.Writer, "%s\n", body)

@@ -597,3 +597,84 @@ func captureRealRequest(t *testing.T, run func(*httptest.Server) (*cobra.Command
 	}
 	return last
 }
+
+// TestURLList_PaginationIsNotAliased guards two defects that share one root
+// cause: the decode target was declared OUTSIDE the page loop and every page
+// was decoded into it.
+//
+//  1. Wrong data. json.Unmarshal reuses the existing slice backing array and
+//     the *string pointers inside it, so decoding page 2 overwrote the values
+//     page 1's already-appended structs still point at. The list then displayed
+//     page 1's rows carrying page 2's IDs — and a user copying that ID into
+//     `url delete` removes the wrong redirect.
+//  2. Infinite loop. The spec says nextPage "is only populated if there is
+//     another page", so the final page OMITS the key. Decoding into a reused
+//     target leaves the previous page's non-nil pointer in place, so the
+//     nextPage==nil exit condition never fires and --all refetches forever.
+//
+// cmd/dns/dns.go uses a fresh variable per iteration and documents exactly this
+// hazard; the other five list commands did not.
+func TestURLList_PaginationIsNotAliased(t *testing.T) {
+	const maxRequests = 8 // generous bound; a correct impl needs exactly 2
+	var requests int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > maxRequests {
+			t.Errorf("pagination did not terminate: %d requests", requests)
+			http.Error(w, "loop", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("page") {
+		case "2":
+			// Final page: nextPage is OMITTED, exactly as the spec describes.
+			_, _ = w.Write([]byte(`{"urlForwarding":[{"id":222,"host":"bbb","forwardsTo":"https://two.example","type":"masked"}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"urlForwarding":[{"id":111,"host":"aaa","forwardsTo":"https://one.example","type":"redirect"}],"nextPage":2}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatJSON, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&listAll, "all", false, "")
+	listAll = true
+	t.Cleanup(func() { listAll = false })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+
+	var env struct {
+		Data []struct {
+			ID   int32  `json:"id"`
+			Host string `json:"host"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(env.Data) != 2 {
+		t.Fatalf("expected 2 forwardings across 2 pages, got %d: %s", len(env.Data), buf.String())
+	}
+	if requests != 2 {
+		t.Errorf("expected exactly 2 page requests, got %d", requests)
+	}
+
+	want := map[string]int32{"aaa": 111, "bbb": 222}
+	for _, e := range env.Data {
+		if want[e.Host] != e.ID {
+			t.Errorf("host %q should have id %d, got %d — page 2 overwrote page 1's data",
+				e.Host, want[e.Host], e.ID)
+		}
+	}
+}

@@ -131,15 +131,23 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if lastResult.NextPage != nil && *lastResult.NextPage != 0 {
 		if !autoPage {
 			hasMore = true
-		} else if lastResult.LastPage != nil && *lastResult.LastPage > 1 {
-			// Fetch all remaining pages in parallel.
+		} else if lastResult.LastPage != nil && *lastResult.LastPage > listPage {
+			// Fetch the remaining pages in parallel, continuing from the page we
+			// already fetched. Starting at 2 unconditionally meant `--all --page 5`
+			// refetched page 5 (duplicating it) and pulled in pages 2-4 the user
+			// asked to skip — while the printed count still matched totalCount, so
+			// it looked correct.
+			start := int(listPage)
 			last := int(*lastResult.LastPage)
-			pages := make([][]gen.DomainResponsePayload, last-1)
+			pages := make([][]gen.DomainResponsePayload, last-start)
 			var mu sync.Mutex
 			g, gctx := errgroup.WithContext(ctx)
-			for p := 2; p <= last; p++ {
+			// Bound concurrency: an account with many pages would otherwise queue
+			// every request at once behind the shared rate limiter.
+			g.SetLimit(5)
+			for p := start + 1; p <= last; p++ {
 				p := int32(p)
-				idx := int(p) - 2
+				idx := int(p) - start - 1
 				g.Go(func() error {
 					r, err := client.Gen().ListDomains(gctx, buildParams(p))
 					if err != nil {
@@ -165,18 +173,25 @@ func runList(cmd *cobra.Command, _ []string) error {
 				domains = append(domains, pg...)
 			}
 		} else {
-			// LastPage unknown; walk sequentially via NextPage.
-			for lastResult.NextPage != nil && *lastResult.NextPage != 0 {
-				r, err := client.Gen().ListDomains(ctx, buildParams(*lastResult.NextPage))
+			// LastPage unknown; walk sequentially via NextPage. Decode into a
+			// fresh variable each iteration — reusing one target lets the JSON
+			// decoder overwrite pointers in already-appended pages, and leaves a
+			// stale non-nil NextPage when the last page omits the key, which
+			// never terminates. Same hazard as cmd/dns/dns.go documents.
+			next := lastResult.NextPage
+			for next != nil && *next != 0 {
+				r, err := client.Gen().ListDomains(ctx, buildParams(*next))
 				if err != nil {
 					spin.Stop()
 					return err
 				}
-				if err := api.Decode(r, &lastResult); err != nil {
+				var result gen.ListDomainsResponseSchema
+				if err := api.Decode(r, &result); err != nil {
 					spin.Stop()
 					return err
 				}
-				domains = append(domains, lastResult.Domains...)
+				domains = append(domains, result.Domains...)
+				next = result.NextPage
 			}
 		}
 	}
