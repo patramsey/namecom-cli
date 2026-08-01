@@ -75,7 +75,7 @@ var deleteCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
 
-	createCmd.Flags().StringVar(&createHostname, "hostname", "", "fully-qualified nameserver hostname (required)")
+	createCmd.Flags().StringVar(&createHostname, "hostname", "", "nameserver hostname, either fully-qualified (ns1.example.com) or bare label (ns1) (required)")
 	createCmd.Flags().StringVar(&createIPs, "ips", "", "comma-separated IP addresses (required)")
 	_ = createCmd.MarkFlagRequired("hostname")
 	_ = createCmd.MarkFlagRequired("ips")
@@ -195,6 +195,31 @@ func runGet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// vanityLabel converts a nameserver hostname into the form the create endpoint
+// expects. That endpoint takes only the subdomain portion — "ns1", deriving the
+// rest from the URL path — while get/update/delete take the full hostname. Our
+// help text documents the FQDN spelling everywhere, which is right for three of
+// the four commands, so accept either form here rather than making create the
+// odd one out.
+func vanityLabel(hostname, domain string) (string, error) {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
+	if h == "" {
+		return "", fmt.Errorf("--hostname is required")
+	}
+	if !strings.Contains(h, ".") {
+		return h, nil // already a bare label
+	}
+	suffix := "." + domain
+	if !strings.HasSuffix(h, suffix) {
+		return "", fmt.Errorf("--hostname %q must be a subdomain of %s (e.g. ns1.%s)", hostname, domain, domain)
+	}
+	label := strings.TrimSuffix(h, suffix)
+	if label == "" {
+		return "", fmt.Errorf("--hostname %q must include a subdomain (e.g. ns1.%s)", hostname, domain)
+	}
+	return label, nil
+}
+
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
@@ -204,15 +229,20 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	label, err := vanityLabel(createHostname, domain)
+	if err != nil {
+		return err
+	}
+
 	ips := splitIPs(createIPs)
 	body := gen.CreateVanityNameserverJSONRequestBody{
-		Hostname: createHostname,
+		Hostname: label,
 		Ips:      ips,
 	}
 
 	if dryRun {
 		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers", domain), nil)
-		fmt.Fprintf(out.Writer, "  hostname=%s ips=%s\n", createHostname, createIPs)
+		fmt.Fprintf(out.Writer, "  hostname=%s ips=%s\n", label, createIPs)
 		return nil
 	}
 

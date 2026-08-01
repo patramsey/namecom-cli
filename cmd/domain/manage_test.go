@@ -474,12 +474,13 @@ func cmdForRenew(t *testing.T, srv *httptest.Server) *cobra.Command {
 	t.Helper()
 	cmd := baseCmd(t, srv)
 	cmd.Flags().IntVar(&renewYears, "years", 1, "")
+	cmd.Flags().Float64Var(&renewPrice, "price", 0, "")
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
-	t.Cleanup(func() { renewYears = 1 })
+	t.Cleanup(func() { renewYears = 1; renewPrice = 0 })
 	return cmd
 }
 
@@ -506,6 +507,164 @@ func TestRenew_YearsOutOfRange(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "years") {
 				t.Errorf("expected 'years' in error, got: %v", err)
+			}
+		})
+	}
+}
+
+// renewServer serves the given pricing for the getPricing call and records the
+// decoded body of the subsequent renew POST, so tests can assert on what we
+// actually send rather than only that no error came back.
+func renewServer(t *testing.T, pricing gen.PricingResponseSchema, got *map[string]any) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "getPricing") {
+			_ = json.NewEncoder(w).Encode(pricing)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Errorf("decoding renew body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(gen.RenewDomainResponseSchema{})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestRenew_PremiumSendsPurchasePrice guards a regression where runRenew built
+// the body as {Years: &years} only. DomainsRenewDomainBody also carries
+// PurchasePrice, documented "required if this is a premium domain" — so a
+// premium renewal was quoted to the user at the right price, confirmed, then
+// rejected by the API. runRegister already merged the price correctly; renew
+// was the asymmetric path.
+func TestRenew_PremiumSendsPurchasePrice(t *testing.T) {
+	renewal := 2500.00
+	var gotBody map[string]any
+	srv := renewServer(t, gen.PricingResponseSchema{Premium: true, RenewalPrice: &renewal}, &gotBody)
+
+	cmd := cmdForRenew(t, srv)
+	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
+		t.Fatalf("runRenew: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("renew request was never sent")
+	}
+	got, ok := gotBody["purchasePrice"]
+	if !ok {
+		t.Fatalf("premium renewal must send purchasePrice, body was: %#v", gotBody)
+	}
+	if got != renewal {
+		t.Errorf("expected purchasePrice %.2f, got %#v", renewal, got)
+	}
+}
+
+// TestRenew_NonPremiumOmitsPurchasePrice pins the other side: standard renewals
+// should not pin a price the user never confirmed.
+func TestRenew_NonPremiumOmitsPurchasePrice(t *testing.T) {
+	renewal := 19.99
+	var gotBody map[string]any
+	srv := renewServer(t, gen.PricingResponseSchema{Premium: false, RenewalPrice: &renewal}, &gotBody)
+
+	cmd := cmdForRenew(t, srv)
+	if err := runRenew(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runRenew: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("renew request was never sent")
+	}
+	if _, ok := gotBody["purchasePrice"]; ok {
+		t.Errorf("standard renewal should omit purchasePrice, got: %#v", gotBody)
+	}
+}
+
+// TestRenew_ExplicitPriceOverridesQuote covers the --price escape hatch, which
+// renewCmd lacked entirely while registerCmd had one. It also matters when the
+// quoted price and the price the user is willing to pay disagree.
+func TestRenew_ExplicitPriceOverridesQuote(t *testing.T) {
+	quoted := 2500.00
+	confirmed := 1800.00
+	var gotBody map[string]any
+	srv := renewServer(t, gen.PricingResponseSchema{Premium: true, RenewalPrice: &quoted}, &gotBody)
+
+	cmd := cmdForRenew(t, srv)
+	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
+		t.Fatalf("runRenew: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("renew request was never sent")
+	}
+	if got := gotBody["purchasePrice"]; got != confirmed {
+		t.Errorf("--price should win over the quote: expected %.2f, got %#v", confirmed, got)
+	}
+}
+
+// TestPricingQuoteUsesRequestedYears guards a regression where both runRegister
+// and runRenew passed an empty GetPricingForDomainParams{}, ignoring --years.
+// The API defaults to the minimum period, so `--years 3` quoted the 1-year
+// price to the user and then sent that price alongside years:3 —
+// CreateDomainRequest.Years explicitly warns "If passing purchasePrice make
+// sure to adjust it accordingly." It is also simply wrong for TLDs whose
+// minimum period isn't 1 year (.ai requires 2).
+func TestPricingQuoteUsesRequestedYears(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, *httptest.Server) error
+	}{
+		{
+			name: "renew",
+			run: func(t *testing.T, srv *httptest.Server) error {
+				cmd := cmdForRenew(t, srv)
+				if err := cmd.ParseFlags([]string{"--years", "3"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return runRenew(cmd, []string{"example.com"})
+			},
+		},
+		{
+			name: "register",
+			run: func(t *testing.T, srv *httptest.Server) error {
+				cmd := cmdForRegister(t, srv)
+				if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+					t.Fatalf("setting yes flag: %v", err)
+				}
+				if err := cmd.ParseFlags([]string{"--years", "3"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return runRegister(cmd, []string{"example.com"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			price := 12.99
+			var pricingYears string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "getPricing"):
+					pricingYears = r.URL.Query().Get("years")
+					_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+						PurchasePrice: &price, RenewalPrice: &price,
+					})
+				case strings.Contains(r.URL.Path, "checkAvailability"):
+					results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+					_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+				default:
+					_, _ = w.Write([]byte(`{}`))
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			if err := tc.run(t, srv); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if pricingYears != "3" {
+				t.Errorf("pricing call should request years=3, got %q", pricingYears)
 			}
 		})
 	}
@@ -696,5 +855,88 @@ func TestRegister_YearsOutOfRange(t *testing.T) {
 				t.Errorf("expected 'years' in error, got: %v", err)
 			}
 		})
+	}
+}
+
+// checkThenCreateServer answers CheckAvailability with the given result and
+// records the body of the subsequent CreateDomain POST.
+func checkThenCreateServer(t *testing.T, result gen.SearchResult, got *map[string]any) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			results := []gen.SearchResult{result}
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: result.PurchasePrice})
+		default:
+			if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+				t.Errorf("decoding create body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestRegister_ForwardsPurchaseTypeAndPrice guards a gap where PurchaseType
+// appeared nowhere in cmd/ at all, despite CreateDomainRequest documenting it
+// as "should be copied from the result of either a Search or checkAvailability
+// request". Aftermarket, expiring and backorder results were all submitted as
+// plain registrations. PurchasePrice is documented as required when
+// purchaseType is not "registration", so the two must travel together.
+func TestRegister_ForwardsPurchaseTypeAndPrice(t *testing.T) {
+	price := 450.00
+	ptype := gen.SearchPurchaseType("aftermarket_b")
+	var gotBody map[string]any
+	srv := checkThenCreateServer(t, gen.SearchResult{
+		DomainName: "example.com", Purchasable: true,
+		PurchasePrice: &price, PurchaseType: &ptype,
+	}, &gotBody)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := runRegister(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runRegister: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("create request was never sent")
+	}
+	if got := gotBody["purchaseType"]; got != "aftermarket_b" {
+		t.Errorf("expected purchaseType %q forwarded, got %#v", "aftermarket_b", got)
+	}
+	if got := gotBody["purchasePrice"]; got != price {
+		t.Errorf("non-registration purchase requires a price: expected %.2f, got %#v", price, got)
+	}
+}
+
+// TestRegister_PlainRegistrationOmitsPurchaseType pins the common case: a
+// standard registration shouldn't start sending a redundant field, and a
+// non-premium registration shouldn't pin a price.
+func TestRegister_PlainRegistrationOmitsPurchaseType(t *testing.T) {
+	price := 12.99
+	ptype := gen.SearchPurchaseType("registration")
+	var gotBody map[string]any
+	srv := checkThenCreateServer(t, gen.SearchResult{
+		DomainName: "example.com", Purchasable: true,
+		PurchasePrice: &price, PurchaseType: &ptype,
+	}, &gotBody)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := runRegister(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runRegister: %v", err)
+	}
+	if _, ok := gotBody["purchaseType"]; ok {
+		t.Errorf("plain registration should omit purchaseType, got: %#v", gotBody)
+	}
+	if _, ok := gotBody["purchasePrice"]; ok {
+		t.Errorf("non-premium registration should omit purchasePrice, got: %#v", gotBody)
 	}
 }

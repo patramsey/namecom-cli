@@ -42,6 +42,7 @@ var (
 	registerPrice        float64
 	registerIdemKey      string
 	renewYears           int
+	renewPrice           float64
 )
 
 func init() {
@@ -53,6 +54,7 @@ func init() {
 	registerCmd.Flags().StringVar(&registerIdemKey, "idempotency-key", "", "idempotency key for safe retries (auto-generated if omitted)")
 
 	renewCmd.Flags().IntVar(&renewYears, "years", 1, "number of years to renew")
+	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "required for premium domains: confirmed renewal price in USD")
 }
 
 func runRegister(cmd *cobra.Command, args []string) error {
@@ -75,6 +77,13 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// is used here (not ZoneCheck) because it's authoritative — it includes
 	// pricing, premium status, and the reason a domain isn't available, all of
 	// which we can cross-check against the subsequent GetPricingForDomain call.
+	// Carried out of the availability check below: purchaseType tells the API
+	// this is an aftermarket/expiring/backorder purchase rather than a plain
+	// registration, and checkPrice is the price quoted for that specific
+	// purchase type — which can differ from standard registration pricing.
+	var checkPurchaseType *string
+	var checkPrice *float64
+
 	if !dryRun {
 		stop := out.Spin("Checking availability of " + domainName + "…")
 		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: []string{domainName}})
@@ -97,6 +106,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 			}
 			return fmt.Errorf("%s", msg)
 		}
+		checkPurchaseType, checkPrice = nonDefaultPurchaseType(r)
 	}
 
 	// Guided form when interactive and no customization flags supplied.
@@ -107,9 +117,14 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Fetch pricing first to show cost before charging.
+	// Fetch pricing first to show cost before charging. Quote the same term the
+	// request body will carry — otherwise a multi-year registration quotes the
+	// 1-year price and then sends it alongside years:N, which CreateDomainRequest
+	// explicitly warns against ("If passing purchasePrice make sure to adjust it
+	// accordingly").
 	out.Step("Checking pricing for " + domainName + "…")
-	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{})
+	pricingYears := int32(registerYears)
+	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{Years: &pricingYears})
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}
@@ -154,8 +169,14 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 		body.Domain.Contacts = &contacts
 	}
+	body.PurchaseType = checkPurchaseType
 	if registerPrice > 0 {
 		body.PurchasePrice = &registerPrice
+	} else if checkPrice != nil {
+		// Non-registration purchases (aftermarket, expiring, backorder) require a
+		// price, and it's the check result's price that applies — the separate
+		// GetPricingForDomain call quotes standard registration pricing.
+		body.PurchasePrice = checkPrice
 	} else if pricing.Premium && pricing.PurchasePrice != nil {
 		// Premium domains require the confirmed price in the body. Use the price
 		// we already fetched so the user isn't forced to pass --price manually.
@@ -246,9 +267,12 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Fetch pricing to show renewal cost before charging.
+	// Fetch pricing to show renewal cost before charging. Quote the same term
+	// the request body will carry, so the price we show and the price we send
+	// can't diverge on multi-year renewals.
 	out.Step("Checking renewal pricing for " + domainName + "…")
-	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{})
+	pricingYears := int32(renewYears)
+	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{Years: &pricingYears})
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}
@@ -257,11 +281,11 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	renewPrice := ""
+	renewPriceStr := ""
 	if pricing.RenewalPrice != nil {
-		renewPrice = fmt.Sprintf("$%.2f/yr", *pricing.RenewalPrice)
+		renewPriceStr = fmt.Sprintf("$%.2f/yr", *pricing.RenewalPrice)
 	}
-	promptMsg := fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, renewYears, renewPrice)
+	promptMsg := fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, renewYears, renewPriceStr)
 	ok, err := confirm(out, yes, promptMsg)
 	if err != nil {
 		return err
@@ -273,6 +297,14 @@ func runRenew(cmd *cobra.Command, args []string) error {
 
 	years := int32(renewYears)
 	body := gen.RenewDomainJSONRequestBody{Years: &years}
+	if renewPrice > 0 {
+		body.PurchasePrice = &renewPrice
+	} else if pricing.Premium && pricing.RenewalPrice != nil {
+		// Premium domains require the confirmed price in the body. Use the price
+		// we already quoted above so the user isn't forced to pass --price
+		// manually. Mirrors the same merge in runRegister.
+		body.PurchasePrice = pricing.RenewalPrice
+	}
 
 	if dryRun {
 		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:renew", domainName), body)

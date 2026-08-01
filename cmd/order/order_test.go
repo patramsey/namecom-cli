@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -226,5 +227,45 @@ func TestOrderGet_Success(t *testing.T) {
 	cmd := cmdForOrderGet(t, srv)
 	if err := runGet(cmd, []string{"42"}); err != nil {
 		t.Fatalf("runGet: %v", err)
+	}
+}
+
+// TestOrderRows_Currency guards a regression where the total was rendered with
+// a hardcoded "$" while gen.Order carries a Currency field documented as
+// ('USD', 'CNY') — so a CNY order was displayed as dollars, understating or
+// overstating it by the exchange rate.
+func TestOrderRows_Currency(t *testing.T) {
+	usd, cny := "USD", "CNY"
+	amount := float32(100)
+
+	tests := []struct {
+		name        string
+		currency    *string
+		wantContain string
+		wantAbsent  string
+	}{
+		{"USD renders with a dollar sign", &usd, "$100.00", "USD"},
+		{"unset currency defaults to USD", nil, "$100.00", "USD"},
+		{"CNY is not rendered as dollars", &cny, "CNY", "$"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := &output.Config{
+				Format: output.FormatTable, Color: output.ColorNever,
+				Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{},
+			}
+			rows := orderRows(out, []gen.Order{{FinalAmount: &amount, Currency: tc.currency}})
+			if len(rows) != 1 {
+				t.Fatalf("expected 1 row, got %d", len(rows))
+			}
+			total := rows[0][3]
+			if !strings.Contains(total, tc.wantContain) {
+				t.Errorf("expected total to contain %q, got %q", tc.wantContain, total)
+			}
+			if strings.Contains(total, tc.wantAbsent) {
+				t.Errorf("total should not contain %q, got %q", tc.wantAbsent, total)
+			}
+		})
 	}
 }

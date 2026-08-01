@@ -12,12 +12,39 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// inlineRegister performs a quick single-domain registration using a price
-// already returned by the check/search endpoint — no extra pricing API call.
-func inlineRegister(cmd *cobra.Command, domainName string, purchasePrice *float64) error {
+// nonDefaultPurchaseType returns the purchaseType and price to forward to
+// CreateDomain, or (nil, nil) for an ordinary registration.
+//
+// CreateDomainRequest.PurchaseType is documented as "should be copied from the
+// result of either a Search or checkAvailability request", and PurchasePrice is
+// "required if purchaseType is not 'registration'" — so the two travel
+// together. "registration" is the API's own default, so we omit it rather than
+// send a redundant field.
+//
+// Note this is only ever populated from a real SearchResult. The ZoneCheck path
+// in runCheck cannot supply one: neither ZoneCheck nor GetPricingForDomain
+// returns a purchaseType, so results synthesized there can structurally only
+// represent a plain registration.
+func nonDefaultPurchaseType(r gen.SearchResult) (*string, *float64) {
+	if r.PurchaseType == nil {
+		return nil, nil
+	}
+	pt := string(*r.PurchaseType)
+	if pt == "" || pt == string(gen.Registration) {
+		return nil, nil
+	}
+	return &pt, r.PurchasePrice
+}
+
+// inlineRegister performs a quick single-domain registration from a result the
+// check/search endpoint already returned — no extra pricing API call. It takes
+// the whole SearchResult rather than a name and price so that purchaseType
+// travels with them; the API requires it for non-registration purchases.
+func inlineRegister(cmd *cobra.Command, r gen.SearchResult) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	domainName := r.DomainName
 	years := int32(1)
 	body := gen.CreateDomainJSONRequestBody{
 		Domain: gen.DomainCreatePayload{
@@ -27,9 +54,10 @@ func inlineRegister(cmd *cobra.Command, domainName string, purchasePrice *float6
 		},
 		Years: &years,
 	}
-	if purchasePrice != nil {
-		body.PurchasePrice = purchasePrice
+	if r.PurchasePrice != nil {
+		body.PurchasePrice = r.PurchasePrice
 	}
+	body.PurchaseType, _ = nonDefaultPurchaseType(r)
 
 	stop := out.Spin(fmt.Sprintf("Registering %s…", domainName))
 	resp, err := client.Gen().CreateDomain(cmd.Context(), &gen.CreateDomainParams{}, body)
@@ -135,7 +163,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			out.Warn("aborted")
 			return nil
 		}
-		return inlineRegister(cmd, r.DomainName, r.PurchasePrice)
+		return inlineRegister(cmd, r)
 	}
 
 	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
@@ -282,7 +310,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		out.Warn("aborted")
 		return nil
 	}
-	return inlineRegister(cmd, r.DomainName, r.PurchasePrice)
+	return inlineRegister(cmd, r)
 }
 
 func renderSearchResults(out *output.Config, results *[]gen.SearchResult) error {

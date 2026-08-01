@@ -311,12 +311,26 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// isTerminalTransferStatus reports whether a transfer status is final, using
+// the split the spec defines on TransferStatus. Two are counterintuitive and
+// worth stating explicitly: `rejected` is NON-terminal (the losing registrar
+// rejected it, but the transfer may still progress), while
+// `canceled_pending_refund` IS terminal (canceled; only the refund is
+// outstanding).
+func isTerminalTransferStatus(status string) bool {
+	switch gen.TransferStatus(status) {
+	case gen.TransferStatusCompleted,
+		gen.TransferStatusFailed,
+		gen.TransferStatusCanceled,
+		gen.TransferStatusCanceledPendingRefund:
+		return true
+	}
+	return false
+}
+
 // watchTransfer polls GetTransfer every 5 minutes until it reaches a terminal
 // state. Useful in CI/automation — for interactive use the hint is enough.
 func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, domain string) error {
-	terminalStates := map[string]bool{
-		"completed": true, "canceled": true, "failed": true, "rejected": true,
-	}
 	fmt.Fprintf(out.Writer, "\nWatching transfer status — checking every 5 minutes (Ctrl+C to stop)\n")
 
 	ticker := time.NewTicker(5 * time.Minute)
@@ -341,7 +355,7 @@ func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, d
 		}
 		status := string(t.Status)
 		fmt.Fprintf(out.Writer, "  %s  %s\n", time.Now().Format("15:04"), out.StatusBadge(status))
-		if terminalStates[status] {
+		if isTerminalTransferStatus(status) {
 			if status == "completed" {
 				out.Success(fmt.Sprintf("Transfer of %s completed", domain))
 			} else {

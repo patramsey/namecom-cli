@@ -3,6 +3,7 @@ package url
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -288,6 +289,90 @@ func TestURLUpdate_InvalidType(t *testing.T) {
 	err := runUpdate(cmd, []string{"example.com", "1"})
 	if err == nil {
 		t.Fatal("expected error for invalid forwarding type, got nil")
+	}
+}
+
+// captureUpdateBody serves getResponse for the GET and records the decoded
+// body of the subsequent write request, so tests can assert on what we
+// actually send rather than only that no error came back.
+func captureUpdateBody(t *testing.T, getResponse string, got *map[string]any) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(getResponse))
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Errorf("decoding %s body: %v", r.Method, err)
+		}
+		_, _ = w.Write([]byte(getResponse))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestURLUpdate_PreservesUnsetFieldsFromCurrent guards a regression where
+// runUpdate fetched the current entry — its comment promising that "unset
+// flags preserve existing values (type, title, meta)" — but only ever read
+// current.Type back. Title and Meta have no `omitempty` in the request body,
+// so a nil pointer serializes as an explicit `"title":null`, and the server
+// reads that as a deliberate clear rather than an omission.
+func TestURLUpdate_PreservesUnsetFieldsFromCurrent(t *testing.T) {
+	const title = "My Site"
+	const meta = "<meta name='keywords' content='fish, denver'>"
+	getResponse := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"masked","title":"` + title + `","meta":"` + meta + `"}`
+
+	var gotBody map[string]any
+	srv := captureUpdateBody(t, getResponse, &gotBody)
+
+	cmd := cmdForURLUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--to", "https://new.com"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+
+	if gotBody == nil {
+		t.Fatal("update request was never sent")
+	}
+	if got := gotBody["title"]; got != title {
+		t.Errorf("title should be preserved: expected %q, got %#v", title, got)
+	}
+	if got := gotBody["meta"]; got != meta {
+		t.Errorf("meta should be preserved: expected %q, got %#v", meta, got)
+	}
+	// The type-preservation path already worked; pin it so a fix here can't regress it.
+	if got := gotBody["type"]; got != "masked" {
+		t.Errorf("type should be preserved: expected %q, got %#v", "masked", got)
+	}
+}
+
+// TestURLUpdate_ExplicitFlagsOverrideCurrent is the other half: preserving
+// unset fields must not stop the user from actually changing them.
+func TestURLUpdate_ExplicitFlagsOverrideCurrent(t *testing.T) {
+	getResponse := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"masked","title":"Old Title","meta":"old meta"}`
+
+	var gotBody map[string]any
+	srv := captureUpdateBody(t, getResponse, &gotBody)
+
+	cmd := cmdForURLUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--to", "https://new.com", "--title", "New Title"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+
+	if gotBody == nil {
+		t.Fatal("update request was never sent")
+	}
+	if got := gotBody["title"]; got != "New Title" {
+		t.Errorf("explicit --title should win: expected %q, got %#v", "New Title", got)
+	}
+	if got := gotBody["meta"]; got != "old meta" {
+		t.Errorf("unset --meta should still be preserved: expected %q, got %#v", "old meta", got)
 	}
 }
 

@@ -161,6 +161,67 @@ func TestVanityCreate_DomainNormalized(t *testing.T) {
 	}
 }
 
+// TestVanityCreate_HostnameSentAsLabel guards a mismatch between our help text
+// and the API. CreateVanityNameserverBody.hostname is documented as "The
+// subdomain portion of the nameserver hostname. The domain portion will be
+// taken from the URL path… to create 'ns1.example.com', specify 'ns1'" —
+// but every CLI example says --hostname ns1.example.com, and we sent it
+// verbatim, yielding a 400 or 'ns1.example.com.example.com'.
+//
+// The get/update/delete path parameter genuinely IS the FQDN, so the CLI's
+// own examples are self-consistent; only create needs the label. We accept
+// both spellings rather than making create the odd command out.
+func TestVanityCreate_HostnameSentAsLabel(t *testing.T) {
+	tests := []struct {
+		name, hostname, want string
+	}{
+		{"fqdn as documented in help", "ns1.example.com", "ns1"},
+		{"bare label as the API documents", "ns1", "ns1"},
+		{"multi-level subdomain", "ns1.a.example.com", "ns1.a"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Errorf("decoding create body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{Hostname: tc.hostname})
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForCreate(t, srv)
+			createHostname, createIPs = tc.hostname, "1.2.3.4"
+			if err := runCreate(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runCreate: %v", err)
+			}
+			if gotBody == nil {
+				t.Fatal("create request was never sent")
+			}
+			if got := gotBody["hostname"]; got != tc.want {
+				t.Errorf("expected hostname %q sent to API, got %#v", tc.want, got)
+			}
+		})
+	}
+}
+
+// TestVanityCreate_HostnameWrongDomain rejects a hostname that isn't under the
+// domain being operated on. Stripping the suffix would otherwise silently turn
+// 'ns1.other.com' into a nameserver named 'ns1.other.com' under example.com.
+func TestVanityCreate_HostnameWrongDomain(t *testing.T) {
+	srv := neverCalledServer(t)
+	cmd := cmdForCreate(t, srv)
+	createHostname, createIPs = "ns1.other.com", "1.2.3.4"
+	err := runCreate(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected error for hostname outside the target domain, got nil")
+	}
+	if !strings.Contains(err.Error(), "example.com") {
+		t.Errorf("error should name the expected domain, got: %v", err)
+	}
+}
+
 // ---- update -----------------------------------------------------------------
 
 func TestVanityUpdate_BadDomain(t *testing.T) {

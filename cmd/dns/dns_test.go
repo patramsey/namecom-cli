@@ -660,3 +660,138 @@ func TestDNSList_JSONEnvelope(t *testing.T) {
 		t.Errorf("expected JSON list envelope with 'data' key, got: %q", body)
 	}
 }
+
+// TestDNSCreate_ExplicitZeroPriority guards a regression where runCreate gated
+// the body on `if createPriority != 0`, deciding by value, while the warning
+// immediately above it decided by cmd.Flags().Changed("priority"). Priority 0
+// is a perfectly normal MX/SRV preference, so `--priority 0` was both dropped
+// from the request and silently robbed of the warning that would have said so.
+// runUpdate and runImport already gate on Changed(); only create didn't.
+func TestDNSCreate_ExplicitZeroPriority(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCreate(t, srv)
+	createType, createHost, createAnswer, createTTL = "MX", "@", "mail.example.com.", 300
+	if err := cmd.ParseFlags([]string{"--priority", "0"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("create request was never sent")
+	}
+	got, ok := gotBody["priority"]
+	if !ok {
+		t.Fatalf("explicit --priority 0 must be sent, body was: %#v", gotBody)
+	}
+	if got != float64(0) {
+		t.Errorf("expected priority 0, got %#v", got)
+	}
+}
+
+// TestDNSCreate_OmittedPriorityStaysOmitted is the other half: not passing
+// --priority at all must still leave the field off the request.
+func TestDNSCreate_OmittedPriorityStaysOmitted(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCreate(t, srv)
+	createType, createHost, createAnswer, createTTL, createPriority = "A", "@", "1.2.3.4", 300, 0
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("create request was never sent")
+	}
+	if _, ok := gotBody["priority"]; ok {
+		t.Errorf("unset --priority should be omitted, got: %#v", gotBody)
+	}
+}
+
+// cmdForUpdateCapturing is cmdForUpdate with the stderr buffer exposed, so
+// tests can assert on warnings rather than only on the request body.
+func cmdForUpdateCapturing(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	cmd := cmdForUpdate(t, srv)
+	ew := &bytes.Buffer{}
+	cmdutil.Out(cmd).EWriter = ew
+	return cmd, ew
+}
+
+// TestDNSUpdate_NoFalsePriorityWarning guards a regression where runUpdate
+// passed the *flag* variable updatePriority (unset, therefore 0) to
+// DNSAnswerWarnings rather than the value it had already merged into
+// body.Priority from the existing record. Changing only --answer on a
+// priority-10 MX record warned "priority is 0" while the PUT correctly carried
+// priority 10 — a renderer reading a value that code path never populated.
+func TestDNSUpdate_NoFalsePriorityWarning(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"id":1,"type":"MX","host":"@","answer":"mail.example.com.","ttl":3600,"priority":10}`))
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding update body: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, ew := cmdForUpdateCapturing(t, srv)
+	if err := cmd.ParseFlags([]string{"--answer", "mail2.example.com."}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+
+	if strings.Contains(ew.String(), "priority is 0") {
+		t.Errorf("warned about priority 0 while sending the record's real priority; stderr: %q", ew.String())
+	}
+	if got := gotBody["priority"]; got != float64(10) {
+		t.Errorf("existing priority should be preserved: expected 10, got %#v", got)
+	}
+}
+
+// TestDNSUpdate_WarnsWhenPriorityGenuinelyZero pins the warning still firing
+// when it should — an MX record that really does have priority 0.
+func TestDNSUpdate_WarnsWhenPriorityGenuinelyZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"id":1,"type":"MX","host":"@","answer":"mail.example.com.","ttl":3600}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, ew := cmdForUpdateCapturing(t, srv)
+	if err := cmd.ParseFlags([]string{"--answer", "mail2.example.com."}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if !strings.Contains(ew.String(), "priority is 0") {
+		t.Errorf("expected the priority-0 warning for a record with no priority; stderr: %q", ew.String())
+	}
+}

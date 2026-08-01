@@ -266,7 +266,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Answer: createAnswer,
 		Ttl:    &createTTL,
 	}
-	if createPriority != 0 {
+	// Gate on the flag, not the value: 0 is a valid MX/SRV priority, so deciding
+	// by value makes `--priority 0` unsettable. The warning above already keys
+	// off Changed(), and runUpdate/runImport do the same.
+	if cmd.Flags().Changed("priority") {
 		body.Priority = &createPriority
 	}
 
@@ -332,6 +335,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if current.Priority != nil {
 		body.Priority = current.Priority
 	}
+	// Merge --priority before anything reads body.Priority, so the warnings
+	// below reason about the value we will actually send rather than an unset
+	// flag variable.
+	if cmd.Flags().Changed("priority") {
+		body.Priority = &updatePriority
+	}
 
 	if cmd.Flags().Changed("type") {
 		if err := cmdutil.ValidDNSType(updateType); err != nil {
@@ -354,7 +363,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSAnswer(rtype, host, updateAnswer); err != nil {
 			return err
 		}
-		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, updatePriority, cmd.Flags().Changed("priority")) {
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, derefInt64(body.Priority), body.Priority != nil) {
 			out.Warn(w)
 		}
 		body.Answer = updateAnswer
@@ -377,10 +386,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body.Ttl = &updateTTL
 	}
-	if cmd.Flags().Changed("priority") {
-		body.Priority = &updatePriority
-	}
-
 	if dryRun {
 		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), body)
 		return nil
@@ -770,6 +775,13 @@ func derefStr(s *string) string {
 }
 
 func derefInt32(n *int32) int32 {
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+func derefInt64(n *int64) int64 {
 	if n == nil {
 		return 0
 	}

@@ -393,9 +393,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		fwdTypeStr = updateType
 	}
 
+	// Title and Meta have no `omitempty` in the request body, so leaving them
+	// nil transmits an explicit `"title":null` — the server reads that as a
+	// deliberate clear, not an omission. Seed both from the current entry so
+	// an unset flag preserves what's already there.
 	body := gen.UpdateURLForwardingByIdJSONRequestBody{
 		ForwardsTo: updateForwardsTo,
 		Type:       gen.UpdateURLForwardingBodyType(fwdTypeStr),
+		Title:      current.Title,
+		Meta:       current.Meta,
 	}
 	if updateTitle != "" {
 		body.Title = &updateTitle

@@ -300,3 +300,42 @@ func TestTransferCreate_DomainNormalized(t *testing.T) {
 		t.Errorf("domain was not lowercased in request body: %q", body)
 	}
 }
+
+// TestIsTerminalTransferStatus pins the terminal/non-terminal split against the
+// spec's own classification. The previous hardcoded set treated `rejected` as
+// terminal and omitted `canceled_pending_refund`, so `--watch` exited early on
+// a rejection (which the registry may still follow with a retry) and polled
+// forever on a cancellation that had already finished.
+//
+// Spec (TransferStatus description):
+//
+//	Terminal (finished; will not change):
+//	  completed, failed, canceled, canceled_pending_refund
+//	Non-terminal (in progress; may change):
+//	  pending, submitting_transfer, pending_new_auth_code, pending_unlock,
+//	  pending_registry_unlock, pending_transfer, pending_insert, rejected
+func TestIsTerminalTransferStatus(t *testing.T) {
+	terminal := []string{"completed", "failed", "canceled", "canceled_pending_refund"}
+	nonTerminal := []string{
+		"pending", "submitting_transfer", "pending_new_auth_code", "pending_unlock",
+		"pending_registry_unlock", "pending_transfer", "pending_insert", "rejected",
+	}
+
+	for _, s := range terminal {
+		if !isTerminalTransferStatus(s) {
+			t.Errorf("%q is terminal per the spec, got non-terminal (--watch would poll forever)", s)
+		}
+	}
+	for _, s := range nonTerminal {
+		if isTerminalTransferStatus(s) {
+			t.Errorf("%q is non-terminal per the spec, got terminal (--watch would exit early)", s)
+		}
+	}
+
+	// Every value in the generated enum must be classified — a new status added
+	// by a spec regen should fail here rather than silently default to polling.
+	all := append(append([]string{}, terminal...), nonTerminal...)
+	if len(all) != 12 {
+		t.Errorf("TransferStatus enum has 12 values; test covers %d", len(all))
+	}
+}

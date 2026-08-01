@@ -4,6 +4,7 @@ package order
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -272,6 +273,17 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// formatAmount renders a monetary value in the order's currency. Orders can be
+// placed in non-USD currencies ('USD', 'CNY'), so a bare "$" would misreport
+// them. USD keeps the familiar symbol; anything else is suffixed with its code
+// rather than guessing at a symbol we may not have.
+func formatAmount(amount float32, currency *string) string {
+	if currency == nil || *currency == "" || strings.EqualFold(*currency, "USD") {
+		return fmt.Sprintf("$%.2f", amount)
+	}
+	return fmt.Sprintf("%.2f %s", amount, strings.ToUpper(*currency))
+}
+
 func orderRows(out *output.Config, orders []gen.Order) [][]string {
 	rows := make([][]string, 0, len(orders))
 	for _, o := range orders {
@@ -289,7 +301,7 @@ func orderRows(out *output.Config, orders []gen.Order) [][]string {
 		}
 		total := ""
 		if o.FinalAmount != nil {
-			total = fmt.Sprintf("$%.2f", *o.FinalAmount)
+			total = formatAmount(*o.FinalAmount, o.Currency)
 		}
 		rows = append(rows, []string{id, status, date, total})
 	}

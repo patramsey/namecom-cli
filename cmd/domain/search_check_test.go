@@ -442,3 +442,42 @@ func TestCheck_SandboxBypassesZoneCheck(t *testing.T) {
 		t.Error("ZoneCheck was called in sandbox mode — should have been bypassed")
 	}
 }
+
+// TestInlineRegister_ForwardsPurchaseType covers the second registration path.
+// runCheck's --authoritative branch holds a real gen.SearchResult with
+// PurchaseType populated, but handed inlineRegister only the domain name and
+// price, so aftermarket results were registered as plain registrations. This
+// path can't be driven end-to-end (it's gated on an interactive TTY), so drive
+// inlineRegister directly.
+func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
+	price := 450.00
+	ptype := gen.SearchPurchaseType("aftermarket_b")
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCheck(t, srv)
+	result := gen.SearchResult{
+		DomainName: "example.com", Purchasable: true,
+		PurchasePrice: &price, PurchaseType: &ptype,
+	}
+	if err := inlineRegister(cmd, result); err != nil {
+		t.Fatalf("inlineRegister: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("create request was never sent")
+	}
+	if got := gotBody["purchaseType"]; got != "aftermarket_b" {
+		t.Errorf("expected purchaseType forwarded, got %#v", got)
+	}
+	if got := gotBody["purchasePrice"]; got != price {
+		t.Errorf("expected purchasePrice %.2f, got %#v", price, got)
+	}
+}
