@@ -55,8 +55,12 @@ type Options struct {
 	OnRetry func(attempt int, delay time.Duration)
 
 	// Advanced knobs; zero values fall back to the defaults above.
-	RPS        float64
-	Burst      int
+	RPS   float64
+	Burst int
+	// MaxRetries is the number of retries AFTER the initial attempt.
+	// Zero means "use the default"; a negative value disables retries so the
+	// first failure is returned immediately. Without the negative case there
+	// was no way to express fail-fast, since 0 was already taken by the default.
 	MaxRetries int
 }
 
@@ -90,8 +94,16 @@ func New(opts Options) (*Client, error) {
 		burst = defaultBurst
 	}
 	maxRetries := opts.MaxRetries
-	if maxRetries == 0 {
+	switch {
+	case maxRetries == 0:
 		maxRetries = defaultRetries
+	case maxRetries < 0:
+		// Explicit fail-fast. Clamp to 0 rather than passing the negative
+		// through: the retry loop is `for attempt := 0; attempt <= maxRetries`,
+		// so a negative skipped the body entirely and returned (nil, nil) —
+		// which net/http reports as "RoundTripper returned a nil *Response with
+		// a nil error".
+		maxRetries = 0
 	}
 	timeout := opts.Timeout
 	if timeout == 0 {

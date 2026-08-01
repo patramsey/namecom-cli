@@ -333,3 +333,47 @@ func TestStillRetriesTransientNetworkError(t *testing.T) {
 		t.Error("a transient network error must still be retried")
 	}
 }
+
+// TestMaxRetriesCanBeDisabled covers the gap in Options.MaxRetries: 0 means
+// "use the default", so there was no value that meant "don't retry". Callers
+// wanting fail-fast behaviour — a health check, a test, an interactive command
+// that would rather surface an error than stall — had no way to ask for it.
+// A negative value now disables retries entirely.
+func TestMaxRetriesCanBeDisabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxRetries  int
+		wantCalls   int32
+		description string
+	}{
+		{"zero means default", 0, 4, "1 attempt + 3 retries"},
+		{"explicit count", 1, 2, "1 attempt + 1 retry"},
+		{"negative disables", -1, 1, "single attempt, no retries"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusInternalServerError) // retryable for GET
+			}))
+			defer srv.Close()
+
+			c, err := New(Options{BaseURL: srv.URL, MaxRetries: tc.maxRetries})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			resp, err := c.HTTPClient().Get(srv.URL)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			_ = resp.Body.Close()
+
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Errorf("MaxRetries=%d: got %d call(s), want %d (%s)",
+					tc.maxRetries, got, tc.wantCalls, tc.description)
+			}
+		})
+	}
+}

@@ -1240,3 +1240,62 @@ func TestToggleCommands_UseUpdateDomain(t *testing.T) {
 		})
 	}
 }
+
+// TestContactsGet_SurfacesVerificationStatus guards the highest-consequence gap
+// found in the API coverage audit.
+//
+// ICANN requires registrant contact verification, and the spec is explicit
+// about what happens if it lapses (UnverifiedContact.verifyBy): "If the contact
+// record is not verified by this date, the domain may become locked by the
+// registry. This is typically 15 days from the creation date."
+//
+// Both `domain register` and `domain contacts set` can trigger verification —
+// the spec says validation "is required by ICANN for all TLDs except ccTLDs" on
+// contact update. Yet the CLI had no verification awareness anywhere: a grep for
+// "verif" across cmd/ returned only unrelated hits.
+//
+// GetDomain already returns isVerified and verificationId on every contact
+// role, so no extra API call is needed — `contacts get` just dumped raw JSON and
+// never called attention to it.
+func TestContactsGet_SurfacesVerificationStatus(t *testing.T) {
+	const resp = `{
+	  "domainName": "example.com",
+	  "contacts": {
+	    "registrant": {"firstName":"Alice","lastName":"A","email":"alice@example.com","isVerified":false,"verificationId":9911},
+	    "admin":      {"firstName":"Bob","lastName":"B","email":"bob@example.com","isVerified":true},
+	    "tech":       {"firstName":"Cal","lastName":"C","email":"cal@example.com","isVerified":true},
+	    "billing":    {"firstName":"Dee","lastName":"D","email":"dee@example.com","isVerified":true}
+	  }
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &stderr}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+
+	if err := runContactsGet(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runContactsGet: %v", err)
+	}
+	combined := stdout.String() + stderr.String()
+
+	// An unverified registrant is the case that can cost the user the domain.
+	if !strings.Contains(strings.ToLower(combined), "unverified") &&
+		!strings.Contains(strings.ToLower(combined), "not verified") {
+		t.Errorf("an unverified registrant contact must be called out, got:\n%s", combined)
+	}
+	// The registry-lock consequence is the reason it matters.
+	if !strings.Contains(strings.ToLower(combined), "lock") {
+		t.Errorf("output should explain the registry-lock consequence, got:\n%s", combined)
+	}
+}

@@ -311,8 +311,51 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(d.Contacts)
 	default:
-		return out.JSON(d.Contacts)
+		if err := out.JSON(d.Contacts); err != nil {
+			return err
+		}
+		warnUnverifiedContacts(out, d.Contacts)
+		return nil
 	}
+}
+
+// warnUnverifiedContacts calls out contacts pending ICANN verification.
+//
+// The consequence is severe and time-boxed: the spec states that if a contact
+// record is not verified by its deadline "the domain may become locked by the
+// registry", typically 15 days from creation. Both `domain register` and
+// `domain contacts set` can trigger verification, and until now the CLI never
+// mentioned it — the isVerified flag was buried in a raw JSON dump.
+//
+// GetDomain already returns this, so no extra request is made.
+func warnUnverifiedContacts(out *output.Config, c gen.Contacts) {
+	var pending []string
+	check := func(role string, verified *bool) {
+		if verified != nil && !*verified {
+			pending = append(pending, role)
+		}
+	}
+	if c.Registrant != nil {
+		check("registrant", c.Registrant.IsVerified)
+	}
+	if c.Admin != nil {
+		check("admin", c.Admin.IsVerified)
+	}
+	if c.Tech != nil {
+		check("tech", c.Tech.IsVerified)
+	}
+	if c.Billing != nil {
+		check("billing", c.Billing.IsVerified)
+	}
+	if len(pending) == 0 {
+		return
+	}
+	out.WarnBox(
+		fmt.Sprintf("Unverified contact(s): %s", strings.Join(pending, ", ")),
+		"ICANN requires contact verification. If it is not completed by the deadline",
+		"(typically 15 days from when it was triggered) the registry may LOCK the domain.",
+		"Check the inbox for the verification email — name.com can resend it.",
+	)
 }
 
 func runContactsSet(cmd *cobra.Command, args []string) error {
@@ -347,6 +390,14 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Contacts updated for %s", domain))
+	// Updating the registrant can start an ICANN verification clock. The spec:
+	// "When registrant contact information is updated, validation may be
+	// triggered if the new contact information has not been previously
+	// validated. This validation is required by ICANN for all TLDs except
+	// country-code TLDs (ccTLDs)." Missing the deadline can get the domain
+	// registry-locked, so say so at the moment the clock may have started.
+	out.Hint("If this changed the registrant, ICANN may require email verification — " +
+		fmt.Sprintf("run 'namecom domain contacts get %s' to check", domain))
 	return nil
 }
 

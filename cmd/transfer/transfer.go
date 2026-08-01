@@ -4,6 +4,7 @@ package transfer
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -60,8 +61,16 @@ var createCmd = &cobra.Command{
 }
 
 var internalCmd = &cobra.Command{
-	Use:     "internal-in <domain>",
-	Short:   "Move a domain between name.com accounts (no EPP wait required)",
+	Use:   "internal-in <domain>",
+	Short: "Move a domain between name.com accounts (enterprise resellers only)",
+	Long: `Move a domain between name.com accounts without the usual EPP transfer wait.
+
+Requires an approved enterprise reseller account: the spec states "Restricted to
+approved enterprise resellers; other callers receive 403 Forbidden." Contact
+name.com support to request access.
+
+The losing account must unlock the domain and supply the authorization code from
+the name.com dashboard first — this command cannot do either.`,
 	Example: `  namecom transfer internal-in example.com --auth-code XXXXXX`,
 	Args:    cmdutil.ExactArgs(1),
 	RunE:    runInternalIn,
@@ -485,6 +494,15 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	}
 	var t gen.Transfer
 	if err := api.Decode(resp, &t); err != nil {
+		// A 403 here almost always means the account is not on the enterprise
+		// allowlist rather than that the credentials are wrong. Say so, instead
+		// of letting the generic "check your credentials" hint send the user off
+		// to re-enter a token that was fine.
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("internal transfer-in requires an approved enterprise reseller account "+
+				"— contact name.com support to request access (original error: %w)", err)
+		}
 		return err
 	}
 
@@ -614,7 +632,12 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 			{result.DomainName, out.BoolBadge(result.AtName), out.BoolBadge(result.SupportsInternalTransfer)},
 		})
 		if result.AtName {
-			out.Hint(fmt.Sprintf("Run 'namecom transfer internal-in %s --auth-code XXXXXX' to transfer", domain))
+			// supportsInternalTransfer is a TLD-level flag. The spec is explicit
+			// that it "does not reflect per-account allowlist eligibility" — so
+			// recommending this unconditionally sent ordinary users to a command
+			// that returns 403 for everyone outside the enterprise allowlist.
+			out.Hint(fmt.Sprintf("Run 'namecom transfer internal-in %s --auth-code XXXXXX' to transfer "+
+				"(requires enterprise reseller approval)", domain))
 		} else {
 			out.Hint(fmt.Sprintf("Run 'namecom transfer create %s --auth-code XXXXXX' to initiate transfer", domain))
 		}

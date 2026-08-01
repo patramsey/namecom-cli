@@ -213,6 +213,12 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return out.YAML(created)
 	default:
 		out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", created.Domain.DomainName, created.Order, created.TotalPaid))
+		// A new registration can trigger ICANN contact verification, and an
+		// unverified contact can get the domain registry-locked (typically 15
+		// days). The verification record is not queryable for ~10 minutes after
+		// creation, so point at the check rather than performing it here.
+		out.Hint(fmt.Sprintf("ICANN may require contact email verification — run "+
+			"'namecom domain contacts get %s' in a few minutes to check", created.Domain.DomainName))
 		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", created.Domain.DomainName))
 		if !registerAutorenew {
 			out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", created.Domain.DomainName))
