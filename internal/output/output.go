@@ -243,6 +243,14 @@ func (c *Config) Table(headers []string, rows [][]string) {
 
 // KVTable renders a headerless two-column key-value table with styled field names.
 func (c *Config) KVTable(rows [][]string) {
+	// Structured modes get their data from the caller's own JSON/YAML encoding;
+	// emitting an ASCII table here would append a second, unparseable document.
+	// Every sibling renderer (Success, Hint, Step, Count, Empty, Title) already
+	// gates on format — this one did not, which is how `auth status -o json`
+	// came to print an envelope followed by a table.
+	if c.Format == FormatJSON || c.Format == FormatYAML || c.QuietMode {
+		return
+	}
 	color := c.ColorEnabled()
 
 	valueStyle := lipgloss.NewStyle().Padding(0, 1)

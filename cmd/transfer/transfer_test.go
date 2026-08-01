@@ -600,3 +600,40 @@ func TestAllTransferStatusesIsComplete(t *testing.T) {
 			"a spec regen added or removed one; classify it in TestIsTerminalTransferStatus", got, want)
 	}
 }
+
+// TestWatchTransfer_ProgressDoesNotCorruptStructuredOutput guards the stream
+// --watch writes into.
+//
+// The format switch in runCreate was changed to fall through to watchTransfer
+// so that --watch works in JSON/YAML mode — the automation case the flag exists
+// for. But watchTransfer wrote its progress lines to stdout, which already
+// carries the create response as a structured document, so the combined output
+// was a JSON object followed by "Watching transfer status…" and a series of
+// timestamped status lines.
+func TestWatchTransfer_ProgressDoesNotCorruptStructuredOutput(t *testing.T) {
+	for _, format := range []output.Format{output.FormatJSON, output.FormatYAML} {
+		t.Run(string(format), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			out := &output.Config{Format: format, Color: output.ColorNever,
+				Writer: &stdout, EWriter: &stderr}
+
+			// Cancel immediately: the banner is written before the first tick, so
+			// this exercises the stream choice without waiting on the 5m ticker.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			cmd := &cobra.Command{}
+			cmd.SetContext(ctx)
+
+			if err := watchTransfer(cmd, out, nil, "example.com"); err != nil {
+				t.Fatalf("watchTransfer: %v", err)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("--watch wrote progress to stdout in %s mode, corrupting the document:\n%s",
+					format, stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "Watching transfer status") {
+				t.Errorf("progress should still be visible on stderr, got: %q", stderr.String())
+			}
+		})
+	}
+}

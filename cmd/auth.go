@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -178,8 +179,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 
 	cfgPath, _ := config.Path()
 
-	out.Success("Credentials verified")
-	out.KVTable([][]string{
+	renderAuthStatus(out, [][]string{
 		{"Profile", profileName},
 		{"Username", username},
 		{"Environment", env},
@@ -187,6 +187,35 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		{"Config", cfgPath},
 	})
 	return nil
+}
+
+// renderAuthStatus emits the credential summary in whichever format was asked
+// for.
+//
+// This is the command CI runs to verify credentials before doing real work, so
+// its output has to be parseable. It previously called out.Success followed by
+// out.KVTable — and KVTable has no format guard, so `-o json` produced a JSON
+// envelope followed by an ASCII table, which fails on the second document.
+//
+// Keys are lowercased for the structured views so they read as field names
+// rather than display labels.
+func renderAuthStatus(out *output.Config, rows [][]string) {
+	switch out.Format {
+	case output.FormatJSON, output.FormatYAML:
+		fields := make(map[string]string, len(rows))
+		for _, r := range rows {
+			fields[strings.ToLower(strings.ReplaceAll(r[0], " ", "_"))] = r[1]
+		}
+		fields["verified"] = "true"
+		if out.Format == output.FormatJSON {
+			_ = out.JSON(fields)
+			return
+		}
+		_ = out.YAML(fields)
+	default:
+		out.Success("Credentials verified")
+		out.KVTable(rows)
+	}
 }
 
 func runAuthLogout(cmd *cobra.Command, _ []string) error {

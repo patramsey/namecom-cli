@@ -391,7 +391,15 @@ func isTerminalTransferStatus(status string) bool {
 // watchTransfer polls GetTransfer every 5 minutes until it reaches a terminal
 // state. Useful in CI/automation — for interactive use the hint is enough.
 func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, domain string) error {
-	fmt.Fprintf(out.Writer, "\nWatching transfer status — checking every 5 minutes (Ctrl+C to stop)\n")
+	// Progress commentary goes to stderr, not stdout. --watch is reachable in
+	// JSON/YAML mode (that is the automation case it exists for), and stdout
+	// already carries the create response as a structured document — writing
+	// human progress lines into that stream makes it unparseable.
+	progress := out.Writer
+	if out.Format != output.FormatTable {
+		progress = out.EWriter
+	}
+	fmt.Fprintf(progress, "\nWatching transfer status — checking every 5 minutes (Ctrl+C to stop)\n")
 
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -414,7 +422,7 @@ func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, d
 			continue
 		}
 		status := string(t.Status)
-		fmt.Fprintf(out.Writer, "  %s  %s\n", time.Now().Format("15:04"), out.StatusBadge(status))
+		fmt.Fprintf(progress, "  %s  %s\n", time.Now().Format("15:04"), out.StatusBadge(status))
 		if isTerminalTransferStatus(status) {
 			if status == "completed" {
 				out.Success(fmt.Sprintf("Transfer of %s completed", domain))
