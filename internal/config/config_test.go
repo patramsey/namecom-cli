@@ -297,8 +297,17 @@ func TestRunTokenCmd_TimesOut(t *testing.T) {
 	tokenCmdTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { tokenCmdTimeout = prev })
 
+	// A PIPELINE, not a bare command. `sh -c "sleep 30"` lets the shell exec
+	// itself into sleep, so killing the direct child is enough — which is why
+	// this passed on macOS while hanging for the full 30s in CI. A pipeline
+	// forks grandchildren that keep the stdout pipe open, and cmd.Output()
+	// blocks reading it long after the shell is dead.
+	//
+	// Credential helpers are overwhelmingly pipelines in practice
+	// (`op read … | tr -d '\n'`, `vault read … | jq -r .token`), so this is the
+	// shape that actually needs bounding.
 	start := time.Now()
-	_, err := runTokenCmd("sleep 30")
+	_, err := runTokenCmd("sleep 30 | cat")
 	elapsed := time.Since(start)
 
 	if err == nil {

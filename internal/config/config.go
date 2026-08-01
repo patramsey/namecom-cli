@@ -259,6 +259,15 @@ func runTokenCmd(cmdline string) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
 	cmd.Stderr = os.Stderr
+	// WaitDelay bounds how long Wait blocks AFTER the deadline kills the shell.
+	//
+	// CommandContext only kills the direct child. A helper written as a pipeline
+	// — `op read … | tr -d '\n'`, `vault read … | jq -r .token`, which is how
+	// most of them are written — forks grandchildren that inherit the stdout
+	// pipe, and cmd.Output() keeps reading that pipe long after sh is gone.
+	// Without this the timeout bounded nothing for exactly the common case: it
+	// only appeared to work when the shell exec'd itself into a single command.
+	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		// Report the deadline explicitly. The bare exec error here is a killed
