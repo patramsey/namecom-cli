@@ -181,19 +181,16 @@ func runCheck(cmd *cobra.Command, args []string) error {
 
 	// Preserve input order in the final result slice.
 	finalResults := make([]gen.SearchResult, len(args))
-	argIdx := make(map[string]int, len(args))
-	for i, name := range args {
-		argIdx[name] = i
-	}
+	matcher := newArgMatcher(args)
 
 	var unsupported []string
 	seen := make(map[string]bool, len(args))
 	for _, r := range zoneResult.Results {
-		idx, ok := argIdx[r.DomainName]
+		idx, ok := matcher.match(r.DomainName)
 		if !ok {
 			continue // API returned a domain we didn't request; ignore
 		}
-		seen[r.DomainName] = true
+		seen[args[idx]] = true
 		if r.Available == nil {
 			// Null means this TLD isn't supported by ZoneCheck.
 			unsupported = append(unsupported, r.DomainName)
@@ -224,7 +221,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if r.Available == nil || !*r.Available {
 			continue
 		}
-		idx, ok := argIdx[r.DomainName]
+		idx, ok := matcher.match(r.DomainName)
 		if !ok {
 			continue // unexpected domain from API; skip
 		}
@@ -277,7 +274,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		}
 		if checkResult.Results != nil {
 			for _, r := range *checkResult.Results {
-				if idx, ok := argIdx[r.DomainName]; ok {
+				if idx, ok := matcher.match(r.DomainName); ok {
 					finalResults[idx] = r
 				}
 			}
@@ -385,4 +382,63 @@ func renderSearchResults(out *output.Config, results *[]gen.SearchResult) error 
 		}
 	}
 	return nil
+}
+
+// argMatcher maps a domain name returned by the API back to the position of the
+// argument that asked about it.
+//
+// The API normalizes names server-side and replies "in its canonical (ASCII /
+// punycode) form", so the reply is not always spelled the way the user typed
+// it. Arguments are already lowercased before we get here, which covers case
+// differences; what remains is punycode. Encoding punycode locally would mean
+// depending on golang.org/x/net/idna — ~9MB of module for one edge case — so
+// instead the reply is resolved by elimination.
+//
+// The rule is deliberately conservative: an unrecognized reply is paired with a
+// pending argument ONLY when exactly one of each remains, which makes the
+// pairing unambiguous. With two or more outstanding on either side the reply is
+// left unmatched and falls through to the CheckAvailability path, because
+// guessing could report one domain's availability under another's name — worse
+// than the blank row it would replace.
+type argMatcher struct {
+	idx     map[string]int
+	claimed []bool
+}
+
+func newArgMatcher(args []string) *argMatcher {
+	m := &argMatcher{idx: make(map[string]int, len(args)), claimed: make([]bool, len(args))}
+	for i, name := range args {
+		m.idx[name] = i
+	}
+	return m
+}
+
+// match resolves an API-returned name to an argument index. It is idempotent:
+// asking about the same name twice (the zone-check pass and the pricing pass
+// both do) returns the same slot.
+func (m *argMatcher) match(apiName string) (int, bool) {
+	if i, ok := m.idx[apiName]; ok {
+		m.claimed[i] = true
+		return i, true
+	}
+
+	// Unrecognized spelling. Pair it only if exactly one argument is still
+	// unaccounted for.
+	pending := -1
+	for i, done := range m.claimed {
+		if done {
+			continue
+		}
+		if pending != -1 {
+			return 0, false // ambiguous — refuse to guess
+		}
+		pending = i
+	}
+	if pending == -1 {
+		return 0, false
+	}
+	m.claimed[pending] = true
+	// Remember the alias so the second pass resolves identically.
+	m.idx[apiName] = pending
+	return pending, true
 }

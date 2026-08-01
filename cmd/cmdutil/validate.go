@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/net/idna"
 )
 
 // ValidDate checks that s is a valid YYYY-MM-DD date.
@@ -273,26 +271,19 @@ func DomainArg(args []string, n int) (string, error) {
 	return d, nil
 }
 
-// CanonicalDomain converts a domain name to the form the API echoes back:
-// lowercase ASCII, punycode-encoded if it contains non-ASCII labels.
+// CanonicalDomain normalizes a domain name for comparison and transmission.
 //
-// The API accepts either spelling on input ("Punycode is normalized
-// server-side, so either ASCII or UTF-8 is accepted") but always *replies* in
-// "its canonical (ASCII / punycode) form". Anything that matches a response
-// against the requested name — `domain check` indexes its results this way —
-// therefore has to canonicalize locally, or a Unicode argument silently fails
-// to match its own result.
+// It lowercases and trims. It deliberately does NOT convert Unicode labels to
+// punycode: the API "normalizes punycode server-side, so either ASCII or UTF-8
+// is accepted" on input, and encoding locally would mean depending on
+// golang.org/x/net/idna for one edge case.
 //
-// A name idna cannot encode is returned lowercased rather than rejected: the
-// server is the authority on what it will accept, and this function is only
-// used to make matching work.
+// Responses do come back in canonical punycode, so anything matching a reply
+// against a request must cope with the spellings differing — see argMatcher in
+// cmd/domain/search_check.go, which resolves that by elimination rather than by
+// re-encoding.
 func CanonicalDomain(s string) string {
-	lowered := strings.ToLower(strings.TrimSpace(s))
-	ascii, err := idna.ToASCII(lowered)
-	if err != nil || ascii == "" {
-		return lowered
-	}
-	return strings.ToLower(ascii)
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // ValidAuthCode checks that a transfer auth code is plausibly non-trivial.

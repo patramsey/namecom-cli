@@ -692,3 +692,65 @@ func TestCheck_MatchesPunycodeResponse(t *testing.T) {
 		t.Errorf("café.com is available but was reported as taken: %s", buf.String())
 	}
 }
+
+// TestArgMatcher covers the resolver that replaced local punycode encoding.
+// The API replies in canonical form, which may not be spelled the way the user
+// typed it; rather than depend on golang.org/x/net/idna to re-encode locally,
+// unrecognized replies are resolved by elimination.
+//
+// The conservative half matters most: pairing is only safe when exactly one
+// argument is outstanding. Guessing among several would report one domain's
+// availability under another's name — strictly worse than the blank row it
+// would be replacing.
+func TestArgMatcher(t *testing.T) {
+	t.Run("exact names match", func(t *testing.T) {
+		m := newArgMatcher([]string{"a.com", "b.com"})
+		if i, ok := m.match("b.com"); !ok || i != 1 {
+			t.Errorf("expected index 1, got %d ok=%v", i, ok)
+		}
+		if i, ok := m.match("a.com"); !ok || i != 0 {
+			t.Errorf("expected index 0, got %d ok=%v", i, ok)
+		}
+	})
+
+	t.Run("single unrecognized reply resolves by elimination", func(t *testing.T) {
+		// café.com was sent as UTF-8; the API replies in punycode.
+		m := newArgMatcher([]string{"café.com"})
+		i, ok := m.match("xn--caf-dma.com")
+		if !ok || i != 0 {
+			t.Fatalf("a lone outstanding argument should absorb the reply, got %d ok=%v", i, ok)
+		}
+		// Idempotent: the pricing pass looks the same name up again.
+		if j, ok2 := m.match("xn--caf-dma.com"); !ok2 || j != i {
+			t.Errorf("second lookup must resolve identically, got %d ok=%v", j, ok2)
+		}
+	})
+
+	t.Run("mixed: exact matches narrow it down to one", func(t *testing.T) {
+		m := newArgMatcher([]string{"a.com", "café.com"})
+		if _, ok := m.match("a.com"); !ok {
+			t.Fatal("exact match failed")
+		}
+		// Only café.com is left, so the punycode reply is unambiguous.
+		if i, ok := m.match("xn--caf-dma.com"); !ok || i != 1 {
+			t.Errorf("expected index 1 after elimination, got %d ok=%v", i, ok)
+		}
+	})
+
+	t.Run("ambiguous replies are refused, not guessed", func(t *testing.T) {
+		m := newArgMatcher([]string{"café.com", "münchen.de"})
+		if _, ok := m.match("xn--caf-dma.com"); ok {
+			t.Error("with two outstanding arguments the pairing is ambiguous and must be refused")
+		}
+	})
+
+	t.Run("unrequested domain is rejected once all are claimed", func(t *testing.T) {
+		m := newArgMatcher([]string{"a.com"})
+		if _, ok := m.match("a.com"); !ok {
+			t.Fatal("exact match failed")
+		}
+		if _, ok := m.match("unrelated.com"); ok {
+			t.Error("a reply about a domain we never asked about must not claim a slot")
+		}
+	})
+}

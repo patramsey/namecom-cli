@@ -328,21 +328,23 @@ func TestDomainArg_Normalization(t *testing.T) {
 }
 
 // TestCanonicalDomain pins the normalization every command's domain argument
-// goes through. The API accepts either UTF-8 or punycode on input but always
-// replies in canonical ASCII, so anything matching a response to a request has
-// to canonicalize locally.
+// goes through: lowercase and trim, nothing more.
+//
+// It deliberately does NOT punycode-encode. The API accepts UTF-8 on input and
+// normalizes server-side, so encoding locally would buy nothing on the request
+// path — it would only help match the canonical form the API replies with, and
+// that is handled by argMatcher in cmd/domain rather than by taking on
+// golang.org/x/net/idna (~9MB of module) for one edge case.
 func TestCanonicalDomain(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"example.com", "example.com"},
 		{"EXAMPLE.COM", "example.com"},
 		{"  example.com  ", "example.com"},
-		{"café.com", "xn--caf-dma.com"},
-		{"CAFÉ.COM", "xn--caf-dma.com"},
-		// Already punycode — must be left alone, not double-encoded.
+		// Unicode is lowercased but left as UTF-8 — the API accepts it.
+		{"CAFÉ.COM", "café.com"},
+		// Already-punycode input is untouched, never double-encoded.
 		{"xn--caf-dma.com", "xn--caf-dma.com"},
-		{"ÄPFEL.de", "xn--pfel-koa.de"},
-		// Mixed ASCII/Unicode labels: only the non-ASCII label is encoded.
-		{"shop.café.com", "shop.xn--caf-dma.com"},
+		{"XN--CAF-DMA.COM", "xn--caf-dma.com"},
 	}
 	for _, tc := range tests {
 		if got := CanonicalDomain(tc.in); got != tc.want {
