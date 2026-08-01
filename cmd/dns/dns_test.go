@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -793,5 +795,136 @@ func TestDNSUpdate_WarnsWhenPriorityGenuinelyZero(t *testing.T) {
 	}
 	if !strings.Contains(ew.String(), "priority is 0") {
 		t.Errorf("expected the priority-0 warning for a record with no priority; stderr: %q", ew.String())
+	}
+}
+
+// TestDNSImport_ReadsStdin covers `--file -`, which both help examples advertise
+// (`namecom dns export old.com | namecom dns import new.com --file -`) but which
+// os.ReadFile never handled — it failed with "open -: no such file or directory".
+func TestDNSImport_ReadsStdin(t *testing.T) {
+	const payload = `[{"type":"A","host":"@","answer":"1.2.3.4","ttl":300}]`
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	go func() {
+		defer func() { _ = w.Close() }()
+		_, _ = w.WriteString(payload)
+	}()
+
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig; _ = r.Close() })
+
+	got, err := readImportData("-")
+	if err != nil {
+		t.Fatalf("readImportData(\"-\"): %v", err)
+	}
+	if string(got) != payload {
+		t.Errorf("expected stdin payload %q, got %q", payload, string(got))
+	}
+}
+
+// TestDNSImport_ReadsFile pins that ordinary paths still work.
+func TestDNSImport_ReadsFile(t *testing.T) {
+	const payload = `[{"type":"A","host":"@","answer":"1.2.3.4","ttl":300}]`
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("writing temp file: %v", err)
+	}
+	got, err := readImportData(path)
+	if err != nil {
+		t.Fatalf("readImportData(%q): %v", path, err)
+	}
+	if string(got) != payload {
+		t.Errorf("expected file payload %q, got %q", payload, string(got))
+	}
+}
+
+// cmdForExport builds an export command whose output goes to the returned buffer.
+func cmdForExport(t *testing.T, srv *httptest.Server, format output.Format) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{Format: format, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd, &buf
+}
+
+func recordsServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestDNSExport_RespectsYAMLFormat guards runExport calling out.JSON
+// unconditionally: `dns export -o yaml` silently emitted JSON. Every other
+// command in the package switches on out.Format.
+func TestDNSExport_RespectsYAMLFormat(t *testing.T) {
+	srv := recordsServer(t, `{"records":[{"id":1,"type":"A","host":"@","fqdn":"example.com.","answer":"1.2.3.4","ttl":300}],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatYAML)
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, `"answer"`) || strings.HasPrefix(strings.TrimSpace(got), "[") {
+		t.Errorf("-o yaml emitted JSON, got: %q", got)
+	}
+	if !strings.Contains(got, "answer:") {
+		t.Errorf("expected YAML mapping syntax, got: %q", got)
+	}
+}
+
+// TestDNSExport_ZoneQuotesTXT pins that TXT rdata is quoted in zone output.
+// Unquoted, an SPF/DKIM value with spaces parses as several separate
+// character-strings, so the exported zone does not describe the same record.
+func TestDNSExport_ZoneQuotesTXT(t *testing.T) {
+	srv := recordsServer(t, `{"records":[{"id":1,"type":"TXT","host":"@","fqdn":"example.com.","answer":"v=spf1 include:_spf.google.com ~all","ttl":300}],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	got := strings.TrimSpace(buf.String())
+	if !strings.Contains(got, `"v=spf1 include:_spf.google.com ~all"`) {
+		t.Errorf("TXT rdata must be quoted in zone output, got: %q", got)
+	}
+}
+
+// TestDNSExport_ZoneMXWithoutPriority pins that an MX record whose priority is
+// absent still emits a priority field. Omitting it produces a zone line with
+// the wrong number of fields, which parsers reject.
+func TestDNSExport_ZoneMXWithoutPriority(t *testing.T) {
+	srv := recordsServer(t, `{"records":[{"id":1,"type":"MX","host":"@","fqdn":"example.com.","answer":"mail.example.com.","ttl":300}],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	got := strings.TrimSpace(buf.String())
+	fields := strings.Fields(got)
+	// name ttl IN MX <priority> <target>
+	if len(fields) != 6 {
+		t.Fatalf("expected 6 zone fields for an MX record, got %d: %q", len(fields), got)
+	}
+	if fields[4] != "0" {
+		t.Errorf("expected default priority 0, got %q in %q", fields[4], got)
 	}
 }

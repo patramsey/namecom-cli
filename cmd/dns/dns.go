@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -471,9 +472,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 		for _, r := range records {
 			rtype := derefStr(r.Type)
 			rdata := derefStr(r.Answer)
-			// MX and SRV records require priority prepended to rdata.
-			if (rtype == "MX" || rtype == "SRV") && r.Priority != nil {
-				rdata = fmt.Sprintf("%d %s", *r.Priority, rdata)
+			switch rtype {
+			case "MX", "SRV":
+				// MX and SRV require priority prepended to rdata. Emit 0 when the
+				// record has none — omitting it yields a line with the wrong field
+				// count, which zone parsers reject.
+				rdata = fmt.Sprintf("%d %s", derefInt64(r.Priority), rdata)
+			case "TXT":
+				// TXT rdata is a character-string: unquoted, a value containing
+				// spaces (SPF, DKIM) parses as several separate strings and no
+				// longer describes the same record.
+				rdata = quoteTXT(rdata)
 			}
 			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
 				derefStr(r.Fqdn), r.Ttl, rtype, rdata)
@@ -481,8 +490,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := out.JSON(records); err != nil {
-		return err
+	switch out.Format {
+	case output.FormatYAML:
+		return out.YAML(records)
+	default:
+		if err := out.JSON(records); err != nil {
+			return err
+		}
 	}
 	out.Hint(fmt.Sprintf("Use --zone for RFC 1035 zone-file format, or pipe to a file: namecom dns export %s > records.json", domain))
 	return nil
@@ -497,7 +511,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	dryRun := importDryRun || cmdutil.IsDryRun(cmd)
 
-	data, err := os.ReadFile(importFile)
+	data, err := readImportData(importFile)
 	if err != nil {
 		return fmt.Errorf("reading import file: %w", err)
 	}
@@ -786,4 +800,25 @@ func derefInt64(n *int64) int64 {
 		return 0
 	}
 	return *n
+}
+
+// quoteTXT wraps TXT rdata in a quoted character-string, escaping embedded
+// backslashes and quotes, unless it is already quoted.
+func quoteTXT(s string) string {
+	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+		return s
+	}
+	escaped := strings.ReplaceAll(s, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
+}
+
+// readImportData reads the import payload from a path, or from stdin when the
+// path is "-". The help examples advertise `dns export old.com | dns import
+// new.com --file -`, so the pipe form has to work. Mirrors cmd/apicmd.
+func readImportData(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }

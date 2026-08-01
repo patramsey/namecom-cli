@@ -4,6 +4,7 @@ package transfer
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -302,6 +303,20 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	default:
 		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total $%.2f)",
 			domain, result.Order, result.TotalPaid))
+		if s := string(result.Transfer.Status); s != "" {
+			fmt.Fprintf(out.Writer, "  status: %s\n", out.StatusBadge(s))
+		}
+		// The API flags non-blocking registry statuses that may still stall the
+		// transfer. JSON output carried these; table output silently dropped them,
+		// so a TTY user saw an unqualified success.
+		if w := result.Warnings; w != nil {
+			if w.Message != nil && *w.Message != "" {
+				out.Warn(*w.Message)
+			}
+			if w.Statuses != nil && len(*w.Statuses) > 0 {
+				out.Warn("registry statuses: " + strings.Join(*w.Statuses, ", "))
+			}
+		}
 		out.Hint("Transfers typically take 3–5 days — the gaining registrar and current owner must approve")
 		out.Hint(fmt.Sprintf("Run 'namecom transfer get %s' to check status", domain))
 	}
@@ -423,7 +438,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", "/core/v1/transfers:internal-in", nil)
+		out.DryRun("POST", "/core/v1/transfers/internal/in", nil)
 		fmt.Fprintf(out.Writer, "  domain=%s authCode=[redacted]\n", domain)
 		return nil
 	}
@@ -469,7 +484,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/transfers/%s", domain), nil)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/%s:cancel", domain), nil)
 		return nil
 	}
 
@@ -507,7 +522,7 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:cancel-transfer-out", domain), nil)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/external/out/%s:cancel", domain), nil)
 		return nil
 	}
 

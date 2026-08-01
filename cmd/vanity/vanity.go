@@ -363,10 +363,17 @@ func vanityRows(nss []gen.VanityNameserverResponseSchema) [][]string {
 	return rows
 }
 
+// splitIPs parses the --ips flag. It always returns a non-nil slice so an empty
+// value marshals as [] rather than null: the API documents "Providing an empty
+// array will remove all existing IPs", so `--ips ""` is the supported way to
+// clear glue records. strings.Split("", ",") yields [""], which would send a
+// blank address instead.
 func splitIPs(s string) []string {
-	parts := strings.Split(s, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	ips := []string{}
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			ips = append(ips, p)
+		}
 	}
-	return parts
+	return ips
 }

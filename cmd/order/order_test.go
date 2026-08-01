@@ -269,3 +269,103 @@ func TestOrderRows_Currency(t *testing.T) {
 		})
 	}
 }
+
+// ---- dry-run / real request drift -------------------------------------------
+
+var httpMethods = map[string]bool{
+	"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true,
+}
+
+func dryRunLine(t *testing.T, s string) string {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && httpMethods[f[0]] && strings.HasPrefix(f[1], "/") {
+			return f[0] + " " + f[1]
+		}
+	}
+	t.Fatalf("no dry-run METHOD/path line found in output: %q", s)
+	return ""
+}
+
+// cmdForRefund builds a refund command with --order-id/--item-ids set and a
+// root carrying --yes (skips the confirm) and optionally --dry-run.
+func cmdForRefund(t *testing.T, srv *httptest.Server, dryRun bool) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{
+		Format: output.FormatTable, Color: output.ColorNever,
+		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "")
+	cmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "")
+	cmd.Flags().StringVar(&refundIdemKey, "idempotency-key", "", "")
+	if err := cmd.ParseFlags([]string{"--order-id", "42", "--item-ids", "7"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { refundOrderID = 0; refundItemIDs = nil; refundIdemKey = "" })
+
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := root.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if dryRun {
+		if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
+			t.Fatalf("setting dry-run flag: %v", err)
+		}
+	}
+	root.AddCommand(cmd)
+	return cmd
+}
+
+// TestDryRunMatchesRealRequest_Refund asserts --dry-run reports the request the
+// refund command actually sends. It printed "/core/v1/orders:refund"; the real
+// endpoint is "/core/v1/refund". Refunds are irreversible, so a dry-run that
+// misreports the endpoint is exactly the wrong place to have drift.
+func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
+	const resp = `{}`
+
+	dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(dsrv.Close)
+	dcmd := cmdForRefund(t, dsrv, true)
+	if err := runRefund(dcmd, nil); err != nil {
+		t.Fatalf("dry-run invocation: %v", err)
+	}
+	buf, ok := cmdutil.Out(dcmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	printed := dryRunLine(t, buf.String())
+
+	var last string
+	lsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		last = r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(lsrv.Close)
+	lcmd := cmdForRefund(t, lsrv, false)
+	if err := runRefund(lcmd, nil); err != nil {
+		t.Fatalf("live invocation: %v", err)
+	}
+	if last == "" {
+		t.Fatal("no request was made")
+	}
+
+	if printed != last {
+		t.Errorf("--dry-run reports %q but the command actually sends %q", printed, last)
+	}
+}

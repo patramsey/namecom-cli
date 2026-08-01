@@ -40,10 +40,10 @@ var listCmd = &cobra.Command{
 	Short: "List orders",
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
-  namecom order list --since 2026-01-01               # orders from this year
-  namecom order list --domain acme.io                 # orders for one domain
+  namecom order list --since 2026-01-01                # orders from this year
+  namecom order list --domain acme.io                  # orders for one domain
   namecom order list --status success
-  namecom order list --all -o json | jq '.[].domainName'`,
+  namecom order list --all -o json | jq '.data[].id'   # JSON output is wrapped in a "data" envelope`,
 	Args: cobra.NoArgs,
 	RunE: runList,
 }
@@ -247,7 +247,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", "/core/v1/orders:refund", nil)
+		out.DryRun("POST", "/core/v1/refund", nil)
 		fmt.Fprintf(out.Writer, "  orderId=%d itemIds=%v\n", refundOrderID, refundItemIDs)
 		return nil
 	}

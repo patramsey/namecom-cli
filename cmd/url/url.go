@@ -411,7 +411,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/url/forwarding/%d", domain, id), nil)
+		out.DryRun("PATCH", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
 		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", updateForwardsTo, updateType)
 		return nil
 	}
@@ -464,7 +464,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/url/forwarding/%d", domain, id), nil)
+		out.DryRun("DELETE", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
 		return nil
 	}
 

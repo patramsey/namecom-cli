@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/config"
@@ -47,6 +48,62 @@ func init() {
 	Cmd.AddCommand(listProfilesCmd, useCmd, showCmd)
 }
 
+// profileView is the serialization-safe projection of a config.Profile.
+//
+// config.Profile must never be marshalled directly: it carries the live API
+// token and token_cmd, and neither has a `json:"-"` tag. Because
+// output.DefaultConfig() selects JSON whenever stdout is not a TTY, marshalling
+// it wrote every profile's credentials straight into any pipe, redirect, or CI
+// log. This type exposes only what the table view already showed, plus booleans
+// saying how the credential is supplied.
+type profileView struct {
+	Name         string `json:"name" yaml:"name"`
+	Username     string `json:"username" yaml:"username"`
+	Endpoint     string `json:"endpoint" yaml:"endpoint"`
+	Default      bool   `json:"default" yaml:"default"`
+	HasToken     bool   `json:"hasToken" yaml:"hasToken"`
+	UsesTokenCmd bool   `json:"usesTokenCmd" yaml:"usesTokenCmd"`
+}
+
+func redactProfiles(cfgFile *config.File, names []string) []profileView {
+	views := make([]profileView, 0, len(names))
+	for _, name := range names {
+		p := cfgFile.Profiles[name]
+		views = append(views, profileView{
+			Name:         name,
+			Username:     p.Username,
+			Endpoint:     endpointFor(p.Sandbox),
+			Default:      name == cfgFile.Default,
+			HasToken:     p.Token != "",
+			UsesTokenCmd: p.TokenCmd != "",
+		})
+	}
+	return views
+}
+
+// tokenCmdSummary reduces a token_cmd to the helper program it invokes.
+// The arguments can themselves carry a secret — an inline bearer token, a
+// vault path — so echoing the full command puts a credential on screen. The
+// program name alone answers "where does my token come from?"; the full
+// command is in the config file for anyone who needs it.
+func tokenCmdSummary(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	if len(fields) == 1 {
+		return fields[0]
+	}
+	return fields[0] + " …"
+}
+
+func endpointFor(sandbox bool) string {
+	if sandbox {
+		return "api.dev.name.com"
+	}
+	return "api.name.com"
+}
+
 func runListProfiles(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 
@@ -68,9 +125,9 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(cfgFile.Profiles)
+		return out.JSON(redactProfiles(cfgFile, names))
 	case output.FormatYAML:
-		return out.YAML(cfgFile.Profiles)
+		return out.YAML(redactProfiles(cfgFile, names))
 	default:
 		rows := make([][]string, 0, len(names))
 		for _, name := range names {
@@ -133,7 +190,7 @@ func runShow(cmd *cobra.Command, _ []string) error {
 	}
 	tokenDisplay := "••••••••"
 	if p.TokenCmd != "" {
-		tokenDisplay = out.Dim(fmt.Sprintf("(from token_cmd: %s)", p.TokenCmd))
+		tokenDisplay = out.Dim(fmt.Sprintf("(from token_cmd: %s)", tokenCmdSummary(p.TokenCmd)))
 	}
 
 	path, _ := config.Path()

@@ -145,25 +145,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if err := renderSearchResults(out, result.Results); err != nil {
 			return err
 		}
-		if result.Results == nil || len(*result.Results) != 1 ||
-			!(*result.Results)[0].Purchasable ||
-			out.Format != output.FormatTable || out.QuietMode || !output.IsInteractive() {
+		if result.Results == nil {
 			return nil
 		}
-		r := (*result.Results)[0]
-		price := ""
-		if r.PurchasePrice != nil {
-			price = fmt.Sprintf(" for $%.2f/yr", *r.PurchasePrice)
-		}
-		ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Register %s%s?", r.DomainName, price))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			out.Warn("aborted")
-			return nil
-		}
-		return inlineRegister(cmd, r)
+		return maybeOfferRegister(cmd, out, *result.Results)
 	}
 
 	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
@@ -289,20 +274,38 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// When checking a single domain in interactive table mode, offer to register
-	// it immediately if it's available.
+	return maybeOfferRegister(cmd, out, finalResults)
+}
+
+// maybeOfferRegister offers to register a domain that `check` just found
+// available, when exactly one was checked and a human is at the terminal.
+//
+// Two safety rules, both learned the hard way:
+//
+//   - The answer is NEVER auto-supplied from --yes. `check` is a read-only
+//     command; --yes is a global flag people put in aliases and CI wrappers
+//     precisely because it is safe there. Honoring it here silently turned
+//     `check` into `register` and charged the user.
+//   - --dry-run suppresses the offer entirely. There is no meaningful "preview"
+//     of an interactive purchase prompt, and the old code ignored --dry-run
+//     outright, so a dry run really bought the domain.
+func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []gen.SearchResult) error {
+	if cmdutil.IsDryRun(cmd) {
+		return nil
+	}
 	if out.Format != output.FormatTable || out.QuietMode || !output.IsInteractive() {
 		return nil
 	}
-	if len(finalResults) != 1 || !finalResults[0].Purchasable {
+	if len(results) != 1 || !results[0].Purchasable {
 		return nil
 	}
-	r := finalResults[0]
+	r := results[0]
 	price := ""
 	if r.PurchasePrice != nil {
 		price = fmt.Sprintf(" for $%.2f/yr", *r.PurchasePrice)
 	}
-	ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Register %s%s?", r.DomainName, price))
+	// Deliberately passing false, not cmdutil.IsYes(cmd) — see the doc comment.
+	ok, err := confirm(out, false, fmt.Sprintf("Register %s%s?", r.DomainName, price))
 	if err != nil {
 		return err
 	}

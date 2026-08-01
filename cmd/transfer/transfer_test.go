@@ -339,3 +339,166 @@ func TestIsTerminalTransferStatus(t *testing.T) {
 		t.Errorf("TransferStatus enum has 12 values; test covers %d", len(all))
 	}
 }
+
+// ---- dry-run / real request drift -------------------------------------------
+
+var httpMethods = map[string]bool{
+	"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true,
+}
+
+func dryRunLine(t *testing.T, s string) string {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && httpMethods[f[0]] && strings.HasPrefix(f[1], "/") {
+			return f[0] + " " + f[1]
+		}
+	}
+	t.Fatalf("no dry-run METHOD/path line found in output: %q", s)
+	return ""
+}
+
+// withDryRun attaches a root carrying --dry-run and --yes so cmdutil.IsDryRun /
+// IsYes observe them, as the real CLI wires persistent flags.
+func withDryRun(t *testing.T, child *cobra.Command, dryRun bool) *cobra.Command {
+	t.Helper()
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	if err := root.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if dryRun {
+		if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
+			t.Fatalf("setting dry-run flag: %v", err)
+		}
+	}
+	root.AddCommand(child)
+	return child
+}
+
+// TestDryRunMatchesRealRequest_Transfer asserts that what --dry-run prints is
+// what the command actually sends. Three of these four had drifted: cancel
+// printed DELETE /core/v1/transfers/{d} while sending POST
+// /core/v1/transfers/{d}:cancel, cancel-outbound printed a
+// /core/v1/domains/{d}:cancel-transfer-out path that does not exist, and
+// internal-in printed /core/v1/transfers:internal-in instead of
+// /core/v1/transfers/internal/in.
+func TestDryRunMatchesRealRequest_Transfer(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *httptest.Server) *cobra.Command
+		args  []string
+		run   func(*cobra.Command, []string) error
+	}{
+		{"cancel", cmdForTransferGet, []string{"example.com"}, runCancel},
+		{"cancel-outbound", cmdForTransferGet, []string{"example.com"}, runCancelOutbound},
+		{
+			name: "internal-in",
+			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForInternalIn(t, srv)
+				if err := cmd.ParseFlags([]string{"--auth-code", "ABC123"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
+			},
+			args: []string{"example.com"},
+			run:  runInternalIn,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			const resp = `{"domainName":"example.com","status":"pending"}`
+
+			// dry-run: capture what we print
+			dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(resp))
+			}))
+			t.Cleanup(dsrv.Close)
+			dcmd := withDryRun(t, tc.setup(t, dsrv), true)
+			if err := tc.run(dcmd, tc.args); err != nil {
+				t.Fatalf("dry-run invocation: %v", err)
+			}
+			buf, ok := cmdutil.Out(dcmd).Writer.(*bytes.Buffer)
+			if !ok {
+				t.Fatal("output writer is not a *bytes.Buffer")
+			}
+			printed := dryRunLine(t, buf.String())
+
+			// live: capture what we send
+			var last string
+			lsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				last = r.Method + " " + r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(resp))
+			}))
+			t.Cleanup(lsrv.Close)
+			lcmd := withDryRun(t, tc.setup(t, lsrv), false)
+			if err := tc.run(lcmd, tc.args); err != nil {
+				t.Fatalf("live invocation: %v", err)
+			}
+			if last == "" {
+				t.Fatal("no request was made")
+			}
+
+			if printed != last {
+				t.Errorf("--dry-run reports %q but the command actually sends %q", printed, last)
+			}
+		})
+	}
+}
+
+// TestTransferCreate_ShowsAPIWarnings guards a dropped field: the create
+// response carries an optional Warnings object ("non-blocking registry statuses
+// detected") that table output never printed, so a TTY user saw a clean success
+// while `-o json` showed the warning. The status is surfaced too — it was also
+// dropped.
+func TestTransferCreate_ShowsAPIWarnings(t *testing.T) {
+	const resp = `{
+		"order": 12345,
+		"totalPaid": 9.99,
+		"transfer": {"domainName":"example.com","status":"pending_unlock"},
+		"warnings": {
+			"message": "Domain has clientTransferProhibited; unlock at your current registrar",
+			"statuses": ["clientTransferProhibited","serverTransferProhibited"]
+		}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForTransferCreate(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := cmd.ParseFlags([]string{"--auth-code", "ABC123"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	ew := &bytes.Buffer{}
+	cmdutil.Out(cmd).EWriter = ew
+
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	combined := buf.String() + ew.String()
+
+	if !strings.Contains(combined, "clientTransferProhibited") {
+		t.Errorf("registry statuses from the API warning must be shown, got: %q", combined)
+	}
+	if !strings.Contains(combined, "unlock at your current registrar") {
+		t.Errorf("warning message must be shown, got: %q", combined)
+	}
+	if !strings.Contains(combined, "pending_unlock") {
+		t.Errorf("transfer status must be shown, got: %q", combined)
+	}
+}

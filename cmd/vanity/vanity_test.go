@@ -286,3 +286,39 @@ func TestVanityDelete_DomainNormalized(t *testing.T) {
 		t.Errorf("expected 'example.com' in delete path, got: %q", receivedPath)
 	}
 }
+
+// TestSplitIPs guards two related defects. strings.Split("", ",") returns
+// [""], not an empty slice, so `--ips ""` — the documented way to clear glue
+// records ("Providing an empty array will remove all existing IPs") — sent
+// [""] and the registry rejected it. Blank entries from a trailing comma had
+// the same problem.
+func TestSplitIPs(t *testing.T) {
+	tests := []struct {
+		name, in string
+		want     []string
+	}{
+		{"empty clears all IPs", "", []string{}},
+		{"whitespace only clears all IPs", "   ", []string{}},
+		{"single IP", "1.2.3.4", []string{"1.2.3.4"}},
+		{"multiple IPs", "1.2.3.4,5.6.7.8", []string{"1.2.3.4", "5.6.7.8"}},
+		{"surrounding spaces trimmed", " 1.2.3.4 , 5.6.7.8 ", []string{"1.2.3.4", "5.6.7.8"}},
+		{"trailing comma drops the blank", "1.2.3.4,", []string{"1.2.3.4"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := splitIPs(tc.in)
+			if got == nil {
+				t.Fatal("splitIPs must return a non-nil slice so it marshals as [] not null")
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("expected %#v, got %#v", tc.want, got)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("index %d: expected %q, got %q", i, tc.want[i], got[i])
+				}
+			}
+		})
+	}
+}

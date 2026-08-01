@@ -481,3 +481,81 @@ func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
 		t.Errorf("expected purchasePrice %.2f, got %#v", price, got)
 	}
 }
+
+// checkRegisterServer answers a ZoneCheck+pricing check for one available
+// domain and records whether CreateDomain was ever called.
+func checkRegisterServer(t *testing.T, registered *bool) *httptest.Server {
+	t.Helper()
+	avail := true
+	price := 12.99
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "zonecheck"):
+			results := []gen.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/domains"):
+			*registered = true
+			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestCheck_YesDoesNotAutoPurchase is a money guard. `domain check` ends with an
+// interactive "offer to register" flow that passed the GLOBAL --yes straight
+// into confirm(), so confirm returned true with no prompt and the domain was
+// bought. --yes is exactly the flag people bake into aliases and CI wrappers
+// because it is supposed to be safe on a read-only command; it must never
+// convert `check` into `register`.
+func TestCheck_YesDoesNotAutoPurchase(t *testing.T) {
+	defer output.StubInteractive(true)()
+
+	var registered bool
+	srv := checkRegisterServer(t, &registered)
+
+	cmd := cmdForCheck(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	// confirm() with yes=false and no TTY to read from must not silently succeed.
+	_ = runCheck(cmd, []string{"free.com"})
+
+	if registered {
+		t.Error("MONEY BUG: `domain check --yes` registered the domain without an explicit answer")
+	}
+}
+
+// TestCheck_DryRunDoesNotPurchase guards the other half: runCheck never
+// consulted cmdutil.IsDryRun at all, so --dry-run performed a real purchase.
+func TestCheck_DryRunDoesNotPurchase(t *testing.T) {
+	defer output.StubInteractive(true)()
+
+	var registered bool
+	srv := checkRegisterServer(t, &registered)
+
+	child := cmdForCheck(t, srv)
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	for _, f := range []string{"dry-run", "yes"} {
+		if err := root.PersistentFlags().Set(f, "true"); err != nil {
+			t.Fatalf("setting %s flag: %v", f, err)
+		}
+	}
+	root.AddCommand(child)
+
+	if err := runCheck(child, []string{"free.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	if registered {
+		t.Error("MONEY BUG: `domain check --dry-run --yes` performed a real purchase")
+	}
+}

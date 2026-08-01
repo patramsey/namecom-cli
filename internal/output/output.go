@@ -73,8 +73,24 @@ func DefaultConfig() *Config {
 
 // IsInteractive reports whether stdin is a TTY — i.e., a human is present.
 // Command code uses this to decide whether to show prompts.
-func IsInteractive() bool {
+//
+// It is a variable rather than a plain function so tests can simulate a human
+// at the terminal. Several money-spending code paths are reachable only when
+// this returns true, and they were untestable — and consequently untested —
+// while it read the real TTY unconditionally. Tests must restore the original
+// value; see output.StubInteractive.
+var IsInteractive = func() bool {
 	return isStdinTTY()
+}
+
+// StubInteractive forces IsInteractive to return v and returns a function that
+// restores the previous implementation. Intended for tests:
+//
+//	defer output.StubInteractive(true)()
+func StubInteractive(v bool) func() {
+	prev := IsInteractive
+	IsInteractive = func() bool { return v }
+	return func() { IsInteractive = prev }
 }
 
 // ColorEnabled reports whether ANSI colors should be emitted for this config.
