@@ -158,6 +158,18 @@ func TestDNSSECGet_ReturnsKey(t *testing.T) {
 	if err := runGet(cmd, []string{"example.com", "abc123"}); err != nil {
 		t.Fatalf("runGet: %v", err)
 	}
+
+	// See the note in cmd/url: err == nil says nothing about what was rendered.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	for _, want := range []string{"1234", "abc123"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("get output is missing %q:\n%s", want, got)
+		}
+	}
 }
 
 // ---- delete -----------------------------------------------------------------

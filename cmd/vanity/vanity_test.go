@@ -125,6 +125,15 @@ func TestVanityGet_ReturnsEntry(t *testing.T) {
 	if err := runGet(cmd, []string{"example.com", "ns1.example.com"}); err != nil {
 		t.Fatalf("runGet: %v", err)
 	}
+
+	// See the note in cmd/url: err == nil says nothing about what was rendered.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	if got := buf.String(); !strings.Contains(got, "ns1.example.com") {
+		t.Errorf("get output is missing the nameserver hostname:\n%s", got)
+	}
 }
 
 // ---- create -----------------------------------------------------------------

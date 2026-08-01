@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ type globalFlags struct {
 	yes       bool
 	dryRun    bool
 	idempKey  string
+	baseURL   string
 }
 
 var gf globalFlags
@@ -194,6 +196,7 @@ func init() {
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "print the API request that would be sent without executing it")
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for write operations (auto-generated per invocation if not set)")
+	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
 
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
@@ -319,6 +322,15 @@ func initContext(cmd *cobra.Command) error {
 		UserAgent: "namecom-cli/" + Version,
 		Timeout:   gf.timeout,
 	}
+	if gf.baseURL != "" {
+		if err := validateBaseURL(gf.baseURL); err != nil {
+			return cmdutil.NewUsageError(err)
+		}
+		apiOpts.BaseURL = gf.baseURL
+		if warn := baseURLWarning(gf.baseURL); warn != "" {
+			out.Warn(warn)
+		}
+	}
 	switch {
 	case gf.debugFile != "":
 		f, err := os.OpenFile(gf.debugFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -403,4 +415,39 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 1
+}
+
+// validateBaseURL checks a --base-url value before it is used, so a typo fails
+// with an explanation rather than an opaque transport error mid-request.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid --base-url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("invalid --base-url %q: must be an absolute http:// or https:// URL", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("invalid --base-url %q: missing host", raw)
+	}
+	return nil
+}
+
+// baseURLWarning returns a caution when --base-url points somewhere other than
+// name.com, or the empty string when it does not.
+//
+// The flag redirects authenticated traffic: the account's Authorization header
+// goes to whatever host is named. That is exactly what makes it useful against
+// a local stub, and exactly what makes it worth saying out loud — a typo'd or
+// pasted value sends a live credential to a third party.
+func baseURLWarning(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	switch u.Host {
+	case "api.name.com", "api.dev.name.com":
+		return ""
+	}
+	return fmt.Sprintf("--base-url is set: requests and your API credentials are being sent to %s, not name.com", u.Host)
 }

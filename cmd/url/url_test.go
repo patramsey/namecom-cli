@@ -126,6 +126,20 @@ func TestURLGet_Success(t *testing.T) {
 	if err := runGet(cmd, []string{"example.com", "7"}); err != nil {
 		t.Fatalf("runGet: %v", err)
 	}
+
+	// Assert on what was rendered, not merely that no error came back. Checking
+	// err == nil alone passes while the renderer emits an empty table, so the
+	// data the command exists to display can go missing silently.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	for _, want := range []string{"7", "https://example.com", "redirect"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("get output is missing %q:\n%s", want, got)
+		}
+	}
 }
 
 func TestURLCreate_MissingDestURL(t *testing.T) {

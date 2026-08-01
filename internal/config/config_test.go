@@ -385,3 +385,114 @@ func TestActivePath_ReportsTheFileActuallyUsed(t *testing.T) {
 		}
 	})
 }
+
+// TestSave_PreservesUnknownKeysAndComments guards against silent data loss on
+// rewrite.
+//
+// Save marshalled the File struct, so anything the struct does not model —
+// comments, and any top-level or per-profile key added by a newer CLI, a
+// sibling tool, or by hand — vanished the first time `auth login` or
+// `config use` wrote the file. The user is not told; the data is simply gone.
+func TestSave_PreservesUnknownKeysAndComments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := `# My namecom config — do not delete, see runbook §4.
+default: prod
+
+# Used by the TUI, not by the CLI.
+theme: solarized
+
+profiles:
+  prod:
+    username: alice
+    token: TOK
+    # Set by ops tooling.
+    region: us-east
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+
+	f, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// A normal mutation, as `config use` would make.
+	f.Default = "prod"
+	if err := Save(f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	out := string(got)
+
+	for _, want := range []string{
+		"theme: solarized",   // unknown top-level key
+		"region: us-east",    // unknown per-profile key
+		"do not delete",      // leading comment
+		"Used by the TUI",    // free-standing comment
+		"Set by ops tooling", // nested comment
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Save dropped %q from the config:\n%s", want, out)
+		}
+	}
+	// And the change we asked for must actually be there.
+	if !strings.Contains(out, "default: prod") {
+		t.Errorf("Save lost the value it was called to write:\n%s", out)
+	}
+}
+
+// TestSave_PreservationDoesNotResurrectDeletedProfiles is the counterweight to
+// preserving unknown keys: `auth logout` must still remove the credential.
+//
+// A node-tree merge that only ever adds and updates would leave a deleted
+// profile's token sitting in the file while the CLI reported success — the
+// exact failure the legacy-path bug already caused once.
+func TestSave_PreservationDoesNotResurrectDeletedProfiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := `# keep me
+default: prod
+theme: solarized
+profiles:
+  prod:
+    username: alice
+    token: PROD-TOKEN
+    region: us-east
+  stale:
+    username: bob
+    token: STALE-TOKEN
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+
+	f, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	delete(f.Profiles, "stale") // what `auth logout --profile stale` does
+	if err := Save(f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	out := string(got)
+
+	if strings.Contains(out, "STALE-TOKEN") || strings.Contains(out, "stale:") {
+		t.Errorf("a logged-out profile's credential survived the write:\n%s", out)
+	}
+	// Preservation must still hold for what remains.
+	for _, want := range []string{"theme: solarized", "region: us-east", "keep me", "PROD-TOKEN"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Save dropped %q while pruning:\n%s", want, out)
+		}
+	}
+}

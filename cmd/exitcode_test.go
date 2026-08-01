@@ -87,3 +87,47 @@ func TestSkipClientInit_StillRequiresCredentialsForAPICommands(t *testing.T) {
 		})
 	}
 }
+
+// TestBaseURLOverride guards the escape hatch that lets the CLI be pointed at
+// something other than production or sandbox.
+//
+// Without it, the only way to exercise a command end-to-end is to construct an
+// api.Client in Go — running the built binary against a local stub silently
+// went to the real api.name.com instead. That is how an unintended request to
+// production happened during development.
+//
+// Because the flag redirects authenticated traffic, it must warn when it points
+// somewhere other than name.com: the account credential goes wherever it says.
+func TestBaseURLOverride(t *testing.T) {
+	tests := []struct {
+		name, baseURL string
+		wantWarn      bool
+	}{
+		{"local stub warns", "http://127.0.0.1:8080", true},
+		{"arbitrary host warns", "https://example.invalid", true},
+		{"official production is silent", "https://api.name.com", false},
+		{"official sandbox is silent", "https://api.dev.name.com", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := baseURLWarning(tc.baseURL); (got != "") != tc.wantWarn {
+				t.Errorf("baseURLWarning(%q) = %q; warning expected = %v", tc.baseURL, got, tc.wantWarn)
+			}
+		})
+	}
+}
+
+// TestBaseURLOverride_Rejected covers values that cannot work, caught before a
+// request rather than as an opaque transport error.
+func TestBaseURLOverride_Rejected(t *testing.T) {
+	for _, bad := range []string{"not a url", "ftp://example.com", "api.name.com", "//example.com"} {
+		if err := validateBaseURL(bad); err == nil {
+			t.Errorf("validateBaseURL(%q) should reject: needs an absolute http(s) URL", bad)
+		}
+	}
+	for _, good := range []string{"https://api.name.com", "http://127.0.0.1:8080", "https://stub.test:9000/prefix"} {
+		if err := validateBaseURL(good); err != nil {
+			t.Errorf("validateBaseURL(%q) should accept, got: %v", good, err)
+		}
+	}
+}
