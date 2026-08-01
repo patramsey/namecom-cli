@@ -227,6 +227,9 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "")
 	cmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "")
 	cmd.Flags().Float64Var(&registerPrice, "price", 0, "")
+	cmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false, "")
+	cmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil, "")
+	t.Cleanup(func() { registerAckClaim = false; registerTLDReqs = nil })
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	return cmd
@@ -869,6 +872,9 @@ func checkThenCreateServer(t *testing.T, result gen.SearchResult, got *map[strin
 			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
 		case strings.Contains(r.URL.Path, "getPricing"):
 			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: result.PurchasePrice})
+		case strings.Contains(r.URL.Path, "claims"):
+			// register now always checks for trademark claims; no claim here.
+			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 		default:
 			if err := json.NewDecoder(r.Body).Decode(got); err != nil {
 				t.Errorf("decoding create body: %v", err)
@@ -1297,5 +1303,139 @@ func TestContactsGet_SurfacesVerificationStatus(t *testing.T) {
 	// The registry-lock consequence is the reason it matters.
 	if !strings.Contains(strings.ToLower(combined), "lock") {
 		t.Errorf("output should explain the registry-lock consequence, got:\n%s", combined)
+	}
+}
+
+// claimsServer answers the full register flow. claimsBody is the
+// CheckDomainClaims response; the create body is recorded for assertions.
+func claimsServer(t *testing.T, claimsBody string, gotCreate *map[string]any, claimsCalled *bool) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "claims"):
+			*claimsCalled = true
+			_, _ = w.Write([]byte(claimsBody))
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			_, _ = w.Write([]byte(`{"results":[{"domainName":"tiktok.page","purchasable":true,"purchasePrice":12.99}]}`))
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_, _ = w.Write([]byte(`{"purchasePrice":12.99}`))
+		default:
+			_ = json.NewDecoder(r.Body).Decode(gotCreate)
+			_, _ = w.Write([]byte(`{"order":1,"totalPaid":12.99,"domain":{"domainName":"tiktok.page"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const claimedResponse = `{
+  "domain": "tiktok.page",
+  "claimsProcessActive": true,
+  "claimId": "2013041500/2/6/9/rJ1NrDO92vDsAzf7EQzgjX4R0000000001",
+  "notBefore": "2026-01-01T00:00:00Z",
+  "notAfter":  "2026-12-31T00:00:00Z",
+  "claimsNotice": "**This domain may infringe on a trademark claim. Proceeding with registration acknowledges that you have received notice of this claim.**",
+  "claims": [{"trademark":"TIKTOK","jurisdiction":"US","registrationNumber":"5653614"}]
+}`
+
+const unclaimedResponse = `{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`
+
+// TestRegister_ClaimedDomainRequiresExplicitAcknowledgement is the core guard.
+// CreateDomainRequest documents that "When a domain has trademark claims (as
+// determined by the Domain Claims Check endpoint), you must include the claims
+// acknowledgment data in the domain creation request" — and `domain register`
+// never called that endpoint nor set the field, so registering any
+// TMCH-matched name was impossible through the CLI.
+//
+// The acknowledgement is a legal notice ("Proceeding with registration
+// acknowledges that you have received notice of this claim"), so --yes must NOT
+// satisfy it: --yes is a general-purpose flag people set in wrappers, and
+// accepting a trademark notice nobody read is exactly the failure mode the
+// `domain check --yes` money bug had.
+func TestRegister_ClaimedDomainRequiresExplicitAcknowledgement(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var gotCreate map[string]any
+	var claimsCalled bool
+	srv := claimsServer(t, claimedResponse, &gotCreate, &claimsCalled)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+
+	err := runRegister(cmd, []string{"tiktok.page"})
+	if err == nil {
+		t.Fatal("--yes alone must not acknowledge a trademark claim")
+	}
+	if !strings.Contains(err.Error(), "acknowledge-claim") {
+		t.Errorf("error should name the flag that acknowledges the claim, got: %v", err)
+	}
+	if gotCreate != nil {
+		t.Error("registration must not proceed without an explicit acknowledgement")
+	}
+	if !claimsCalled {
+		t.Error("register must check for trademark claims before registering")
+	}
+}
+
+// TestRegister_AcknowledgedClaimIsForwarded pins the data actually reaching the
+// API: claimId plus the validity window, all three of which the create request
+// requires when claims exist.
+func TestRegister_AcknowledgedClaimIsForwarded(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var gotCreate map[string]any
+	var claimsCalled bool
+	srv := claimsServer(t, claimedResponse, &gotCreate, &claimsCalled)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := cmd.Flags().Set("acknowledge-claim", "true"); err != nil {
+		t.Fatalf("setting acknowledge-claim flag: %v", err)
+	}
+	if err := runRegister(cmd, []string{"tiktok.page"}); err != nil {
+		t.Fatalf("runRegister: %v", err)
+	}
+
+	claims, ok := gotCreate["claims"].(map[string]any)
+	if !ok {
+		t.Fatalf("create body must carry the claims acknowledgement, got: %#v", gotCreate)
+	}
+	if claims["claimId"] != "2013041500/2/6/9/rJ1NrDO92vDsAzf7EQzgjX4R0000000001" {
+		t.Errorf("claimId not forwarded, got %#v", claims["claimId"])
+	}
+	for _, k := range []string{"notBefore", "notAfter"} {
+		if claims[k] == nil || claims[k] == "" {
+			t.Errorf("%s must be forwarded with the acknowledgement, got %#v", k, claims[k])
+		}
+	}
+}
+
+// TestRegister_UnclaimedDomainIsUnaffected guards against a regression in the
+// overwhelmingly common path: no claims means no prompt, no extra flag, and no
+// claims field on the request.
+func TestRegister_UnclaimedDomainIsUnaffected(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var gotCreate map[string]any
+	var claimsCalled bool
+	srv := claimsServer(t, unclaimedResponse, &gotCreate, &claimsCalled)
+
+	cmd := cmdForRegister(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatalf("setting yes flag: %v", err)
+	}
+	if err := runRegister(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("an unclaimed domain must register without extra flags, got: %v", err)
+	}
+	if gotCreate == nil {
+		t.Fatal("registration did not happen")
+	}
+	if _, present := gotCreate["claims"]; present {
+		t.Errorf("unclaimed registration must not send a claims field, got: %#v", gotCreate)
 	}
 }

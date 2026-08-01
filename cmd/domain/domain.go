@@ -29,6 +29,8 @@ func init() {
 		authCodeCmd,
 		pricingCmd,
 		renewCmd,
+		claimsCmd,
+		requirementsCmd,
 	)
 }
 

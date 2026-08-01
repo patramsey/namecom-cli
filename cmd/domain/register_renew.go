@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -40,6 +41,8 @@ var (
 	registerAutorenew    bool
 	registerContactsFile string
 	registerPrice        float64
+	registerAckClaim     bool
+	registerTLDReqs      []string
 	renewYears           int
 	renewPrice           float64
 )
@@ -50,6 +53,10 @@ func init() {
 	registerCmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "enable auto-renewal")
 	registerCmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "JSON file with contact data")
 	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "required for premium domains: confirmed purchase price in USD")
+	registerCmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false,
+		"acknowledge a trademark claim on this domain (required to register a claimed domain non-interactively; --yes does NOT cover this)")
+	registerCmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil,
+		"registry-required field as key=value; repeatable (see 'namecom domain requirements <tld>')")
 
 	renewCmd.Flags().IntVar(&renewYears, "years", 1, "number of years to renew")
 	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "required for premium domains: confirmed renewal price in USD")
@@ -152,6 +159,15 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Trademark claims. CreateDomainRequest: "When a domain has trademark
+	// claims (as determined by the Domain Claims Check endpoint), you must
+	// include the claims acknowledgment data in the domain creation request."
+	// Without this the CLI simply could not register a TMCH-matched name.
+	claims, err := resolveClaims(cmd, out, domainName, dryRun)
+	if err != nil {
+		return err
+	}
+
 	years := int32(registerYears)
 	payload := gen.DomainCreatePayload{
 		DomainName:       domainName,
@@ -173,6 +189,12 @@ func runRegister(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("parsing contacts file: %w", err)
 		}
 		body.Domain.Contacts = &contacts
+	}
+	body.Claims = claims
+	if reqs, rerr := parseTLDRequirements(registerTLDReqs); rerr != nil {
+		return rerr
+	} else if len(reqs) > 0 {
+		body.TldRequirements = &reqs
 	}
 	body.PurchaseType = checkPurchaseType
 	if registerPrice > 0 {
@@ -352,4 +374,110 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to see the new expiry date", domainName))
 	}
 	return nil
+}
+
+// resolveClaims checks a domain for trademark claims and, when any exist,
+// obtains the user's acknowledgement before registration can continue.
+//
+// The claims process is TMCH's: during a gTLD's claims period, registering a
+// name matching a registered trademark requires the registrant to be shown a
+// notice and to acknowledge it. The API mirrors that — the acknowledgement
+// triple (claimId, notBefore, notAfter) must accompany the create request.
+//
+// The acknowledgement is deliberately NOT satisfied by --yes. --yes is a
+// general-purpose "skip prompts" flag that people set globally in wrappers and
+// aliases; letting it accept a legal notice on the user's behalf would mean
+// acknowledging something nobody read. --acknowledge-claim has to be passed
+// explicitly, and it exists only on this command.
+//
+// Returns nil when the domain has no claims, which is the overwhelmingly common
+// case and leaves the request body untouched.
+func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, dryRun bool) (*gen.DomainClaimsInfo, error) {
+	if dryRun {
+		// A dry run makes no purchase, so there is nothing to acknowledge.
+		return nil, nil
+	}
+	client := cmdutil.APIClient(cmd)
+
+	resp, err := client.Gen().CheckDomainClaims(cmd.Context(), domainName, gen.CheckDomainClaimsJSONRequestBody{})
+	if err != nil {
+		return nil, fmt.Errorf("checking trademark claims: %w", err)
+	}
+	var result gen.DomainClaimsCheckResponseSchema
+	if err := api.Decode(resp, &result); err != nil {
+		return nil, fmt.Errorf("checking trademark claims: %w", err)
+	}
+
+	// No claim on this name: nothing to show, nothing to send.
+	if result.ClaimId == nil || *result.ClaimId == "" {
+		return nil, nil
+	}
+
+	renderClaimsNotice(out, result)
+
+	if !registerAckClaim {
+		if !output.IsInteractive() {
+			return nil, fmt.Errorf(
+				"%s has a trademark claim against it — pass --acknowledge-claim to confirm you have "+
+					"read the notice above and still want to register it (--yes does not cover this)", domainName)
+		}
+		// Interactive: the notice is on screen, so an explicit answer is a
+		// genuine acknowledgement. Pass false for `yes` deliberately.
+		ok, cerr := confirm(out, false, "Acknowledge this trademark claim and continue?")
+		if cerr != nil {
+			return nil, cerr
+		}
+		if !ok {
+			return nil, fmt.Errorf("aborted: trademark claim not acknowledged")
+		}
+	}
+
+	return &gen.DomainClaimsInfo{
+		ClaimId:   result.ClaimId,
+		NotBefore: result.NotBefore,
+		NotAfter:  result.NotAfter,
+	}, nil
+}
+
+// renderClaimsNotice displays the registry's own claim notice plus the matching
+// trademarks. The notice text is supplied by the API and exists precisely to be
+// shown to the registrant, so it is printed verbatim.
+func renderClaimsNotice(out *output.Config, r gen.DomainClaimsCheckResponseSchema) {
+	lines := []string{"TRADEMARK CLAIM on " + r.Domain}
+	if r.ClaimsNotice != nil && *r.ClaimsNotice != "" {
+		lines = append(lines, *r.ClaimsNotice)
+	}
+	for _, c := range r.Claims {
+		desc := c.Trademark
+		if c.Jurisdiction != nil && *c.Jurisdiction != "" {
+			desc += " (" + *c.Jurisdiction
+			if c.RegistrationNumber != nil && *c.RegistrationNumber != "" {
+				desc += ", reg " + *c.RegistrationNumber
+			}
+			desc += ")"
+		}
+		lines = append(lines, "  • "+desc)
+	}
+	out.WarnBox(lines...)
+}
+
+// parseTLDRequirements turns repeated --tld-requirement key=value flags into
+// the map the API expects. Some registries require extra fields, and IDN
+// registrations require the character-set code; the spec declines to document
+// them ("they vary wildly between registries and TLDs"), so the values are
+// passed through verbatim and validated server-side.
+func parseTLDRequirements(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	reqs := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, found := strings.Cut(p, "=")
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if !found || k == "" {
+			return nil, fmt.Errorf("invalid --tld-requirement %q: expected key=value", p)
+		}
+		reqs[k] = v
+	}
+	return reqs, nil
 }

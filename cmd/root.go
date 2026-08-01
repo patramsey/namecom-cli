@@ -13,6 +13,7 @@ import (
 	"github.com/patramsey/namecom-cli/cmd/apicmd"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	configcmd "github.com/patramsey/namecom-cli/cmd/config"
+	"github.com/patramsey/namecom-cli/cmd/contact"
 	"github.com/patramsey/namecom-cli/cmd/dns"
 	"github.com/patramsey/namecom-cli/cmd/dnssec"
 	"github.com/patramsey/namecom-cli/cmd/domain"
@@ -141,6 +142,7 @@ func init() {
 	)
 
 	domain.Cmd.GroupID = "domains"
+	contact.Cmd.GroupID = "domains"
 	dns.Cmd.GroupID = "domains"
 	dnssec.Cmd.GroupID = "domains"
 	transfer.Cmd.GroupID = "domains"
@@ -160,6 +162,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(configcmd.Cmd)
 	rootCmd.AddCommand(domain.Cmd)
+	rootCmd.AddCommand(contact.Cmd)
 	rootCmd.AddCommand(dns.Cmd)
 	rootCmd.AddCommand(dnssec.Cmd)
 	rootCmd.AddCommand(email.Cmd)

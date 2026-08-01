@@ -28,15 +28,19 @@ func init() {
 }
 
 type statusSummary struct {
-	Profile          string       `json:"profile"`
-	Endpoint         string       `json:"endpoint"`
-	DomainsTotal     int          `json:"domains_total"`
-	ExpiringCritical int          `json:"expiring_critical"` // <7 days
-	ExpiringSoon     int          `json:"expiring_soon"`     // 7-30 days
-	Unlocked         int          `json:"unlocked"`
-	PendingTransfers int          `json:"pending_transfers"`
-	ExpiringDomains  []expiryItem `json:"expiring_domains,omitempty"`
-	PendingDomains   []string     `json:"pending_transfer_domains,omitempty"`
+	Profile          string `json:"profile"`
+	Endpoint         string `json:"endpoint"`
+	DomainsTotal     int    `json:"domains_total"`
+	ExpiringCritical int    `json:"expiring_critical"` // <7 days
+	ExpiringSoon     int    `json:"expiring_soon"`     // 7-30 days
+	Unlocked         int    `json:"unlocked"`
+	PendingTransfers int    `json:"pending_transfers"`
+	// Balance is nil when the lookup failed. It must not default to 0:
+	// rendering a failed balance as $0.00 tells the user their account is
+	// empty, which is worse than telling them nothing.
+	Balance         *float64     `json:"balance,omitempty"`
+	ExpiringDomains []expiryItem `json:"expiring_domains,omitempty"`
+	PendingDomains  []string     `json:"pending_transfer_domains,omitempty"`
 }
 
 type expiryItem struct {
@@ -58,6 +62,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		unlockedCount   int32
 		expiringDomains []gen.DomainResponsePayload
 		transfers       []gen.Transfer
+		balance         *float64
 	)
 
 	now := time.Now()
@@ -115,6 +120,22 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 			}
 			p = *result.NextPage
 		}
+	})
+
+	// Account balance. Non-fatal: a status view is still useful without it,
+	// and every purchasing command can fail with 402 "Insufficient Funds", so
+	// being able to see the balance beforehand is the point of showing it.
+	g.Go(func() error {
+		resp, err := client.Gen().CheckAccountBalance(gctx)
+		if err != nil {
+			return nil
+		}
+		var result gen.CheckAccountBalanceResponseSchema
+		if api.Decode(resp, &result) != nil {
+			return nil
+		}
+		balance = &result.Balance
+		return nil
 	})
 
 	// Fetch transfers for pending count.
@@ -188,6 +209,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		PendingTransfers: len(pendingDomains),
 		ExpiringDomains:  expiringItems,
 		PendingDomains:   pendingDomains,
+		Balance:          balance,
 	}
 
 	switch out.Format {
@@ -227,6 +249,12 @@ func renderStatus(out *output.Config, s statusSummary) {
 		unlockedPart = "  " + out.Dim(strconv.Itoa(s.Unlocked)+" unlocked")
 	}
 	fmt.Fprintf(out.Writer, "%s%s%s%s\n", total, expPart, transferPart, unlockedPart)
+
+	// Balance, only when we actually have it. A failed lookup leaves this nil
+	// and prints nothing — showing "$0.00" would read as an empty account.
+	if s.Balance != nil {
+		fmt.Fprintf(out.Writer, "%s  %s\n", out.Dim("Balance"), fmt.Sprintf("$%.2f", *s.Balance))
+	}
 
 	// Expiring domains section.
 	if len(s.ExpiringDomains) > 0 {
