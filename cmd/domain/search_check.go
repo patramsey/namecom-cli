@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -62,7 +63,8 @@ var checkCmd = &cobra.Command{
 	Short: "Check exact availability and price for one or more domains",
 	Example: `  namecom domain check example.com
   namecom domain check example.com myidea.io coolname.dev
-  namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly`,
+  namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly
+  namecom domain check --sandbox example.com        # sandbox: registry check used automatically`,
 	Args: cmdutil.MinimumNArgs(1),
 	RunE: runCheck,
 }
@@ -92,8 +94,16 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	// --authoritative skips ZoneCheck and hits the registry directly.
-	if checkAuthoritative {
+	// ZoneCheck queries production DNS zone files and has no sandbox equivalent —
+	// the sandbox EPP registry is isolated from production zone data. Using both
+	// in the same check produces contradictory results in sandbox mode. Skip
+	// ZoneCheck and go straight to the EPP registry when --sandbox is active.
+	if cmdutil.IsSandbox(cmd) && !checkAuthoritative {
+		out.Hint("Sandbox mode: using registry check (ZoneCheck is production-only)")
+	}
+
+	// --authoritative (or sandbox mode) skips ZoneCheck and hits the registry directly.
+	if checkAuthoritative || cmdutil.IsSandbox(cmd) {
 		stop := out.Spin("Checking availability…")
 		resp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: args})
 		stop()
@@ -162,9 +172,12 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			unsupported = append(unsupported, r.DomainName)
 			continue
 		}
+		sld, tld, _ := strings.Cut(r.DomainName, ".")
 		finalResults[idx] = gen.SearchResult{
 			DomainName:  r.DomainName,
 			Purchasable: *r.Available,
+			Sld:         sld,
+			Tld:         tld,
 		}
 	}
 	// Domains absent from ZoneCheck results entirely (pre-validation failure)
@@ -206,6 +219,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 				return
 			}
 			premium := pricing.Premium
+			sld, tld, _ := strings.Cut(domainName, ".")
 			mu.Lock()
 			finalResults[idx] = gen.SearchResult{
 				DomainName:    domainName,
@@ -213,6 +227,8 @@ func runCheck(cmd *cobra.Command, args []string) error {
 				PurchasePrice: pricing.PurchasePrice,
 				RenewalPrice:  pricing.RenewalPrice,
 				Premium:       &premium,
+				Sld:           sld,
+				Tld:           tld,
 			}
 			mu.Unlock()
 		}(r.DomainName, idx)

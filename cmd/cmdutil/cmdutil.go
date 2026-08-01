@@ -62,6 +62,13 @@ func Overrides(cmd *cobra.Command) config.Overrides {
 	return config.Overrides{}
 }
 
+// IsSandbox reports whether --sandbox was passed on the root command.
+func IsSandbox(cmd *cobra.Command) bool {
+	root := cmd.Root()
+	f := root.PersistentFlags().Lookup("sandbox")
+	return f != nil && f.Value.String() == "true"
+}
+
 // IsNotFound reports whether err is a 404 API error.
 func IsNotFound(err error) bool {
 	var apiErr *api.APIError

@@ -2,12 +2,15 @@ package domain
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -56,6 +59,107 @@ func cmdForCheck(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	t.Cleanup(func() { checkAuthoritative = false })
 	return cmd
+}
+
+// cmdForCheckSandbox builds a check command whose root has --sandbox=true,
+// so IsSandbox(cmd) returns true and ZoneCheck is bypassed.
+func cmdForCheckSandbox(t *testing.T, srv *httptest.Server) *cobra.Command {
+	t.Helper()
+	child := cmdForCheck(t, srv)
+	root := &cobra.Command{Use: "namecom"}
+	var sandbox bool
+	root.PersistentFlags().BoolVar(&sandbox, "sandbox", false, "")
+	if err := root.PersistentFlags().Set("sandbox", "true"); err != nil {
+		t.Fatalf("setting sandbox flag: %v", err)
+	}
+	root.AddCommand(child)
+	return child
+}
+
+// cmdForCheckJSON builds a check command that emits JSON into the returned
+// buffer, so tests can assert on the exact serialized fields. baseCmd keeps
+// its buffer private and renders tables, which hides field-level regressions.
+func cmdForCheckJSON(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	var buf bytes.Buffer
+	out := &output.Config{
+		Format:  output.FormatJSON,
+		Color:   output.ColorNever,
+		Writer:  &buf,
+		EWriter: &bytes.Buffer{},
+	}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	cmd.Flags().BoolVar(&checkAuthoritative, "authoritative", false, "")
+	t.Cleanup(func() { checkAuthoritative = false })
+	return cmd, &buf
+}
+
+// TestCheck_ZoneCheckPathPopulatesSldTld guards a regression where results
+// synthesized from ZoneCheck (which returns only domainName + available) were
+// missing the Sld and Tld fields that the CheckAvailability path populates —
+// so `domain check <domain> -o json` emitted `"sld": "", "tld": ""` depending
+// on which code path served the request.
+func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
+	price := 12.99
+	free, taken := true, false
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/core/v1/zonecheck":
+			results := []gen.ZoneCheckResult{
+				{DomainName: "free.com", Available: &free},
+				{DomainName: "taken.co.uk", Available: &taken},
+			}
+			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 2})
+		case "/core/v1/domains/free.com:getPricing":
+			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := runCheck(cmd, []string{"free.com", "taken.co.uk"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+
+	var got []gen.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 results, got %d: %s", len(got), buf.String())
+	}
+
+	// free.com is filled in by the pricing goroutine, taken.co.uk by the plain
+	// unavailable branch — the two branches build SearchResult separately, so
+	// both need covering. The split is at the FIRST dot, per the spec ("TLD is
+	// the rest of the domain_name after the SLD"), keeping co.uk intact.
+	want := []struct{ domain, sld, tld string }{
+		{"free.com", "free", "com"},
+		{"taken.co.uk", "taken", "co.uk"},
+	}
+	for i, w := range want {
+		if got[i].DomainName != w.domain {
+			t.Fatalf("result %d: expected domain %q, got %q", i, w.domain, got[i].DomainName)
+		}
+		if got[i].Sld != w.sld {
+			t.Errorf("%s: expected sld %q, got %q", w.domain, w.sld, got[i].Sld)
+		}
+		if got[i].Tld != w.tld {
+			t.Errorf("%s: expected tld %q, got %q", w.domain, w.tld, got[i].Tld)
+		}
+	}
 }
 
 func TestCheck_ZoneCheckAvailableGetsPricing(t *testing.T) {
@@ -297,5 +401,44 @@ func TestCheck_PricingPopulatedFromGetPricing(t *testing.T) {
 	}
 	if pricingPrice != price {
 		t.Errorf("expected GetPricing to be called and return %.2f, got %.2f", price, pricingPrice)
+	}
+}
+
+// ---- sandbox bypass ---------------------------------------------------------
+
+// TestCheck_SandboxBypassesZoneCheck verifies that --sandbox routes directly
+// to CheckAvailability (EPP) without calling ZoneCheck. ZoneCheck always
+// queries production DNS zone files and has no sandbox equivalent, so mixing
+// it with the sandbox EPP registry produces contradictory results.
+func TestCheck_SandboxBypassesZoneCheck(t *testing.T) {
+	avail := true
+	price := 9.99
+	var zoneCheckCalled bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/core/v1/zonecheck":
+			zoneCheckCalled = true
+			t.Error("ZoneCheck should not be called in sandbox mode")
+			http.Error(w, "unexpected zonecheck call", http.StatusInternalServerError)
+		case "/core/v1/domains:checkAvailability":
+			results := []gen.SearchResult{
+				{DomainName: "example.com", Purchasable: avail, PurchasePrice: &price},
+			}
+			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCheckSandbox(t, srv)
+	if err := runCheck(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCheck in sandbox mode: %v", err)
+	}
+	if zoneCheckCalled {
+		t.Error("ZoneCheck was called in sandbox mode — should have been bypassed")
 	}
 }
