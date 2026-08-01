@@ -195,6 +195,20 @@ func TestTransferList_Empty(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
+	// An empty result must still guide the user — the point of the empty state
+	// is that someone with no records is told what to do next, not shown a
+	// blank screen. Asserting err == nil alone cannot see that.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	if !strings.Contains(got, "No transfers found") {
+		t.Errorf("empty-state output should contain %q, got:\n%s", "No transfers found", got)
+	}
+	if !strings.Contains(got, "transfer create") {
+		t.Errorf("empty-state output should contain %q, got:\n%s", "transfer create", got)
+	}
 }
 
 func TestTransferList_ShowsEntries(t *testing.T) {
@@ -256,6 +270,19 @@ func TestTransferGet_Success(t *testing.T) {
 	cmd := cmdForTransferGet(t, srv)
 	if err := runGet(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runGet: %v", err)
+	}
+	// Assert what was rendered. err == nil passes while the renderer emits an
+	// empty table, so the data the command exists to show can vanish silently.
+	if buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer); ok {
+		got := buf.String()
+		if !strings.Contains(got, "example.com") {
+			t.Errorf("output is missing %q (the domain and its transfer status):\n%s", "example.com", got)
+		}
+		if !strings.Contains(got, "pending") {
+			t.Errorf("output is missing %q (the domain and its transfer status):\n%s", "pending", got)
+		}
+	} else {
+		t.Fatal("output writer is not a *bytes.Buffer")
 	}
 }
 

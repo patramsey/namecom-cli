@@ -35,6 +35,22 @@ func TestSearch_ShowsResults(t *testing.T) {
 	if err := runSearch(cmd, []string{"acme"}); err != nil {
 		t.Fatalf("runSearch: %v", err)
 	}
+	// Assert what was rendered. err == nil passes while the renderer emits an
+	// empty table, so the data the command exists to show can vanish silently.
+	if buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer); ok {
+		got := buf.String()
+		if !strings.Contains(got, "acme.com") {
+			t.Errorf("output is missing %q (both results and the price):\n%s", "acme.com", got)
+		}
+		if !strings.Contains(got, "acme.io") {
+			t.Errorf("output is missing %q (both results and the price):\n%s", "acme.io", got)
+		}
+		if !strings.Contains(got, "12.99") {
+			t.Errorf("output is missing %q (both results and the price):\n%s", "12.99", got)
+		}
+	} else {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
 }
 
 func TestSearch_Empty(t *testing.T) {

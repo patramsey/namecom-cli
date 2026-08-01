@@ -228,6 +228,16 @@ func TestOrderGet_Success(t *testing.T) {
 	if err := runGet(cmd, []string{"42"}); err != nil {
 		t.Fatalf("runGet: %v", err)
 	}
+	// Assert what was rendered. err == nil passes while the renderer emits an
+	// empty table, so the data the command exists to show can vanish silently.
+	if buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer); ok {
+		got := buf.String()
+		if !strings.Contains(got, "42") {
+			t.Errorf("output is missing %q (the order id):\n%s", "42", got)
+		}
+	} else {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
 }
 
 // TestOrderRows_Currency guards a regression where the total was rendered with
