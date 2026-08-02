@@ -368,7 +368,7 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	f, err := os.ReadFile(contactsFile)
+	f, err := os.ReadFile(contactsFile) //nolint:gosec // G304: --contacts-file names the file to read; that is the flag's purpose
 	if err != nil {
 		return fmt.Errorf("reading contacts file: %w", err)
 	}

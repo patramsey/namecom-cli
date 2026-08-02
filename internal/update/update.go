@@ -95,7 +95,7 @@ func readCache() (string, bool) {
 	if path == "" {
 		return "", false
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is cacheFile(), derived from os.UserCacheDir() — never external input
 	if err != nil {
 		return "", false
 	}

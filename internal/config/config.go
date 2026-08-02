@@ -157,7 +157,7 @@ func Load() (*File, error) {
 		fmt.Fprintf(os.Stderr, "warning: %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
 			path, info.Mode().Perm(), path)
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is this tool's own config location (XDG, legacy, or NAMECOM_CONFIG), never an API response
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
@@ -257,7 +257,14 @@ func runTokenCmd(cmdline string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tokenCmdTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
+	// G204: running a shell string is the feature, not a lapse. token_cmd exists
+	// so a token can come from `op read ...` or `pass show ...` instead of living
+	// in the config file, and those invocations need pipes and quoting. cmdline
+	// comes only from the user's own config file — never from a flag, an
+	// environment variable, or an API response — so anyone who can set it can
+	// already run commands as this user. The mitigations that do apply are the
+	// timeout above and the process group below.
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline) //nolint:gosec
 	cmd.Stderr = os.Stderr
 	setProcessGroup(cmd)
 	// WaitDelay bounds how long Wait blocks AFTER the deadline kills the shell.
@@ -312,7 +319,7 @@ func truthy(s string) bool {
 // file is absent or unparseable there is nothing to preserve, and a plain
 // marshal is correct.
 func encodeConfig(path string, f *File) ([]byte, error) {
-	existing, err := os.ReadFile(path)
+	existing, err := os.ReadFile(path) //nolint:gosec // G304: same config path the caller is about to write back to
 	if err != nil {
 		return marshalConfig(f)
 	}

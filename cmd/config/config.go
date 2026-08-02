@@ -199,7 +199,7 @@ func runShow(cmd *cobra.Command, _ []string) error {
 	if p.Sandbox {
 		endpoint = "api.dev.name.com"
 	}
-	tokenDisplay := "••••••••"
+	tokenDisplay := "••••••••" //nolint:gosec // G101 false positive: a mask shown in place of the token, not a credential
 	if p.TokenCmd != "" {
 		tokenDisplay = out.Dim(fmt.Sprintf("(from token_cmd: %s)", tokenCmdSummary(p.TokenCmd)))
 	}
