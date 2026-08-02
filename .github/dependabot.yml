@@ -40,5 +40,16 @@ updates:
       github-actions:
         patterns:
           - "*"
+        # Majors are excluded from the group deliberately, matching the gomod
+        # entry above. An update outside a group still gets a PR — it just gets
+        # its own, rather than riding along in a batch. That is the point: these
+        # actions run the release job that holds the Homebrew tap token, and a
+        # major bump can change runtime, inputs, or defaults. The first grouped
+        # run proposed checkout v4->v7, setup-go v5->v7, and
+        # golangci-lint-action v7->v9 as a single PR whose only evidence was a
+        # green CI run.
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: chore
