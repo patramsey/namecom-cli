@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -41,12 +43,24 @@ func TestFilterToWildcard(t *testing.T) {
 // domainServer builds an httptest.Server that serves paginated domain list
 // responses. pages is a slice of domain-name slices; page i returns pages[i]
 // and sets NextPage to i+2 if there's a next page, else 0.
-// It also records every request URL so tests can inspect query params.
-func domainServer(t *testing.T, pages [][]string) (*httptest.Server, *[]string) {
+//
+// It also records every request URL so tests can inspect query params. That
+// recording is mutex-guarded because runList fetches pages 2..N concurrently
+// (errgroup, SetLimit(5)), so the handler runs on several goroutines at once —
+// an unsynchronized append here is a real race, and -race caught it
+// intermittently: it only fires when two page requests actually overlap.
+//
+// The accessor returns a copy rather than the slice itself. Handing back a
+// *[]string, as this used to, makes an unlocked read the path of least
+// resistance and invites the same bug back at the call site.
+func domainServer(t *testing.T, pages [][]string) (*httptest.Server, func() []string) {
 	t.Helper()
+	var mu sync.Mutex
 	var received []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		received = append(received, r.URL.String())
+		mu.Unlock()
 		pageQ := r.URL.Query().Get("page")
 		pageNum := 1
 		if n, err := strconv.Atoi(pageQ); pageQ != "" && err == nil {
@@ -75,7 +89,11 @@ func domainServer(t *testing.T, pages [][]string) (*httptest.Server, *[]string) 
 		})
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &received
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(received)
+	}
 }
 
 // cmdForDomainList builds a cobra.Command wired with a test API client,
@@ -117,8 +135,8 @@ func TestDomainList_PaginationStopsAtFirstPage(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if len(*requests) != 1 {
-		t.Errorf("expected 1 request (first page only), got %d: %v", len(*requests), *requests)
+	if len(requests()) != 1 {
+		t.Errorf("expected 1 request (first page only), got %d: %v", len(requests()), requests())
 	}
 	out := stdout.String()
 	if !contains(out, "acme.io") || !contains(out, "beta.io") {
@@ -148,8 +166,8 @@ func TestDomainList_AllFetchesAllPages(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if len(*requests) != 3 {
-		t.Errorf("expected 3 requests (all pages), got %d: %v", len(*requests), *requests)
+	if len(requests()) != 3 {
+		t.Errorf("expected 3 requests (all pages), got %d: %v", len(requests()), requests())
 	}
 	out := stdout.String()
 	for _, d := range []string{"acme.io", "beta.io", "gamma.io"} {
@@ -177,10 +195,10 @@ func TestDomainList_FilterWrapsWildcardAndAutoPages(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if len(*requests) != 2 {
-		t.Errorf("expected 2 requests (filter auto-paginates), got %d: %v", len(*requests), *requests)
+	if len(requests()) != 2 {
+		t.Errorf("expected 2 requests (filter auto-paginates), got %d: %v", len(requests()), requests())
 	}
-	for _, u := range *requests {
+	for _, u := range requests() {
 		if !contains(u, "domainName=%2Aacme%2A") && !contains(u, "domainName=*acme*") {
 			t.Errorf("request URL missing wildcard-wrapped filter: %q", u)
 		}
@@ -199,8 +217,8 @@ func TestDomainList_TLDFilterPassedToAPI(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if len(*requests) == 0 || !contains((*requests)[0], "tld=io") {
-		t.Errorf("expected tld=io in request URL, got: %v", *requests)
+	if len(requests()) == 0 || !contains(requests()[0], "tld=io") {
+		t.Errorf("expected tld=io in request URL, got: %v", requests())
 	}
 }
 
