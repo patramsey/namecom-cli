@@ -688,6 +688,92 @@ func TestPricingQuoteUsesRequestedYears(t *testing.T) {
 	}
 }
 
+// TestYearsReachesTheWriteBody pins the term length on the two commands that
+// spend money.
+//
+// TestPricingQuoteUsesRequestedYears above covers the *quote* — that --years 3
+// is passed to getPricing. This covers the other half: that the same 3 reaches
+// the register/renew body. Drop Years there and the API applies its default of
+// one year, so the user is quoted, shown, and confirms a three-year price, then
+// receives a one-year term. Nothing errors and nothing looks wrong.
+//
+// --years is deliberately 3 here. Its flag default is 1, so a fixture at 1
+// cannot tell "sent the requested term" apart from "sent nothing and let the
+// API default", which is exactly the bug.
+func TestYearsReachesTheWriteBody(t *testing.T) {
+	tests := []struct {
+		name     string
+		pathPart string
+		run      func(*testing.T, *httptest.Server) error
+	}{
+		{
+			name:     "renew",
+			pathPart: "renew",
+			run: func(t *testing.T, srv *httptest.Server) error {
+				cmd := cmdForRenew(t, srv)
+				if err := cmd.ParseFlags([]string{"--years", "3"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return runRenew(cmd, []string{"example.com"})
+			},
+		},
+		{
+			name:     "register",
+			pathPart: "domains",
+			run: func(t *testing.T, srv *httptest.Server) error {
+				cmd := cmdForRegister(t, srv)
+				if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+					t.Fatalf("setting yes flag: %v", err)
+				}
+				if err := cmd.ParseFlags([]string{"--years", "3"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return runRegister(cmd, []string{"example.com"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			price := 12.99
+			var writeBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "getPricing"):
+					_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+						PurchasePrice: &price, RenewalPrice: &price,
+					})
+				case strings.Contains(r.URL.Path, "checkAvailability"):
+					results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+					_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+				case r.Method == http.MethodPost:
+					_ = json.NewDecoder(r.Body).Decode(&writeBody)
+					_, _ = w.Write([]byte(`{}`))
+				default:
+					_, _ = w.Write([]byte(`{}`))
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			if err := tc.run(t, srv); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if writeBody == nil {
+				t.Fatal("no write request was sent")
+			}
+			got, ok := writeBody["years"]
+			if !ok {
+				t.Fatalf("body omits years — the API will default to 1 while the user "+
+					"was quoted a 3-year price; body was: %#v", writeBody)
+			}
+			if n, isNum := got.(float64); !isNum || int(n) != 3 {
+				t.Errorf("body should carry the requested term years=3, got %#v", got)
+			}
+		})
+	}
+}
+
 func TestRenew_DomainNormalized(t *testing.T) {
 	price := 12.99
 	var renewPath string
