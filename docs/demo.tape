@@ -29,9 +29,9 @@
 # frame.
 #
 # RE-RECORDING: the registration is real within the sandbox account, so once
-# this succeeds DEMO.COM below is taken and the next run stops at "not
-# available". Pick a fresh name (check it first with `namecom domain check`)
-# or release the old one from the sandbox account.
+# this succeeds the domain below is taken and the next run stops at "not
+# available". Pick a fresh name, verify it first with `namecom domain check`,
+# and update every occurrence in this file.
 #
 # Keep this in sync: re-run it whenever a change touches what these commands
 # print (flags, output formatting, hints, prompts, sample values).
@@ -47,7 +47,7 @@ Set FontSize 20
 Set Width 1200
 Set Height 640
 Set Theme "Dracula"
-Set TypingSpeed 60ms
+Set TypingSpeed 40ms
 Set Padding 20
 
 # Hidden setup. Neither of these belongs on screen:
@@ -63,32 +63,39 @@ Type "clear"
 Enter
 Show
 
-Sleep 1s
+Sleep 600ms
 
 # The whole demo is one command. `domain check` prints availability and price,
 # then — in an interactive terminal — offers to register it inline, so there is
-# no second command to type. That offer is why the sleeps below are generous:
-# a prompt is waiting for input, and any keystroke sent early is consumed by it
-# rather than by the shell.
-Type "namecom domain check lunarcrate.com"
-Sleep 400ms
+# no second command to type.
+#
+# SLEEP BUDGET. The two sleeps that follow a keystroke-consuming prompt are
+# sized against measured sandbox latency, not guessed: a keystroke sent while a
+# prompt is still waiting gets eaten by the prompt instead of reaching the
+# shell, which is exactly how an earlier take ended up running "amecom".
+# Measured: domain check 0.46s, inline registration 2.86s, dns create 0.31s.
+# The rest is reading time. Re-measure before shortening these further.
+Type "namecom domain check driftwoodco.com"
+Sleep 300ms
 Enter
 
-# Availability table, then the "Register …?" confirm appears.
-Sleep 5s
+# Availability table, then the "Register …?" confirm. 1.5s covers a 0.46s call.
+Sleep 1500ms
 
 # Answer the confirm. huh renders Yes/No with No selected; "y" picks Yes.
 Type "y"
-Sleep 800ms
-Enter
-
-# Registration, then the post-registration hints.
-Sleep 6s
-
-# Point the new domain somewhere.
-Type "namecom dns create lunarcrate.com --type A --answer 1.2.3.4"
 Sleep 400ms
 Enter
-Sleep 4s
 
-Sleep 1500ms
+# Registration plus its hints. 4.5s over a measured 2.86s — the tightest
+# margin in the tape, and the one that breaks the recording if it is wrong.
+Sleep 4500ms
+
+# Point the new domain somewhere. Nothing is typed after this, so the trailing
+# sleep is purely for reading and can be trimmed freely.
+Type "namecom dns create driftwoodco.com --type A --answer 1.2.3.4"
+Sleep 300ms
+Enter
+Sleep 2s
+
+Sleep 1s
