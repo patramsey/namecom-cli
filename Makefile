@@ -16,7 +16,7 @@ SPEC_30     := $(shell mktemp -t namecom.api.30.XXXX.yaml)
 # Pinned via the `tool` directive in go.mod (oapi-codegen v2.4.1).
 OAPI_CODEGEN := go tool oapi-codegen
 
-.PHONY: all build test test-int lint generate verify-spec install release clean fmt
+.PHONY: all build test test-int lint generate verify-spec verify-generate install release clean fmt
 
 all: build
 
@@ -31,6 +31,19 @@ generate: verify-spec
 	$(OAPI_CODEGEN) -config internal/api/gen/codegen.yaml $(SPEC_30)
 	gofmt -w internal/api/gen/zz_generated.go
 	@rm -f $(SPEC_30)
+
+# Fail if the committed generated code differs from what the current generator
+# produces. Bumping oapi-codegen changes its output, but nothing regenerates on
+# a dependency bump — so the tree can silently drift from its own generator
+# until someone runs `make generate` months later and finds a 2000-line diff
+# mixed in with their own work. CI runs this so the bump PR itself goes red.
+verify-generate: generate
+	@git diff --exit-code -- internal/api/gen/zz_generated.go \
+		|| { echo ""; \
+		     echo "zz_generated.go is out of date with the current oapi-codegen."; \
+		     echo "Run 'make generate' and commit the result."; \
+		     exit 1; }
+	@echo "generated code is up to date"
 
 # Fail loudly if the vendored spec drifts from the recorded SHA256 — forces a
 # deliberate re-vendor + provenance update rather than a silent change.
