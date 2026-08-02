@@ -17,6 +17,10 @@ Register domains, manage DNS, and run your entire domain portfolio — without l
 
 ---
 
+![Registering a domain with namecom](docs/demo.gif)
+
+*Recorded against the sandbox API with [vhs](https://github.com/charmbracelet/vhs) — see [`docs/demo.tape`](docs/demo.tape) for the script.*
+
 ```
 $ namecom status
 
@@ -209,7 +213,15 @@ namecom domain list --quiet             # one domain per line, for scripting
 
 ## Configuration
 
-Credentials live at `~/.config/namecom/config.yaml` after `namecom auth login`. Multiple profiles are supported for managing separate accounts:
+Credentials are written by `namecom auth login` to your platform's user config directory:
+
+| Platform | Location |
+|---|---|
+| macOS | `~/Library/Application Support/namecom/config.yaml` |
+| Linux | `$XDG_CONFIG_HOME/namecom/config.yaml`, or `~/.config/namecom/config.yaml` |
+| Windows | `%AppData%\namecom\config.yaml` |
+
+`namecom auth status` prints the path in use. An older `~/.namecom/config.yaml` is still read if the current location has no config, and `NAMECOM_CONFIG` overrides both. Multiple profiles are supported for managing separate accounts:
 
 ```bash
 namecom auth login --profile work
@@ -231,7 +243,7 @@ export NAMECOM_USERNAME=yourname
 export NAMECOM_TOKEN=yourtoken
 export NAMECOM_SANDBOX=true        # target sandbox API
 export NAMECOM_PROFILE=staging     # select a profile
-export NAMECOM_CONFIG=~/.config/namecom/ci.yaml  # alternate config file
+export NAMECOM_CONFIG=~/namecom-ci.yaml    # use this file instead of the default
 namecom domain list
 ```
 

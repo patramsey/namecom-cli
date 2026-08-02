@@ -73,9 +73,14 @@ type Credentials struct {
 // source. Callers in TTY mode may offer to run `namecom auth login`.
 var ErrNoCredentials = errors.New("no credentials configured")
 
-// Path returns the config file path, honoring NAMECOM_CONFIG, then XDG
-// (~/.config/namecom/config.yaml). The returned path is where new config is
-// written; see resolveReadPath for read-time legacy fallback.
+// Path returns the config file path, honoring NAMECOM_CONFIG, then the
+// platform user config directory. That directory is NOT ~/.config everywhere:
+// os.UserConfigDir gives ~/Library/Application Support on darwin,
+// $XDG_CONFIG_HOME (or ~/.config) on unix, and %AppData% on windows. Saying
+// "XDG" here previously read as a promise of ~/.config on every platform,
+// which sent people looking for their credentials in a directory macOS never
+// uses. The returned path is where new config is written; see resolveReadPath
+// for the read-time legacy fallback.
 func Path() (string, error) {
 	if p := os.Getenv("NAMECOM_CONFIG"); p != "" {
 		return p, nil
