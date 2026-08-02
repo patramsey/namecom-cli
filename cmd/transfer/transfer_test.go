@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -662,5 +663,179 @@ func TestWatchTransfer_ProgressDoesNotCorruptStructuredOutput(t *testing.T) {
 				t.Errorf("progress should still be visible on stderr, got: %q", stderr.String())
 			}
 		})
+	}
+}
+
+// ---- transfer eligibility ---------------------------------------------------
+
+// eligibilityServer serves a fixed eligibility response and records the request
+// path, so tests can assert both what was rendered and what was asked for.
+func eligibilityServer(t *testing.T, body string) (*httptest.Server, func() string) {
+	t.Helper()
+	var mu sync.Mutex
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		path = r.URL.Path
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return path
+	}
+}
+
+func cmdForEligibility(t *testing.T, srv *httptest.Server, format output.Format, stdout *bytes.Buffer) *cobra.Command {
+	t.Helper()
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: format, Color: output.ColorNever, Writer: stdout, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+func TestTransferEligibility_BadDomain(t *testing.T) {
+	cmd := cmdForEligibility(t, neverCalledServer(t), output.FormatTable, &bytes.Buffer{})
+	if err := runEligibility(cmd, []string{"nodot"}); err == nil {
+		t.Fatal("expected error for domain without a dot, got nil")
+	}
+}
+
+func TestTransferEligibility_HitsEligibilityEndpoint(t *testing.T) {
+	srv, reqPath := eligibilityServer(t,
+		`{"domainName":"example.com","atName":false,"supportsInternalTransfer":false}`)
+	cmd := cmdForEligibility(t, srv, output.FormatTable, &bytes.Buffer{})
+
+	// EXAMPLE.COM, not example.com: this also pins that the domain is
+	// canonicalized before it reaches the path, the same way transfer create is.
+	if err := runEligibility(cmd, []string{"EXAMPLE.COM"}); err != nil {
+		t.Fatalf("runEligibility: %v", err)
+	}
+	if got, want := reqPath(), "/core/v1/transfers/eligibility/example.com"; got != want {
+		t.Errorf("request path = %q, want %q", got, want)
+	}
+}
+
+// The hint is the whole point of this command: someone runs it to find out
+// which transfer command to run next. Recommending internal-in to a user whose
+// domain is not at name.com sends them to a call that cannot succeed, and
+// recommending it without the approval caveat sends ordinary users to a 403.
+func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantCmd    string
+		wantAbsent string
+		wantCaveat bool
+		wantBadges []string
+	}{
+		{
+			name:       "not at name.com recommends transfer create",
+			body:       `{"domainName":"example.com","atName":false,"supportsInternalTransfer":false}`,
+			wantCmd:    "transfer create example.com",
+			wantAbsent: "internal-in",
+			wantBadges: []string{"no"},
+		},
+		{
+			name:       "at name.com recommends internal-in, with the approval caveat",
+			body:       `{"domainName":"example.com","atName":true,"supportsInternalTransfer":true}`,
+			wantCmd:    "transfer internal-in example.com",
+			wantAbsent: "transfer create",
+			wantCaveat: true,
+			wantBadges: []string{"yes"},
+		},
+		{
+			// atName drives the recommendation; supportsInternalTransfer is a
+			// TLD-level flag that must not flip it on its own.
+			name:       "at name.com but TLD lacks internal support still recommends internal-in",
+			body:       `{"domainName":"example.com","atName":true,"supportsInternalTransfer":false}`,
+			wantCmd:    "transfer internal-in example.com",
+			wantAbsent: "transfer create",
+			wantCaveat: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := eligibilityServer(t, tt.body)
+			var stdout bytes.Buffer
+			cmd := cmdForEligibility(t, srv, output.FormatTable, &stdout)
+			if err := runEligibility(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runEligibility: %v", err)
+			}
+			got := stdout.String()
+			if !strings.Contains(got, tt.wantCmd) {
+				t.Errorf("output should recommend %q, got:\n%s", tt.wantCmd, got)
+			}
+			if strings.Contains(got, tt.wantAbsent) {
+				t.Errorf("output should NOT mention %q, got:\n%s", tt.wantAbsent, got)
+			}
+			if tt.wantCaveat && !strings.Contains(got, "enterprise reseller approval") {
+				t.Errorf("internal-in recommendation must carry the approval caveat, got:\n%s", got)
+			}
+			if !tt.wantCaveat && strings.Contains(got, "enterprise reseller approval") {
+				t.Errorf("transfer create recommendation should not carry the approval caveat, got:\n%s", got)
+			}
+			for _, b := range tt.wantBadges {
+				if !strings.Contains(got, b) {
+					t.Errorf("table should render badge %q, got:\n%s", b, got)
+				}
+			}
+			if !strings.Contains(got, "example.com") {
+				t.Errorf("table should show the domain, got:\n%s", got)
+			}
+		})
+	}
+}
+
+// Structured output must carry the machine-readable fields and must not carry
+// the human hint, which would not be valid JSON/YAML alongside the document.
+func TestTransferEligibility_StructuredOutput(t *testing.T) {
+	for _, format := range []output.Format{output.FormatJSON, output.FormatYAML} {
+		t.Run(string(format), func(t *testing.T) {
+			srv, _ := eligibilityServer(t,
+				`{"domainName":"example.com","atName":true,"supportsInternalTransfer":true}`)
+			var stdout bytes.Buffer
+			cmd := cmdForEligibility(t, srv, format, &stdout)
+			if err := runEligibility(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runEligibility: %v", err)
+			}
+			got := stdout.String()
+			for _, want := range []string{"example.com", "true"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s output missing %q, got:\n%s", format, want, got)
+				}
+			}
+			if strings.Contains(got, "Run 'namecom") {
+				t.Errorf("%s output must not contain the human hint, got:\n%s", format, got)
+			}
+		})
+	}
+}
+
+func TestTransferEligibility_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Domain not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEligibility(t, srv, output.FormatTable, &bytes.Buffer{})
+	err := runEligibility(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected an error for a 404 response, got nil")
+	}
+	if !strings.Contains(err.Error(), "Domain not found") {
+		t.Errorf("error should surface the API message, got: %v", err)
 	}
 }
