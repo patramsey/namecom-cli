@@ -33,7 +33,22 @@ jobs:
         # -count=1 disables the test cache. internal/api/gen shells out to
         # scripts/spec_to_30.py and reads namecom.api.yaml; Go's cache tracks
         # neither, so a cached pass can hide a broken preprocessor.
-        run: go test -race -count=1 ./...
+        #
+        # The coverage profile rides along on this run rather than getting its
+        # own: a second full `go test` would roughly double this job for a
+        # number the first run already has.
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        # continue-on-error because coverage reporting is not a correctness
+        # signal. Codecov being down, rate-limiting, or rejecting an upload
+        # must not turn a PR red when the tests themselves passed.
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   lint:
     name: Lint
