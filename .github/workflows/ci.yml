@@ -21,6 +21,14 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Generated code is up to date
+        # Catches the failure mode that produced this step: bumping
+        # oapi-codegen changes its output, but a dependency bump regenerates
+        # nothing, so the committed zz_generated.go silently stops matching its
+        # own generator. Without this, the drift surfaces months later as a
+        # 2000-line diff tangled into somebody's unrelated change.
+        run: make verify-generate
+
       - name: Test
         # -count=1 disables the test cache. internal/api/gen shells out to
         # scripts/spec_to_30.py and reads namecom.api.yaml; Go's cache tracks
