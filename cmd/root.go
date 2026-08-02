@@ -367,12 +367,6 @@ func initContext(cmd *cobra.Command) error {
 	return nil
 }
 
-// IsYes reports whether --yes / -y was set globally (skip confirmation).
-func IsYes() bool { return gf.yes }
-
-// IsDryRun reports whether --dry-run was set globally.
-func IsDryRun() bool { return gf.dryRun }
-
 // skipClientInit returns true for commands that don't need API credentials.
 func skipClientInit(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {

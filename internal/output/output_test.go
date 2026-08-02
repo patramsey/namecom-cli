@@ -366,3 +366,127 @@ func TestSuccess_StructuredFormats(t *testing.T) {
 		}
 	})
 }
+
+// ---- flag value parsing -----------------------------------------------------
+
+// ParseFormat and ParseColorMode validate --output and --color. Both lowercase
+// their input, so mixed case must be accepted — nothing previously proved that,
+// and `--output JSON` silently erroring would be a poor way to find out.
+func TestParseFormat(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    Format
+		wantErr bool
+	}{
+		{"table", FormatTable, false},
+		{"json", FormatJSON, false},
+		{"yaml", FormatYAML, false},
+		{"JSON", FormatJSON, false},
+		{"YaMl", FormatYAML, false},
+		{"TABLE", FormatTable, false},
+		{"", "", true},
+		{"xml", "", true},
+		{"jsonl", "", true},
+		{" json", "", true}, // not trimmed: a stray space is a real mistake, not a synonym
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ParseFormat(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseFormat(%q) = %q, want an error", tt.in, got)
+				}
+				// The message has to name the valid choices; "unknown format"
+				// alone leaves the user guessing.
+				for _, want := range []string{"table", "json", "yaml"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q should list %q as a valid choice", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseFormat(%q) unexpected error: %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseFormat(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseColorMode(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    ColorMode
+		wantErr bool
+	}{
+		{"auto", ColorAuto, false},
+		{"always", ColorAlways, false},
+		{"never", ColorNever, false},
+		{"ALWAYS", ColorAlways, false},
+		{"Never", ColorNever, false},
+		{"", "", true},
+		{"yes", "", true},
+		{"true", "", true},
+		{"none", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ParseColorMode(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseColorMode(%q) = %q, want an error", tt.in, got)
+				}
+				for _, want := range []string{"auto", "always", "never"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q should list %q as a valid choice", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseColorMode(%q) unexpected error: %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("ParseColorMode(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---- color helpers ----------------------------------------------------------
+
+// Red and Amber must return the text unchanged when color is off. A helper that
+// emits escape sequences regardless would corrupt piped output and any file
+// written with --debug-file.
+func TestRedAmber_NoColorReturnsPlainText(t *testing.T) {
+	c := noColor()
+	for _, tt := range []struct {
+		name string
+		got  string
+	}{
+		{"Red", c.Red("failed")},
+		{"Amber", c.Amber("careful")},
+	} {
+		if strings.ContainsRune(tt.got, '\x1b') {
+			t.Errorf("%s with color disabled returned an escape sequence: %q", tt.name, tt.got)
+		}
+	}
+	if got := c.Red("failed"); got != "failed" {
+		t.Errorf("Red = %q, want %q unchanged", got, "failed")
+	}
+	if got := c.Amber("careful"); got != "careful" {
+		t.Errorf("Amber = %q, want %q unchanged", got, "careful")
+	}
+}
+
+func TestRedAmber_ColorWrapsButPreservesText(t *testing.T) {
+	c := &Config{Color: ColorAlways}
+	if got := c.Red("failed"); !strings.Contains(got, "failed") {
+		t.Errorf("Red = %q, want it to still contain %q", got, "failed")
+	}
+	if got := c.Amber("careful"); !strings.Contains(got, "careful") {
+		t.Errorf("Amber = %q, want it to still contain %q", got, "careful")
+	}
+}
