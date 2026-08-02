@@ -37,7 +37,18 @@ jobs:
         # The coverage profile rides along on this run rather than getting its
         # own: a second full `go test` would roughly double this job for a
         # number the first run already has.
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        #
+        # -coverpkg=./... credits a package for code its tests exercise in
+        # OTHER packages. Without it `go test` only ever credits the package
+        # under test, which made the per-file numbers actively wrong here:
+        # cmd/cmdutil/cmdutil.go reported 0% while being called by nearly every
+        # command test (it is 85%), errors.go 17% (78%), confirm.go 42% (83%),
+        # internal/output 30% (59%), internal/api/client.go 70% (93%). The
+        # aggregate only moves 63.6% -> 66.7%, so this is not about the badge —
+        # it is that "0%" on a well-tested file sends whoever reads it next to
+        # write tests that already exist. Costs about 9% on this job
+        # (21.0s -> 22.9s measured locally with -race).
+        run: go test -race -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         # No token: Codecov accepts tokenless uploads from public repositories
