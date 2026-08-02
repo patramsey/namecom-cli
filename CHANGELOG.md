@@ -18,8 +18,20 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - Dependabot's `github-actions` group is restricted to `minor` and `patch`,
   matching the `gomod` group. Majors still get a PR — their own, rather than
   batched with others.
+- `namecom open` now rejects an argument that isn't a plausible domain name,
+  instead of passing it through. `namecom open example.com` is unaffected.
 
-No user-facing behavior changes yet.
+### Security
+- `namecom open <domain>` validates its argument before handing it to the
+  platform browser opener. The argument was previously interpolated straight
+  into a URL and passed to `open`/`xdg-open`/`rundll32`, which read a leading
+  `-` as a flag — so `namecom open -e` supplied an argument to that program
+  rather than opening a page. No shell was ever involved, so this was
+  argument confusion rather than command injection.
+- `gosec` added to the lint set, and golangci-lint's default output
+  truncation disabled. `max-same-issues` defaults to 3 per distinct message,
+  which had been hiding roughly a quarter of the findings on any run that
+  produced several of the same kind.
 
 ## [0.2.2] - 2026-08-02
 
