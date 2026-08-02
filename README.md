@@ -31,6 +31,23 @@ $ namecom status
 → Run 'namecom domain renew acme.io' to renew now
 ```
 
+## Contents
+
+- [Why](#why)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Workflows](#workflows)
+- [Output formats](#output-formats)
+- [Configuration](#configuration)
+- [Shell completion](#shell-completion)
+- [Global flags](#global-flags)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
+- [License](#license)
+
 ## Why
 
 The name.com web UI is great for humans. The CLI is for agents and terminal wizards
@@ -263,7 +280,18 @@ make generate   # regenerate internal/api/gen/ from namecom.api.yaml
 
 The API client in `internal/api/gen/` is code-generated from `namecom.api.yaml` (a vendored OpenAPI 3.1 spec). See [`internal/api/gen/README.md`](internal/api/gen/README.md) for details on the codegen pipeline.
 
-Contributions welcome — open an issue or PR.
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+setup, the checks CI runs, and what to know before touching the generated
+API client or a command that writes. Participation is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+Security issues should go through
+[private vulnerability reporting](https://github.com/patramsey/namecom-cli/security/advisories/new)
+rather than a public issue — see [SECURITY.md](SECURITY.md).
+
+Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

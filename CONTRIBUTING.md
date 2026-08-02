@@ -1,0 +1,125 @@
+# Contributing to namecom-cli
+
+Thanks for considering a contribution. `namecom` is a Go CLI over the
+name.com Core API — the bar for a good change here is: it's correct, it's
+tested, and it doesn't quietly widen the blast radius of a command that
+mutates real domains.
+
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Development setup
+
+Requires Go 1.26+ and Python 3 (only for `make generate`).
+
+```bash
+git clone https://github.com/patramsey/namecom-cli.git
+cd namecom-cli
+make build
+make test
+```
+
+## Before opening a PR
+
+```bash
+go build ./...
+go vet ./...
+make lint          # golangci-lint — see https://golangci-lint.run/ for install
+make test          # go test -count=1 ./...
+go test -race -count=1 ./...
+```
+
+All of these must be clean. CI runs `lint`, `go test -race -count=1 ./...`,
+`make verify-generate`, and `govulncheck ./...` on every pull request.
+
+`-count=1` is not optional: `internal/api/gen` shells out to
+`scripts/spec_to_30.py` and reads `namecom.api.yaml`, and Go's test cache
+tracks neither — a cached pass can hide a broken preprocessor.
+
+The integration suite hits the real sandbox API and is excluded from CI. It
+needs sandbox credentials:
+
+```bash
+make test-int      # NAMECOM_TEST_SANDBOX=1 go test -tags integration ./...
+```
+
+## Testing against the API
+
+Use `--sandbox` (`api.dev.name.com`) for anything that mutates state. There
+is **no base-URL override flag**, so a binary pointed at nothing in
+particular talks to production — be deliberate about which credentials are
+loaded when you run a write command by hand.
+
+`--dry-run` prints the request a mutating command would send without
+sending it. If you add or change a mutating command, extend the matching
+`TestDryRunMatchesRealRequest_*` test in that package — those tests run each
+command twice (once with `--dry-run` to capture what is *printed*, once
+against an `httptest` stub to capture what is *sent*) and assert the two
+agree. Hand-written dry-run strings drift silently otherwise.
+
+## Don't hand-edit generated code
+
+`internal/api/gen/zz_generated.go` is generated; `namecom.api.yaml` is a
+vendored upstream spec pinned by SHA256 in the `Makefile`. Neither is
+hand-edited.
+
+- To pick up an upstream spec change: re-vendor the spec, update `SPEC_SHA`
+  in the `Makefile` in the same commit, then `make generate`.
+- After bumping `oapi-codegen`, run `make generate` and commit the result —
+  a dependency bump regenerates nothing on its own, and `make verify-generate`
+  will fail CI if the committed output no longer matches its generator.
+
+See [`internal/api/gen/README.md`](internal/api/gen/README.md) for the
+3.1 → 3.0 preprocessing pipeline and the three spec incompatibilities it
+works around.
+
+## Workflow
+
+- Branch off `main`, open a PR — direct pushes to `main` aren't used here.
+- Keep commits focused; prefer several small, well-scoped commits over one
+  large one.
+- Commit messages follow a `type: summary` convention (`feat:`, `fix:`,
+  `docs:`, `chore:`, `test:`, `ci:`), with a body explaining *why* when the
+  reasoning isn't obvious from the diff alone.
+- Add tests for behavior changes. This codebase leans on table-driven tests
+  and `httptest` stubs; assert the observable behavior, not merely the
+  absence of an error.
+- Update [`CHANGELOG.md`](CHANGELOG.md) under `[Unreleased]` for anything
+  user-facing.
+
+## Design context
+
+Every API call flows through `internal/api/`: `client.go` wires auth, the
+User-Agent, and a 10 req/s rate limiter; `transport.go` buffers request
+bodies for replay and retries `429`/`5xx` with exponential backoff;
+`apierror.go` normalizes every non-2xx response to an `*APIError`. Commands
+receive their client and output config off the command context via the
+typed keys in `cmd/cmdutil`, which exists to avoid an import cycle — use
+`cmdutil.APIClient(cmd)` / `cmdutil.Out(cmd)` rather than reaching for a
+global.
+
+Two behaviors are load-bearing and easy to break by accident:
+
+- **Retries.** `POST` is only retried when `X-Idempotency-Key` is set. Don't
+  relax that; unconditional POST retries can double-register a domain.
+- **Read-modify-write.** `dns update` and `domain update` fetch the current
+  record first and merge only the flags that were explicitly changed,
+  because the API does full `PUT` replacement. Sending a partial body drops
+  fields.
+
+## Reporting bugs / requesting features
+
+Open an issue. For a bug, include the exact command you ran and the
+`--dry-run` output if it's a mutating command. `--debug` output is useful
+too — it redacts the token — but read it before pasting.
+
+## Scope
+
+`namecom` covers the name.com Core API surface: domains, DNS, DNSSEC, email
+forwarding, URL forwarding, vanity nameservers, transfers, and orders, plus
+`namecom api` as a raw passthrough for anything not yet wrapped.
+
+The interactive TUI lives in a separate repository (`namecom-tui`) and is
+deliberately not part of this module. Proposals to add a persistent
+daemon, a config-file-driven declarative sync mode, or provider plugins for
+other registrars are bigger conversations than a typical fix — open an
+issue to discuss before sending a PR.

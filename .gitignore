@@ -11,9 +11,13 @@
 go.work
 go.work.sum
 
-# Claude Code local settings
+# Agent working artifacts — local only, never published. Planning docs,
+# task briefs, and review diffs are a record of how the work was produced,
+# not something a contributor reading this repo needs.
 .claude/
 CLAUDE.md
+.superpowers/
+docs/plans/
 
 # Editor / OS noise
 .DS_Store
