@@ -598,10 +598,15 @@ func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
 
 func TestDNSUpdate_SuccessPath(t *testing.T) {
 	recType := "A"
-	recHost := "@"
+	recHost := "www"
 	recAnswer := "1.2.3.4"
 	recID := int32(42)
-	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+	// A deliberately realistic record: the API replaces the whole record on
+	// PUT, so every field the user did not pass has to survive the round trip.
+	// ttl is 3600 rather than 300 because 300 is --ttl's default — a fixture
+	// using it cannot tell "preserved the record's TTL" apart from "ignored the
+	// record and sent the flag default", which is the bug worth catching.
+	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer, Ttl: 3600}
 
 	var putPath string
 	var putBody []byte
@@ -631,8 +636,29 @@ func TestDNSUpdate_SuccessPath(t *testing.T) {
 	if !strings.Contains(putPath, "example.com") || !strings.Contains(putPath, "42") {
 		t.Errorf("unexpected PUT path: %q", putPath)
 	}
-	if !strings.Contains(string(putBody), "5.6.7.8") {
-		t.Errorf("expected updated answer '5.6.7.8' in PUT body, got: %s", putBody)
+	var sent struct {
+		Type   string `json:"type"`
+		Host   string `json:"host"`
+		Answer string `json:"answer"`
+		TTL    int64  `json:"ttl"`
+	}
+	if err := json.Unmarshal(putBody, &sent); err != nil {
+		t.Fatalf("PUT body was not JSON: %v (%s)", err, putBody)
+	}
+	if sent.Answer != "5.6.7.8" {
+		t.Errorf("--answer must reach the wire: sent answer %q, want 5.6.7.8", sent.Answer)
+	}
+	// Only --answer was passed. Anything else arriving as a zero value or a
+	// flag default means this PUT silently rewrote a field the user never
+	// mentioned — on DNS, that is a live outage rather than a cosmetic bug.
+	if sent.TTL != 3600 {
+		t.Errorf("ttl was not passed and must be preserved, got %d", sent.TTL)
+	}
+	if sent.Host != "www" {
+		t.Errorf("host was not passed and must be preserved, got %q", sent.Host)
+	}
+	if sent.Type != "A" {
+		t.Errorf("type was not passed and must be preserved, got %q", sent.Type)
 	}
 }
 

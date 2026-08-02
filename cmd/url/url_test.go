@@ -330,8 +330,11 @@ func TestURLUpdate_BadDestURL(t *testing.T) {
 func TestURLUpdate_InvalidType(t *testing.T) {
 	getResponse := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"redirect"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut {
-			t.Error("PUT should not be called when type validation fails")
+		// Guard on "anything that is not the read" rather than naming a verb:
+		// this endpoint updates via PATCH, so a check for PUT never fired and
+		// a regression that sent the write anyway would have gone unnoticed.
+		if r.Method != http.MethodGet {
+			t.Errorf("%s must not be sent when type validation fails", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(getResponse))

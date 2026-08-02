@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1717,6 +1718,73 @@ func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	}
 	if !patched {
 		t.Error("the update was not sent")
+	}
+}
+
+// TestUpdate_PreservesUnmentionedSettings pins the read-modify-write contract on
+// the one command that can turn three separate protections off by accident.
+//
+// This is a PATCH, but the CLI sends all three booleans every time — it seeds
+// them from the current domain and overrides only the flags the user actually
+// passed. Drop that seeding and every field defaults to false, so
+// `domain update --autorenew=true` would ALSO unlock the domain and switch off
+// WHOIS privacy without printing a word about either. Unlocking is what makes
+// an unauthorized transfer possible, and dropping privacy republishes the
+// registrant's name, address, and phone number in public WHOIS.
+//
+// The fixture sets the preserved fields to true on purpose: false is both the
+// zero value and a legitimate state, so a fixture full of false cannot tell
+// "preserved correctly" apart from "dropped to the zero value".
+func TestUpdate_PreservesUnmentionedSettings(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var patchBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patchBody, _ = io.ReadAll(r.Body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com","locked":true,` +
+			`"privacyEnabled":true,"autorenewEnabled":false}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	cmd.Flags().Bool("autorenew", false, "")
+	cmd.Flags().Bool("privacy", false, "")
+	cmd.Flags().Bool("lock", false, "")
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	root.AddCommand(cmd)
+	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
+		t.Fatalf("setting autorenew flag: %v", err)
+	}
+
+	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if patchBody == nil {
+		t.Fatal("the update was never sent")
+	}
+
+	var sent struct {
+		AutorenewEnabled *bool `json:"autorenewEnabled"`
+		PrivacyEnabled   *bool `json:"privacyEnabled"`
+		Locked           *bool `json:"locked"`
+	}
+	if err := json.Unmarshal(patchBody, &sent); err != nil {
+		t.Fatalf("PATCH body was not JSON: %v (%s)", err, patchBody)
+	}
+	if sent.AutorenewEnabled == nil || !*sent.AutorenewEnabled {
+		t.Errorf("--autorenew=true must reach the wire, got %v", sent.AutorenewEnabled)
+	}
+	if sent.Locked == nil || !*sent.Locked {
+		t.Errorf("--lock was not passed: the domain must stay locked, got %v (this unlocks it)", sent.Locked)
+	}
+	if sent.PrivacyEnabled == nil || !*sent.PrivacyEnabled {
+		t.Errorf("--privacy was not passed: privacy must stay on, got %v (this exposes WHOIS data)", sent.PrivacyEnabled)
 	}
 }
 
