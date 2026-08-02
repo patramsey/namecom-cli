@@ -5,6 +5,7 @@ linters:
     - revive
     - misspell
     - unconvert
+    - gosec
   exclusions:
     rules:
       - linters: [errcheck]
@@ -17,6 +18,32 @@ linters:
       - linters: [revive]
         path: "internal/api/apierror.go"
         text: "stutters"
+
+      # gosec on test code. These four rules fire on fixture plumbing: a
+      # discarded Close() on a stub response (G104), a 0644 file written into a
+      # t.TempDir() (G306), reading back a path the test just built (G304), and
+      # int32(len(pages)) in a stub API response (G115). None of it ships, and
+      # annotating every site individually would bury the findings that matter.
+      # Deliberately narrow — gosec still runs on tests for everything else.
+      - linters: [gosec]
+        path: "_test\\.go"
+        text: "(G104|G115|G304|G306)"
+
+      # spec_transform_test.go shells out to scripts/spec_to_30.py with paths it
+      # constructed itself, to assert the preprocessor's behavior. The subprocess
+      # is the thing under test.
+      - linters: [gosec]
+        path: "internal/api/gen/spec_transform_test\\.go"
+        text: "G204"
+
+# golangci-lint truncates by default: max-issues-per-linter 50, and
+# max-same-issues 3 per distinct message. Enabling gosec surfaced 15 findings
+# under those defaults and 21 without them — the six hidden ones were real
+# call sites, silently dropped because two others shared their wording. A
+# linter that quietly withholds findings is worse than one that is noisy.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 # Formatters are checked by `golangci-lint run` and applied by
 # `golangci-lint fmt`. Enabling gofmt here makes CI fail on formatting drift,

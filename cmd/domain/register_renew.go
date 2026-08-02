@@ -150,7 +150,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// explicitly warns against ("If passing purchasePrice make sure to adjust it
 	// accordingly").
 	out.Step("Checking pricing for " + domainName + "…")
-	pricingYears := int32(registerYears)
+	pricingYears := int32(registerYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds registerYears to 1..10
 	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{Years: &pricingYears})
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
@@ -190,7 +190,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	years := int32(registerYears)
+	years := int32(registerYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds registerYears to 1..10
 	payload := gen.DomainCreatePayload{
 		DomainName:       domainName,
 		AutorenewEnabled: &registerAutorenew,
@@ -202,7 +202,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		Years:  &years,
 	}
 	if registerContactsFile != "" {
-		f, err := os.ReadFile(registerContactsFile)
+		f, err := os.ReadFile(registerContactsFile) //nolint:gosec // G304: --contacts-file names the file to read; that is the flag's purpose
 		if err != nil {
 			return fmt.Errorf("reading contacts file: %w", err)
 		}
@@ -323,7 +323,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	// the request body will carry, so the price we show and the price we send
 	// can't diverge on multi-year renewals.
 	out.Step("Checking renewal pricing for " + domainName + "…")
-	pricingYears := int32(renewYears)
+	pricingYears := int32(renewYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds renewYears to 1..10
 	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{Years: &pricingYears})
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
@@ -351,7 +351,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	years := int32(renewYears)
+	years := int32(renewYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds renewYears to 1..10
 	body := gen.RenewDomainJSONRequestBody{Years: &years}
 	if renewPrice > 0 {
 		body.PurchasePrice = &renewPrice

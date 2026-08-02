@@ -154,7 +154,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			// every request at once behind the shared rate limiter.
 			g.SetLimit(5)
 			for p := start + 1; p <= last; p++ {
-				p := int32(p)
+				p := int32(p) //nolint:gosec // G115: p <= last, and last is int(*lastResult.LastPage) — already an int32 from the API
 				idx := int(p) - start - 1
 				g.Go(func() error {
 					r, err := client.Gen().ListDomains(gctx, buildParams(p))

@@ -860,5 +860,7 @@ func readImportData(path string) ([]byte, error) {
 	if path == "-" {
 		return io.ReadAll(os.Stdin)
 	}
-	return os.ReadFile(path)
+	// G304: reading a caller-named file is this function's entire purpose —
+	// --file is the documented way to pass an import payload.
+	return os.ReadFile(path) //nolint:gosec
 }

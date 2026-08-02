@@ -193,7 +193,10 @@ func (t *retryTransport) backoffDelay(attempt int, retryAfter *time.Duration) ti
 	}
 	const maxBackoff = 30 * time.Second
 	base := min(unit<<attempt, maxBackoff)
-	jitter := time.Duration(rand.Int64N(int64(base)/5 + 1))
+	// G404: jitter exists to desynchronize retries across concurrent requests,
+	// not to be unpredictable to an attacker. crypto/rand would buy nothing and
+	// can fail, on a path that must not.
+	jitter := time.Duration(rand.Int64N(int64(base)/5 + 1)) //nolint:gosec
 	return base - base/10 + jitter
 }
 
