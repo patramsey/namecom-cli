@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -205,8 +206,10 @@ func TestURLCreate_ValidTypes(t *testing.T) {
 	for _, fwdType := range []string{"redirect", "302", "masked"} {
 		t.Run(fwdType, func(t *testing.T) {
 			var called bool
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			var sentBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
+				sentBody, _ = io.ReadAll(r.Body)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"host":"@","forwardsTo":"https://example.com","type":"` + fwdType + `"}`))
 			}))
@@ -222,6 +225,31 @@ func TestURLCreate_ValidTypes(t *testing.T) {
 			}
 			if !called {
 				t.Errorf("expected API to be called for valid type %q", fwdType)
+			}
+			// Accepting the flag is only half of it: the type has to survive the
+			// cast to the generated named type and reach the wire. A mapping bug
+			// there would create a redirect when the user asked for masked, and
+			// "the command exited 0" would never notice.
+			var sent struct {
+				Type       string `json:"type"`
+				ForwardsTo string `json:"forwardsTo"`
+			}
+			if err := json.Unmarshal(sentBody, &sent); err != nil {
+				t.Fatalf("request body was not JSON: %v (%s)", err, sentBody)
+			}
+			if sent.Type != fwdType {
+				t.Errorf("forwarding type sent to the API = %q, want %q", sent.Type, fwdType)
+			}
+			if sent.ForwardsTo != "https://example.com" {
+				t.Errorf("destination sent to the API = %q, want https://example.com", sent.ForwardsTo)
+			}
+			// And the created entry must be rendered back, not silently dropped.
+			buf, bok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+			if !bok {
+				t.Fatal("output writer is not a *bytes.Buffer")
+			}
+			if got := buf.String(); !strings.Contains(got, "https://example.com") {
+				t.Errorf("create output should confirm the new forwarding:\n%s", got)
 			}
 		})
 	}
@@ -431,11 +459,20 @@ func cmdForURLDelete(t *testing.T, srv *httptest.Server) *cobra.Command {
 }
 
 func TestURLUpdate_Success(t *testing.T) {
-	getJSON := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"redirect"}`
-	putJSON := `{"id":1,"host":"@","forwardsTo":"https://new.com","type":"redirect"}`
+	// The existing type is deliberately NOT "redirect": that is the --type flag's
+	// default, so a fixture using it cannot tell "preserved the current type"
+	// apart from "silently fell back to the default and converted the record".
+	getJSON := `{"id":1,"host":"@","forwardsTo":"https://old.com","type":"masked"}`
+	putJSON := `{"id":1,"host":"@","forwardsTo":"https://new.com","type":"masked"}`
+	var sentBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPut {
+		// The update is a PATCH, not a PUT. Branching on PUT made this arm dead
+		// code: the update response was never served and the stub replied with
+		// the pre-update record, so any assertion on the new value would have
+		// been testing the old one.
+		if r.Method == http.MethodPatch {
+			sentBody, _ = io.ReadAll(r.Body)
 			_, _ = w.Write([]byte(putJSON))
 		} else {
 			_, _ = w.Write([]byte(getJSON))
@@ -449,6 +486,41 @@ func TestURLUpdate_Success(t *testing.T) {
 	}
 	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
 		t.Fatalf("runUpdate: %v", err)
+	}
+
+	// This endpoint replaces the record rather than patching a field, so the
+	// command fetches first and merges only the flags that changed. The failure
+	// mode is silent: any field the user did not pass gets sent as its zero
+	// value and is wiped. Only --to was given here, so host and type must come
+	// back from the GET untouched.
+	// host and domainName are readOnly on this body — the record is identified
+	// by the path — so they are deliberately absent, not dropped.
+	var sent struct {
+		ForwardsTo string  `json:"forwardsTo"`
+		Type       string  `json:"type"`
+		Title      *string `json:"title"`
+	}
+	if err := json.Unmarshal(sentBody, &sent); err != nil {
+		t.Fatalf("update body was not JSON: %v (%s)", err, sentBody)
+	}
+	if sent.ForwardsTo != "https://new.com" {
+		t.Errorf("--to must reach the wire: sent forwardsTo %q, want https://new.com", sent.ForwardsTo)
+	}
+	if sent.Type != "masked" {
+		t.Errorf("type was not passed and must be preserved from the existing record, got %q (a masked forwarding silently became a 301)", sent.Type)
+	}
+	// title has no omitempty, so a nil here is transmitted as an explicit
+	// `"title":null` and the server reads it as a deliberate clear.
+	if sent.Title != nil {
+		t.Errorf("title was absent from the existing record and must not be invented, got %q", *sent.Title)
+	}
+
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	if got := buf.String(); !strings.Contains(got, "Updated") {
+		t.Errorf("update should confirm it happened:\n%s", got)
 	}
 }
 

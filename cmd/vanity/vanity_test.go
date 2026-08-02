@@ -100,6 +100,21 @@ func TestVanityList_Empty(t *testing.T) {
 	if err := runList(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
+
+	// An account with no vanity nameservers must be told so and pointed at the
+	// command that creates one. Exiting 0 with a blank screen reads as a
+	// failure to the user, and nothing but this assertion guards the message.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	if !strings.Contains(got, "No vanity nameservers found") {
+		t.Errorf("empty list should say so explicitly:\n%s", got)
+	}
+	if !strings.Contains(got, "vanity-ns create") {
+		t.Errorf("empty list should point at the create command:\n%s", got)
+	}
 }
 
 // ---- get --------------------------------------------------------------------

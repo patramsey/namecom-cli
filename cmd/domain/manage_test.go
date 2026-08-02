@@ -842,16 +842,50 @@ func TestContactsGet_BadDomain(t *testing.T) {
 	}
 }
 
+// TestContactsGet_Success pins that the contacts are actually rendered. The
+// fixture must carry real contacts: with an empty payload the command prints
+// "null" and passes, which is indistinguishable from rendering nothing at all.
+//
+// It also pins the quiet side of warnUnverifiedContacts — a fully verified
+// domain must NOT be shown the registry-lock warning, or the warning stops
+// meaning anything on the domains where it matters.
 func TestContactsGet_Success(t *testing.T) {
+	const payload = `{
+	  "domainName": "example.com",
+	  "contacts": {
+	    "registrant": {"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com","isVerified":true},
+	    "admin": {"firstName":"Grace","lastName":"Hopper","email":"grace@example.com","isVerified":true}
+	  }
+	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+		_, _ = w.Write([]byte(payload))
 	}))
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForContactsGet(t, srv)
 	if err := runContactsGet(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runContactsGet: %v", err)
+	}
+
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	for _, want := range []string{"ada@example.com", "Lovelace", "grace@example.com"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("contacts output missing %q:\n%s", want, got)
+		}
+	}
+	// The warning goes to stderr via WarnBox, so this has to read EWriter —
+	// asserting its absence on stdout would pass no matter what was warned.
+	ebuf, ok := cmdutil.Out(cmd).EWriter.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("error writer is not a *bytes.Buffer")
+	}
+	if stderr := ebuf.String(); strings.Contains(strings.ToLower(stderr), "unverified") {
+		t.Errorf("every contact is verified — no registry-lock warning should appear:\n%s", stderr)
 	}
 }
 
