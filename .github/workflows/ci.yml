@@ -11,9 +11,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -31,13 +31,39 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
         with:
           version: v2.12.2
+
+  vuln:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        # Reachability-aware, which is why this is worth running alongside
+        # Dependabot rather than instead of it. Dependabot reports that a CVE
+        # exists somewhere in a graph of 164 modules; govulncheck reports only
+        # the ones whose vulnerable function this binary can actually reach, so
+        # a failure here means we are exposed rather than merely adjacent.
+        #
+        # Pinned rather than @latest: an unpinned tool that runs on every push
+        # is the same mutable-upstream exposure the SHA-pinned actions above
+        # exist to remove. Dependabot does not manage `go install` versions, so
+        # this one is bumped by hand.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
