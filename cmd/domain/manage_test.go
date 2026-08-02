@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -842,16 +843,50 @@ func TestContactsGet_BadDomain(t *testing.T) {
 	}
 }
 
+// TestContactsGet_Success pins that the contacts are actually rendered. The
+// fixture must carry real contacts: with an empty payload the command prints
+// "null" and passes, which is indistinguishable from rendering nothing at all.
+//
+// It also pins the quiet side of warnUnverifiedContacts — a fully verified
+// domain must NOT be shown the registry-lock warning, or the warning stops
+// meaning anything on the domains where it matters.
 func TestContactsGet_Success(t *testing.T) {
+	const payload = `{
+	  "domainName": "example.com",
+	  "contacts": {
+	    "registrant": {"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com","isVerified":true},
+	    "admin": {"firstName":"Grace","lastName":"Hopper","email":"grace@example.com","isVerified":true}
+	  }
+	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+		_, _ = w.Write([]byte(payload))
 	}))
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForContactsGet(t, srv)
 	if err := runContactsGet(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runContactsGet: %v", err)
+	}
+
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	for _, want := range []string{"ada@example.com", "Lovelace", "grace@example.com"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("contacts output missing %q:\n%s", want, got)
+		}
+	}
+	// The warning goes to stderr via WarnBox, so this has to read EWriter —
+	// asserting its absence on stdout would pass no matter what was warned.
+	ebuf, ok := cmdutil.Out(cmd).EWriter.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("error writer is not a *bytes.Buffer")
+	}
+	if stderr := ebuf.String(); strings.Contains(strings.ToLower(stderr), "unverified") {
+		t.Errorf("every contact is verified — no registry-lock warning should appear:\n%s", stderr)
 	}
 }
 
@@ -1683,6 +1718,73 @@ func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	}
 	if !patched {
 		t.Error("the update was not sent")
+	}
+}
+
+// TestUpdate_PreservesUnmentionedSettings pins the read-modify-write contract on
+// the one command that can turn three separate protections off by accident.
+//
+// This is a PATCH, but the CLI sends all three booleans every time — it seeds
+// them from the current domain and overrides only the flags the user actually
+// passed. Drop that seeding and every field defaults to false, so
+// `domain update --autorenew=true` would ALSO unlock the domain and switch off
+// WHOIS privacy without printing a word about either. Unlocking is what makes
+// an unauthorized transfer possible, and dropping privacy republishes the
+// registrant's name, address, and phone number in public WHOIS.
+//
+// The fixture sets the preserved fields to true on purpose: false is both the
+// zero value and a legitimate state, so a fixture full of false cannot tell
+// "preserved correctly" apart from "dropped to the zero value".
+func TestUpdate_PreservesUnmentionedSettings(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var patchBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patchBody, _ = io.ReadAll(r.Body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com","locked":true,` +
+			`"privacyEnabled":true,"autorenewEnabled":false}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := baseCmd(t, srv)
+	cmd.Flags().Bool("autorenew", false, "")
+	cmd.Flags().Bool("privacy", false, "")
+	cmd.Flags().Bool("lock", false, "")
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	root.AddCommand(cmd)
+	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
+		t.Fatalf("setting autorenew flag: %v", err)
+	}
+
+	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	if patchBody == nil {
+		t.Fatal("the update was never sent")
+	}
+
+	var sent struct {
+		AutorenewEnabled *bool `json:"autorenewEnabled"`
+		PrivacyEnabled   *bool `json:"privacyEnabled"`
+		Locked           *bool `json:"locked"`
+	}
+	if err := json.Unmarshal(patchBody, &sent); err != nil {
+		t.Fatalf("PATCH body was not JSON: %v (%s)", err, patchBody)
+	}
+	if sent.AutorenewEnabled == nil || !*sent.AutorenewEnabled {
+		t.Errorf("--autorenew=true must reach the wire, got %v", sent.AutorenewEnabled)
+	}
+	if sent.Locked == nil || !*sent.Locked {
+		t.Errorf("--lock was not passed: the domain must stay locked, got %v (this unlocks it)", sent.Locked)
+	}
+	if sent.PrivacyEnabled == nil || !*sent.PrivacyEnabled {
+		t.Errorf("--privacy was not passed: privacy must stay on, got %v (this exposes WHOIS data)", sent.PrivacyEnabled)
 	}
 }
 

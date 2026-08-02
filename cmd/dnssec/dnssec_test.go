@@ -92,6 +92,20 @@ func TestDNSSECList_Empty(t *testing.T) {
 	if err := runList(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
+	// An empty result must still guide the user — the point of the empty state
+	// is that someone with no records is told what to do next, not shown a
+	// blank screen. Asserting err == nil alone cannot see that.
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	if !strings.Contains(got, "No DNSSEC keys found") {
+		t.Errorf("empty-state output should contain %q, got:\n%s", "No DNSSEC keys found", got)
+	}
+	if !strings.Contains(got, "dnssec create") {
+		t.Errorf("empty-state output should contain %q, got:\n%s", "dnssec create", got)
+	}
 }
 
 // ---- create -----------------------------------------------------------------
