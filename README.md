@@ -6,6 +6,7 @@
 
 [![Beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/patramsey/namecom-cli/releases)
 [![CI](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/patramsey/namecom-cli/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/patramsey/namecom-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/patramsey/namecom-cli)
 [![Latest Release](https://img.shields.io/github/v/release/patramsey/namecom-cli)](https://github.com/patramsey/namecom-cli/releases/latest)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/patramsey/namecom-cli)](go.mod)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
