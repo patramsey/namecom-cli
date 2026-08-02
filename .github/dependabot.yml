@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  # Go modules. Monthly and grouped: this repo has 12 direct dependencies
+  # behind 164 total, so ungrouped weekly updates would be a stream of PRs for
+  # transitive modules the CLI never calls. One reviewable PR a month is the
+  # point — see the govulncheck step in ci.yml for the reachability-aware
+  # signal that actually says whether we are exposed.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: chore
+
+  # GitHub Actions. These are pinned to commit SHAs in the workflows rather
+  # than floating major tags, because a tag is mutable: whoever controls the
+  # upstream repo can repoint v4 at new code, and release.yml holds the token
+  # that publishes binaries and pushes to the Homebrew tap. Pinning removes
+  # that hijack path but freezes the actions, including security fixes — which
+  # is exactly why this entry exists. Dependabot reads the `# vX.Y.Z` comment
+  # beside each SHA, so it can bump the pin and rewrite the comment together.
+  #
+  # Do not "simplify" a pin back to a bare tag; it silently restores the
+  # mutable reference this is here to remove.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: chore
