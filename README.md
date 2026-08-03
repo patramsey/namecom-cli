@@ -21,6 +21,9 @@ Register domains, manage DNS, and run your entire domain portfolio — without l
 
 *Recorded against the sandbox API with [vhs](https://github.com/charmbracelet/vhs) — see [`docs/demo.tape`](docs/demo.tape) for the script.*
 
+And `namecom status`, for the portfolio at a glance — illustrated below with a
+representative account rather than a real one:
+
 ```
 $ namecom status
 
