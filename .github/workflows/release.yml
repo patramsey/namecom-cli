@@ -24,7 +24,28 @@ jobs:
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: latest
+          # Pinned, not `latest`. The action itself is SHA-pinned above, but
+          # `version: latest` reached straight past that and fetched whatever
+          # goreleaser had shipped by the time a tag was pushed — the same
+          # mutable-upstream exposure the SHA pins exist to remove, on the one
+          # job holding the Homebrew tap token.
+          #
+          # It is not hypothetical here: `.goreleaser.yaml` still uses the
+          # deprecated `brews:` key (`goreleaser check` warns about it). While
+          # unpinned, the release that breaks is whichever one happens to run
+          # after upstream turns that deprecation into a removal — discovered
+          # at release time, with a tag already pushed.
+          #
+          # 2.17.1 is what CI actually used for the v0.2.3 release, verified
+          # end to end: five archives, checksums that validate, and a working
+          # Homebrew formula.
+          #
+          # Dependabot does not manage this input (it is a value, not an action
+          # ref), so it is bumped by hand — same as govulncheck in ci.yml. When
+          # bumping, migrate `brews:` to `homebrew_casks:` first, then run
+          # `goreleaser check` and `goreleaser release --snapshot --clean`
+          # locally before pushing a tag.
+          version: v2.17.1
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
