@@ -9,10 +9,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-02
+
 ### Added
 - Project documentation for outside contributors: `CONTRIBUTING.md`,
   `CODE_OF_CONDUCT.md`, `SECURITY.md`, this changelog, and GitHub issue and
   pull-request templates.
+- A demo recording in the README, plus `docs/demo.tape` to regenerate it.
 
 ### Changed
 - Dependabot's `github-actions` group is restricted to `minor` and `patch`,
@@ -32,6 +35,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   truncation disabled. `max-same-issues` defaults to 3 per distinct message,
   which had been hiding roughly a quarter of the findings on any run that
   produced several of the same kind.
+
+### Fixed
+- The documented location of the config file. `README.md` said
+  `~/.config/namecom/config.yaml` on every platform, but the CLI uses
+  `os.UserConfigDir()` — `~/Library/Application Support` on macOS and
+  `%AppData%` on Windows. Only Linux matched. `namecom auth status` prints
+  the path actually in use. No behavior change; credentials do not move.
 
 ## [0.2.2] - 2026-08-02
 
@@ -67,7 +77,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/patramsey/namecom-cli/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/patramsey/namecom-cli/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/patramsey/namecom-cli/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/patramsey/namecom-cli/compare/v0.1.10...v0.2.0
