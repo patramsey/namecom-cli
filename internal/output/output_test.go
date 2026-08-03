@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -488,5 +489,221 @@ func TestRedAmber_ColorWrapsButPreservesText(t *testing.T) {
 	}
 	if got := c.Amber("careful"); !strings.Contains(got, "careful") {
 		t.Errorf("Amber = %q, want it to still contain %q", got, "careful")
+	}
+}
+
+// ---- DefaultConfig ----------------------------------------------------------
+
+// DefaultConfig decides the output format from whether stdout is a terminal.
+// Under `go test` stdout is a pipe, which is the same situation as any script
+// or agent invoking the CLI — so this asserts the machine-readable default that
+// piping is supposed to produce.
+func TestDefaultConfig_NonTTYDefaultsToJSON(t *testing.T) {
+	c := DefaultConfig()
+	if c.Format != FormatJSON {
+		t.Errorf("Format = %q with a non-TTY stdout, want %q — piped output must be machine-readable", c.Format, FormatJSON)
+	}
+	if c.Color != ColorAuto {
+		t.Errorf("Color = %q, want %q", c.Color, ColorAuto)
+	}
+	if c.Writer == nil || c.EWriter == nil {
+		t.Error("DefaultConfig must populate both writers")
+	}
+}
+
+// ---- ColorEnabled -----------------------------------------------------------
+
+// NO_COLOR is presence-based by specification (https://no-color.org): an empty
+// value still disables colour. Treating it as a boolean would re-enable colour
+// for `NO_COLOR=` and `NO_COLOR=0`, which the spec explicitly forbids.
+//
+// Every presence case below ALSO sets CLICOLOR_FORCE=1. Without it these
+// assertions are vacuous: under `go test` stdout is not a TTY, so ColorEnabled
+// falls through to false no matter what NO_COLOR does, and a boolean reading of
+// NO_COLOR passes anyway. With CLICOLOR_FORCE=1 the two readings diverge —
+// correct code returns false because NO_COLOR is checked first, a boolean
+// reading returns true — so the test can fail, and it simultaneously pins that
+// NO_COLOR outranks CLICOLOR_FORCE.
+func TestColorEnabled_ExplicitModesIgnoreEnv(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	if !(&Config{Color: ColorAlways}).ColorEnabled() {
+		t.Error("ColorAlways must ignore NO_COLOR")
+	}
+	_ = os.Unsetenv("NO_COLOR")
+	t.Setenv("CLICOLOR_FORCE", "1")
+	if (&Config{Color: ColorNever}).ColorEnabled() {
+		t.Error("ColorNever must ignore CLICOLOR_FORCE")
+	}
+}
+
+func TestColorEnabled_NoColorIsPresenceBasedAndOutranksForce(t *testing.T) {
+	for _, val := range []string{"1", "0", "", "false", "no"} {
+		t.Run("NO_COLOR="+val, func(t *testing.T) {
+			t.Setenv("CLICOLOR_FORCE", "1")
+			t.Setenv("NO_COLOR", val)
+			if (&Config{Color: ColorAuto}).ColorEnabled() {
+				t.Errorf("NO_COLOR=%q must disable colour even with CLICOLOR_FORCE=1 — "+
+					"presence disables, regardless of value", val)
+			}
+		})
+	}
+}
+
+func TestColorEnabled_ForceEnablesWithoutNoColor(t *testing.T) {
+	_ = os.Unsetenv("NO_COLOR")
+	t.Setenv("CLICOLOR_FORCE", "1")
+	if !(&Config{Color: ColorAuto}).ColorEnabled() {
+		t.Error("CLICOLOR_FORCE=1 should enable colour when NO_COLOR is absent")
+	}
+}
+
+func TestColorEnabled_AutoIsOffWhenPipedWithNoEnv(t *testing.T) {
+	_ = os.Unsetenv("NO_COLOR")
+	_ = os.Unsetenv("CLICOLOR_FORCE")
+	if (&Config{Color: ColorAuto}).ColorEnabled() {
+		t.Error("ColorAuto should be off when stdout is a pipe and no env forces it")
+	}
+}
+
+// ---- YAMLList ---------------------------------------------------------------
+
+// The pagination envelope is a documented output contract: nextPage is omitted
+// when there is no next page, so a script can test for its presence rather than
+// comparing it to zero.
+func TestYAMLList_PaginationEnvelope(t *testing.T) {
+	tests := []struct {
+		name     string
+		nextPage *int32
+		total    int32
+		wantNext bool
+	}{
+		{"no next page", nil, 3, false},
+		{"explicit zero is not a next page", int32Ptr(0), 3, false},
+		{"a real next page is included", int32Ptr(2), 30, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			c := &Config{Format: FormatYAML, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+			if err := c.YAMLList([]string{"a", "b"}, tt.nextPage, tt.total); err != nil {
+				t.Fatalf("YAMLList: %v", err)
+			}
+			got := buf.String()
+			if strings.Contains(got, "nextPage") != tt.wantNext {
+				t.Errorf("nextPage present = %v, want %v, got:\n%s", !tt.wantNext, tt.wantNext, got)
+			}
+			if !strings.Contains(got, "data:") {
+				t.Errorf("envelope should carry a data key, got:\n%s", got)
+			}
+		})
+	}
+}
+
+func int32Ptr(i int32) *int32 { return &i }
+
+// ---- Hint / WarnBox suppression --------------------------------------------
+
+// Hint is commentary. Emitting it in JSON or YAML mode would corrupt the
+// document that a caller is about to parse.
+func TestHint_OnlyInTableMode(t *testing.T) {
+	for _, f := range []Format{FormatJSON, FormatYAML} {
+		var buf bytes.Buffer
+		c := &Config{Format: f, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+		c.Hint("run something else")
+		if buf.Len() != 0 {
+			t.Errorf("Hint must be silent in %s mode, got: %q", f, buf.String())
+		}
+	}
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	c.Hint("run something else")
+	if !strings.Contains(buf.String(), "run something else") {
+		t.Errorf("Hint should print in table mode, got: %q", buf.String())
+	}
+}
+
+// WarnBox degrades to plain prefixed lines outside table mode rather than
+// drawing a box into a pipe — but it must not go silent, because the warnings
+// it carries are the ones that warrant extra weight.
+func TestWarnBox_DegradesButStaysVisible(t *testing.T) {
+	for _, f := range []Format{FormatJSON, FormatYAML} {
+		var errBuf bytes.Buffer
+		c := &Config{Format: f, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &errBuf}
+		c.WarnBox("first line", "second line")
+		got := errBuf.String()
+		for _, want := range []string{"first line", "second line"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("WarnBox lost %q in %s mode, got: %q", want, f, got)
+			}
+		}
+		if strings.ContainsAny(got, "╭╰│") {
+			t.Errorf("WarnBox must not draw a border in %s mode, got: %q", f, got)
+		}
+	}
+}
+
+// ---- Spinners ---------------------------------------------------------------
+
+// Spinners animate on stderr. Under a pipe — every CI run, every script — they
+// must be inert and their stop/update calls must stay safe to call anyway.
+func TestSpinners_NoOpWhenNotATTY(t *testing.T) {
+	var errBuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &errBuf}
+
+	stop := c.Spin("working…")
+	if stop == nil {
+		t.Fatal("Spin must return a callable stop function even when inert")
+	}
+	stop()
+	stop() // stopping twice must not panic
+
+	s := c.StartSpinner("working…")
+	if s == nil {
+		t.Fatal("StartSpinner must return a spinner even when inert")
+	}
+	s.Update("still working…")
+	s.Stop()
+	s.Stop()
+
+	if errBuf.Len() != 0 {
+		t.Errorf("spinners must write nothing to a non-TTY stderr, got: %q", errBuf.String())
+	}
+}
+
+func TestSpin_SilentInQuietAndStructuredModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *Config
+	}{
+		{"quiet", &Config{Format: FormatTable, QuietMode: true}},
+		{"json", &Config{Format: FormatJSON}},
+		{"yaml", &Config{Format: FormatYAML}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var errBuf bytes.Buffer
+			tc.cfg.Writer = &bytes.Buffer{}
+			tc.cfg.EWriter = &errBuf
+			tc.cfg.Spin("working…")()
+			tc.cfg.StartSpinner("working…").Stop()
+			if errBuf.Len() != 0 {
+				t.Errorf("spinner should be silent, got: %q", errBuf.String())
+			}
+		})
+	}
+}
+
+// ---- TTY predicates ---------------------------------------------------------
+
+// These wrap term.IsTerminal. Under `go test` all three streams are pipes, so
+// the assertion is that they agree with that rather than returning a constant.
+func TestTTYPredicates_ReportNonTTYUnderTest(t *testing.T) {
+	if IsStderrTTY() {
+		t.Error("IsStderrTTY() = true under `go test`, where stderr is a pipe")
+	}
+	if isStdoutTTY() {
+		t.Error("isStdoutTTY() = true under `go test`, where stdout is a pipe")
+	}
+	if IsInteractive() {
+		t.Error("IsInteractive() = true under `go test`, where stdin is not a terminal")
 	}
 }
