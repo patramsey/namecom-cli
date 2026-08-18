@@ -9,7 +9,10 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-Requires Go 1.26+ and Python 3 (only for `make generate`).
+Requires Go 1.26.6+ and Python 3 (only for `make generate`). The `go`
+directive in `go.mod` carries a patch version because CI's `govulncheck`
+step resolves the toolchain from it — see the comment on that step in
+`.github/workflows/ci.yml`.
 
 ```bash
 git clone https://github.com/patramsey/namecom-cli.git

@@ -101,6 +101,16 @@ jobs:
         # is the same mutable-upstream exposure the SHA-pinned actions above
         # exist to remove. Dependabot does not manage `go install` versions, so
         # this one is bumped by hand.
+        #
+        # When this step fails on a commit that changed no code, suspect the
+        # Go standard library before suspecting the diff. `setup-go` resolves
+        # the toolchain from the `go` directive in go.mod and GOTOOLCHAIN is
+        # `local`, so CI builds against exactly that patch release and reports
+        # every stdlib advisory filed against it. Three landed against 1.26.5
+        # five days after the last green run and turned main red on a
+        # goreleaser-config change. The fix in that case is to bump the patch
+        # version in go.mod to the release named in `Fixed in:`, which is why
+        # that directive carries a patch version at all.
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...

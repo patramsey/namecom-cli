@@ -9,6 +9,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Security
+- The Go toolchain moves to 1.26.6, clearing four standard-library
+  advisories that `govulncheck` found reachable from this binary:
+  `GO-2026-6218` (quadratic complexity in `net/url.resolvePath`),
+  `GO-2026-6090` (unbounded post-handshake messages in `crypto/tls`),
+  `GO-2026-5972` (recursion depth in `encoding/asn1`), and `GO-2026-5026`
+  (ASCII-only Punycode labels in `net/http`'s IDNA handling). Three were
+  filed on 2026-08-13, after the last green build; no code here changed.
+  Building now needs Go 1.26.6.
+
 ## [0.2.3] - 2026-08-02
 
 ### Added
