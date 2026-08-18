@@ -36,12 +36,26 @@ archives:
 checksum:
   name_template: checksums.txt
 
-brews:
+# homebrew_casks, not the deprecated `brews`. GoReleaser's formula generator
+# produced, in its own words, "hackyish formulas that would install the
+# pre-compiled binaries" — a formula is meant to build from source, and this
+# project ships binaries. Casks are the supported shape for that now, on Linux
+# as well as macOS: a cask is Linux-capable unless it declares `depends_on
+# macos` (see Cask#supports_linux? in Homebrew), and the generated cask below
+# declares no such dependency.
+#
+# Migrating renames the published file from Formula/namecom.rb to
+# Casks/namecom.rb in the tap. Existing installs need tap_migrations.json in
+# the tap repository to follow that rename; without it `brew upgrade` keeps
+# resolving the stale formula. See the PR that introduced this.
+homebrew_casks:
   - name: namecom
+    binaries:
+      - namecom
     homepage: https://github.com/patramsey/namecom-cli
     description: CLI for the name.com domain registrar API
     license: MIT
-    directory: Formula
+    directory: Casks
     repository:
       owner: patramsey
       name: homebrew-tap
@@ -49,9 +63,6 @@ brews:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    install: bin.install "namecom"
-    test: |
-      system "#{bin}/namecom", "--version"
 
 changelog:
   sort: asc
