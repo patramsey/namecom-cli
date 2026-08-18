@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-17
+
+### Changed
+- Homebrew now installs `namecom` as a **cask** rather than a formula.
+  GoReleaser deprecated the `brews:` key it had been built with. The
+  install command is unchanged (`brew install namecom`), and the tap
+  carries a migration entry, so an existing install moves itself over on
+  the next `brew upgrade` and prints how to drop the old keg.
+
 ### Security
 - The Go toolchain moves to 1.26.6, clearing four standard-library
   advisories that `govulncheck` found reachable from this binary:
@@ -87,7 +96,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/patramsey/namecom-cli/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/patramsey/namecom-cli/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/patramsey/namecom-cli/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/patramsey/namecom-cli/compare/v0.2.0...v0.2.1
