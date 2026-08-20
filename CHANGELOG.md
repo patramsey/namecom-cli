@@ -9,6 +9,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-20
+
+Minor rather than patch because of one behavioural change worth checking before
+upgrading: **invocation mistakes now exit 2 instead of 1.** A bad flag value, an
+unknown record type, a missing required flag — all of these previously exited 1,
+the same code as an API or runtime failure, and now exit 2 as the documented
+table has always said. A script branching on exit 1 to detect "the command was
+wrong" needs to look for 2. Nothing else in this release changes an exit code,
+and no command changes what it sends to the API.
+
 ### Added
 - `--wide` keeps every table column even when the table is wider than the
   terminal.
@@ -176,7 +186,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/patramsey/namecom-cli/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/patramsey/namecom-cli/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/patramsey/namecom-cli/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/patramsey/namecom-cli/compare/v0.2.1...v0.2.2
