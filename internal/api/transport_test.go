@@ -640,3 +640,40 @@ func TestRetryAfterClamped(t *testing.T) {
 		t.Errorf("backoffDelay with Retry-After 2s = %s, want it honoured", got)
 	}
 }
+
+// TestNetworkRetryRespectsDeadline covers the deadline check on the
+// network-error path, the sibling of the one on the status path.
+//
+// Retrying a connection failure is only worth doing if there is time left to
+// make the attempt. Sleeping through the remaining budget first turns a
+// concrete "connection refused" into a context error that says nothing about
+// why the call failed.
+func TestNetworkRetryRespectsDeadline(t *testing.T) {
+	// A port with nothing listening: RoundTrip fails immediately and the error
+	// is transient by the transport's classification, so a retry is eligible.
+	tr := &retryTransport{
+		base:       http.DefaultTransport,
+		limiter:    rate.NewLimiter(rate.Inf, 1),
+		maxRetries: 3,
+		baseDelay:  10 * time.Second, // far longer than the budget below
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:1", nil)
+
+	start := time.Now()
+	_, err := tr.RoundTrip(req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected the connection error to be returned")
+	}
+	if elapsed > time.Second {
+		t.Errorf("took %s; the wait does not fit the deadline and should not be taken", elapsed)
+	}
+	// The underlying failure must survive rather than being replaced by a
+	// context error produced by our own sleep.
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("connection error was masked by our own backoff: %v", err)
+	}
+}

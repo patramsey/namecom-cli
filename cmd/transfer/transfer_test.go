@@ -3,6 +3,7 @@ package transfer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -838,4 +839,97 @@ func TestTransferEligibility_APIError(t *testing.T) {
 	if !strings.Contains(err.Error(), "Domain not found") {
 		t.Errorf("error should surface the API message, got: %v", err)
 	}
+}
+
+// TestTransferList_PagesToTheEnd covers the --all walk across more than one
+// page, and the guard that stops it against a server whose nextPage never
+// advances.
+//
+// There was no multi-page test here, which mattered when every list loop was
+// rewritten to route through cmdutil.NextPage: the continuation line is what a
+// mechanical rewrite gets wrong, and nothing would have caught a loop that
+// stopped after page 1 or one that never advanced at all.
+func TestTransferList_PagesToTheEnd(t *testing.T) {
+	t.Run("walks every page", func(t *testing.T) {
+		const maxRequests = 8 // a correct implementation needs exactly 2
+		var requests int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			if requests > maxRequests {
+				t.Errorf("pagination did not terminate: %d requests", requests)
+				http.Error(w, "loop", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Query().Get("page") == "2" {
+				_, _ = w.Write([]byte(`{"transfers":[{"domainName":"two.com","status":"completed"}],"lastPage":2}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"transfers":[{"domainName":"one.com","status":"pending"}],"nextPage":2,"lastPage":2}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		cmd := cmdForTransferList(t, srv)
+		out := cmdutil.Out(cmd)
+		out.Format = output.FormatJSON
+		listAll = true
+
+		if err := runList(cmd, nil); err != nil {
+			t.Fatalf("runList: %v", err)
+		}
+		if requests != 2 {
+			t.Errorf("made %d page requests, want exactly 2", requests)
+		}
+
+		buf, ok := out.Writer.(*bytes.Buffer)
+		if !ok {
+			t.Fatal("output writer is not a *bytes.Buffer")
+		}
+		var env struct {
+			Data []struct {
+				DomainName string `json:"domainName"`
+				Status     string `json:"status"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+			t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+		}
+		if len(env.Data) != 2 {
+			t.Fatalf("got %d transfers across 2 pages, want 2: %s", len(env.Data), buf.String())
+		}
+		// Pairing name to status catches page 2 overwriting page 1's backing
+		// array, the aliasing failure this loop shape has produced before.
+		want := map[string]string{"one.com": "pending", "two.com": "completed"}
+		for _, e := range env.Data {
+			if want[e.DomainName] != e.Status {
+				t.Errorf("%s has status %q, want %q — pages were aliased", e.DomainName, e.Status, want[e.DomainName])
+			}
+		}
+	})
+
+	t.Run("a non-advancing nextPage terminates the walk", func(t *testing.T) {
+		var requests int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests++
+			if requests > 10 {
+				t.Errorf("walk did not terminate against a non-advancing nextPage")
+				http.Error(w, "loop", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"transfers":[{"domainName":"one.com","status":"pending"}],"nextPage":2,"lastPage":99}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		cmd := cmdForTransferList(t, srv)
+		cmdutil.Out(cmd).Format = output.FormatJSON
+		listAll = true
+
+		if err := runList(cmd, nil); err != nil {
+			t.Fatalf("runList: %v", err)
+		}
+		if requests != 2 {
+			t.Errorf("made %d requests, want 2 (page 1 -> 2, then the page stops advancing)", requests)
+		}
+	})
 }
