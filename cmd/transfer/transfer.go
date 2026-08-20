@@ -113,6 +113,7 @@ func init() {
 
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full transfer history)")
 
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 

@@ -97,6 +97,7 @@ func init() {
 	updateCmd.Flags().StringVar(&updateTitle, "title", "", "page title (masked only)")
 	updateCmd.Flags().StringVar(&updateMeta, "meta", "", "meta tags (masked only)")
 
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -160,4 +161,56 @@ func TestExactArgs_HintContainsUseLine(t *testing.T) {
 	if !strings.Contains(err.Error(), "namecom dns list") {
 		t.Errorf("error = %q, missing command path in hint", err.Error())
 	}
+}
+
+// TestGroupCmd guards the unknown-subcommand check on command groups.
+//
+// Cobra's legacyArgs only rejects unknown commands on the ROOT command — for
+// any parent that itself has a parent it returns nil, so cobra fell through to
+// "not runnable", printed help, and returned no error. `namecom domain
+// regsiter example.com` therefore exited 0, and
+// `namecom domain regsiter foo.com && deploy` deployed.
+func TestGroupCmd(t *testing.T) {
+	newGroup := func() *cobra.Command {
+		root := &cobra.Command{Use: "namecom"}
+		group := GroupCmd(&cobra.Command{Use: "domain"})
+		group.AddCommand(&cobra.Command{Use: "register", Run: func(*cobra.Command, []string) {}})
+		group.AddCommand(&cobra.Command{Use: "list", Run: func(*cobra.Command, []string) {}})
+		root.AddCommand(group)
+		return group
+	}
+
+	t.Run("unknown subcommand is a usage error", func(t *testing.T) {
+		group := newGroup()
+		err := group.Args(group, []string{"regsiter", "example.com"})
+		if err == nil {
+			t.Fatal("unknown subcommand accepted; it would print help and exit 0")
+		}
+		var u *UsageError
+		if !errors.As(err, &u) {
+			t.Errorf("error is not a UsageError, so it would exit 1 not 2: %v", err)
+		}
+		if !strings.Contains(err.Error(), `unknown command "regsiter"`) {
+			t.Errorf("error does not name the typo: %v", err)
+		}
+		if !strings.Contains(err.Error(), "register") {
+			t.Errorf("error carries no suggestion: %v", err)
+		}
+	})
+
+	t.Run("no args is allowed so the group can print help", func(t *testing.T) {
+		group := newGroup()
+		if err := group.Args(group, nil); err != nil {
+			t.Errorf("bare group name rejected: %v", err)
+		}
+	})
+
+	t.Run("suggestion distance is set", func(t *testing.T) {
+		// Cobra defaults this to 2 only inside the root-command path being
+		// replaced here. Left at zero, SuggestionsFor matches nothing.
+		group := newGroup()
+		if group.SuggestionsMinimumDistance <= 0 {
+			t.Error("SuggestionsMinimumDistance not set; every typo loses its hint")
+		}
+	})
 }

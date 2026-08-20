@@ -84,3 +84,58 @@ func TestNewUsageError(t *testing.T) {
 		t.Error("NewUsageError should preserve the original error in the chain")
 	}
 }
+
+// TestClassifyCobraUsage guards the message matching that maps cobra's own
+// invocation errors onto exit code 2.
+//
+// Cobra validates required flags and flag groups inside execute(), after
+// SetFlagErrorFunc has had its chance, and exposes no hook for that path. So
+// `dns create example.com` with two required flags missing exited 1 while
+// `dns list example.com --badflag` right beside it exited 2. Matching the
+// message is the only seam available; these cases fail if a cobra upgrade
+// rewords one, which is the point of asserting them.
+func TestClassifyCobraUsage(t *testing.T) {
+	usage := func(err error) bool {
+		var u *UsageError
+		return errors.As(err, &u)
+	}
+
+	cobraMessages := []string{
+		`required flag(s) "answer", "type" not set`,
+		`if any flags in the group [a b] are set they must all be set; missing [b]`,
+		`unknown command "regsiter" for "namecom domain"`,
+		`unknown flag: --badflag`,
+		`unknown shorthand flag: 'z' in -z`,
+		`invalid argument "abc" for "--ttl" flag: strconv.ParseInt: parsing "abc": invalid syntax`,
+		`flag needs an argument: --type`,
+	}
+	for _, msg := range cobraMessages {
+		if got := ClassifyCobraUsage(errors.New(msg)); !usage(got) {
+			t.Errorf("ClassifyCobraUsage(%q) did not classify as a usage error", msg)
+		}
+	}
+
+	t.Run("leaves other errors alone", func(t *testing.T) {
+		runtime := errors.New("connection refused")
+		if got := ClassifyCobraUsage(runtime); usage(got) {
+			t.Errorf("misclassified a runtime error as usage: %v", got)
+		}
+	})
+
+	t.Run("nil stays nil", func(t *testing.T) {
+		if got := ClassifyCobraUsage(nil); got != nil {
+			t.Errorf("ClassifyCobraUsage(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("does not re-wrap an already-classified error", func(t *testing.T) {
+		// An AuthError whose text happens to mention an unknown flag must keep
+		// its exit code 3 rather than being demoted to a usage error.
+		auth := NewAuthError(errors.New("unknown flag: --token was not usable"))
+		got := ClassifyCobraUsage(auth)
+		var a *AuthError
+		if !errors.As(got, &a) {
+			t.Errorf("ClassifyCobraUsage demoted an AuthError: %v", got)
+		}
+	})
+}

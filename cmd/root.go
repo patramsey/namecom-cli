@@ -45,6 +45,7 @@ type globalFlags struct {
 	output    string
 	quiet     bool
 	noHeader  bool
+	wide      bool
 	color     string
 	timeout   time.Duration
 	debug     bool
@@ -110,7 +111,7 @@ func Execute() {
 		return cmdutil.NewUsageError(err)
 	})
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
 		cfg := resolvedOut
 		if cfg == nil {
 			cfg = output.DefaultConfig()
@@ -189,12 +190,13 @@ func init() {
 	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml (default: table in TTY, json otherwise)")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "print IDs/names only (one per line)")
 	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
+	pf.BoolVar(&gf.wide, "wide", false, "keep every table column even if it overflows the terminal")
 	pf.StringVar(&gf.color, "color", "auto", "colorize output: auto, always, never (env: NO_COLOR, CLICOLOR_FORCE)")
 	pf.DurationVar(&gf.timeout, "timeout", 30*time.Second, "per-request timeout")
 	pf.BoolVar(&gf.debug, "debug", false, "log HTTP requests/responses to stderr (token redacted)")
 	pf.StringVar(&gf.debugFile, "debug-file", "", "log HTTP requests/responses to this file instead of stderr")
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
-	pf.BoolVar(&gf.dryRun, "dry-run", false, "print the API request that would be sent without executing it")
+	pf.BoolVar(&gf.dryRun, "dry-run", false, "for write operations, print the request instead of sending it (reads are unaffected)")
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for write operations (auto-generated per invocation if not set)")
 	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
 
@@ -221,7 +223,7 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	return err
 }
 
-// initOutputContext applies --output, --color, --quiet, and --no-header to the
+// initOutputContext applies --output, --color, --quiet, --no-header, and --wide to the
 // command context. It runs for every command, including those that skip API
 // credential setup (auth, version, etc.).
 func initOutputContext(cmd *cobra.Command) error {
@@ -244,6 +246,7 @@ func initOutputContext(cmd *cobra.Command) error {
 	}
 	out.QuietMode = gf.quiet
 	out.NoHeader = gf.noHeader
+	out.Wide = gf.wide
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
 	// Remember it for Execute's error path. That path ran before this config
 	// existed and fell back to output.DefaultConfig(), which decides format by

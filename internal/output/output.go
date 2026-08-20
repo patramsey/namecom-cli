@@ -54,6 +54,11 @@ type Config struct {
 	Writer    io.Writer // defaults to os.Stdout
 	EWriter   io.Writer // defaults to os.Stderr
 	Sandbox   bool      // true when targeting the sandbox API (--sandbox / profile)
+	Wide      bool      // --wide: never drop table columns, even if they overflow
+	// MaxWidth is the terminal width tables must fit inside. Zero means
+	// unconstrained, which is what a pipe or a redirect gets: a consumer that
+	// is not a terminal has no width to respect and wants every column.
+	MaxWidth int
 }
 
 // DefaultConfig returns an output config with defaults resolved from the
@@ -63,12 +68,16 @@ func DefaultConfig() *Config {
 	if isStdoutTTY() {
 		f = FormatTable
 	}
-	return &Config{
+	c := &Config{
 		Format:  f,
 		Color:   ColorAuto,
 		Writer:  os.Stdout,
 		EWriter: os.Stderr,
 	}
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		c.MaxWidth = w
+	}
+	return c
 }
 
 // IsInteractive reports whether stdin is a TTY — i.e., a human is present.
@@ -206,8 +215,20 @@ func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
 }
 
 // Table renders rows as a styled table. headers is the column header row.
+// Table renders headers and rows as a bordered table, dropping trailing
+// columns that do not fit the terminal.
+//
+// Tables were rendered at their natural width with no regard for the terminal:
+// `domain list` came to 113 columns, `order list` 99, `dns list` 87. In an
+// 80-column terminal — an SSH session, a split pane — every one of them wrapped
+// and the rounded borders came apart into unreadable fragments. Columns are
+// ordered most- to least-important by their callers, so the ones that go are
+// the ones from the right, and a footer names them rather than letting them
+// vanish. --wide opts out; so does any non-terminal writer, since a pipe has no
+// width to fit and its consumer wants the whole row.
 func (c *Config) Table(headers []string, rows [][]string) {
 	color := c.ColorEnabled()
+	headers, rows, dropped := c.fitColumns(headers, rows)
 
 	cell := lipgloss.NewStyle().Padding(0, 1)
 	header := cell.Bold(color)
@@ -239,6 +260,73 @@ func (c *Config) Table(headers []string, rows [][]string) {
 	}
 
 	fmt.Fprintln(c.Writer, t.Render())
+
+	if len(dropped) > 0 {
+		fmt.Fprintln(c.Writer, c.Dim(fmt.Sprintf(
+			"%d column%s hidden (%s) — widen the terminal, pass --wide, or use -o json",
+			len(dropped), plural("", len(dropped)), strings.Join(dropped, ", "))))
+	}
+}
+
+// fitColumns drops trailing columns until the rendered table fits MaxWidth,
+// returning the surviving headers and rows plus the names of what went.
+//
+// The first column is never dropped: a table of nothing but a row count is
+// worse than one that overflows, and callers put the identifying column first.
+func (c *Config) fitColumns(headers []string, rows [][]string) ([]string, [][]string, []string) {
+	if c.Wide || c.MaxWidth <= 0 || len(headers) == 0 {
+		return headers, rows, nil
+	}
+
+	keep := len(headers)
+	for keep > 1 && tableWidth(colWidths(headers, rows, keep)) > c.MaxWidth {
+		keep--
+	}
+	if keep == len(headers) {
+		return headers, rows, nil
+	}
+
+	dropped := make([]string, 0, len(headers)-keep)
+	for _, h := range headers[keep:] {
+		dropped = append(dropped, strings.ToLower(h))
+	}
+	trimmed := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		if len(r) > keep {
+			r = r[:keep]
+		}
+		trimmed = append(trimmed, r)
+	}
+	return headers[:keep], trimmed, dropped
+}
+
+// colWidths measures the first n columns at their natural (widest-cell) width.
+// lipgloss.Width is used rather than len because cells arrive pre-styled —
+// ExpiryDate returns ANSI escapes — and because a domain may hold wide runes.
+func colWidths(headers []string, rows [][]string, n int) []int {
+	w := make([]int, n)
+	for i := 0; i < n && i < len(headers); i++ {
+		w[i] = lipgloss.Width(headers[i])
+	}
+	for _, r := range rows {
+		for i := 0; i < n && i < len(r); i++ {
+			if cw := lipgloss.Width(r[i]); cw > w[i] {
+				w[i] = cw
+			}
+		}
+	}
+	return w
+}
+
+// tableWidth is the rendered width of a table with the given column widths:
+// each column carries one space of padding on each side, and there is a border
+// rune before the first column, between every pair, and after the last.
+func tableWidth(widths []int) int {
+	total := len(widths) + 1
+	for _, w := range widths {
+		total += w + 2
+	}
+	return total
 }
 
 // KVTable renders a headerless two-column key-value table with styled field names.
@@ -503,9 +591,7 @@ func (c *Config) ExpiryDate(t *time.Time) string {
 		return label
 	}
 	switch {
-	case days < 0:
-		return lipgloss.NewStyle().Bold(true).Foreground(acRed).Render(label)
-	case days < 7:
+	case days < 7: // expired, or expiring inside a week
 		return lipgloss.NewStyle().Bold(true).Foreground(acRed).Render(label)
 	case days < 30:
 		return lipgloss.NewStyle().Bold(true).Foreground(acAmber).Render(label)
@@ -514,7 +600,15 @@ func (c *Config) ExpiryDate(t *time.Time) string {
 	}
 }
 
-// relativeTime converts a floating-point day count into a human-readable string.
+// relativeTime converts a floating-point day count into a human-readable
+// string, widening the unit as the distance grows.
+//
+// It used to speak only days, which is right near an expiry and useless far
+// from one: a domain paid through 2034 rendered as "in 2750 days", a number no
+// reader converts to anything meaningful. Days stay exact inside a quarter,
+// where renewal decisions actually happen; past that the unit widens. The
+// absolute date sits immediately before this string in every caller, so the
+// parenthetical only has to convey magnitude.
 func relativeTime(days float64) string {
 	abs := days
 	if abs < 0 {
@@ -523,21 +617,34 @@ func relativeTime(days float64) string {
 	switch {
 	case days < 0 && abs < 1:
 		return "expired today"
-	case days < 0:
-		n := int(abs + 0.5)
-		if n == 1 {
-			return "1 day ago"
-		}
-		return fmt.Sprintf("%d days ago", n)
-	case days < 1:
+	case days < 1 && days >= 0:
 		return "today"
-	default:
-		n := int(days + 0.5)
-		if n == 1 {
-			return "in 1 day"
-		}
-		return fmt.Sprintf("in %d days", n)
 	}
+	unit, n := humanizeDays(abs)
+	if days < 0 {
+		return fmt.Sprintf("%d %s ago", n, plural(unit, n))
+	}
+	return fmt.Sprintf("in %d %s", n, plural(unit, n))
+}
+
+// humanizeDays picks the coarsest unit that still says something useful about a
+// span, and returns the count in that unit.
+func humanizeDays(abs float64) (unit string, n int) {
+	switch {
+	case abs <= 90:
+		return "day", int(abs + 0.5)
+	case abs < 730:
+		return "month", int(abs/30.44 + 0.5)
+	default:
+		return "year", int(abs/365.25 + 0.5)
+	}
+}
+
+func plural(unit string, n int) string {
+	if n == 1 {
+		return unit
+	}
+	return unit + "s"
 }
 
 // spinFrames are the animation frames for the spinner.

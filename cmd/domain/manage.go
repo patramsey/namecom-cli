@@ -285,6 +285,7 @@ var contactsFile string
 func init() {
 	contactsSetCmd.Flags().StringVar(&contactsFile, "from-file", "", "JSON file with contact data (required)")
 	_ = contactsSetCmd.MarkFlagRequired("from-file")
+	cmdutil.GroupCmd(contactsCmd)
 	contactsCmd.AddCommand(contactsGetCmd, contactsSetCmd)
 }
 

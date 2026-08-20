@@ -48,6 +48,7 @@ var logoutProfile string
 func init() {
 	authLoginCmd.Flags().StringVar(&loginProfile, "profile", "default", "profile name to save credentials under")
 	authLogoutCmd.Flags().StringVar(&logoutProfile, "profile", "", "profile to remove (defaults to the active profile)")
+	cmdutil.GroupCmd(authCmd)
 	authCmd.AddCommand(authLoginCmd, authStatusCmd, authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
 }

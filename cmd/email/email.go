@@ -80,6 +80,7 @@ func init() {
 	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address (required)")
 	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address")
 
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

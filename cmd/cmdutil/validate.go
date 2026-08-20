@@ -8,10 +8,19 @@ import (
 	"time"
 )
 
+// usagef builds a UsageError. Every failure in this file is an invocation
+// mistake — a malformed flag value, an out-of-range count, an argument that
+// cannot be what it claims — so each one maps to exit code 2 in the documented
+// table. They used to return bare fmt.Errorf values, which collapsed to exit 1
+// and made `--type ZZZ` indistinguishable from a 500 to a calling script.
+func usagef(format string, a ...any) error {
+	return NewUsageError(fmt.Errorf(format, a...))
+}
+
 // ValidDate checks that s is a valid YYYY-MM-DD date.
 func ValidDate(s, flagName string) error {
 	if _, err := time.Parse("2006-01-02", s); err != nil {
-		return fmt.Errorf("--%s: %q is not a valid date — expected YYYY-MM-DD", flagName, s)
+		return usagef("--%s: %q is not a valid date — expected YYYY-MM-DD", flagName, s)
 	}
 	return nil
 }
@@ -24,7 +33,7 @@ var validDNSTypes = map[string]bool{
 // ValidDNSType checks that t is a supported DNS record type.
 func ValidDNSType(t string) error {
 	if !validDNSTypes[strings.ToUpper(t)] {
-		return fmt.Errorf("unknown record type %q — must be one of: A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT", t)
+		return usagef("unknown record type %q — must be one of: A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT", t)
 	}
 	return nil
 }
@@ -32,27 +41,27 @@ func ValidDNSType(t string) error {
 // ValidDNSHost checks that host is a valid relative DNS label (@ and wildcards allowed).
 func ValidDNSHost(host string) error {
 	if host == "" {
-		return fmt.Errorf("--host cannot be empty (use @ for the zone apex)")
+		return usagef("--host cannot be empty (use @ for the zone apex)")
 	}
 	if host == "@" || host == "*" {
 		return nil
 	}
 	check := strings.TrimPrefix(host, "*.")
 	if strings.ContainsAny(check, " \t") {
-		return fmt.Errorf("--host %q must not contain spaces", host)
+		return usagef("--host %q must not contain spaces", host)
 	}
 	if len(check) > 253 {
-		return fmt.Errorf("--host %q exceeds maximum DNS name length (253 chars)", host)
+		return usagef("--host %q exceeds maximum DNS name length (253 chars)", host)
 	}
 	for label := range strings.SplitSeq(check, ".") {
 		if label == "" {
-			return fmt.Errorf("--host %q has an empty label (double dot or leading/trailing dot)", host)
+			return usagef("--host %q has an empty label (double dot or leading/trailing dot)", host)
 		}
 		if len(label) > 63 {
-			return fmt.Errorf("--host %q label %q exceeds 63 characters", host, label)
+			return usagef("--host %q label %q exceeds 63 characters", host, label)
 		}
 		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return fmt.Errorf("--host %q label %q must not start or end with a hyphen", host, label)
+			return usagef("--host %q label %q must not start or end with a hyphen", host, label)
 		}
 	}
 	return nil
@@ -61,50 +70,50 @@ func ValidDNSHost(host string) error {
 // ValidDNSAnswer validates the answer field for a given record type and host.
 func ValidDNSAnswer(recordType, host, answer string) error {
 	if answer == "" {
-		return fmt.Errorf("--answer is required")
+		return usagef("--answer is required")
 	}
 	switch strings.ToUpper(recordType) {
 	case "A":
 		ip := net.ParseIP(answer)
 		if ip == nil || ip.To4() == nil {
-			return fmt.Errorf("--answer must be a valid IPv4 address for A records, got %q", answer)
+			return usagef("--answer must be a valid IPv4 address for A records, got %q", answer)
 		}
 	case "AAAA":
 		ip := net.ParseIP(answer)
 		if ip == nil || ip.To4() != nil {
-			return fmt.Errorf("--answer must be a valid IPv6 address for AAAA records, got %q", answer)
+			return usagef("--answer must be a valid IPv6 address for AAAA records, got %q", answer)
 		}
 	case "CNAME":
 		if host == "@" || host == "" {
-			return fmt.Errorf("CNAME record cannot be set at the zone apex (@) — use ANAME for apex aliasing")
+			return usagef("CNAME record cannot be set at the zone apex (@) — use ANAME for apex aliasing")
 		}
 	case "MX":
 		if strings.ContainsAny(answer, " \t") {
-			return fmt.Errorf("MX record --answer must be a hostname (got %q) — set priority with --priority", answer)
+			return usagef("MX record --answer must be a hostname (got %q) — set priority with --priority", answer)
 		}
 	case "SRV":
 		parts := strings.Fields(answer)
 		if len(parts) != 3 {
-			return fmt.Errorf("SRV record --answer must be \"weight port target\" (e.g. \"0 443 target.example.com.\"), got %q", answer)
+			return usagef("SRV record --answer must be \"weight port target\" (e.g. \"0 443 target.example.com.\"), got %q", answer)
 		}
 		if _, err := strconv.Atoi(parts[0]); err != nil {
-			return fmt.Errorf("SRV record weight (first field) must be an integer, got %q", parts[0])
+			return usagef("SRV record weight (first field) must be an integer, got %q", parts[0])
 		}
 		if _, err := strconv.Atoi(parts[1]); err != nil {
-			return fmt.Errorf("SRV record port (second field) must be an integer, got %q", parts[1])
+			return usagef("SRV record port (second field) must be an integer, got %q", parts[1])
 		}
 	case "CAA":
 		parts := strings.Fields(answer)
 		if len(parts) < 3 {
-			return fmt.Errorf("CAA record --answer must be \"flags tag value\" (e.g. `0 issue \"letsencrypt.org\"`), got %q", answer)
+			return usagef("CAA record --answer must be \"flags tag value\" (e.g. `0 issue \"letsencrypt.org\"`), got %q", answer)
 		}
 		flags, err := strconv.Atoi(parts[0])
 		if err != nil || flags < 0 || flags > 255 {
-			return fmt.Errorf("CAA record flags (first field) must be an integer 0-255, got %q", parts[0])
+			return usagef("CAA record flags (first field) must be an integer 0-255, got %q", parts[0])
 		}
 		validTags := map[string]bool{"issue": true, "issuewild": true, "iodef": true}
 		if !validTags[parts[1]] {
-			return fmt.Errorf("CAA record tag (second field) must be one of: issue, issuewild, iodef — got %q", parts[1])
+			return usagef("CAA record tag (second field) must be one of: issue, issuewild, iodef — got %q", parts[1])
 		}
 	}
 	return nil
@@ -152,7 +161,7 @@ func isPrivateIP(ip net.IP) bool {
 // ValidTTL checks that ttl meets the API minimum.
 func ValidTTL(ttl int64) error {
 	if ttl < 300 {
-		return fmt.Errorf("--ttl must be at least 300 seconds (got %d)", ttl)
+		return usagef("--ttl must be at least 300 seconds (got %d)", ttl)
 	}
 	return nil
 }
@@ -160,13 +169,13 @@ func ValidTTL(ttl int64) error {
 // ValidDomainName does a basic sanity check on a domain name argument.
 func ValidDomainName(domain string) error {
 	if strings.Contains(domain, " ") {
-		return fmt.Errorf("domain name %q must not contain spaces", domain)
+		return usagef("domain name %q must not contain spaces", domain)
 	}
 	if !strings.Contains(domain, ".") {
-		return fmt.Errorf("domain name %q must contain at least one dot", domain)
+		return usagef("domain name %q must contain at least one dot", domain)
 	}
 	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
-		return fmt.Errorf("domain name %q must not start or end with a dot", domain)
+		return usagef("domain name %q must not start or end with a dot", domain)
 	}
 	return nil
 }
@@ -174,20 +183,20 @@ func ValidDomainName(domain string) error {
 // ValidNameserver checks that ns is a plausible fully-qualified nameserver hostname.
 func ValidNameserver(ns string, idx int) error {
 	if ns == "" {
-		return fmt.Errorf("nameserver %d is empty", idx+1)
+		return usagef("nameserver %d is empty", idx+1)
 	}
 	if !strings.Contains(ns, ".") {
-		return fmt.Errorf("nameserver %q must be a fully-qualified hostname (e.g. ns1.example.com)", ns)
+		return usagef("nameserver %q must be a fully-qualified hostname (e.g. ns1.example.com)", ns)
 	}
 	if strings.HasPrefix(ns, ".") || strings.HasSuffix(ns, ".") {
-		return fmt.Errorf("nameserver %q must not start or end with a dot", ns)
+		return usagef("nameserver %q must not start or end with a dot", ns)
 	}
 	for label := range strings.SplitSeq(ns, ".") {
 		if label == "" {
-			return fmt.Errorf("nameserver %q has an empty label", ns)
+			return usagef("nameserver %q has an empty label", ns)
 		}
 		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return fmt.Errorf("nameserver %q label %q must not start or end with a hyphen", ns, label)
+			return usagef("nameserver %q label %q must not start or end with a hyphen", ns, label)
 		}
 	}
 	return nil
@@ -205,13 +214,13 @@ func ValidSortDir(dir string) error {
 	case "", "asc", "desc":
 		return nil
 	}
-	return NewUsageError(fmt.Errorf("invalid --sort-dir %q: valid values are asc, desc", dir))
+	return usagef("invalid --sort-dir %q: valid values are asc, desc", dir)
 }
 
 // ValidYears checks that n is a valid domain registration/renewal period.
 func ValidYears(n int) error {
 	if n < 1 || n > 10 {
-		return fmt.Errorf("--years must be between 1 and 10 (got %d)", n)
+		return usagef("--years must be between 1 and 10 (got %d)", n)
 	}
 	return nil
 }
@@ -219,11 +228,11 @@ func ValidYears(n int) error {
 // ValidURL checks that u has an http:// or https:// scheme.
 func ValidURL(u, flagName string) error {
 	if u == "" {
-		return fmt.Errorf("--%s is required", flagName)
+		return usagef("--%s is required", flagName)
 	}
 	lower := strings.ToLower(u)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
-		return fmt.Errorf("--%s %q must start with http:// or https://", flagName, u)
+		return usagef("--%s %q must start with http:// or https://", flagName, u)
 	}
 	return nil
 }
@@ -231,14 +240,14 @@ func ValidURL(u, flagName string) error {
 // ValidEmail checks that addr looks like a valid email address.
 func ValidEmail(addr, flagName string) error {
 	if addr == "" {
-		return fmt.Errorf("--%s is required", flagName)
+		return usagef("--%s is required", flagName)
 	}
 	at := strings.LastIndex(addr, "@")
 	if at < 1 || at == len(addr)-1 {
-		return fmt.Errorf("--%s %q is not a valid email address — expected user@domain.tld", flagName, addr)
+		return usagef("--%s %q is not a valid email address — expected user@domain.tld", flagName, addr)
 	}
 	if !strings.Contains(addr[at+1:], ".") {
-		return fmt.Errorf("--%s %q domain part has no dot — expected user@domain.tld", flagName, addr)
+		return usagef("--%s %q domain part has no dot — expected user@domain.tld", flagName, addr)
 	}
 	return nil
 }
@@ -249,19 +258,19 @@ func ValidURLForwardingType(t, flagName string) error {
 	case "redirect", "302", "masked":
 		return nil
 	}
-	return fmt.Errorf("--%s %q is not valid — must be one of: redirect, 302, masked", flagName, t)
+	return usagef("--%s %q is not valid — must be one of: redirect, 302, masked", flagName, t)
 }
 
 // ValidEmailLocalPart checks that s is a valid email mailbox local-part.
 func ValidEmailLocalPart(s, argName string) error {
 	if s == "" {
-		return fmt.Errorf("%s must not be empty", argName)
+		return usagef("%s must not be empty", argName)
 	}
 	if strings.Contains(s, "@") {
-		return fmt.Errorf("%s %q must not contain '@' — provide only the local part (e.g. 'info', not 'info@example.com')", argName, s)
+		return usagef("%s %q must not contain '@' — provide only the local part (e.g. 'info', not 'info@example.com')", argName, s)
 	}
 	if strings.ContainsAny(s, " \t\n") {
-		return fmt.Errorf("%s %q must not contain spaces", argName, s)
+		return usagef("%s %q must not contain spaces", argName, s)
 	}
 	return nil
 }
@@ -293,10 +302,10 @@ func CanonicalDomain(s string) string {
 // ValidAuthCode checks that a transfer auth code is plausibly non-trivial.
 func ValidAuthCode(code string) error {
 	if code == "" {
-		return fmt.Errorf("--auth-code is required")
+		return usagef("--auth-code is required")
 	}
 	if len(code) < 6 {
-		return fmt.Errorf("--auth-code is too short (got %d chars, minimum 6); EPP auth codes are typically 8+ characters", len(code))
+		return usagef("--auth-code is too short (got %d chars, minimum 6); EPP auth codes are typically 8+ characters", len(code))
 	}
 	return nil
 }

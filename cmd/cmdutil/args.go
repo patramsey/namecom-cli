@@ -81,3 +81,48 @@ func joinNames(names []string) string {
 		return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 	}
 }
+
+// GroupCmd wires a command group — a parent that exists only to hold
+// subcommands — so a mistyped subcommand fails instead of succeeding quietly.
+//
+// Cobra only checks for unknown commands on the ROOT command: legacyArgs()
+// returns nil for any parent that itself has a parent. So `namecom domian`
+// errored with a suggestion, while `namecom domain regsiter example.com`
+// printed the group's help and exited 0. In a script that reads as success —
+// `namecom domain regsiter foo.com && deploy` ran deploy.
+//
+// Bare `namecom domain` keeps its old behavior of printing help and exiting 0,
+// which is what a user typing a group name to browse it expects.
+func GroupCmd(cmd *cobra.Command) *cobra.Command {
+	// Cobra defaults this to 2, but only on the root command, inside the
+	// unknown-command path we are replacing here. Left at zero, SuggestionsFor
+	// matches nothing and every typo loses its "Did you mean" line.
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = 2
+	}
+	cmd.Args = func(c *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		return NewUsageError(fmt.Errorf("unknown command %q for %q%s",
+			args[0], c.CommandPath(), suggestionHint(c.SuggestionsFor(args[0]))))
+	}
+	cmd.RunE = func(c *cobra.Command, _ []string) error {
+		return c.Help()
+	}
+	return cmd
+}
+
+// suggestionHint renders cobra's near-miss list the way cobra renders it on the
+// root command, so a typo reads the same wherever in the tree it happens.
+func suggestionHint(suggestions []string) string {
+	if len(suggestions) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nDid you mean this?\n")
+	for _, s := range suggestions {
+		fmt.Fprintf(&b, "\t%s\n", s)
+	}
+	return b.String()
+}

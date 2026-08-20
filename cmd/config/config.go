@@ -46,6 +46,7 @@ var showCmd = &cobra.Command{
 }
 
 func init() {
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listProfilesCmd, useCmd, showCmd)
 }
 
