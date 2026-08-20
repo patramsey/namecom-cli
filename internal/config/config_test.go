@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -504,4 +505,87 @@ profiles:
 			t.Errorf("Save dropped %q while pruning:\n%s", want, out)
 		}
 	}
+}
+
+// TestResolveImpliedDefault covers config files that name no default profile.
+//
+// firstNonEmpty(flag, env, f.Default) resolved to "" when a file carried no
+// top-level `default:` key, f.Profiles[""] returned the zero Profile, and the
+// CLI reported "no credentials configured — run 'namecom auth login'" while
+// `config list-profiles` was printing the profile it refused to use. auth login
+// writes the key, so this only ever bit hand-edited files — which is the only
+// way to configure token_cmd.
+func TestResolveImpliedDefault(t *testing.T) {
+	t.Setenv("NAMECOM_PROFILE", "")
+	t.Setenv("NAMECOM_USERNAME", "")
+	t.Setenv("NAMECOM_TOKEN", "")
+
+	t.Run("a profile named default is used without the default key", func(t *testing.T) {
+		f := &File{Profiles: map[string]Profile{
+			"default": {Username: "alice", Token: "aaa"},
+		}}
+		creds, err := Resolve(f, Overrides{})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if creds.Username != "alice" || creds.Profile != "default" {
+			t.Errorf("got %+v, want alice via the 'default' profile", creds)
+		}
+	})
+
+	t.Run("a lone profile is used whatever it is called", func(t *testing.T) {
+		f := &File{Profiles: map[string]Profile{
+			"work": {Username: "bob", Token: "bbb"},
+		}}
+		creds, err := Resolve(f, Overrides{})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if creds.Username != "bob" || creds.Profile != "work" {
+			t.Errorf("got %+v, want bob via the 'work' profile", creds)
+		}
+	})
+
+	t.Run("the default key still wins over the implied one", func(t *testing.T) {
+		f := &File{Default: "work", Profiles: map[string]Profile{
+			"default": {Username: "alice", Token: "aaa"},
+			"work":    {Username: "bob", Token: "bbb"},
+		}}
+		creds, err := Resolve(f, Overrides{})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if creds.Profile != "work" {
+			t.Errorf("profile = %q, want work", creds.Profile)
+		}
+	})
+
+	t.Run("ambiguity is an error that names the candidates", func(t *testing.T) {
+		f := &File{Profiles: map[string]Profile{
+			"work": {Username: "bob", Token: "bbb"},
+			"home": {Username: "eve", Token: "eee"},
+		}}
+		_, err := Resolve(f, Overrides{})
+		if err == nil {
+			t.Fatal("two profiles and no default resolved to credentials")
+		}
+		if !errors.Is(err, ErrNoCredentials) {
+			t.Errorf("error does not wrap ErrNoCredentials: %v", err)
+		}
+		for _, want := range []string{"home", "work", "--profile"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error does not mention %q: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("an empty file is still the plain sentinel", func(t *testing.T) {
+		// root.go swaps in friendlier wording for exactly this case, keyed on
+		// the error being the bare sentinel rather than a wrapped one.
+		_, err := Resolve(&File{Profiles: map[string]Profile{}}, Overrides{})
+		//nolint:errorlint // identity is the property under test
+		if err != ErrNoCredentials {
+			t.Errorf("got %v, want the bare ErrNoCredentials sentinel", err)
+		}
+	})
 }

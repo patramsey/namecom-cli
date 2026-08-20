@@ -9,6 +9,51 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `dns import` sent the **same idempotency key on every record**. The key was
+  minted once per invocation, but an invocation can perform many operations —
+  import posts once per record — so a 50-record zone file went out under one
+  key. An API honouring keys as documented ("reusing the same key returns the
+  original result instead of repeating the operation") would create the first
+  record, echo it back for the other 49, and let the CLI report the whole file
+  as imported. Each write now gets its own key. `--idempotency-key` still pins
+  every write in an invocation to one value, which is what makes re-running a
+  failed command collapse onto the original.
+- Credentials that existed were reported as missing. A config file with no
+  top-level `default:` key resolved to no profile at all, so `auth status` said
+  "no credentials configured — run 'namecom auth login'" (which would have
+  overwritten them) while `config list-profiles` printed the profile it was
+  refusing to use. A profile named `default` is now used without the key, as is
+  a lone profile under any name; two or more with no default is an error that
+  names them and suggests `--profile`.
+- Seven list commands could page forever. Only `domain list` bounded its walk
+  with `lastPage`; the rest trusted the server to stop saying "there is more",
+  so one that kept answering `nextPage: 2` made `dns list --all` run
+  indefinitely at the full client rate limit. All paginated walks — including
+  record-ID shell completion and `namecom status` — now stop unless the page
+  number advances and stays within `lastPage`.
+- A 429 carrying a long `Retry-After` was swallowed. The CLI slept on it until
+  the request deadline expired and then reported `context deadline exceeded
+  (Client.Timeout exceeded while awaiting headers)` with exit 1 — a transport
+  error, hiding the rate-limit answer the server had already given. A wait that
+  cannot fit the remaining budget is no longer taken: the 429 is returned as-is,
+  with exit 5 and a hint naming the wait the API asked for. A server-supplied
+  wait is also capped at 30s, matching the cap computed backoff always had.
+- Error bodies that are not the API's JSON envelope are summarized instead of
+  echoed. A 502 HTML page from a proxy became a single 20 KB error message; it
+  is now collapsed to one line and truncated to 400 characters with the dropped
+  byte count disclosed.
+
+### Changed
+- `--timeout` is described as the total budget for one API call including
+  retries, which is what it has always been (`http.Client.Timeout`), rather
+  than "per-request timeout".
+
+### Documentation
+- `CLAUDE.md` claimed `transport.go` retries a POST when `X-Idempotency-Key` is
+  set. It never has: `idempotent()` covers GET/HEAD/PUT/DELETE only, and
+  `transport_test.go` pins that a key does not make a POST retryable on 5xx.
+
 ### Added
 - `--wide` keeps every table column even when the table is wider than the
   terminal.

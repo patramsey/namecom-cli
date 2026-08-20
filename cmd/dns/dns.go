@@ -619,14 +619,15 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen
 		records = append(records, result.Records...)
 		lastNextPage = result.NextPage
 
-		if result.NextPage == nil || *result.NextPage == 0 {
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok {
 			break
 		}
 		if !all {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = next
 	}
 	if hasMore {
 		nextPage = lastNextPage

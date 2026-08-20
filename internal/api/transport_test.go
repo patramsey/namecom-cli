@@ -108,32 +108,77 @@ func TestNoRetryOn4xx(t *testing.T) {
 }
 
 func TestContextCancelStopsRetry(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Retry-After", "30") // long, so we cancel during backoff
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
+	// Two ways a wait can be cut short, and they now end differently.
+	//
+	// When the wait plainly cannot fit the deadline, the transport no longer
+	// sleeps into cancellation — it hands back the response it already has, so
+	// a 429 stays a 429 instead of becoming "context deadline exceeded". When
+	// the wait does fit and the context is cancelled underneath it, the sleep
+	// must still abandon the backoff rather than run it to completion.
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-	start := time.Now()
-	_, err := newTestClient(http.DefaultTransport).Do(req)
-	elapsed := time.Since(start)
-	if err == nil {
-		t.Fatal("expected error from cancelled context")
-	}
+	t.Run("a wait that cannot fit returns the response, not a context error", func(t *testing.T) {
+		var calls int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
 
-	// Assert the cancellation actually short-circuited the backoff. Checking
-	// only err != nil passes even if sleep() ignores ctx entirely and blocks for
-	// the full retry schedule — verified: replacing the ctx.Done() select with a
-	// bare <-timer.C left this green while the call took 30s instead of 0.1s.
-	if elapsed > 2*time.Second {
-		t.Errorf("cancellation did not interrupt the backoff: took %v", elapsed)
-	}
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		t.Errorf("expected a context error, got %v", err)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+		start := time.Now()
+		resp, err := newTestClient(http.DefaultTransport).Do(req)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("got a transport error instead of the 429: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("status = %d, want the 429 preserved", resp.StatusCode)
+		}
+		if elapsed > 2*time.Second {
+			t.Errorf("did not short-circuit the backoff: took %v", elapsed)
+		}
+		if got := atomic.LoadInt32(&calls); got != 1 {
+			t.Errorf("calls = %d, want 1 — no retry fits in the budget", got)
+		}
+	})
+
+	t.Run("cancelling during an eligible backoff abandons it", func(t *testing.T) {
+		// No deadline, so the wait is eligible and the transport commits to
+		// sleeping. Checking only err != nil would pass even if sleep() ignored
+		// ctx entirely and blocked for the full schedule — verified: replacing
+		// the ctx.Done() select with a bare <-timer.C left this green while the
+		// call took 30s instead of 0.1s. The elapsed-time bound is the assertion
+		// that actually holds sleep() to account.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+		time.AfterFunc(100*time.Millisecond, cancel)
+		defer cancel()
+
+		start := time.Now()
+		_, err := newTestClient(http.DefaultTransport).Do(req)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected an error from the cancelled context")
+		}
+		if elapsed > 2*time.Second {
+			t.Errorf("cancellation did not interrupt the backoff: took %v", elapsed)
+		}
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("expected a context error, got %v", err)
+		}
+	})
 }
 
 func TestIdempotent(t *testing.T) {
@@ -489,5 +534,109 @@ func TestRateLimiterPacesRequests(t *testing.T) {
 	if elapsed < minExpected {
 		t.Errorf("requests were not rate limited: %d requests in %v, expected at least %v",
 			n, elapsed, minExpected)
+	}
+}
+
+// TestRetryAfterDoesNotOutliveDeadline guards the 429 path against burning the
+// caller's whole time budget on a wait the server asked for.
+//
+// A 429 carrying "Retry-After: 600" used to be slept on until the client
+// timeout fired. The user waited the full 30s and got "context deadline
+// exceeded (Client.Timeout exceeded while awaiting headers)" — exit 1, a
+// transport error, with the rate-limit answer the server had already given
+// thrown away. Handing the response back keeps the status, the body, and the
+// exit code 5 that scripts branch on.
+func TestRetryAfterDoesNotOutliveDeadline(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"slow down"}`))
+	}))
+	defer srv.Close()
+
+	tr := &retryTransport{
+		base:       http.DefaultTransport,
+		limiter:    rate.NewLimiter(rate.Inf, 1),
+		maxRetries: 3,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+
+	start := time.Now()
+	resp, err := tr.RoundTrip(req)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("RoundTrip returned an error instead of the 429: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 preserved", resp.StatusCode)
+	}
+	if elapsed > time.Second {
+		t.Errorf("took %s; it should return immediately rather than sleep into the deadline", elapsed)
+	}
+	if calls != 1 {
+		t.Errorf("server saw %d calls, want 1 — no retry fits in the budget", calls)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "slow down") {
+		t.Errorf("response body was consumed: %q", body)
+	}
+}
+
+// TestRetryAfterHonouredWhenItFits pins the other side: a short Retry-After
+// inside the budget is still respected, so this fix did not disable the header.
+func TestRetryAfterHonouredWhenItFits(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	tr := &retryTransport{
+		base:       http.DefaultTransport,
+		limiter:    rate.NewLimiter(rate.Inf, 1),
+		maxRetries: 3,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 after the retry", resp.StatusCode)
+	}
+	if calls != 2 {
+		t.Errorf("server saw %d calls, want 2", calls)
+	}
+}
+
+// TestRetryAfterClamped pins the cap on a server-supplied wait for the case
+// with no deadline at all. Computed backoff was always bounded by maxBackoff;
+// the header went through unbounded, so one response could park the process
+// for as long as it liked.
+func TestRetryAfterClamped(t *testing.T) {
+	tr := &retryTransport{}
+	huge := 12 * time.Hour
+	if got := tr.backoffDelay(0, &huge); got != maxBackoff {
+		t.Errorf("backoffDelay with Retry-After 12h = %s, want it clamped to %s", got, maxBackoff)
+	}
+	short := 2 * time.Second
+	if got := tr.backoffDelay(0, &short); got != short {
+		t.Errorf("backoffDelay with Retry-After 2s = %s, want it honoured", got)
 	}
 }

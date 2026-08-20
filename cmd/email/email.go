@@ -116,14 +116,15 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		all = append(all, result.EmailForwarding...)
 		lastResult = result
-		if result.NextPage == nil || *result.NextPage == 0 {
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = next
 		spin.Update(fmt.Sprintf("Fetching email forwardings… (page %d, %d so far)", page, len(all)))
 	}
 	spin.Stop()

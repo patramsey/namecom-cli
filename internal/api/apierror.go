@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // APIError is a normalized name.com API error. The API returns a consistent
@@ -16,6 +17,9 @@ type APIError struct {
 	StatusCode int
 	Message    string
 	Details    string
+	// RetryAfter carries the Retry-After header from a 429, when the server
+	// sent one. Zero means it did not.
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -36,6 +40,11 @@ func (e *APIError) UserHint() string {
 	case 404:
 		return "the requested resource was not found — check the domain name or ID"
 	case 429:
+		// Say how long when the server said so: "wait a moment" is misleading
+		// advice next to a Retry-After of ten minutes.
+		if e.RetryAfter > 0 {
+			return fmt.Sprintf("rate limited — the API asked to wait %s before retrying", e.RetryAfter.Round(time.Second))
+		}
 		return "rate limited — wait a moment and try again"
 	}
 	if e.StatusCode >= 500 {
@@ -61,10 +70,7 @@ func ErrorFromResponse(statusCode int, body []byte) *APIError {
 		e.Message = env.Message
 		e.Details = env.Details
 	} else {
-		e.Message = strings.TrimSpace(string(body))
-		if e.Message == "" {
-			e.Message = http.StatusText(statusCode)
-		}
+		e.Message = summarizeBody(body, statusCode)
 	}
 	if statusCode == http.StatusUnauthorized {
 		// Error() already renders details as "message (details)", so the note
@@ -81,10 +87,38 @@ func ErrorFromResponse(statusCode int, body []byte) *APIError {
 	return e
 }
 
+// maxFallbackMessage bounds how much of a non-JSON error body becomes the
+// error message.
+const maxFallbackMessage = 400
+
+// summarizeBody turns a body that is not the API's JSON envelope into a usable
+// one-line message.
+//
+// It used to be passed through verbatim, capped only by the 1 MiB read limit.
+// A proxy answering with an HTML error page therefore became the error text: a
+// 502 from nginx rendered as a single 20 KB line of markup, in the terminal and
+// inside the JSON error envelope alike. Collapse the whitespace, keep the
+// front of it, and say how much was dropped.
+func summarizeBody(body []byte, statusCode int) string {
+	msg := strings.Join(strings.Fields(string(body)), " ")
+	if msg == "" {
+		return http.StatusText(statusCode)
+	}
+	if len(msg) > maxFallbackMessage {
+		return fmt.Sprintf("%s… (%d bytes of non-JSON body truncated)",
+			strings.TrimSpace(msg[:maxFallbackMessage]), len(body))
+	}
+	return msg
+}
+
 // parseError builds an APIError from a non-2xx response, reading and closing
 // the body. The caller should only invoke this for non-2xx responses.
 func parseError(resp *http.Response) *APIError {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	_ = resp.Body.Close()
-	return ErrorFromResponse(resp.StatusCode, body)
+	e := ErrorFromResponse(resp.StatusCode, body)
+	if ra := parseRetryAfter(resp.Header.Get("Retry-After")); ra != nil {
+		e.RetryAfter = *ra
+	}
+	return e
 }

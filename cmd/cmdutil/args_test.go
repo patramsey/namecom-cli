@@ -227,3 +227,61 @@ func TestGroupCmd(t *testing.T) {
 		}
 	})
 }
+
+// TestNextPage guards the paginated-walk stopping conditions.
+//
+// The old condition was `nextPage == nil || *nextPage == 0` alone, which trusts
+// the server to eventually stop saying "there is more". Against one that kept
+// answering nextPage:2, `dns list --all` walked forever at the full client rate
+// limit — confirmed by running it: still going after 20 seconds. domain list
+// escaped only because it bounded on lastPage; the other seven list commands
+// and record-ID completion did not.
+func TestNextPage(t *testing.T) {
+	p := func(v int32) *int32 { return &v }
+
+	tests := []struct {
+		name     string
+		current  int32
+		next     *int32
+		last     *int32
+		wantPage int32
+		wantOK   bool
+	}{
+		{"advances normally", 1, p(2), p(9), 2, true},
+		{"nil next ends the walk", 3, nil, p(9), 3, false},
+		{"zero next ends the walk", 3, p(0), p(9), 3, false},
+		{"a next that repeats the current page ends the walk", 2, p(2), p(99), 2, false},
+		{"a next that goes backwards ends the walk", 5, p(3), p(99), 5, false},
+		{"a next beyond lastPage ends the walk", 9, p(10), p(9), 9, false},
+		{"reaching lastPage exactly is allowed", 8, p(9), p(9), 9, true},
+		{"an unknown lastPage still allows advancing", 1, p(2), nil, 2, true},
+		{"a zero lastPage is treated as unknown", 1, p(2), p(0), 2, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPage, gotOK := NextPage(tt.current, tt.next, tt.last)
+			if gotPage != tt.wantPage || gotOK != tt.wantOK {
+				t.Errorf("NextPage(%d, %v, %v) = (%d, %v), want (%d, %v)",
+					tt.current, tt.next, tt.last, gotPage, gotOK, tt.wantPage, tt.wantOK)
+			}
+		})
+	}
+
+	t.Run("a stuck server terminates the walk", func(t *testing.T) {
+		// The exact shape that hung: nextPage pinned at 2 forever.
+		page, steps := int32(1), 0
+		for {
+			next, ok := NextPage(page, p(2), p(99))
+			if !ok {
+				break
+			}
+			page = next
+			if steps++; steps > 100 {
+				t.Fatal("walk did not terminate against a non-advancing nextPage")
+			}
+		}
+		if steps != 1 {
+			t.Errorf("walk took %d steps, want 1 (page 1 -> 2, then stop)", steps)
+		}
+	})
+}

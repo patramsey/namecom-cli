@@ -110,7 +110,8 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		}
 		contacts = append(contacts, result.UnverifiedContacts...)
 		lastResult = result
-		if result.NextPage == nil || *result.NextPage == 0 {
+		next, ok := cmdutil.NextPage(page, result.NextPage, &result.LastPage)
+		if !ok {
 			break
 		}
 		// --quiet is for scripting, and the "showing first page" hint lives in
@@ -121,7 +122,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = next
 	}
 	spin.Stop()
 

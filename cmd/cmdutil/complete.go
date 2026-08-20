@@ -67,10 +67,11 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 			// "12345\tA @ → 1.2.3.4" — tab separates value from description in zsh/fish
 			completions = append(completions, fmt.Sprintf("%s\t%s %s → %s", id, typ, host, answer))
 		}
-		if result.NextPage == nil || *result.NextPage == 0 {
+		next, ok := NextPage(page, result.NextPage, result.LastPage)
+		if !ok {
 			break
 		}
-		page = *result.NextPage
+		page = next
 	}
 	return completions, cobra.ShellCompDirectiveNoFileComp
 }

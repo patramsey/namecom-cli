@@ -136,14 +136,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		orders = append(orders, result.Orders...)
 		lastResult = result
-		if result.NextPage == nil || *result.NextPage == 0 {
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok {
 			break
 		}
 		if !autoPage {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = next
 		spin.Update(fmt.Sprintf("Fetching orders… (page %d, %d so far)", page, len(orders)))
 	}
 	spin.Stop()

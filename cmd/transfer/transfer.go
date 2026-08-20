@@ -145,14 +145,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		transfers = append(transfers, result.Transfers...)
 		lastResult = result
-		if result.NextPage == nil || *result.NextPage == 0 {
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok {
 			break
 		}
 		if !listAll {
 			hasMore = true
 			break
 		}
-		page = *result.NextPage
+		page = next
 		spin.Update(fmt.Sprintf("Fetching transfers… (page %d, %d so far)", page, len(transfers)))
 	}
 	spin.Stop()
