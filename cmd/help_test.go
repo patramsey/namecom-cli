@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -192,4 +193,87 @@ func TestPrintFilteredFlags_ShowsOnlyAllowedFlags(t *testing.T) {
 	if strings.Contains(got, "--token") {
 		t.Errorf("a flag outside the allow list must not be rendered, got:\n%s", got)
 	}
+}
+
+// TestHelpLayout pins the three help-page fixes. None of them had a test, and
+// all three are the kind of thing that silently reverts when someone edits the
+// template for an unrelated reason.
+func TestHelpLayout(t *testing.T) {
+	noop := func(*cobra.Command, []string) {}
+
+	t.Run("examples appear above the flag tables", func(t *testing.T) {
+		// Examples used to print last — below Flags, below Global Flags, and
+		// below the "see all global options" footer — which put the most-read
+		// part of a help page furthest down it.
+		root := &cobra.Command{Use: "namecom"}
+		cmd := &cobra.Command{
+			Use:     "create <domain>",
+			Short:   "Create a DNS record",
+			Example: "  namecom dns create example.com --type A --answer 1.2.3.4",
+			Run:     noop,
+		}
+		cmd.Flags().String("answer", "", "record value")
+		root.AddCommand(cmd)
+
+		var buf bytes.Buffer
+		printHelp(&buf, cmd, false)
+		got := buf.String()
+
+		examples := strings.Index(got, "Examples:")
+		flags := strings.Index(got, "Flags:")
+		if examples < 0 || flags < 0 {
+			t.Fatalf("help is missing a section:\n%s", got)
+		}
+		if examples > flags {
+			t.Errorf("Examples renders below Flags:\n%s", got)
+		}
+	})
+
+	t.Run("a command group asks for a subcommand, not flags", func(t *testing.T) {
+		// UseLine() appends "[flags]" to anything with flags, so every group
+		// advertised `namecom domain [flags]` — an invocation that does nothing.
+		root := &cobra.Command{Use: "namecom"}
+		group := &cobra.Command{Use: "domain", Short: "Manage domains"}
+		group.AddCommand(&cobra.Command{Use: "list", Short: "List domains", Run: noop})
+		root.AddCommand(group)
+
+		if got := usageLine(group); got != "namecom domain <command>" {
+			t.Errorf("usageLine(group) = %q, want %q", got, "namecom domain <command>")
+		}
+		// A leaf command keeps cobra's own usage line, placeholders and all.
+		leaf := &cobra.Command{Use: "get <domain>", Run: noop}
+		root.AddCommand(leaf)
+		if got := usageLine(leaf); !strings.Contains(got, "<domain>") {
+			t.Errorf("usageLine(leaf) = %q, want it to keep its argument placeholder", got)
+		}
+		// The root keeps "[command] [flags]": its persistent flags are the
+		// ones the page is documenting.
+		if got := usageLine(root); strings.Contains(got, "<command>") {
+			t.Errorf("usageLine(root) = %q, want cobra's own line", got)
+		}
+	})
+
+	t.Run("only string defaults are quoted", func(t *testing.T) {
+		// Quoting uniformly rendered (default "300") and (default "30s"),
+		// which reads like the flag wants a quoted literal.
+		fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		fs.String("host", "@", "hostname")
+		fs.Int64("ttl", 300, "TTL in seconds")
+		fs.Duration("timeout", 30*time.Second, "per-request timeout")
+
+		var buf bytes.Buffer
+		printFlags(&buf, fs, false, noStyle)
+		got := buf.String()
+
+		for _, want := range []string{`(default "@")`, `(default 300)`, `(default 30s)`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("missing %s in:\n%s", want, got)
+			}
+		}
+		for _, unwanted := range []string{`(default "300")`, `(default "30s")`} {
+			if strings.Contains(got, unwanted) {
+				t.Errorf("non-string default rendered as %s:\n%s", unwanted, got)
+			}
+		}
+	})
 }

@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -202,6 +203,18 @@ func TestGroupCmd(t *testing.T) {
 		group := newGroup()
 		if err := group.Args(group, nil); err != nil {
 			t.Errorf("bare group name rejected: %v", err)
+		}
+	})
+
+	t.Run("bare group prints help rather than erroring", func(t *testing.T) {
+		group := newGroup()
+		var buf bytes.Buffer
+		group.SetOut(&buf)
+		if err := group.RunE(group, nil); err != nil {
+			t.Fatalf("group RunE returned an error: %v", err)
+		}
+		if !strings.Contains(buf.String(), "register") {
+			t.Errorf("bare group did not print its subcommands:\n%s", buf.String())
 		}
 	})
 

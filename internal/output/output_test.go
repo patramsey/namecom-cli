@@ -820,3 +820,47 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 		}
 	})
 }
+
+// TestExpiryStyleThresholds pins the urgency thresholds. The expired and
+// expiring-this-week cases were two byte-identical switch arms; merging them is
+// only safe if something asserts both still resolve to red.
+//
+// It asserts on the style rather than on rendered output because lipgloss
+// degrades to no-op styles off a TTY: an earlier version of this test compared
+// ANSI prefixes, every expected prefix was the empty string, and all three
+// cases passed without checking anything.
+func TestExpiryStyleThresholds(t *testing.T) {
+	tests := []struct {
+		name string
+		days float64
+		want lipgloss.TerminalColor
+	}{
+		{"long expired", -758, acRed},
+		{"expired today", -0.5, acRed},
+		{"expiring inside a week", 3, acRed},
+		{"the week boundary", 6.9, acRed},
+		{"expiring inside a month", 20, acAmber},
+		{"the month boundary", 29.9, acAmber},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := expiryStyle(tt.days).GetForeground(); got != tt.want {
+				t.Errorf("expiryStyle(%.1f) foreground = %v, want %v", tt.days, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("far future is neither red nor amber", func(t *testing.T) {
+		fg := expiryStyle(900).GetForeground()
+		if fg == acRed || fg == acAmber {
+			t.Errorf("expiryStyle(900) = %v, want the dim style", fg)
+		}
+	})
+
+	t.Run("a far-future date still reads in years", func(t *testing.T) {
+		at := time.Now().Add(900 * 24 * time.Hour)
+		if got := noColor().ExpiryDate(&at); !strings.Contains(got, "in 2 years") {
+			t.Errorf("ExpiryDate(900 days) = %q, want a year-scale relative time", got)
+		}
+	})
+}

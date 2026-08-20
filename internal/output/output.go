@@ -590,13 +590,22 @@ func (c *Config) ExpiryDate(t *time.Time) string {
 	if !c.ColorEnabled() {
 		return label
 	}
+	return expiryStyle(days).Render(label)
+}
+
+// expiryStyle picks the urgency styling for a date this many days away.
+//
+// Split out from ExpiryDate so the thresholds can be asserted directly: off a
+// TTY lipgloss degrades every style to a no-op, so a test comparing rendered
+// output cannot tell red from dim and passes whatever the code does.
+func expiryStyle(days float64) lipgloss.Style {
 	switch {
 	case days < 7: // expired, or expiring inside a week
-		return lipgloss.NewStyle().Bold(true).Foreground(acRed).Render(label)
+		return lipgloss.NewStyle().Bold(true).Foreground(acRed)
 	case days < 30:
-		return lipgloss.NewStyle().Bold(true).Foreground(acAmber).Render(label)
+		return lipgloss.NewStyle().Bold(true).Foreground(acAmber)
 	default:
-		return styleDim.Render(label)
+		return styleDim
 	}
 }
 
