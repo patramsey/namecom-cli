@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Added
+- `--wide` keeps every table column even when the table is wider than the
+  terminal.
+
+### Changed
+- `--timeout` is described as the total budget for one API call including
+  retries, which is what it has always been (`http.Client.Timeout`), rather
+  than "per-request timeout".
+
 ### Fixed
 - `dns import` sent the **same idempotency key on every record**. The key was
   minted once per invocation, but an invocation can perform many operations —
@@ -43,22 +52,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   echoed. A 502 HTML page from a proxy became a single 20 KB error message; it
   is now collapsed to one line and truncated to 400 characters with the dropped
   byte count disclosed.
-
-### Changed
-- `--timeout` is described as the total budget for one API call including
-  retries, which is what it has always been (`http.Client.Timeout`), rather
-  than "per-request timeout".
-
-### Documentation
-- `CLAUDE.md` claimed `transport.go` retries a POST when `X-Idempotency-Key` is
-  set. It never has: `idempotent()` covers GET/HEAD/PUT/DELETE only, and
-  `transport_test.go` pins that a key does not make a POST retryable on 5xx.
-
-### Added
-- `--wide` keeps every table column even when the table is wider than the
-  terminal.
-
-### Fixed
 - A mistyped subcommand now fails instead of succeeding. Cobra checks for
   unknown commands only on the root command, so `namecom domain regsiter
   example.com` printed the group's help and exited **0** — meaning
@@ -90,6 +83,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the flag tables and footer, command groups show `namecom <group> <command>`
   instead of the uninvokable `namecom <group> [flags]`, and non-string flag
   defaults print unquoted (`default 300`, not `default "300"`).
+
+### Documentation
+- `CLAUDE.md` claimed `transport.go` retries a POST when `X-Idempotency-Key` is
+  set. It never has: `idempotent()` covers GET/HEAD/PUT/DELETE only, and
+  `transport_test.go` pins that a key does not make a POST retryable on 5xx.
 
 ## [0.2.4] - 2026-08-17
 
