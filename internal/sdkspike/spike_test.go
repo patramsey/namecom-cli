@@ -3,6 +3,7 @@ package sdkspike
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
+	sdk "github.com/namedotcom/core-api-go/client"
+	"github.com/namedotcom/core-api-go/core"
 	"github.com/namedotcom/core-api-go/option"
 )
 
@@ -35,7 +38,7 @@ func TestWithoutRetriesHoldsAtClientScope(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		c := New(srv.URL, "u", "t", &http.Client{Timeout: 5 * time.Second})
+		c := rawClient(srv.URL, option.WithoutRetries())
 		_, err := c.DNS.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
 			DomainName: "example.com",
 		})
@@ -63,7 +66,7 @@ func TestWithoutRetriesHoldsAtClientScope(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		c := New(srv.URL, "u", "t", &http.Client{Timeout: 5 * time.Second})
+		c := rawClient(srv.URL)
 		_, _ = c.DNS.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
 			DomainName: "example.com",
 		}, option.WithoutRetries())
@@ -300,7 +303,7 @@ func TestOurTransportSurvivesTheWiring(t *testing.T) {
 	tr := &countingTransport{base: http.DefaultTransport}
 	c := New(srv.URL, "u", "t", &http.Client{Transport: tr, Timeout: 5 * time.Second})
 
-	if _, err := c.DNS.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
+	if _, err := c.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
 		DomainName: "example.com",
 	}); err != nil {
 		t.Fatalf("ListRecords: %v", err)
@@ -323,7 +326,7 @@ func TestBasicAuthMatchesOurHeader(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := New(srv.URL, "alice", "s3cret", &http.Client{Timeout: 5 * time.Second})
-	if _, err := c.DNS.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
+	if _, err := c.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
 		DomainName: "example.com",
 	}); err != nil {
 		t.Fatalf("ListRecords: %v", err)
@@ -332,5 +335,111 @@ func TestBasicAuthMatchesOurHeader(t *testing.T) {
 	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:s3cret"))
 	if got != want {
 		t.Errorf("Authorization = %q, want %q", got, want)
+	}
+}
+
+// rawClient builds an unguarded SDK client, used only to demonstrate the two
+// defects. Production wiring goes through NewGuarded, which is why *sdk.Namecom
+// is unexported there.
+func rawClient(baseURL string, opts ...option.RequestOption) *sdk.Namecom {
+	return sdk.NewNamecom(append([]option.RequestOption{
+		option.WithBaseURL(baseURL),
+		option.WithBasicAuth("u", "t"),
+		option.WithHTTPClient(&http.Client{Timeout: 90 * time.Second}),
+	}, opts...)...)
+}
+
+// ---- the workarounds themselves --------------------------------------------
+
+// TestWorkaroundSuppressesDuplicateWrite is the one that matters for safety.
+// The guarded client must issue a POST exactly once against a 5xx, without the
+// caller having to remember anything.
+func TestWorkaroundSuppressesDuplicateWrite(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL, "u", "t", &http.Client{Timeout: 30 * time.Second})
+	_, err := c.CreateRecord(context.Background(), &coreapigo.DNSCreateRecordBody{
+		DomainName: "example.com",
+		Type:       coreapigo.DNSCreateRecordBodyType("A"),
+		Host:       "spike",
+		Answer:     "1.2.3.4",
+	})
+	if err == nil {
+		t.Fatal("expected the 500 to surface as an error")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("POST was sent %d times, want exactly 1 — the write was duplicated", got)
+	}
+}
+
+// TestWorkaroundCapsDeadSleep covers the second defect, which disabling retries
+// does NOT solve on its own: Retrier.run sleeps before it checks the attempt
+// counter, so a call with retries off still waits out the server's Retry-After
+// and only then declines to retry.
+//
+// Stripping the header on the way back to the SDK caps that at its
+// minRetryDelay. Measured on the unguarded path: 30s. Guarded: ~1s.
+func TestWorkaroundCapsDeadSleep(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"slow down"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL, "u", "t", &http.Client{Timeout: 90 * time.Second})
+	start := time.Now()
+	_, err := c.ListRecords(context.Background(), &coreapigo.ListRecordsRequest{
+		DomainName: "example.com",
+	})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected the 429 to surface as an error")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("call took %s; the Retry-After strip is not capping the SDK's dead sleep", elapsed)
+	}
+	// The status must survive the strip — exit-code mapping depends on it.
+	var apiErr *core.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error is not a *core.APIError: %v", err)
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 preserved through the strip", apiErr.StatusCode)
+	}
+	t.Logf("guarded call against Retry-After: 30 took %s and kept status %d",
+		elapsed.Round(100*time.Millisecond), apiErr.StatusCode)
+}
+
+// TestStripIsScopedToTheSDKClient pins that the header removal does not leak
+// into the caller's own transport. `namecom api` and anything else reading raw
+// responses must still see what the server sent.
+func TestStripIsScopedToTheSDKClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+
+	ours := &http.Client{Timeout: 30 * time.Second}
+	_ = sdkHTTPClient(ours) // wrapping must not mutate the client passed in
+
+	resp, err := ours.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if got := resp.Header.Get("Retry-After"); got != "7" {
+		t.Errorf("Retry-After = %q on our own client, want %q — the strip leaked", got, "7")
 	}
 }

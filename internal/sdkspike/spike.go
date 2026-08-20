@@ -28,13 +28,8 @@ import (
 // 5xx (it dispatches on status code alone) and sleeps with a bare time.Sleep
 // that ignores context. Ours refuses POST retries and returns the response
 // rather than sleeping past the deadline. Only one of the two may be live.
-func New(baseURL, username, token string, httpClient *http.Client) *sdk.Namecom {
-	return sdk.NewNamecom(
-		option.WithBaseURL(baseURL),
-		option.WithBasicAuth(username, token),
-		option.WithHTTPClient(httpClient),
-		option.WithoutRetries(),
-	)
+func New(baseURL, username, token string, httpClient *http.Client) *Client {
+	return NewGuarded(baseURL, username, token, httpClient)
 }
 
 // NewWithSDKRetries is the same client with the SDK's retry layer left ON.
@@ -53,7 +48,7 @@ func NewWithSDKRetries(baseURL, username, token string, httpClient *http.Client)
 // reports nextPage/lastPage as *int where the generated client used *int32, so
 // cmdutil.NextPage's signature does not carry over unchanged — this is the
 // int-width adaptation the migration needs, isolated so it can be judged.
-func ListAllRecords(ctx context.Context, c *sdk.Namecom, domain string) ([]*coreapigo.Record, int, error) {
+func ListAllRecords(ctx context.Context, c *Client, domain string) ([]*coreapigo.Record, int, error) {
 	var (
 		all      []*coreapigo.Record
 		page     = 1
@@ -61,7 +56,7 @@ func ListAllRecords(ctx context.Context, c *sdk.Namecom, domain string) ([]*core
 	)
 	for {
 		p := page
-		resp, err := c.DNS.ListRecords(ctx, &coreapigo.ListRecordsRequest{
+		resp, err := c.ListRecords(ctx, &coreapigo.ListRecordsRequest{
 			DomainName: domain,
 			Page:       &p,
 		})
@@ -110,8 +105,8 @@ type Changed struct {
 }
 
 // UpdateRecord mirrors runUpdate in cmd/dns/dns.go against the SDK.
-func UpdateRecord(ctx context.Context, c *sdk.Namecom, domain string, id int, ch Changed) (*coreapigo.Record, error) {
-	current, err := c.DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{
+func UpdateRecord(ctx context.Context, c *Client, domain string, id int, ch Changed) (*coreapigo.Record, error) {
+	current, err := c.GetRecord(ctx, &coreapigo.GetRecordRequest{
 		DomainName: domain,
 		ID:         id,
 	})
@@ -150,7 +145,7 @@ func UpdateRecord(ctx context.Context, c *sdk.Namecom, domain string, id int, ch
 		body.Priority = ch.Priority
 	}
 
-	updated, err := c.DNS.UpdateRecord(ctx, body)
+	updated, err := c.UpdateRecord(ctx, body)
 	if err != nil {
 		return nil, fmt.Errorf("updating record %d on %s: %w", id, domain, err)
 	}
