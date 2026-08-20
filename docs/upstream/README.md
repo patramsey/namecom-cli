@@ -2,17 +2,17 @@
 
 Bug reports written against dependencies but **not yet filed**. They live here so
 the analysis is not lost between the day it is done and the day someone opens
-the issue, and so a workaround in this repo can point at the reasoning behind it.
+the issue — the work of reproducing a defect and verifying a fix is worth more
+than the few minutes it takes to paste it into a tracker.
 
 When one is filed, replace its body with a link to the filed issue and keep the
-file — the workaround it justifies will outlive the report.
+file, so the reproduction stays with the repository that produced it.
 
 | Draft | Against | Status |
 |---|---|---|
 | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | not filed |
 | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | not filed |
 
-Both are worked around in `internal/sdkspike`. See
-[`workarounds.md`](workarounds.md) for what each one costs, why the two are not
-one problem, how the test suite will tell you when upstream fixes them, and the
-removal steps for each.
+Neither is worked around in this repository. What a mitigation would look like,
+and what each was measured to cost, is recorded in
+[`core-api-go-mitigations.md`](core-api-go-mitigations.md) for the #40 decision.
