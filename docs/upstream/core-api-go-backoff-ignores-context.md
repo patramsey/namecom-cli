@@ -1,5 +1,8 @@
 # Retry backoff ignores the request context
 
+**Filed 2026-08-20 as [namedotcom/core-api-go#4](https://github.com/namedotcom/core-api-go/issues/4).** Kept here so the reproduction stays with the repository that produced it.
+
+
 **Version:** v1.33.2 · **Go:** 1.26.6
 
 ## Summary

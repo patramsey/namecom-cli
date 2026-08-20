@@ -5,12 +5,12 @@ what a mitigation would look like and what it was measured to cost, so the
 information is available to the #40 decision and to the upstream reports
 without anyone having to rediscover it.
 
-The defects themselves are drafted as issues in this directory:
+The defects themselves are filed upstream and drafted in this directory:
 
-| # | Defect | Draft |
+| # | Defect | Upstream |
 |---|---|---|
-| 1 | `option.WithoutRetries()` is silently ignored at client scope | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) |
-| 2 | Retry backoff sleeps with a bare `time.Sleep`, ignoring the request context | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) |
+| 1 | `option.WithoutRetries()` is silently ignored at client scope | [#3](https://github.com/namedotcom/core-api-go/issues/3) · [draft](core-api-go-withoutretries-ignored.md) |
+| 2 | Retry backoff sleeps with a bare `time.Sleep`, ignoring the request context | [#4](https://github.com/namedotcom/core-api-go/issues/4) · [draft](core-api-go-backoff-ignores-context.md) |
 
 ## They are not one problem
 
@@ -87,7 +87,9 @@ exist on the current generated client.
 
 Both mitigations work and were measured. Neither is adopted, and the preference
 is that upstream fixes the defects instead — the suggested patches in both
-drafts were verified against a local copy of v1.33.2 and are small.
+drafts were verified against a local copy of v1.33.2 and are small. Both are now
+filed as [#3](https://github.com/namedotcom/core-api-go/issues/3) and
+[#4](https://github.com/namedotcom/core-api-go/issues/4).
 
 If the migration proceeds before a fix lands, mitigation 1 is not optional: it
 guards the money endpoints. Mitigation 2 is a latency question and could be
