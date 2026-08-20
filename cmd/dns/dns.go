@@ -131,7 +131,7 @@ func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages automatically")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
 
-	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT (required)")
+	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT (required)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", 300, "TTL in seconds (minimum 300)")
@@ -151,6 +151,7 @@ func init() {
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "show what would be created without calling the API")
 	_ = importCmd.MarkFlagRequired("file")
 
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, createCmd, updateCmd, deleteCmd, exportCmd, importCmd)
 }
 

@@ -81,6 +81,7 @@ contact click the link.`,
 
 func init() {
 	unverifiedCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(unverifiedCmd, resendCmd, verifyCmd)
 }
 

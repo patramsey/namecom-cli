@@ -51,7 +51,19 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 
 	// Usage line
 	fmt.Fprintln(w, style(helpHeading, "Usage:"))
-	fmt.Fprintf(w, "  %s\n\n", style(helpUsage, cmd.UseLine()))
+	fmt.Fprintf(w, "  %s\n\n", style(helpUsage, usageLine(cmd)))
+
+	// Aliases and examples sit directly under the usage line. Examples used to
+	// print last, below the flag tables and the "see all global options"
+	// footer, which put the most-read part of a help page furthest down it.
+	if len(cmd.Aliases) > 0 {
+		fmt.Fprintf(w, "%s  %s\n\n", style(helpHeading, "Aliases:"), strings.Join(cmd.Aliases, ", "))
+	}
+	if cmd.Example != "" {
+		fmt.Fprintln(w, style(helpHeading, "Examples:"))
+		fmt.Fprintln(w, cmd.Example)
+		fmt.Fprintln(w)
+	}
 
 	// Subcommands — rendered grouped when groups are defined, flat otherwise.
 	cmds := cmd.Commands()
@@ -144,24 +156,27 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 		fmt.Fprintln(w)
 	}
 
-	// Aliases
-	if len(cmd.Aliases) > 0 {
-		fmt.Fprintf(w, "%s  %s\n\n", style(helpHeading, "Aliases:"), strings.Join(cmd.Aliases, ", "))
-	}
-
-	// Examples
-	if cmd.Example != "" {
-		fmt.Fprintln(w, style(helpHeading, "Examples:"))
-		fmt.Fprintln(w, cmd.Example)
-		fmt.Fprintln(w)
-	}
-
 	// Footer hint
 	if cmd.HasAvailableSubCommands() {
 		hint := `Use "` + cmd.CommandPath() + ` [command] --help" for more information about a command.`
 		fmt.Fprintln(w, style(helpCmdDesc, hint))
 		fmt.Fprintln(w)
 	}
+}
+
+// usageLine renders the usage line, correcting it for command groups.
+//
+// UseLine() appends "[flags]" whenever a command has flags, so every group
+// printed as "namecom domain [flags]" — an invocation that does nothing. A
+// group's Use string is a bare name with no argument placeholders; when it also
+// has subcommands, what it actually takes is one of them. The root command is
+// left alone: "namecom [command] [flags]" is accurate there, since its
+// persistent flags are the ones being documented.
+func usageLine(cmd *cobra.Command) string {
+	if cmd.HasAvailableSubCommands() && cmd.HasParent() && !strings.Contains(cmd.Use, " ") {
+		return cmd.CommandPath() + " <command>"
+	}
+	return cmd.UseLine()
 }
 
 // essentialGlobalFlagNames returns the subset of global flags shown on subcommand help pages.
@@ -215,9 +230,16 @@ func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Styl
 		if len(nameType) > maxLen {
 			maxLen = len(nameType)
 		}
+		// Quote string defaults, print everything else bare. Quoting
+		// uniformly rendered numbers as (default "1") and durations as
+		// (default "30s"), which reads like the flag wants a quoted literal.
 		defVal := ""
 		if f.DefValue != "" && f.DefValue != "false" && f.DefValue != "0" && f.DefValue != "0s" && f.DefValue != "[]" {
-			defVal = fmt.Sprintf(" (default %q)", f.DefValue)
+			if f.Value.Type() == "string" {
+				defVal = fmt.Sprintf(" (default %q)", f.DefValue)
+			} else {
+				defVal = fmt.Sprintf(" (default %s)", f.DefValue)
+			}
 		}
 		entries = append(entries, flagEntry{nameType: nameType, usage: f.Usage, defVal: defVal})
 	})

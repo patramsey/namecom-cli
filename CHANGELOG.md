@@ -9,6 +9,43 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Added
+- `--wide` keeps every table column even when the table is wider than the
+  terminal.
+
+### Fixed
+- A mistyped subcommand now fails instead of succeeding. Cobra checks for
+  unknown commands only on the root command, so `namecom domain regsiter
+  example.com` printed the group's help and exited **0** — meaning
+  `namecom domain regsiter foo.com && deploy` ran `deploy`. Every command
+  group now rejects an unknown subcommand as a usage error (exit 2) and
+  offers the same "Did you mean this?" suggestion the root command does.
+  Invoking a group bare still prints its help and exits 0.
+- Invocation mistakes now exit **2**, as the documented exit-code table has
+  always claimed. Flag-value validation returned unclassified errors and
+  cobra's own required-flag check runs where `SetFlagErrorFunc` cannot see
+  it, so `--type ZZZ` and a missing `--answer` both exited 1 — the same code
+  a script uses to detect a server error — while `--badflag` beside them
+  exited 2.
+- Tables no longer overflow the terminal. They rendered at natural width
+  regardless of it (`domain list` came to 113 columns, `order list` 99,
+  `dns list` 87), so in an 80-column pane the rounded borders wrapped into
+  fragments. Trailing columns are now dropped until the table fits, with a
+  footer naming what was hidden; `--wide` restores them, and piped output is
+  unaffected.
+- Relative dates widen their unit past a quarter, so a domain paid through
+  2034 reads `in 8 years` rather than `in 2750 days`.
+- `--dry-run` said it printed "the API request that would be sent without
+  executing it", but only write operations honour it; reads always called the
+  API. The flag now says so rather than implying an invocation touches
+  nothing.
+- `dns create --type` omitted `CAA` from its list of record types, which the
+  validator has always accepted.
+- Help pages put `Examples:` directly under the usage line instead of below
+  the flag tables and footer, command groups show `namecom <group> <command>`
+  instead of the uninvokable `namecom <group> [flags]`, and non-string flag
+  defaults print unquoted (`default 300`, not `default "300"`).
+
 ## [0.2.4] - 2026-08-17
 
 ### Changed

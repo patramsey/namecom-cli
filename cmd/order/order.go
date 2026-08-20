@@ -75,6 +75,7 @@ func init() {
 	_ = refundCmd.MarkFlagRequired("order-id")
 	_ = refundCmd.MarkFlagRequired("item-ids")
 
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 

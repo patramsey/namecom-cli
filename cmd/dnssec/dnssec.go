@@ -71,6 +71,7 @@ func init() {
 	_ = createCmd.MarkFlagRequired("digest-type")
 	_ = createCmd.MarkFlagRequired("key-tag")
 
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, deleteCmd)
 }
 

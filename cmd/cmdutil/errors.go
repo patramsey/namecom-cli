@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/patramsey/namecom-cli/internal/api"
 )
@@ -85,6 +86,46 @@ func AsRestricted(err error, operation, program string) error {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
 		return &RestrictedError{Err: err, Program: program, Operation: operation}
+	}
+	return err
+}
+
+// cobraUsagePrefixes are the messages cobra produces for invocation mistakes it
+// validates itself, after our own hooks have run.
+//
+// SetFlagErrorFunc in root.go covers flag *parsing*, but cobra checks required
+// flags and flag groups later, inside execute(), and offers no hook for that
+// path — a missing required flag surfaced as a bare error and exited 1 while
+// `--badflag` right next to it exited 2. Matching the message is unpleasant but
+// it is the only seam cobra exposes; the strings are stable and asserted by
+// TestClassifyCobraUsage, which fails loudly if an upgrade rewords one.
+var cobraUsagePrefixes = []string{
+	"required flag(s) ",
+	"if any flags in the group ",
+	"unknown command ",
+	"unknown flag: ",
+	"unknown shorthand flag: ",
+	"invalid argument ",
+	"flag needs an argument",
+}
+
+// ClassifyCobraUsage wraps cobra's own invocation errors as UsageError so they
+// reach the documented exit code 2. Errors that are already classified, and
+// errors from anywhere else, pass through untouched.
+func ClassifyCobraUsage(err error) error {
+	if err == nil {
+		return nil
+	}
+	var usage *UsageError
+	var auth *AuthError
+	if errors.As(err, &usage) || errors.As(err, &auth) {
+		return err
+	}
+	msg := err.Error()
+	for _, p := range cobraUsagePrefixes {
+		if strings.Contains(msg, p) {
+			return NewUsageError(err)
+		}
 	}
 	return err
 }

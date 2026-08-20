@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 )
 
@@ -706,4 +707,160 @@ func TestTTYPredicates_ReportNonTTYUnderTest(t *testing.T) {
 	if IsInteractive() {
 		t.Error("IsInteractive() = true under `go test`, where stdin is not a terminal")
 	}
+}
+
+// TestRelativeTimeWidensUnit guards the unit-widening thresholds. Day counts
+// are exact inside a quarter, where a renewal decision is actually pending;
+// past that they widen, because "in 2750 days" told a reader nothing about a
+// domain paid through 2034.
+func TestRelativeTimeWidensUnit(t *testing.T) {
+	tests := []struct {
+		days float64
+		want string
+	}{
+		{0.5, "today"},
+		{-0.5, "expired today"},
+		{1, "in 1 day"},
+		{90, "in 90 days"},   // boundary: still exact days
+		{91, "in 3 months"},  // first step up
+		{194, "in 6 months"}, // a real expiry from `domain list`
+		{729, "in 24 months"},
+		{730, "in 2 years"}, // boundary: months give way to years
+		{2750, "in 8 years"},
+		{-3, "3 days ago"},
+		{-1, "1 day ago"},
+		{-758, "2 years ago"}, // a real expired domain from `domain list`
+	}
+	for _, tt := range tests {
+		if got := relativeTime(tt.days); got != tt.want {
+			t.Errorf("relativeTime(%.1f) = %q, want %q", tt.days, got, tt.want)
+		}
+	}
+}
+
+// TestTableFitsTerminalWidth guards the column-dropping behavior. Tables were
+// rendered at natural width regardless of the terminal: `domain list` measured
+// 113 columns against an 80-column pane, and the rounded borders came apart on
+// wrap. Columns now drop from the right, which is the least-important end,
+// and the footer names what went so nothing disappears silently.
+func TestTableFitsTerminalWidth(t *testing.T) {
+	headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
+	rows := [][]string{
+		{"loadtest-ff7fb52b-b51b-46c8-b254-6a557f053321.com", "2027-03-01 (in 6 months)", "yes", "yes", "no"},
+		{"beers.army", "2034-03-01 (in 8 years)", "yes", "yes", "yes"},
+	}
+
+	widest := func(s string) int {
+		widest := 0
+		for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+			if w := lipgloss.Width(line); w > widest {
+				widest = w
+			}
+		}
+		return widest
+	}
+
+	t.Run("drops columns to fit", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 80}
+		c.Table(headers, rows)
+		got := buf.String()
+
+		// The footer names hidden columns; measure only the table itself.
+		var tableLines []string
+		for _, line := range strings.Split(got, "\n") {
+			if strings.ContainsAny(line, "│╭╰├") {
+				tableLines = append(tableLines, line)
+			}
+		}
+		if w := widest(strings.Join(tableLines, "\n")); w > 80 {
+			t.Errorf("table rendered %d columns wide, want <= 80:\n%s", w, got)
+		}
+		if !strings.Contains(got, "hidden") {
+			t.Errorf("dropped columns without telling the reader:\n%s", got)
+		}
+		if !strings.Contains(got, "DOMAIN") {
+			t.Errorf("dropped the identifying column:\n%s", got)
+		}
+	})
+
+	t.Run("--wide keeps every column", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 80, Wide: true}
+		c.Table(headers, rows)
+		got := buf.String()
+		for _, h := range headers {
+			if !strings.Contains(got, h) {
+				t.Errorf("--wide dropped %q:\n%s", h, got)
+			}
+		}
+		if strings.Contains(got, "hidden") {
+			t.Errorf("--wide should not print a hidden-column footer:\n%s", got)
+		}
+	})
+
+	t.Run("no width constraint keeps every column", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf} // MaxWidth 0: piped
+		c.Table(headers, rows)
+		got := buf.String()
+		for _, h := range headers {
+			if !strings.Contains(got, h) {
+				t.Errorf("piped output dropped %q:\n%s", h, got)
+			}
+		}
+	})
+
+	t.Run("wide enough drops nothing", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 200}
+		c.Table(headers, rows)
+		if got := buf.String(); strings.Contains(got, "hidden") {
+			t.Errorf("dropped columns that fit:\n%s", got)
+		}
+	})
+}
+
+// TestExpiryStyleThresholds pins the urgency thresholds. The expired and
+// expiring-this-week cases were two byte-identical switch arms; merging them is
+// only safe if something asserts both still resolve to red.
+//
+// It asserts on the style rather than on rendered output because lipgloss
+// degrades to no-op styles off a TTY: an earlier version of this test compared
+// ANSI prefixes, every expected prefix was the empty string, and all three
+// cases passed without checking anything.
+func TestExpiryStyleThresholds(t *testing.T) {
+	tests := []struct {
+		name string
+		days float64
+		want lipgloss.TerminalColor
+	}{
+		{"long expired", -758, acRed},
+		{"expired today", -0.5, acRed},
+		{"expiring inside a week", 3, acRed},
+		{"the week boundary", 6.9, acRed},
+		{"expiring inside a month", 20, acAmber},
+		{"the month boundary", 29.9, acAmber},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := expiryStyle(tt.days).GetForeground(); got != tt.want {
+				t.Errorf("expiryStyle(%.1f) foreground = %v, want %v", tt.days, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("far future is neither red nor amber", func(t *testing.T) {
+		fg := expiryStyle(900).GetForeground()
+		if fg == acRed || fg == acAmber {
+			t.Errorf("expiryStyle(900) = %v, want the dim style", fg)
+		}
+	})
+
+	t.Run("a far-future date still reads in years", func(t *testing.T) {
+		at := time.Now().Add(900 * 24 * time.Hour)
+		if got := noColor().ExpiryDate(&at); !strings.Contains(got, "in 2 years") {
+			t.Errorf("ExpiryDate(900 days) = %q, want a year-scale relative time", got)
+		}
+	})
 }

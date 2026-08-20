@@ -14,6 +14,7 @@ var Cmd = &cobra.Command{
 }
 
 func init() {
+	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(
 		listCmd,
 		getCmd,
