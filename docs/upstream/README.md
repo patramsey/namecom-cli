@@ -12,5 +12,7 @@ file — the workaround it justifies will outlive the report.
 | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | not filed |
 | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | not filed |
 
-Both are worked around in `internal/sdkspike`; see `workaround.go` for what each
-costs and what residue is left over.
+Both are worked around in `internal/sdkspike`. See
+[`workarounds.md`](workarounds.md) for what each one costs, why the two are not
+one problem, how the test suite will tell you when upstream fixes them, and the
+removal steps for each.

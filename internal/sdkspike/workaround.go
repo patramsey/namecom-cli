@@ -10,7 +10,9 @@ import (
 )
 
 // Workarounds for two defects in core-api-go v1.33.2. Both are written up in
-// docs/upstream/ and neither is filed yet.
+// docs/upstream/ and neither is filed yet. docs/upstream/workarounds.md carries
+// the measurements, the residual cost, and the removal steps for each; the two
+// tests that fail when upstream fixes a defect are named there too.
 //
 //  1. option.WithoutRetries() is silently ignored at client scope, so the SDK
 //     retries a POST on a 5xx even when the client asked it not to.
