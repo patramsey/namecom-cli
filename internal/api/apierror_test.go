@@ -199,3 +199,44 @@ func TestRetryAfterHint(t *testing.T) {
 		t.Errorf("hint = %q, want the generic wording when no header was sent", hint)
 	}
 }
+
+// TestParseErrorCapturesRetryAfter pins that the header survives the trip from
+// response to APIError. UserHint reads RetryAfter to say how long the API asked
+// for, and nothing else populates it — a hint that silently fell back to "wait
+// a moment" would look correct while having lost the number.
+func TestParseErrorCapturesRetryAfter(t *testing.T) {
+	withHeader := func(status int, body, retryAfter string) *http.Response {
+		resp := makeResp(status, body)
+		if resp.Header == nil {
+			resp.Header = http.Header{}
+		}
+		if retryAfter != "" {
+			resp.Header.Set("Retry-After", retryAfter)
+		}
+		return resp
+	}
+
+	t.Run("a delta-seconds header is captured", func(t *testing.T) {
+		e := parseError(withHeader(http.StatusTooManyRequests, `{"message":"slow down"}`, "600"))
+		if e.RetryAfter != 10*time.Minute {
+			t.Errorf("RetryAfter = %s, want 10m", e.RetryAfter)
+		}
+		if !strings.Contains(e.UserHint(), "10m") {
+			t.Errorf("hint = %q, want it to name the wait", e.UserHint())
+		}
+	})
+
+	t.Run("no header leaves it zero", func(t *testing.T) {
+		e := parseError(withHeader(http.StatusTooManyRequests, `{"message":"slow down"}`, ""))
+		if e.RetryAfter != 0 {
+			t.Errorf("RetryAfter = %s, want zero", e.RetryAfter)
+		}
+	})
+
+	t.Run("an unparseable header leaves it zero", func(t *testing.T) {
+		e := parseError(withHeader(http.StatusTooManyRequests, `{"message":"slow down"}`, "Wed, 21 Oct 2026 07:28:00 GMT"))
+		if e.RetryAfter != 0 {
+			t.Errorf("RetryAfter = %s, want zero for the HTTP-date form", e.RetryAfter)
+		}
+	})
+}
