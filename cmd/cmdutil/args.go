@@ -126,3 +126,30 @@ func suggestionHint(suggestions []string) string {
 	}
 	return b.String()
 }
+
+// NextPage decides whether a paginated walk continues, given the page just
+// fetched and the nextPage/lastPage the API reported alongside it.
+//
+// The only stopping condition used to be `nextPage == nil || *nextPage == 0`,
+// which trusts the server to eventually stop saying "there is more". A server
+// that keeps answering `nextPage: 2` — a caching bug, a filter interaction, a
+// proxy replaying a response — walked forever at the client's full rate limit.
+// `domain list` escaped it by bounding on lastPage; the other seven list
+// commands and record-ID completion did not, and `dns list --all` against such
+// a server never returned.
+//
+// Two guards, both cheap: the page number must advance, and it must not run
+// past lastPage when the API reports one.
+func NextPage(current int32, nextPage, lastPage *int32) (int32, bool) {
+	if nextPage == nil || *nextPage == 0 {
+		return current, false
+	}
+	next := *nextPage
+	if next <= current {
+		return current, false
+	}
+	if lastPage != nil && *lastPage > 0 && next > *lastPage {
+		return current, false
+	}
+	return next, true
+}

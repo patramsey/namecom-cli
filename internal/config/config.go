@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -216,7 +217,7 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 	}
 
 	// Select the active profile name.
-	profileName := firstNonEmpty(ov.Profile, os.Getenv("NAMECOM_PROFILE"), f.Default)
+	profileName := firstNonEmpty(ov.Profile, os.Getenv("NAMECOM_PROFILE"), f.Default, impliedDefault(f))
 	prof := f.Profiles[profileName] // zero Profile if absent
 
 	creds := Credentials{Profile: profileName}
@@ -245,9 +246,46 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 	}
 
 	if creds.Username == "" || creds.Token == "" {
+		// Distinguish "nothing is configured" from "several profiles exist and
+		// none is marked default" — the second needs a different fix, and the
+		// generic message sent people to `auth login`, which overwrites.
+		if profileName == "" && len(f.Profiles) > 1 {
+			names := make([]string, 0, len(f.Profiles))
+			for n := range f.Profiles {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			return Credentials{}, fmt.Errorf(
+				"%w: %d profiles exist (%s) but none is the default — pass --profile, set NAMECOM_PROFILE, or run 'namecom config use <profile>'",
+				ErrNoCredentials, len(names), strings.Join(names, ", "))
+		}
 		return Credentials{}, ErrNoCredentials
 	}
 	return creds, nil
+}
+
+// impliedDefault names the profile to use when nothing selected one: no
+// --profile, no NAMECOM_PROFILE, and no top-level `default:` key in the file.
+//
+// Without it the name resolved to "", f.Profiles[""] returned the zero Profile,
+// and the CLI reported "no credentials configured — run 'namecom auth login'"
+// while sitting on a perfectly good profile that `config list-profiles` was
+// happily printing. `auth login` writes the `default:` key, so this only bit
+// hand-edited files — which is exactly how token_cmd has to be configured.
+//
+// A profile actually named "default" wins; failing that, a lone profile is
+// unambiguous enough to use. Two or more unnamed candidates stay an error,
+// because guessing between them is worse than saying so.
+func impliedDefault(f *File) string {
+	if _, ok := f.Profiles["default"]; ok {
+		return "default"
+	}
+	if len(f.Profiles) == 1 {
+		for name := range f.Profiles {
+			return name
+		}
+	}
+	return ""
 }
 
 // tokenCmdTimeout bounds how long a credential helper may run. Generous enough

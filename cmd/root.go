@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/patramsey/namecom-cli/cmd/apicmd"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	configcmd "github.com/patramsey/namecom-cli/cmd/config"
@@ -192,12 +191,12 @@ func init() {
 	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
 	pf.BoolVar(&gf.wide, "wide", false, "keep every table column even if it overflows the terminal")
 	pf.StringVar(&gf.color, "color", "auto", "colorize output: auto, always, never (env: NO_COLOR, CLICOLOR_FORCE)")
-	pf.DurationVar(&gf.timeout, "timeout", 30*time.Second, "per-request timeout")
+	pf.DurationVar(&gf.timeout, "timeout", 30*time.Second, "total time budget for one API call, retries included")
 	pf.BoolVar(&gf.debug, "debug", false, "log HTTP requests/responses to stderr (token redacted)")
 	pf.StringVar(&gf.debugFile, "debug-file", "", "log HTTP requests/responses to this file instead of stderr")
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "for write operations, print the request instead of sending it (reads are unaffected)")
-	pf.StringVar(&gf.idempKey, "idempotency-key", "", "idempotency key for write operations (auto-generated per invocation if not set)")
+	pf.StringVar(&gf.idempKey, "idempotency-key", "", "pin every write in this invocation to one idempotency key (default: a fresh key per write)")
 	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
 
 	// Apply styled help to every command in the tree.
@@ -307,6 +306,15 @@ func initContext(cmd *cobra.Command) error {
 	creds, err := config.Resolve(cfgFile, ov)
 	if err != nil {
 		if errors.Is(err, config.ErrNoCredentials) {
+			// Resolve adds context to this error when it can say something more
+			// specific than "nothing is configured" — several profiles exist
+			// but none is the default, say. Substituting the generic text threw
+			// that away and pointed the user at `auth login`, which overwrites.
+			//nolint:errorlint // identity, not chain: the bare sentinel means
+			// Resolve had nothing to add, so the friendlier text below applies.
+			if err != config.ErrNoCredentials {
+				return cmdutil.NewAuthError(err)
+			}
 			if output.IsInteractive() {
 				return cmdutil.NewAuthError(fmt.Errorf("no credentials configured — run 'namecom auth login' to set them up"))
 			}
@@ -358,11 +366,13 @@ func initContext(cmd *cobra.Command) error {
 	// Stash everything on the context so subcommands can retrieve them via
 	// the helpers below without threading parameters through every call.
 	ctx := cmd.Context()
-	idempKey := gf.idempKey
-	if idempKey == "" {
-		idempKey = uuid.New().String()
+	// Only pin a key when the user named one. Left unpinned, the API client
+	// mints a fresh key per write, because one invocation can perform many
+	// operations — `dns import` posts once per record — and a shared key makes
+	// an API that honours it collapse them all onto the first.
+	if gf.idempKey != "" {
+		ctx = api.ContextWithIdempotencyKey(ctx, gf.idempKey)
 	}
-	ctx = api.ContextWithIdempotencyKey(ctx, idempKey)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, apiClient)
 	ctx = context.WithValue(ctx, cmdutil.KeyConfig, cfgFile)
 	ctx = context.WithValue(ctx, cmdutil.KeyOverrides, ov)

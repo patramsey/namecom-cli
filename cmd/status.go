@@ -120,10 +120,11 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 				return err
 			}
 			expiringDomains = append(expiringDomains, result.Domains...)
-			if result.NextPage == nil || *result.NextPage == 0 {
+			next, ok := cmdutil.NextPage(p, result.NextPage, result.LastPage)
+			if !ok {
 				return nil
 			}
-			p = *result.NextPage
+			p = next
 		}
 	})
 
@@ -158,11 +159,16 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 				return nil
 			}
 			transfers = append(transfers, tResult.Transfers...)
-			if tResult.NextPage == nil || *tResult.NextPage == 0 {
+			cur := int32(0)
+			if tPage != nil {
+				cur = *tPage
+			}
+			next, ok := cmdutil.NextPage(cur, tResult.NextPage, tResult.LastPage)
+			if !ok {
 				transfersOK = true
 				return nil
 			}
-			tPage = tResult.NextPage
+			tPage = &next
 		}
 	})
 

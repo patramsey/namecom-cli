@@ -398,3 +398,97 @@ func TestEmailDelete_DeletesEntry(t *testing.T) {
 		t.Errorf("unexpected delete path: %q", deletePath)
 	}
 }
+
+// TestEmailList_PagesToTheEnd covers the --all walk across more than one page.
+//
+// There was no multi-page test here at all, which mattered when every list
+// loop was rewritten to go through cmdutil.NextPage: the continuation line is
+// the one a mechanical rewrite gets wrong, and nothing would have noticed a
+// loop that stopped after page 1 or one that never advanced.
+func TestEmailList_PagesToTheEnd(t *testing.T) {
+	const maxRequests = 8 // a correct implementation needs exactly 2
+	var requests int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > maxRequests {
+			t.Errorf("pagination did not terminate: %d requests", requests)
+			http.Error(w, "loop", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			// Final page: nextPage omitted, as the spec describes.
+			_, _ = w.Write([]byte(`{"emailForwarding":[{"domainName":"example.com","emailBox":"bbb","emailTo":"b@example.com"}],"lastPage":2}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"emailForwarding":[{"domainName":"example.com","emailBox":"aaa","emailTo":"a@example.com"}],"nextPage":2,"lastPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailList(t, srv)
+	out := cmdutil.Out(cmd)
+	out.Format = output.FormatJSON
+	listAll = true
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if requests != 2 {
+		t.Errorf("made %d page requests, want exactly 2", requests)
+	}
+
+	buf, ok := out.Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	var env struct {
+		Data []struct {
+			EmailBox string `json:"emailBox"`
+			EmailTo  string `json:"emailTo"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(env.Data) != 2 {
+		t.Fatalf("got %d forwardings across 2 pages, want 2: %s", len(env.Data), buf.String())
+	}
+	// Pairing box to target catches page 2 overwriting page 1's backing array,
+	// which is the aliasing bug this shape of loop has produced before.
+	want := map[string]string{"aaa": "a@example.com", "bbb": "b@example.com"}
+	for _, e := range env.Data {
+		if want[e.EmailBox] != e.EmailTo {
+			t.Errorf("box %q forwards to %q, want %q — pages were aliased", e.EmailBox, e.EmailTo, want[e.EmailBox])
+		}
+	}
+}
+
+// TestEmailList_StuckNextPageTerminates covers the guard itself: a server that
+// keeps answering nextPage:2 used to make --all walk forever at the full client
+// rate limit. Confirmed against a stub before the fix — still running after 20s.
+func TestEmailList_StuckNextPageTerminates(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		if requests > 10 {
+			t.Errorf("walk did not terminate against a non-advancing nextPage")
+			http.Error(w, "loop", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"emailForwarding":[{"domainName":"example.com","emailBox":"aaa","emailTo":"a@example.com"}],"nextPage":2,"lastPage":99}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailList(t, srv)
+	cmdutil.Out(cmd).Format = output.FormatJSON
+	listAll = true
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if requests != 2 {
+		t.Errorf("made %d requests, want 2 (page 1 -> 2, then the page stops advancing)", requests)
+	}
+}

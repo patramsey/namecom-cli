@@ -14,19 +14,44 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"golang.org/x/time/rate"
 )
 
-// idempKeyCtxKey is the private context key for per-request idempotency keys.
+// idempKeyCtxKey is the private context key for an explicitly-supplied
+// idempotency key.
 type idempKeyCtxKey struct{}
 
-// ContextWithIdempotencyKey attaches key to ctx; the Client's request editor
-// will set X-Idempotency-Key on all write requests (POST/PUT/DELETE) that
-// use this context.
+// ContextWithIdempotencyKey pins every write request made with ctx to key.
+//
+// This is for --idempotency-key, where the user is naming a specific key to
+// reuse — typically to make a retried invocation collapse onto an earlier one.
+// Leave it unset and each write gets its own generated key instead; see
+// idempotencyKeyFor.
 func ContextWithIdempotencyKey(ctx context.Context, key string) context.Context {
 	return context.WithValue(ctx, idempKeyCtxKey{}, key)
+}
+
+// idempotencyKeyFor returns the key to stamp on one outgoing write request.
+//
+// A pinned key from --idempotency-key wins. Otherwise every write gets a fresh
+// one, because a key identifies an OPERATION, not an invocation. It used to be
+// minted once per process and reused: `dns import` therefore sent one key
+// across every record's POST, and an API honouring keys as documented —
+// "reusing the same key returns the original result instead of repeating the
+// operation" — would create the first record, echo it back for all the rest,
+// and let the CLI report the whole file as imported.
+//
+// Retries stay safe. The editor runs once, where the generated client builds
+// the request; retryTransport replays that same *http.Request with its headers
+// already set, so every attempt at one operation carries one key.
+func idempotencyKeyFor(ctx context.Context) string {
+	if pinned, _ := ctx.Value(idempKeyCtxKey{}).(string); pinned != "" {
+		return pinned
+	}
+	return uuid.NewString()
 }
 
 const (
@@ -145,10 +170,9 @@ func New(opts Options) (*Client, error) {
 		// Set() here silently overwrote a key the user passed explicitly —
 		// meaning a retried write sent a different key each attempt and could
 		// double-charge, which is precisely what the key exists to prevent.
-		if key, _ := ctx.Value(idempKeyCtxKey{}).(string); key != "" &&
-			req.Header.Get("X-Idempotency-Key") == "" &&
+		if req.Header.Get("X-Idempotency-Key") == "" &&
 			(req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodDelete) {
-			req.Header.Set("X-Idempotency-Key", key)
+			req.Header.Set("X-Idempotency-Key", idempotencyKeyFor(ctx))
 		}
 		return nil
 	}

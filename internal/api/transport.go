@@ -145,6 +145,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			if attempt < t.maxRetries && idempotent(req) && transientErr(err) {
 				delay := t.backoffDelay(attempt, nil)
+				if !fitsDeadline(ctx, delay) {
+					return nil, err
+				}
 				if t.onRetry != nil {
 					t.onRetry(attempt+1, delay)
 				}
@@ -163,10 +166,20 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			// 429 is always retryable; 5xx only for idempotent requests.
 			if resp.StatusCode == http.StatusTooManyRequests || idempotent(req) {
 				retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+				delay := t.backoffDelay(attempt, retryAfter)
+				// Hand back the response rather than sleeping past the
+				// deadline. A 429 carrying "Retry-After: 600" used to be slept
+				// on until the client timeout fired, turning a rate-limit
+				// answer the server had already given into "context deadline
+				// exceeded (Client.Timeout exceeded while awaiting headers)" —
+				// exit 1, a transport error, with the real cause discarded.
+				// Returning it keeps the status, the body, and exit code 5.
+				if !fitsDeadline(ctx, delay) {
+					return resp, nil
+				}
 				// Drain and close so the connection can be reused.
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				_ = resp.Body.Close()
-				delay := t.backoffDelay(attempt, retryAfter)
 				if t.onRetry != nil {
 					t.onRetry(attempt+1, delay)
 				}
@@ -185,19 +198,36 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // is non-nil it is honored; otherwise exponential backoff with jitter is used.
 func (t *retryTransport) backoffDelay(attempt int, retryAfter *time.Duration) time.Duration {
 	if retryAfter != nil {
-		return *retryAfter
+		// Clamp it. Computed backoff has always been capped at maxBackoff, but
+		// a server-supplied value went through unbounded, so one header could
+		// park the process for as long as it liked. Where a deadline exists the
+		// caller stops before sleeping at all (see fitsDeadline); this bounds
+		// the case where there is none.
+		return min(*retryAfter, maxBackoff)
 	}
 	unit := t.baseDelay
 	if unit == 0 {
 		unit = time.Second
 	}
-	const maxBackoff = 30 * time.Second
 	base := min(unit<<attempt, maxBackoff)
 	// G404: jitter exists to desynchronize retries across concurrent requests,
 	// not to be unpredictable to an attacker. crypto/rand would buy nothing and
 	// can fail, on a path that must not.
 	jitter := time.Duration(rand.Int64N(int64(base)/5 + 1)) //nolint:gosec
 	return base - base/10 + jitter
+}
+
+// maxBackoff caps any single wait between attempts, computed or server-supplied.
+const maxBackoff = 30 * time.Second
+
+// fitsDeadline reports whether waiting d still leaves time to make the next
+// attempt. With no deadline set, any wait fits.
+func fitsDeadline(ctx context.Context, d time.Duration) bool {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return true
+	}
+	return time.Until(deadline) > d
 }
 
 // sleep waits for d, returning false if ctx is cancelled first.

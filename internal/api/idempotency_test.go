@@ -73,3 +73,109 @@ func TestIdempotencyKeyFallsBackToContext(t *testing.T) {
 		t.Errorf("context idempotency key should apply when caller supplies none, got %q", got)
 	}
 }
+
+// TestIdempotencyKeyIsPerOperation guards the scoping of the generated key.
+//
+// The key was minted once per process and pinned on the context, so every
+// write in one invocation carried the same one. `dns import` posts once per
+// record, so a 50-record file went out under a single key — and an API
+// honouring keys as documented ("reusing the same key returns the original
+// result instead of repeating the operation") would create record 1, echo it
+// back for the other 49, and let the CLI report the file as fully imported.
+//
+// A key identifies an OPERATION. Retries of one operation still share theirs:
+// the editor runs once where the request is built, and retryTransport replays
+// that same *http.Request with its headers already set.
+func TestIdempotencyKeyIsPerOperation(t *testing.T) {
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("X-Idempotency-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	// Three record creations, the shape `dns import` produces.
+	ctx := context.Background()
+	for _, host := range []string{"a", "b", "c"} {
+		if _, err := c.Gen().CreateRecord(ctx, "example.com", gen.CreateRecordJSONRequestBody{
+			Type: "A", Host: host, Answer: "1.2.3.4",
+		}); err != nil {
+			t.Fatalf("CreateRecord(%s): %v", host, err)
+		}
+	}
+
+	if len(keys) != 3 {
+		t.Fatalf("server saw %d writes, want 3", len(keys))
+	}
+	seen := map[string]bool{}
+	for i, k := range keys {
+		if k == "" {
+			t.Fatalf("write %d carried no idempotency key", i+1)
+		}
+		if seen[k] {
+			t.Errorf("key %q reused across separate operations: %v", k, keys)
+		}
+		seen[k] = true
+	}
+}
+
+// TestIdempotencyKeyPinnedAcrossOperations pins --idempotency-key's behaviour:
+// naming a key deliberately still applies it to every write, which is what
+// makes a re-run of a failed invocation collapse onto the original.
+func TestIdempotencyKeyPinnedAcrossOperations(t *testing.T) {
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("X-Idempotency-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	ctx := ContextWithIdempotencyKey(context.Background(), "PINNED-123")
+	for _, host := range []string{"a", "b"} {
+		if _, err := c.Gen().CreateRecord(ctx, "example.com", gen.CreateRecordJSONRequestBody{
+			Type: "A", Host: host, Answer: "1.2.3.4",
+		}); err != nil {
+			t.Fatalf("CreateRecord(%s): %v", host, err)
+		}
+	}
+	for _, k := range keys {
+		if k != "PINNED-123" {
+			t.Errorf("key = %q, want the pinned value", k)
+		}
+	}
+}
+
+// TestIdempotencyKeyAbsentOnReads pins that GETs stay clean — the header is a
+// write-path concern and stamping it on reads would be noise.
+func TestIdempotencyKeyAbsentOnReads(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Idempotency-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"records":[]}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	if _, err := c.Gen().ListRecords(context.Background(), "example.com", &gen.ListRecordsParams{}); err != nil {
+		t.Fatalf("ListRecords: %v", err)
+	}
+	if got != "" {
+		t.Errorf("a read carried an idempotency key: %q", got)
+	}
+}
