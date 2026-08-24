@@ -9,6 +9,22 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `brew install namecom` no longer produces *"Apple could not verify 'namecom'
+  is free of malware"* on macOS. Homebrew casks apply `com.apple.quarantine` on
+  install where the formula this project used before 0.2.4 did not, and these
+  binaries carry only Go's ad-hoc signature, so Gatekeeper refused to run them.
+  The cask now clears the attribute in a `postflight` hook.
+
+  Affects every macOS `brew` install since 0.2.4. Already-installed copies are
+  fixed by reinstalling (`brew reinstall namecom`) or by clearing the attribute
+  directly: `xattr -d com.apple.quarantine "$(readlink -f "$(which namecom)")"`.
+
+  This is not code signing. The binaries remain unnotarized, so a tarball
+  downloaded through a browser is still quarantined; the README now says so.
+  `curl` does not set the attribute, so the documented download commands are
+  unaffected.
+
 ## [0.3.0] - 2026-08-23
 
 Minor rather than patch because of one behavioural change worth checking before

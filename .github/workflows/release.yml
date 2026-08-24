@@ -30,11 +30,10 @@ jobs:
           # mutable-upstream exposure the SHA pins exist to remove, on the one
           # job holding the Homebrew tap token.
           #
-          # It is not hypothetical here: `.goreleaser.yaml` still uses the
-          # deprecated `brews:` key (`goreleaser check` warns about it). While
+          # The exposure is not hypothetical for a job like this one: while
           # unpinned, the release that breaks is whichever one happens to run
-          # after upstream turns that deprecation into a removal — discovered
-          # at release time, with a tag already pushed.
+          # after an upstream change lands, discovered at release time with a
+          # tag already pushed.
           #
           # 2.17.1 is what CI actually used for the v0.2.3 release, verified
           # end to end: five archives, checksums that validate, and a working
@@ -42,9 +41,11 @@ jobs:
           #
           # Dependabot does not manage this input (it is a value, not an action
           # ref), so it is bumped by hand — same as govulncheck in ci.yml. When
-          # bumping, migrate `brews:` to `homebrew_casks:` first, then run
-          # `goreleaser check` and `goreleaser release --snapshot --clean`
-          # locally before pushing a tag.
+          # bumping, run `goreleaser check` and `goreleaser release --snapshot
+          # --clean` locally first, and check the generated
+          # dist/homebrew/Casks/namecom.rb still carries its postflight block:
+          # that hook is what keeps `brew install` off Gatekeeper's quarantine,
+          # and a template change that dropped it would not fail the build.
           version: v2.17.1
           args: release --clean
         env:
