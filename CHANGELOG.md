@@ -9,7 +9,7 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-08-20
+## [0.3.0] - 2026-08-23
 
 Minor rather than patch because of one behavioural change worth checking before
 upgrading: **invocation mistakes now exit 2 instead of 1.** A bad flag value, an
