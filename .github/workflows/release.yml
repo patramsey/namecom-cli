@@ -41,11 +41,16 @@ jobs:
           #
           # Dependabot does not manage this input (it is a value, not an action
           # ref), so it is bumped by hand — same as govulncheck in ci.yml. When
-          # bumping, run `goreleaser check` and `goreleaser release --snapshot
-          # --clean` locally first, and check the generated
-          # dist/homebrew/Casks/namecom.rb still carries its postflight block:
-          # that hook is what keeps `brew install` off Gatekeeper's quarantine,
-          # and a template change that dropped it would not fail the build.
+          # bumping, run `goreleaser release --snapshot --clean` locally first
+          # and confirm dist/homebrew/Formula/namecom.rb is still generated.
+          #
+          # `goreleaser check` exits non-zero on this config and that is
+          # expected, not a regression: `brews` is hard-deprecated in favour of
+          # `homebrew_casks`. Switching to satisfy the check would reintroduce
+          # Gatekeeper quarantine on every macOS install — see the long comment
+          # in .goreleaser.yaml before touching it. Deprecated options are only
+          # removed on major versions, so the forcing function is GoReleaser
+          # v3, not this warning.
           version: v2.17.1
           args: release --clean
         env:
