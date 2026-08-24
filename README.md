@@ -92,6 +92,14 @@ sudo mv namecom /usr/local/bin/
 
 All platforms and checksums on the [releases page](https://github.com/patramsey/namecom-cli/releases).
 
+> **macOS:** these binaries are not signed with an Apple Developer ID. The
+> commands above are unaffected — `curl` does not set the quarantine attribute —
+> but a tarball downloaded through a **browser** is quarantined, and macOS will
+> refuse to run it with *"Apple could not verify 'namecom' is free of malware."*
+> Clear it with `xattr -d com.apple.quarantine namecom`, or approve the binary
+> under System Settings → Privacy & Security. Homebrew installs handle this
+> automatically.
+
 **Go install:**
 ```bash
 go install github.com/patramsey/namecom-cli@latest

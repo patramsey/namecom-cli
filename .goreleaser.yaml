@@ -63,6 +63,28 @@ homebrew_casks:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
+    # Casks apply com.apple.quarantine on install; formulas did not. These
+    # binaries carry only Go's ad-hoc linker signature, not a Developer ID, so
+    # a quarantined copy is refused by Gatekeeper with "Apple could not verify
+    # 'namecom' is free of malware" and the process is killed on first run.
+    # Every macOS `brew install` since v0.2.4 has landed in that state.
+    #
+    # This strips the flag Homebrew itself set. It is not notarization: the
+    # binary stays unsigned and `spctl -a` still rejects it, so a tarball
+    # downloaded through a *browser* is still quarantined and still prompts.
+    # (curl does not set the attribute, so the README's download commands are
+    # unaffected — verified.) The real fix is a Developer ID certificate plus a
+    # `notarize:` block, which needs a paid Apple Developer account and
+    # credentials in CI.
+    #
+    # The xattr -h probe guards the Linux case: casks run there too (no
+    # `depends_on macos` above), and /usr/bin/xattr does not exist.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/namecom"]
+          end
 
 changelog:
   sort: asc
