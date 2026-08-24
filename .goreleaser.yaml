@@ -36,55 +36,58 @@ archives:
 checksum:
   name_template: checksums.txt
 
-# homebrew_casks, not the deprecated `brews`. GoReleaser's formula generator
-# produced, in its own words, "hackyish formulas that would install the
-# pre-compiled binaries" — a formula is meant to build from source, and this
-# project ships binaries. Casks are the supported shape for that now, on Linux
-# as well as macOS: a cask is Linux-capable unless it declares `depends_on
-# macos` (see Cask#supports_linux? in Homebrew), and the generated cask below
-# declares no such dependency.
+# `brews` (a Formula), not `homebrew_casks`. This project shipped a cask from
+# v0.2.4 to v0.3.1 and it was a mistake, for one reason that only shows up
+# after install: Homebrew casks apply com.apple.quarantine and formulas do
+# not. These are unsigned Go binaries carrying only an ad-hoc linker
+# signature, so every macOS `brew install` landed quarantined and Gatekeeper
+# refused to run them — "Apple could not verify 'namecom' is free of malware".
 #
-# Migrating renames the published file from Formula/namecom.rb to
-# Casks/namecom.rb in the tap. Existing installs need tap_migrations.json in
-# the tap repository to follow that rename; without it `brew upgrade` keeps
-# resolving the stale formula. See the PR that introduced this.
-homebrew_casks:
+# The cask migration was made because goreleaser deprecated `brews`, calling
+# what it generated "hackyish formulas that would install the pre-compiled
+# binaries". That is goreleaser's opinion about its own output, not a Homebrew
+# rule. Binary-installing formulas in third-party taps are ordinary —
+# hashicorp/tap ships terraform exactly this way, and every bottle in
+# homebrew/core is itself a precompiled binary. Nothing required a cask.
+#
+# The alternative was Developer ID signing plus notarization, which is the
+# genuinely correct fix for a cask and costs ~$99/yr. For a CLI binary with
+# single-digit downloads that is not proportionate, and it would not have
+# been needed at all if this had stayed a formula. Do not "modernise" this
+# back to homebrew_casks without either notarizing or re-reading this comment.
+#
+# `brews` is deprecated and will eventually be removed. When that happens the
+# options are to hand-maintain a ~25-line formula or move to a cask *and*
+# notarize. Not before.
+brews:
   - name: namecom
-    binaries:
-      - namecom
-    homepage: https://github.com/patramsey/namecom-cli
-    description: CLI for the name.com domain registrar API
-    license: MIT
-    directory: Casks
     repository:
       owner: patramsey
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/patramsey/namecom-cli"
+    description: "CLI for the name.com domain registrar API"
+    license: "MIT"
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    # Casks apply com.apple.quarantine on install; formulas did not. These
-    # binaries carry only Go's ad-hoc linker signature, not a Developer ID, so
-    # a quarantined copy is refused by Gatekeeper with "Apple could not verify
-    # 'namecom' is free of malware" and the process is killed on first run.
-    # Every macOS `brew install` since v0.2.4 has landed in that state.
-    #
-    # This strips the flag Homebrew itself set. It is not notarization: the
-    # binary stays unsigned and `spctl -a` still rejects it, so a tarball
-    # downloaded through a *browser* is still quarantined and still prompts.
-    # (curl does not set the attribute, so the README's download commands are
-    # unaffected — verified.) The real fix is a Developer ID certificate plus a
-    # `notarize:` block, which needs a paid Apple Developer account and
-    # credentials in CI.
-    #
-    # The xattr -h probe guards the Linux case: casks run there too (no
-    # `depends_on macos` above), and /usr/bin/xattr does not exist.
-    hooks:
-      post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/namecom"]
-          end
+    # Printed during the cask -> formula migration, which `brew update`
+    # performs automatically but cannot finish: formula_installer.rb refuses to
+    # link while a cask of the same name is installed, and the instruction brew
+    # prints on its own stops at the uninstall. Following only that leaves no
+    # namecom on PATH at all. There is no formula DSL that overrides the check,
+    # so the remaining step has to be told to the user, and this is the one
+    # place it appears at the moment they need it.
+    caveats: |
+      If you are upgrading from the Homebrew cask (v0.2.4 - v0.3.1), two
+      steps remain:
+
+        brew uninstall --cask --force namecom
+        brew link namecom
+
+      Without the second, namecom will not be on your PATH. Fresh installs
+      need neither.
 
 changelog:
   sort: asc

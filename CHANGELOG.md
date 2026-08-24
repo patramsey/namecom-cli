@@ -9,6 +9,33 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- Homebrew installs are a **formula** again rather than a cask. Casks apply
+  `com.apple.quarantine` and formulas do not, which is the entire reason
+  v0.2.4-v0.3.1 tripped Gatekeeper on macOS. Nothing required a cask: the
+  migration was made because GoReleaser deprecated `brews`, not because
+  Homebrew asked for it. Binary-installing formulas in third-party taps are
+  ordinary, and this puts `namecom` back in the same shape as before v0.2.4.
+
+  **Upgrading from v0.2.4-v0.3.1 takes two manual steps.** `brew update`
+  installs the formula for you, but Homebrew will not link it while a cask of
+  the same name is present, and the instruction it prints stops short:
+
+  ```bash
+  brew uninstall --cask --force namecom
+  brew link namecom
+  ```
+
+  Without the second command `namecom` will not be on your PATH. Fresh
+  installs need neither, and the formula prints both as caveats during the
+  migration.
+
+### Removed
+- The cask's `postflight` hook that stripped `com.apple.quarantine`. It
+  disabled a Gatekeeper check for every user to work around a problem that
+  only existed because of the cask. No longer needed, and not replaced —
+  formula installs are never quarantined.
+
 ## [0.3.1] - 2026-08-23
 
 ### Fixed

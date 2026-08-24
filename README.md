@@ -75,6 +75,19 @@ brew trust patramsey/tap
 brew install namecom
 ```
 
+> **Upgrading from v0.2.4 - v0.3.1?** Those versions shipped as a Homebrew
+> *cask*; this is a *formula* again. `brew update` migrates you automatically
+> but cannot finish the job, because Homebrew will not link a formula while a
+> cask of the same name is installed. Two steps remain:
+>
+> ```bash
+> brew uninstall --cask --force namecom
+> brew link namecom
+> ```
+>
+> Without the second, `namecom` will not be on your PATH. Fresh installs need
+> neither.
+
 **Download a release binary:**
 ```bash
 # macOS (Apple Silicon)
@@ -97,8 +110,7 @@ All platforms and checksums on the [releases page](https://github.com/patramsey/
 > but a tarball downloaded through a **browser** is quarantined, and macOS will
 > refuse to run it with *"Apple could not verify 'namecom' is free of malware."*
 > Clear it with `xattr -d com.apple.quarantine namecom`, or approve the binary
-> under System Settings → Privacy & Security. Homebrew installs handle this
-> automatically.
+> under System Settings → Privacy & Security. Homebrew installs are unaffected.
 
 **Go install:**
 ```bash
