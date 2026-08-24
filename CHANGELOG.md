@@ -9,6 +9,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-23
+
 ### Changed
 - Homebrew installs are a **formula** again rather than a cask. Casks apply
   `com.apple.quarantine` and formulas do not, which is the entire reason
@@ -231,7 +233,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/patramsey/namecom-cli/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/patramsey/namecom-cli/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/patramsey/namecom-cli/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/patramsey/namecom-cli/compare/v0.2.3...v0.2.4
