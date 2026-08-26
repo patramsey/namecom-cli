@@ -4,12 +4,13 @@ package url
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/charmbracelet/huh"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -110,28 +111,18 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	spin := out.StartSpinner("Fetching URL forwardings…")
-	var page int32 = 1
-	var all []gen.URLForwardingResponseSchema
+	page := 1
+	var all []*coreapigo.URLForwardingResponse
 	var hasMore bool
-	var lastResult gen.ListURLForwardingsResponseSchema
+	var lastResult *coreapigo.ListURLForwardingsResponse
 	for {
-		params := &gen.ListURLForwardingsByDomainParams{Page: &page}
-		resp, err := client.Gen().ListURLForwardingsByDomain(cmd.Context(), domain, params)
+		result, err := client.SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
+			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page})
 		if err != nil {
 			spin.Stop()
-			return err
+			return api.FromSDKError(err)
 		}
-		// Fresh variable each iteration: the JSON decoder reuses the existing
-		// slice backing array and the pointers inside it, so reusing one target
-		// lets page N overwrite values page 1 already appended. It also leaves a
-		// stale non-nil NextPage when the final page omits the key, which never
-		// terminates. See the same pattern in cmd/dns/dns.go.
-		var result gen.ListURLForwardingsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			spin.Stop()
-			return err
-		}
-		all = append(all, result.UrlForwarding...)
+		all = append(all, result.URLForwarding...)
 		lastResult = result
 		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
 		if !ok {
@@ -149,8 +140,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	if out.QuietMode {
 		ids := make([]string, 0, len(all))
 		for _, u := range all {
-			if u.Id != nil {
-				ids = append(ids, strconv.Itoa(int(*u.Id)))
+			if u.ID != nil {
+				ids = append(ids, strconv.Itoa(*u.ID))
 			}
 		}
 		out.PrintQuiet(ids)
@@ -161,13 +152,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.YAMLList(all, np, 0)
 	default:
@@ -201,21 +192,18 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := client.Gen().GetURLForwardingById(cmd.Context(), domain, id)
+	entry, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
+		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if err != nil {
-		return err
-	}
-	var entry gen.URLForwardingResponseSchema
-	if err := api.Decode(resp, &entry); err != nil {
 		return err
 	}
 
 	// --quiet prints the identifying value only, matching list commands.
 	if out.QuietMode {
 		id := ""
-		if entry.Id != nil {
-			id = strconv.Itoa(int(*entry.Id))
+		if entry.ID != nil {
+			id = strconv.Itoa(*entry.ID)
 		}
 		out.PrintQuiet([]string{id})
 		return nil
@@ -229,7 +217,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	default:
 		out.Table(
 			[]string{"ID", "HOST", "FORWARDS TO", "TYPE"},
-			urlRows([]gen.URLForwardingResponseSchema{entry}),
+			urlRows([]*coreapigo.URLForwardingResponse{entry}),
 		)
 	}
 	return nil
@@ -288,11 +276,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fwdType := gen.URLForwardingType(createType)
-	body := gen.CreateURLForwardingJSONRequestBody{
+	body := coreapigo.URLForwardingInput{
 		Host:       createHost,
 		ForwardsTo: createForwardsTo,
-		Type:       fwdType,
+		Type:       coreapigo.URLForwardingInputType(createType),
 	}
 	if createTitle != "" {
 		body.Title = &createTitle
@@ -308,13 +295,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Creating URL forwarding…")
-	resp, err := client.Gen().CreateURLForwarding(cmd.Context(), domain, body)
+	entry, err := client.SDK().URLForwardings.CreateURLForwarding(cmd.Context(),
+		&coreapigo.CreateURLForwardingRequest{DomainName: domain, Body: &body})
 	stop()
 	if err != nil {
-		return err
-	}
-	var entry gen.URLForwardingResponseSchema
-	if err := api.Decode(resp, &entry); err != nil {
 		return err
 	}
 
@@ -324,9 +308,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(entry)
 	default:
-		id := int32(0)
-		if entry.Id != nil {
-			id = *entry.Id
+		id := 0
+		if entry.ID != nil {
+			id = *entry.ID
 		}
 		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", id, createHost, createForwardsTo))
 		out.Hint(fmt.Sprintf("Run 'namecom url list %s' to see all forwardings", domain))
@@ -350,13 +334,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	// Fetch current entry so unset flags preserve existing values (type, title, meta).
 	getStop := out.Spin("Fetching URL forwarding…")
-	getResp, err := client.Gen().GetURLForwardingById(cmd.Context(), domain, id)
+	current, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
+		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	getStop()
 	if err != nil {
-		return err
-	}
-	var current gen.URLForwardingResponseSchema
-	if err := api.Decode(getResp, &current); err != nil {
 		return err
 	}
 
@@ -436,9 +417,24 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// nil transmits an explicit `"title":null` — the server reads that as a
 	// deliberate clear, not an omission. Seed both from the current entry so
 	// an unset flag preserves what's already there.
-	body := gen.UpdateURLForwardingByIdJSONRequestBody{
+	// This request carries a "host" key that the generated client did not send,
+	// and that is a deliberate, unavoidable change rather than an oversight.
+	//
+	// The SDK models create and update with a single URLForwardingInput whose
+	// Host has no omitempty, so the key is always serialised. Its explicit-field
+	// machinery does not help: HandleExplicitFields only strips omitempty from
+	// fields that were set, it does not omit unset ones. There is no way to
+	// express "leave the host alone" through this type.
+	//
+	// Sending the host fetched a moment ago is the safe form of that. A literal
+	// would send "host":"" — and an empty host on a URL forwarding is the apex,
+	// not "unchanged", so it could silently move the forward. Seeding from the
+	// current record makes the field a no-op restatement of what is already
+	// there. See docs/upstream/core-api-go-urlforwarding-host-required.md.
+	body := coreapigo.URLForwardingInput{
+		Host:       derefStr(current.Host),
 		ForwardsTo: updateForwardsTo,
-		Type:       gen.UpdateURLForwardingBodyType(fwdTypeStr),
+		Type:       coreapigo.URLForwardingInputType(fwdTypeStr),
 		Title:      current.Title,
 		Meta:       current.Meta,
 	}
@@ -456,13 +452,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Updating URL forwarding…")
-	resp, err := client.Gen().UpdateURLForwardingById(cmd.Context(), domain, id, body)
+	entry, err := client.SDK().URLForwardings.UpdateURLForwardingByID(cmd.Context(),
+		&coreapigo.UpdateURLForwardingByIDRequest{DomainName: domain, ID: id, Body: &body})
 	stop()
 	if err != nil {
-		return err
-	}
-	var entry gen.URLForwardingResponseSchema
-	if err := api.Decode(resp, &entry); err != nil {
 		return err
 	}
 
@@ -508,12 +501,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Deleting URL forwarding…")
-	resp, err := client.Gen().DeleteURLForwardingById(cmd.Context(), domain, id)
+	err = client.SDK().URLForwardings.DeleteURLForwardingByID(cmd.Context(),
+		&coreapigo.DeleteURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
@@ -521,16 +512,16 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func urlRows(entries []gen.URLForwardingResponseSchema) [][]string {
+func urlRows(entries []*coreapigo.URLForwardingResponse) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, u := range entries {
 		id := ""
-		if u.Id != nil {
-			id = strconv.Itoa(int(*u.Id))
+		if u.ID != nil {
+			id = strconv.Itoa(*u.ID)
 		}
 		rows = append(rows, []string{
 			id,
-			u.Host,
+			derefStr(u.Host),
 			u.ForwardsTo,
 			string(u.Type),
 		})
@@ -538,10 +529,28 @@ func urlRows(entries []gen.URLForwardingResponseSchema) [][]string {
 	return rows
 }
 
-func parseID(s string) (int32, error) {
+func parseID(s string) (int, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid ID %q: must be a number", s)
 	}
-	return int32(n), nil
+	return int(n), nil
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses. Same rationale as cmd/dns.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
+}
+
+// derefStr returns the value behind a *string, or "" when it is nil.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

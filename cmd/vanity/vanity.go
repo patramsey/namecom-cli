@@ -3,11 +3,12 @@ package vanity
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -96,26 +97,16 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	spin := out.StartSpinner("Fetching vanity nameservers…")
-	var page int32 = 1
-	var all []gen.VanityNameserverResponseSchema
+	page := 1
+	var all []*coreapigo.VanityNameserverResponse
 	var hasMore bool
-	var lastResult gen.ListVanityNameserversResponseSchema
+	var lastResult *coreapigo.ListVanityNameserversResponse
 	for {
-		params := &gen.ListVanityNameserversParams{Page: &page}
-		resp, err := client.Gen().ListVanityNameservers(cmd.Context(), domain, params)
+		result, err := client.SDK().VanityNameservers.ListVanityNameservers(cmd.Context(),
+			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page})
 		if err != nil {
 			spin.Stop()
-			return err
-		}
-		// Fresh variable each iteration: the JSON decoder reuses the existing
-		// slice backing array and the pointers inside it, so reusing one target
-		// lets page N overwrite values page 1 already appended. It also leaves a
-		// stale non-nil NextPage when the final page omits the key, which never
-		// terminates. See the same pattern in cmd/dns/dns.go.
-		var result gen.ListVanityNameserversResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			spin.Stop()
-			return err
+			return api.FromSDKError(err)
 		}
 		all = append(all, result.VanityNameservers...)
 		lastResult = result
@@ -135,7 +126,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	if out.QuietMode {
 		hostnames := make([]string, 0, len(all))
 		for _, v := range all {
-			hostnames = append(hostnames, v.Hostname)
+			hostnames = append(hostnames, derefStr(v.Hostname))
 		}
 		out.PrintQuiet(hostnames)
 		return nil
@@ -145,13 +136,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.YAMLList(all, np, 0)
 	default:
@@ -180,19 +171,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := client.Gen().GetVanityNameserver(cmd.Context(), domain, args[1])
+	ns, err := client.SDK().VanityNameservers.GetVanityNameserver(cmd.Context(),
+		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: args[1]})
 	stop()
 	if err != nil {
-		return err
-	}
-	var ns gen.VanityNameserverResponseSchema
-	if err := api.Decode(resp, &ns); err != nil {
 		return err
 	}
 
 	// --quiet prints the identifying value only, matching list commands.
 	if out.QuietMode {
-		out.PrintQuiet([]string{ns.Hostname})
+		out.PrintQuiet([]string{derefStr(ns.Hostname)})
 		return nil
 	}
 
@@ -204,7 +192,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	default:
 		out.Table(
 			[]string{"HOSTNAME", "IPS"},
-			vanityRows([]gen.VanityNameserverResponseSchema{ns}),
+			vanityRows([]*coreapigo.VanityNameserverResponse{ns}),
 		)
 	}
 	return nil
@@ -250,9 +238,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	ips := splitIPs(createIPs)
-	body := gen.CreateVanityNameserverJSONRequestBody{
-		Hostname: label,
-		Ips:      ips,
+	body := coreapigo.CreateVanityNameserverBody{
+		DomainName: domain,
+		Hostname:   label,
+		Ips:        ips,
 	}
 
 	if dryRun {
@@ -262,14 +251,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Creating vanity nameserver…")
-	resp, err := client.Gen().CreateVanityNameserver(cmd.Context(), domain, body)
+	ns, err := client.SDK().VanityNameservers.CreateVanityNameserver(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var ns gen.VanityNameserverResponseSchema
-	if err := api.Decode(resp, &ns); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -295,8 +280,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	hostname := args[1]
 
 	ips := splitIPs(updateIPs)
-	body := gen.UpdateVanityNameserverJSONRequestBody{
-		Ips: &ips,
+	body := coreapigo.UpdateVanityNameserverBody{
+		DomainName: domain,
+		Hostname:   hostname,
+		Ips:        ips,
 	}
 
 	if dryRun {
@@ -306,14 +293,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Updating vanity nameserver…")
-	resp, err := client.Gen().UpdateVanityNameserver(cmd.Context(), domain, hostname, body)
+	ns, err := client.SDK().VanityNameservers.UpdateVanityNameserver(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var ns gen.VanityNameserverResponseSchema
-	if err := api.Decode(resp, &ns); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -354,24 +337,22 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Deleting vanity nameserver…")
-	resp, err := client.Gen().DeleteVanityNameserver(cmd.Context(), domain, hostname)
+	err = client.SDK().VanityNameservers.DeleteVanityNameserver(cmd.Context(),
+		&coreapigo.DeleteVanityNameserverRequest{DomainName: domain, Hostname: hostname})
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Deleted vanity nameserver %s from %s", hostname, domain))
 	out.Hint(fmt.Sprintf("Run 'namecom vanity-ns list %s' to see remaining nameservers", domain))
 	return nil
 }
 
-func vanityRows(nss []gen.VanityNameserverResponseSchema) [][]string {
+func vanityRows(nss []*coreapigo.VanityNameserverResponse) [][]string {
 	rows := make([][]string, 0, len(nss))
 	for _, ns := range nss {
 		rows = append(rows, []string{
-			ns.Hostname,
+			derefStr(ns.Hostname),
 			strings.Join(ns.Ips, ", "),
 		})
 	}
@@ -391,4 +372,22 @@ func splitIPs(s string) []string {
 		}
 	}
 	return ips
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses. Same rationale as cmd/dns.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
+}
+
+// derefStr returns the value behind a *string, or "" when it is nil.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

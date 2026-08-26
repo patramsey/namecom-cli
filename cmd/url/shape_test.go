@@ -31,8 +31,18 @@ func TestRequestShape_URL(t *testing.T) {
 			}
 			return cmd
 		}
+		// This expectation CHANGED with the port, and it is the only request in
+		// slice 3 that did. The generated client sent no "host" key; the SDK
+		// cannot express that, because create and update share one
+		// URLForwardingInput whose Host has no omitempty.
+		//
+		// The value is the host fetched from the record being updated, so the
+		// key is a restatement of what is already stored rather than a change.
+		// A struct literal without it would send "host":"" — the apex — which
+		// would silently move the forwarding. See
+		// docs/upstream/core-api-go-urlforwarding-host-required.md.
 		drifttest.AssertRequest(t, drifttest.Request{
-			Method: "PATCH", Path: "/core/v1/urlforwarding/example.com/7", Body: `{"forwardsTo":"https://elsewhere.example","type":"redirect"}`,
+			Method: "PATCH", Path: "/core/v1/urlforwarding/example.com/7", Body: `{"forwardsTo":"https://elsewhere.example","host":"@","type":"redirect"}`,
 		}, build, runUpdate, []string{"example.com", "7"}, stub)
 	})
 	t.Run("delete", func(t *testing.T) {

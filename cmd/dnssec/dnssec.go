@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -84,14 +84,11 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Fetching DNSSEC keys…")
-	resp, err := client.Gen().ListDNSSECs(cmd.Context(), domain)
+	result, err := client.SDK().DnsseCs.ListDnsseCs(cmd.Context(),
+		&coreapigo.ListDnsseCsRequest{DomainName: domain})
 	stop()
 	if err != nil {
-		return err
-	}
-	var result gen.ListDNSSECsResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	if out.QuietMode {
@@ -134,13 +131,10 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := client.Gen().GetDNSSEC(cmd.Context(), domain, args[1])
+	key, err := client.SDK().DnsseCs.GetDnssec(cmd.Context(),
+		&coreapigo.GetDnssecRequest{DomainName: domain, Digest: args[1]})
 	stop()
 	if err != nil {
-		return err
-	}
-	var key gen.DNSSEC
-	if err := api.Decode(resp, &key); err != nil {
 		return err
 	}
 
@@ -158,7 +152,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	default:
 		out.Table(
 			[]string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"},
-			dnssecRows([]gen.DNSSEC{key}),
+			dnssecRows([]*coreapigo.Dnssec{key}),
 		)
 	}
 	return nil
@@ -173,11 +167,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	body := gen.CreateDNSSECJSONRequestBody{
-		Algorithm:  &createAlgorithm,
-		Digest:     &createDigest,
-		DigestType: &createDigestType,
-		KeyTag:     &createKeyTag,
+	body := coreapigo.CreateDnssecBody{
+		DomainName: domain,
+		Algorithm:  int(createAlgorithm),
+		Digest:     createDigest,
+		DigestType: int(createDigestType),
+		KeyTag:     int(createKeyTag),
 	}
 
 	if dryRun {
@@ -188,14 +183,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Adding DNSSEC key…")
-	resp, err := client.Gen().CreateDNSSEC(cmd.Context(), domain, body)
+	key, err := client.SDK().DnsseCs.CreateDnssec(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var key gen.DNSSEC
-	if err := api.Decode(resp, &key); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -236,26 +227,24 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Removing DNSSEC key…")
-	resp, err := client.Gen().DeleteDNSSEC(cmd.Context(), domain, digest)
+	err = client.SDK().DnsseCs.DeleteDnssec(cmd.Context(),
+		&coreapigo.DeleteDnssecRequest{DomainName: domain, Digest: digest})
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Removed DNSSEC key from %s", domain))
 	out.Hint(fmt.Sprintf("Run 'namecom dnssec list %s' to see remaining keys", domain))
 	return nil
 }
 
-func dnssecRows(keys []gen.DNSSEC) [][]string {
+func dnssecRows(keys []*coreapigo.Dnssec) [][]string {
 	rows := make([][]string, 0, len(keys))
 	for _, k := range keys {
 		rows = append(rows, []string{
-			strconv.Itoa(int(k.KeyTag)),
-			strconv.Itoa(int(k.Algorithm)),
-			strconv.Itoa(int(k.DigestType)),
+			strconv.Itoa(k.KeyTag),
+			strconv.Itoa(k.Algorithm),
+			strconv.Itoa(k.DigestType),
 			k.Digest,
 		})
 	}
