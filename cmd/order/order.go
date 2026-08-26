@@ -243,9 +243,20 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 
+	itemIDs := make([]int32, len(refundItemIDs))
+	copy(itemIDs, refundItemIDs)
+
+	body := gen.ProcessRefundJSONRequestBody{
+		OrderId:      refundOrderID,
+		OrderItemIds: itemIDs,
+	}
+
 	if dryRun {
-		out.DryRun("POST", "/core/v1/refund", nil)
-		fmt.Fprintf(out.Writer, "  orderId=%d itemIds=%v\n", refundOrderID, refundItemIDs)
+		// Previously printed a hand-rolled "orderId=… itemIds=…" line beside a
+		// nil body, so the preview was a paraphrase of the request rather than
+		// the request. Nothing here is secret, and a refund is worth seeing
+		// exactly as it will be sent.
+		out.DryRun("POST", "/core/v1/refund", body)
 		return nil
 	}
 
@@ -256,14 +267,6 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	if !ok {
 		out.Warn("aborted")
 		return nil
-	}
-
-	itemIDs := make([]int32, len(refundItemIDs))
-	copy(itemIDs, refundItemIDs)
-
-	body := gen.ProcessRefundJSONRequestBody{
-		OrderId:      refundOrderID,
-		OrderItemIds: itemIDs,
 	}
 
 	// The root --idempotency-key (or an auto-generated one) is applied by the
