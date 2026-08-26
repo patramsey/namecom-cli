@@ -1,7 +1,9 @@
 # Bodyless endpoints are modelled with a body that cannot be omitted
 
-**Not filed upstream yet.** Found while porting `namecom contact` to the SDK
-(#40, slice 4).
+**Not filed upstream.** Found while porting `namecom contact` to the SDK (#40,
+slice 4). The least severe of the four: `{}` is accepted where `null` is not,
+so the workaround is a one-line construction with no data risk. Worth filing if
+[#5], [#6], or [#7] get attention.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 
@@ -54,3 +56,7 @@ where they should declare none.
 `contact verify` and `contact resend` pass `&coreapigo.EmptyObject{}` explicitly,
 so both send `{}`. The change from "no body" to `{}` is asserted in
 `cmd/contact/drift_test.go` so it stays visible.
+
+[#5]: https://github.com/namedotcom/core-api-go/issues/5
+[#6]: https://github.com/namedotcom/core-api-go/issues/6
+[#7]: https://github.com/namedotcom/core-api-go/issues/7

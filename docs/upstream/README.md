@@ -10,12 +10,12 @@ being replaced by a link.
 
 | Report | Against | Filed |
 |---|---|---|
-| [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | [#3](https://github.com/namedotcom/core-api-go/issues/3) |
-| [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | [#4](https://github.com/namedotcom/core-api-go/issues/4) |
-| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
+| [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | [#3](https://github.com/namedotcom/core-api-go/issues/3) — **fixed in v1.33.3** |
+| [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | [#4](https://github.com/namedotcom/core-api-go/issues/4) — **fixed in v1.33.3** |
+| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — open |
 | [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
-| [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
-| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
+| [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — open |
+| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — open |
 
 Neither is worked around in this repository. What a mitigation would look like,
 and what each was measured to cost, is recorded in
@@ -23,41 +23,43 @@ and what each was measured to cost, is recorded in
 
 ## Status
 
-**Both defects were fixed upstream in v1.33.3 (2026-08-25). The hold is lifted.**
+**The migration is done.** `namecom` v0.4.0 runs entirely on the Core SDK; the
+vendored spec, the Python preprocessor, and the generated client were removed in
+#62. See #40 for how it went.
 
-Verified by measurement, not by reading the release: the two
-defect-demonstration tests written during the #40 spike are constructed to fail
-once the defects are gone, and both now fail against v1.33.3.
+Two of the six reports here are fixed upstream and closed. Four stand, and three
+of those are worked around in this repository:
+
+| report | what this repo does |
+|---|---|
+| `updatedomain-union` ([#6]) | `domain update` builds a `map[string]any` and passes `option.WithBodyProperties`. The typed body would silently drop the transfer lock. |
+| `idempotency-key-asterisk` ([#5]) | `option.WithXIdempotencyKey` is never used; `internal/api/headers.go` sets the header for every write. |
+| `urlforwarding-host-required` ([#7]) | `url update` sends the host it just fetched, because the type cannot omit it and an empty host means the apex. |
+| `forced-request-bodies` | bodyless endpoints are given `&EmptyObject{}` so they send `{}` rather than `null`. |
+
+**Each workaround is used in exactly one place and pinned by a test that fails
+if it is removed.** That is deliberate: the natural instinct on reading any of
+them is to replace it with the obvious typed call, and in three of the four
+cases the obvious call is silently wrong rather than broken.
+
+If a report is fixed upstream, the sequence is: bump the SDK, delete the
+workaround, watch the pinning test fail, and update it — in that order, so the
+test proves the fix rather than being adjusted to match it.
+
+### On the two that were fixed
+
+#3 and #4 were filed 2026-08-20 and fixed in v1.33.3 five days later, without a
+comment on either issue. Both were verified by measurement here before being
+closed:
 
 | | v1.33.2 | v1.33.3 |
 |---|---|---|
 | client-scoped `WithoutRetries()`, one 500 | 2 requests | **1 request** |
 | 100ms deadline against `Retry-After: 2` | 2.001s | **100.8ms** |
 
-The upstream patches match what these reports proposed — `Retrier` now carries
-`disabled` and `Run` honours either source; the bare `time.Sleep` is now a
-`sleepWithContext` selecting on `ctx.Done()`. One refinement was added that this
-report did not anticipate: a request-scoped `attempts > 0` resets `disabled` to
-false, so a per-call attempt count deliberately overrides a client-scoped
-opt-out.
+Worth recording for anyone deciding whether reporting to this tracker is worth
+the effort: the silence is not an answer, but the fixes shipped.
 
-**Issues #3 and #4 are still open upstream with no comment.** The fixes shipped
-without acknowledgement, so nothing in the tracker signals this. Left to
-upstream to comment and close.
-
-### What this means for #40
-
-The gate is gone. #3 was the blocker: with client-scoped `WithoutRetries()`
-ignored, the SDK retried POSTs on 5xx against endpoints that do not honour
-idempotency keys, and the only fallback was repeating the option across ~53 call
-sites where forgetting it fails silently. That is now a single client-scoped
-option that holds.
-
-What remains is the ordinary migration tradeoff, not a safety hazard. The other
-spike findings are unaffected — they are spec-derived (Fern renames, the type
-gotchas, `*int` vs `*int32` paging) rather than retry-related.
-
-Nothing here blocks the CLI. The vendored spec and generated client keep working
-and stay in place. Any migration should re-run the spike against v1.33.3 first:
-it was evaluated at v1.33.2, and the retry layer is precisely the part that
-changed.
+[#5]: https://github.com/namedotcom/core-api-go/issues/5
+[#7]: https://github.com/namedotcom/core-api-go/issues/7
+[#6]: https://github.com/namedotcom/core-api-go/issues/6

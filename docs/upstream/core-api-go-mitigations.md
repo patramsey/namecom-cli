@@ -118,13 +118,14 @@ confirm the fixes work and that `go test ./internal/...` still passes upstream.
 Two defect-demonstration tests cover the same ground, written to fail if a
 defect is ever fixed so that a green run is the signal to revisit #40:
 
-| Test | Fires when |
-|---|---|
-| `TestWithoutRetriesHoldsAtClientScope/client-scoped_WithoutRetries_is_silently_ignored` | defect 1 is fixed |
-| `TestSDKBackoffIgnoresContext` | defect 2 is fixed |
+Those tests were written to fail once the defects were fixed, and both did
+against v1.33.3 — which is how the fix was noticed at all, since neither issue
+was commented on. They lived in `internal/sdkspike` on the #42 spike branch and
+were inverted into regression guards there.
 
-They live in `internal/sdkspike` on the #42 spike branch, which is **not**
-merged — the package exists only to hold the evaluation. If #42 is closed the
-tests go with it, and re-running the `main.go` programs above is what remains.
-That is the intended state while the migration is on hold: nothing in this
-repository depends on the SDK, so there is nothing here for the tests to guard.
+The guard that matters now lives in the CLI itself:
+`TestSDKRetriesAreDisabledAtClientScope` in `internal/api` counts the requests a
+500 produces. If client-scoped `WithoutRetries()` ever stops holding, that test
+fails — which matters more since the migration than it did during it, because
+the SDK is now the only client and a POST replayed on a 5xx reaches endpoints
+that do not deduplicate.
