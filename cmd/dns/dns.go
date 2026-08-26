@@ -6,14 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -192,8 +193,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	if out.QuietMode {
 		ids := make([]string, 0, len(records))
 		for _, r := range records {
-			if r.Id != nil {
-				ids = append(ids, strconv.Itoa(int(*r.Id)))
+			if r.ID != nil {
+				ids = append(ids, strconv.Itoa(*r.ID))
 			}
 		}
 		out.PrintQuiet(ids)
@@ -202,9 +203,9 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSONList(records, nextPage, 0)
+		return out.JSONList(records, int32Page(nextPage), 0)
 	case output.FormatYAML:
-		return out.YAMLList(records, nextPage, 0)
+		return out.YAMLList(records, int32Page(nextPage), 0)
 	default:
 		if len(records) == 0 {
 			// Distinguish "this zone is empty" from "nothing matched the filter".
@@ -276,11 +277,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	body := gen.CreateRecordJSONRequestBody{
-		Type:   gen.DNSCreateRecordBodyType(createType),
-		Host:   createHost,
-		Answer: createAnswer,
-		Ttl:    &createTTL,
+	body := coreapigo.DNSCreateRecordBody{
+		DomainName: domain,
+		Type:       coreapigo.DNSCreateRecordBodyType(createType),
+		Host:       createHost,
+		Answer:     createAnswer,
+		TTL:        &createTTL,
 	}
 	// Gate on the flag, not the value: 0 is a valid MX/SRV priority, so deciding
 	// by value makes `--priority 0` unsettable. The warning above already keys
@@ -294,13 +296,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	resp, err := client.Gen().CreateRecord(cmd.Context(), domain, body)
+	record, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
 	if err != nil {
-		return err
-	}
-	var record gen.Record
-	if err := api.Decode(resp, &record); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -309,7 +307,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(record)
 	default:
-		out.Success(fmt.Sprintf("Created %s record (id %d)", createType, derefInt32(record.Id)))
+		out.Success(fmt.Sprintf("Created %s record (id %d)", createType, derefInt(record.ID)))
 		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see all records", domain))
 	}
 	return nil
@@ -330,23 +328,28 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read-modify-write: fetch existing record so unset flags don't blank fields.
-	getResp, err := client.Gen().GetRecord(cmd.Context(), domain, id)
+	current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{
+		DomainName: domain,
+		ID:         id,
+	})
 	if err != nil {
+		// Convert first: IsNotFound inspects *api.APIError, and an unconverted
+		// SDK error would fall through to the generic message and exit 1
+		// instead of 4.
+		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
 			return fmt.Errorf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain)
 		}
 		return err
 	}
-	var current gen.Record
-	if err := api.Decode(getResp, &current); err != nil {
-		return err
-	}
 
-	body := gen.UpdateRecordJSONRequestBody{
-		Type:   gen.DNSUpdateRecordBodyType(derefStr(current.Type)),
-		Answer: derefStr(current.Answer),
-		Ttl:    &current.Ttl,
-		Host:   current.Host,
+	body := coreapigo.DNSUpdateRecordBody{
+		DomainName: domain,
+		ID:         id,
+		Type:       coreapigo.DNSUpdateRecordBodyType(derefStr(current.Type)),
+		Answer:     derefStr(current.Answer),
+		TTL:        &current.TTL,
+		Host:       current.Host,
 	}
 	if current.Priority != nil {
 		body.Priority = current.Priority
@@ -362,7 +365,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSType(updateType); err != nil {
 			return err
 		}
-		body.Type = gen.DNSUpdateRecordBodyType(updateType)
+		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
 	}
 	if cmd.Flags().Changed("host") {
 		if err := cmdutil.ValidDNSHost(updateHost); err != nil {
@@ -400,20 +403,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidTTL(updateTTL); err != nil {
 			return err
 		}
-		body.Ttl = &updateTTL
+		body.TTL = &updateTTL
 	}
 	if dryRun {
 		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), body)
 		return nil
 	}
 
-	resp, err := client.Gen().UpdateRecord(cmd.Context(), domain, id, body)
+	updated, err := client.SDK().DNS.UpdateRecord(cmd.Context(), &body)
 	if err != nil {
-		return err
-	}
-	var updated gen.Record
-	if err := api.Decode(resp, &updated); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -458,13 +457,13 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Deleting record…")
-	resp, err := client.Gen().DeleteRecord(cmd.Context(), domain, id)
+	err = client.SDK().DNS.DeleteRecord(cmd.Context(), &coreapigo.DeleteRecordRequest{
+		DomainName: domain,
+		ID:         id,
+	})
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
 	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see remaining records", domain))
@@ -500,7 +499,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 				rdata = quoteTXT(rdata)
 			}
 			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
-				derefStr(r.Fqdn), r.Ttl, rtype, rdata)
+				derefStr(r.Fqdn), r.TTL, rtype, rdata)
 		}
 		return nil
 	}
@@ -531,7 +530,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading import file: %w", err)
 	}
 
-	var records []gen.Record
+	var records []*coreapigo.Record
 	if err := json.Unmarshal(data, &records); err != nil {
 		return fmt.Errorf("parsing import file: %w", err)
 	}
@@ -555,12 +554,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	created := 0
 	for _, r := range records {
-		body := gen.CreateRecordJSONRequestBody{
-			Type:     gen.DNSCreateRecordBodyType(derefStr(r.Type)),
-			Host:     derefStr(r.Host),
-			Answer:   derefStr(r.Answer),
-			Ttl:      &r.Ttl,
-			Priority: r.Priority,
+		body := coreapigo.DNSCreateRecordBody{
+			DomainName: domain,
+			Type:       coreapigo.DNSCreateRecordBodyType(derefStr(r.Type)),
+			Host:       derefStr(r.Host),
+			Answer:     derefStr(r.Answer),
+			TTL:        &r.TTL,
+			Priority:   r.Priority,
 		}
 
 		if dryRun {
@@ -569,11 +569,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		resp, err := client.Gen().CreateRecord(cmd.Context(), domain, body)
-		if err == nil {
-			err = api.Decode(resp, nil)
-		}
+		_, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
 		if err != nil {
+			err = api.FromSDKError(err)
 			// Report what already landed. Import is not transactional, so bailing
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.
@@ -596,25 +594,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 }
 
 // fetchAllRecords pages through all DNS records for a domain.
-func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen.Record, hasMore bool, nextPage *int32, err error) {
+func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, err error) {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 
-	var page int32 = 1
-	var lastNextPage *int32
+	page := 1
+	var lastNextPage *int
 
 	for {
-		params := &gen.ListRecordsParams{Page: &page}
-		resp, err2 := client.Gen().ListRecords(ctx, domain, params)
+		result, err2 := client.SDK().DNS.ListRecords(ctx, &coreapigo.ListRecordsRequest{
+			DomainName: domain,
+			Page:       &page,
+		})
 		if err2 != nil {
-			return nil, false, nil, err2
-		}
-		// Use a fresh variable each iteration: Go's JSON decoder reuses existing
-		// *string pointers in a slice's backing array, so reusing 'last' would
-		// cause page N's strings to silently overwrite page 1's record values.
-		var result gen.ListRecordsResponseSchema
-		if err2 := api.Decode(resp, &result); err2 != nil {
-			return nil, false, nil, err2
+			return nil, false, nil, api.FromSDKError(err2)
 		}
 		records = append(records, result.Records...)
 		lastNextPage = result.NextPage
@@ -635,18 +628,18 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []gen
 	return records, hasMore, nextPage, nil
 }
 
-func recordRows(out *output.Config, records []gen.Record) [][]string {
+func recordRows(out *output.Config, records []*coreapigo.Record) [][]string {
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
 		id := ""
-		if r.Id != nil {
-			id = strconv.Itoa(int(*r.Id))
+		if r.ID != nil {
+			id = strconv.Itoa(*r.ID)
 		}
 		priority := ""
 		if r.Priority != nil {
 			priority = strconv.FormatInt(*r.Priority, 10)
 		}
-		ttl := strconv.FormatInt(r.Ttl, 10)
+		ttl := strconv.FormatInt(r.TTL, 10)
 		rows = append(rows, []string{
 			out.Dim(id),
 			out.TypeBadge(derefStr(r.Type)),
@@ -662,11 +655,11 @@ func recordRows(out *output.Config, records []gen.Record) [][]string {
 // dnsTypeOrder defines the preferred display order for grouped DNS output.
 var dnsTypeOrder = []string{"A", "AAAA", "ANAME", "CNAME", "MX", "TXT", "NS", "SRV", "CAA"}
 
-func renderGroupedRecords(out *output.Config, records []gen.Record) {
+func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 	// Bucket records by type, preserving insertion order per group.
 	seen := map[string]bool{}
 	var orderedTypes []string
-	groups := map[string][]gen.Record{}
+	groups := map[string][]*coreapigo.Record{}
 	for _, r := range records {
 		t := strings.ToUpper(derefStr(r.Type))
 		if !seen[t] {
@@ -699,12 +692,12 @@ func renderGroupedRecords(out *output.Config, records []gen.Record) {
 }
 
 // recordRowsNoType is like recordRows but omits the TYPE column (used in grouped view).
-func recordRowsNoType(out *output.Config, records []gen.Record) [][]string {
+func recordRowsNoType(out *output.Config, records []*coreapigo.Record) [][]string {
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
 		id := ""
-		if r.Id != nil {
-			id = strconv.Itoa(int(*r.Id))
+		if r.ID != nil {
+			id = strconv.Itoa(*r.ID)
 		}
 		priority := ""
 		if r.Priority != nil {
@@ -714,7 +707,7 @@ func recordRowsNoType(out *output.Config, records []gen.Record) [][]string {
 			out.Dim(id),
 			derefStr(r.Host),
 			derefStr(r.Answer),
-			out.Dim(strconv.FormatInt(r.Ttl, 10)),
+			out.Dim(strconv.FormatInt(r.TTL, 10)),
 			priority,
 		})
 	}
@@ -815,12 +808,15 @@ func confirmDelete(out *output.Config, yes bool, msg string) (bool, error) {
 	return cmdutil.Confirm(out, yes, msg)
 }
 
-func parseID(s string) (int32, error) {
+func parseID(s string) (int, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid record ID %q: must be a number", s)
 	}
-	return int32(n), nil
+	// The SDK reports and accepts record IDs as int; ParseInt still bounds at
+	// 32 bits so an ID that could not have come from this API is rejected here
+	// rather than at the server.
+	return int(n), nil
 }
 
 func derefStr(s *string) string {
@@ -830,7 +826,7 @@ func derefStr(s *string) string {
 	return *s
 }
 
-func derefInt32(n *int32) int32 {
+func derefInt(n *int) int {
 	if n == nil {
 		return 0
 	}
@@ -865,4 +861,23 @@ func readImportData(path string) ([]byte, error) {
 	// G304: reading a caller-named file is this function's entire purpose —
 	// --file is the documented way to pass an import payload.
 	return os.ReadFile(path) //nolint:gosec
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses.
+//
+// The envelope's type is not changed to match, because that would change the
+// JSON shape emitted by every command group — including the ones still on the
+// generated client — for the sake of a field that is a small positive integer
+// either way. A page number that does not fit in an int32 cannot have come from
+// this API; it is dropped rather than silently truncated to a wrong page.
+func int32Page(p *int) *int32 {
+	if p == nil {
+		return nil
+	}
+	if *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
 }
