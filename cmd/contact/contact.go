@@ -205,6 +205,16 @@ func runResend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// --dry-run is documented as "for write operations, print the request
+	// instead of sending it". This command sends a verification email to a
+	// registrant — an irreversible, externally visible side effect and exactly
+	// what someone reaches for --dry-run to avoid. It previously ignored the
+	// flag and sent the email anyway.
+	if cmdutil.IsDryRun(cmd) {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/contacts/verify/%d:resend", id), nil)
+		return nil
+	}
+
 	stop := out.Spin("Resending verification email…")
 	resp, err := client.Gen().ResendContactVerificationEmail(cmd.Context(), id,
 		&gen.ResendContactVerificationEmailParams{})
@@ -256,6 +266,13 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	id, err := parseVerificationID(args[0])
 	if err != nil {
 		return err
+	}
+
+	// Same omission as resend: this marks a contact verified through a
+	// reseller-only endpoint and had no --dry-run branch.
+	if cmdutil.IsDryRun(cmd) {
+		out.DryRun("POST", fmt.Sprintf("/core/v1/contacts/verify/%d", id), nil)
+		return nil
 	}
 
 	stop := out.Spin("Marking contact verified…")
