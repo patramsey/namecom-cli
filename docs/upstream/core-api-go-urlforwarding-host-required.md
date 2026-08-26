@@ -1,9 +1,8 @@
 # `URLForwardingInput` forces a `host` key onto update requests
 
-**Not filed upstream.** Found while porting `namecom url` to the SDK (#40,
-slice 3). Lower priority than [#5] and [#6]: it changes one field on one
-endpoint, and the workaround restates a value that is already stored rather
-than inventing one. Worth filing if those two get attention.
+**Filed 2026-08-26 as [namedotcom/core-api-go#7](https://github.com/namedotcom/core-api-go/issues/7).**
+Found while porting `namecom url` to the SDK (#40, slice 3). Kept here so the
+reproduction and the measurements stay with the repository that produced them.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 

@@ -12,7 +12,7 @@ being replaced by a link.
 |---|---|---|
 | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | [#3](https://github.com/namedotcom/core-api-go/issues/3) — **fixed in v1.33.3** |
 | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | [#4](https://github.com/namedotcom/core-api-go/issues/4) — **fixed in v1.33.3** |
-| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
+| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — open |
 | [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
 | [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — open |
 | [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — open |
@@ -34,7 +34,7 @@ of those are worked around in this repository:
 |---|---|
 | `updatedomain-union` ([#6]) | `domain update` builds a `map[string]any` and passes `option.WithBodyProperties`. The typed body would silently drop the transfer lock. |
 | `idempotency-key-asterisk` ([#5]) | `option.WithXIdempotencyKey` is never used; `internal/api/headers.go` sets the header for every write. |
-| `urlforwarding-host-required` | `url update` sends the host it just fetched, because the type cannot omit it and an empty host means the apex. |
+| `urlforwarding-host-required` ([#7]) | `url update` sends the host it just fetched, because the type cannot omit it and an empty host means the apex. |
 | `forced-request-bodies` | bodyless endpoints are given `&EmptyObject{}` so they send `{}` rather than `null`. |
 
 **Each workaround is used in exactly one place and pinned by a test that fails
@@ -61,4 +61,5 @@ Worth recording for anyone deciding whether reporting to this tracker is worth
 the effort: the silence is not an answer, but the fixes shipped.
 
 [#5]: https://github.com/namedotcom/core-api-go/issues/5
+[#7]: https://github.com/namedotcom/core-api-go/issues/7
 [#6]: https://github.com/namedotcom/core-api-go/issues/6
