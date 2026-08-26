@@ -9,116 +9,77 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
-### Removed
-- The vendored OpenAPI spec, the Python preprocessor that downgraded it from
-  3.1 to 3.0, and the 23,381-line generated API client are gone, along with
-  `make generate`, `make verify-spec`, the `verify-generate` CI step, and the
-  `oapi-codegen` tool dependency. The CLI runs entirely on
-  `github.com/namedotcom/core-api-go`, name.com's own SDK. This completes the
-  migration tracked in #40 — about 40,000 lines removed.
+## [0.4.0] - 2026-08-26
 
-  Building no longer requires Python.
+The CLI now runs on [`github.com/namedotcom/core-api-go`](https://github.com/namedotcom/core-api-go),
+name.com's own SDK, instead of a client generated from a vendored copy of the
+OpenAPI spec. About 40,000 lines left the repository and Python left the build.
 
-### Changed
-- `namecom status`, `namecom auth status`, and shell completion now call the
-  official name.com Core SDK. With this, no command in the CLI calls the
-  vendored generated client — the last step of the migration in #40 before the
-  generated client itself can be removed. No user-visible change.
+Minor rather than patch because two commands send a slightly different request
+than before — both unavoidable, both detailed under **Changed** — and because
+three bugs the previous client had been hiding are fixed. Nothing changes what
+any command asks you for, prints on success, or returns as an exit code.
 
-### Fixed
-- `domain check` no longer risks a panic when a lookup returns no result for one
-  of the names asked about. The safety net that reports "could not determine
-  availability" rather than implying the domain is taken is the code that would
-  have crashed.
-- `domain register` no longer risks a panic on a response without a `domain`
-  object; it falls back to the name that was requested.
+### Added
+- `--dry-run` previews the request body for `order refund`, `transfer create`,
+  `transfer internal-in`, `url create`, and `url update`. These printed only a
+  method and path, so `transfer create --dry-run` gave no indication of what was
+  being transferred or at what price, and `order refund --dry-run` paraphrased
+  the request rather than showing it.
 
-### Changed
-- `namecom domain` now calls the official name.com Core SDK instead of the
-  vendored generated client, completing the command-group migration in #40.
-  Every mutating request was compared against the previous client and is
-  byte-identical, including `domain update`, which needs a documented
-  workaround to stay that way — see
-  `docs/upstream/core-api-go-updatedomain-union.md`.
+  **The transfer auth code is redacted.** It authorises moving a domain between
+  registrars and `--dry-run` output reaches terminal scrollback and CI logs, so
+  it appears as `[redacted]` in the preview and is sent normally on the real
+  request.
 
 ### Fixed
+- `contact resend --dry-run` and `contact verify --dry-run` print the request
+  instead of sending it. Both ignored the flag entirely, so
+  `contact resend --dry-run` **delivered the verification email to the
+  registrant** — previewing and doing differed by an email arriving in someone
+  else's inbox. They were the only writes in the CLI that did not honour
+  `--dry-run`.
 - `transfer internal-in` no longer prints an always-empty `(status: )`. That
-  endpoint returns a domain payload, which carries no status field, but the
-  response was being decoded into a transfer struct — so the status silently
-  stayed blank on every successful run. The line now omits it; `transfer get`
-  is where the status comes from, and the command already says so.
-- `transfer create` no longer risks a panic on a response without a `transfer`
-  object. Previously that produced an empty status; under the new client the
-  field is a pointer, so it needed a nil check rather than a dereference.
+  endpoint returns a domain payload, which has no status field, but the response
+  was decoded into a transfer struct — so the status was blank on every
+  successful run. `transfer get` is where the status comes from, and the command
+  already says so.
+- `domain check`, `domain register`, and `transfer create` no longer risk a
+  panic on a response missing an optional object. In `domain check` the affected
+  code is the safety net that reports "could not determine availability" rather
+  than implying a domain is taken, so the crash would have removed exactly the
+  protection it exists to provide.
+- The `Authorization` header is bound to the API's hostname and is not sent
+  anywhere else. `net/http` strips it when following a cross-host redirect, but
+  header injection moved into the transport during this work and a transport
+  runs again for the redirected request — which would have handed the credential
+  to whatever host the redirect named. Caught by an existing test before
+  release; the property is now enforced explicitly rather than inherited.
 
 ### Changed
-- `namecom transfer` now calls the official name.com Core SDK instead of the
-  vendored generated client, continuing the migration in #40. `transfer cancel`
-  and `transfer cancel-outbound` now send `{}` where they previously sent no
-  body, for the reason documented in
-  `docs/upstream/core-api-go-forced-request-bodies.md`.
+- Every command calls the Core SDK. Requests and output were compared against
+  the previous client command by command and are byte-identical, with two
+  exceptions that the SDK's types make unavoidable:
 
-### Changed
-- `namecom contact` and `namecom order` now call the official name.com Core SDK
-  instead of the vendored generated client, continuing the migration in #40.
-  Requests and output are unchanged except for one detail:
+  - **`url update` sends a `host` field it previously omitted.** The SDK models
+    create and update with one input type whose `host` has no `omitempty`. The
+    value sent is the host read from the record being updated — a restatement of
+    what is already stored, not a change — because an empty host on a URL
+    forwarding means the apex and would silently move the forwarding.
+  - **`contact verify`, `contact resend`, `transfer cancel`, and
+    `transfer cancel-outbound` send `{}` where they previously sent no body.**
+    These endpoints take no body, but the SDK marshals its body field
+    regardless; left unset it sends the literal `null`, which a strict parser
+    rejects for an object-typed body.
 
-  `contact verify` and `contact resend` now send `{}` as the request body where
-  they previously sent none. Both endpoints take no body, but the SDK models
-  them with a body field it marshals regardless — leaving it unset sends the
-  literal `null`, which a strict parser rejects for an object-typed body. `{}`
-  is the safe form of a change that cannot be avoided. Documented in
-  `docs/upstream/core-api-go-forced-request-bodies.md`.
+  Both are documented in [`docs/upstream/`](docs/upstream/) with reproductions,
+  and both are pinned by tests so they cannot drift further.
 
-### Changed
-- `namecom dnssec`, `email`, `vanity-ns`, and `url` now call the official
-  name.com Core SDK instead of the vendored generated client, continuing the
-  migration in #40. Requests and output were compared against the previous
-  client and are unchanged, with one exception:
-
-  `url update` now sends a `host` field it previously omitted. The SDK models
-  create and update with a single input type whose `host` has no `omitempty`,
-  so the key cannot be left out. The value sent is the host read from the
-  record being updated — a restatement of what is already stored, not a
-  change — because an empty host on a URL forwarding means the apex and would
-  silently move the forwarding. Documented in
-  `docs/upstream/core-api-go-urlforwarding-host-required.md`.
-
-### Changed
-- `namecom dns` now calls the official name.com Core SDK instead of the
-  vendored generated client. No user-visible change is intended and none was
-  found: the requests it sends and the JSON it prints were compared against the
-  previous client and are identical. Part of the migration tracked in #40.
-
-### Fixed
-- The `Authorization` header is now bound to the API's hostname and is not sent
-  to any other host. `net/http` already strips it when following a cross-host
-  redirect, but header injection moved into the transport layer in this
-  release, and a transport runs again for the redirected request — which would
-  have put the credential back and handed it to whatever host the redirect
-  named. Caught before release by an existing test; noted because the property
-  is now enforced explicitly rather than inherited.
-
-### Changed
-- `--dry-run` now previews the request body for `order refund`, `transfer
-  create`, `transfer internal-in`, `url create`, and `url update`. These
-  printed only a method and path, so `transfer create --dry-run` gave no
-  indication of what was being transferred or at what price, and `order refund
-  --dry-run` paraphrased the request in an ad-hoc line rather than showing it.
-
-  **The transfer auth code is redacted**, and deliberately: it authorises
-  moving a domain between registrars, and `--dry-run` output reaches terminal
-  scrollback and CI logs. It appears as `[redacted]` in the preview and is
-  sent normally on the real request.
-
-### Fixed
-- `contact resend --dry-run` and `contact verify --dry-run` now print the
-  request instead of sending it. Both ignored `--dry-run` entirely, so
-  `contact resend --dry-run` delivered the verification email to the
-  registrant — the one command in that group where previewing and doing
-  differed by an email arriving in someone else's inbox. `--dry-run` is
-  documented as "for write operations, print the request instead of sending
-  it"; these were the only writes that did not honour it.
+### Removed
+- The vendored OpenAPI spec, the Python preprocessor that downgraded it from 3.1
+  to 3.0, the 23,381-line generated client, `make generate`, `make verify-spec`,
+  the `verify-generate` CI step, and the `oapi-codegen` tool dependency.
+  **Building no longer requires Python.**
 
 ## [0.3.2] - 2026-08-23
 
@@ -344,7 +305,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/patramsey/namecom-cli/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/patramsey/namecom-cli/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/patramsey/namecom-cli/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/patramsey/namecom-cli/compare/v0.2.4...v0.3.0
