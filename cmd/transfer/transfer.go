@@ -4,14 +4,15 @@ package transfer
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -122,24 +123,14 @@ func runList(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	spin := out.StartSpinner("Fetching transfers…")
-	var page int32 = 1
-	var transfers []gen.Transfer
+	page := 1
+	var transfers []*coreapigo.Transfer
 	var hasMore bool
-	var lastResult gen.ListTransfersResponseSchema
+	var lastResult *coreapigo.ListTransfersResponse
 	for {
-		params := &gen.ListTransfersParams{Page: &page}
-		resp, err := client.Gen().ListTransfers(cmd.Context(), params)
+		result, err := client.SDK().Transfers.ListTransfers(cmd.Context(),
+			&coreapigo.ListTransfersRequest{Page: &page})
 		if err != nil {
-			spin.Stop()
-			return err
-		}
-		// Fresh variable each iteration: the JSON decoder reuses the existing
-		// slice backing array and the pointers inside it, so reusing one target
-		// lets page N overwrite values page 1 already appended. It also leaves a
-		// stale non-nil NextPage when the final page omits the key, which never
-		// terminates. See the same pattern in cmd/dns/dns.go.
-		var result gen.ListTransfersResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
 			spin.Stop()
 			return err
 		}
@@ -171,13 +162,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.JSONList(transfers, np, 0)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.YAMLList(transfers, np, 0)
 	default:
@@ -206,16 +197,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	stop := out.Spin("Fetching transfer…")
-	resp, err := client.Gen().GetTransfer(cmd.Context(), domain)
+	t, err := client.SDK().Transfers.GetTransfer(cmd.Context(),
+		&coreapigo.GetTransferRequest{DomainName: domain})
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
 			return fmt.Errorf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain)
 		}
-		return err
-	}
-	var t gen.Transfer
-	if err := api.Decode(resp, &t); err != nil {
 		return err
 	}
 
@@ -233,7 +221,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	default:
 		out.Table(
 			[]string{"DOMAIN", "STATUS"},
-			transferRows(out, []gen.Transfer{t}),
+			transferRows(out, []*coreapigo.Transfer{t}),
 		)
 	}
 	return nil
@@ -287,9 +275,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// approved a charge they had never seen. A pricing failure must not block
 	// the transfer — fall back to an unpriced prompt.
 	priceMsg := ""
-	if pricingResp, perr := client.Gen().GetPricingForDomain(cmd.Context(), domain, &gen.GetPricingForDomainParams{}); perr == nil {
-		var pricing gen.PricingResponseSchema
-		if api.Decode(pricingResp, &pricing) == nil && pricing.TransferPrice != nil {
+	if pricing, perr := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
+		&coreapigo.GetPricingForDomainRequest{DomainName: domain}); perr == nil {
+		if pricing.TransferPrice != nil {
 			priceMsg = fmt.Sprintf(" for $%.2f", *pricing.TransferPrice)
 			if createPrivacy {
 				priceMsg += " plus WHOIS privacy"
@@ -306,7 +294,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	body := gen.CreateTransferJSONRequestBody{
+	body := coreapigo.CreateTransferRequest{
 		DomainName: domain,
 		AuthCode:   createAuthCode,
 	}
@@ -329,13 +317,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Initiating transfer…")
-	resp, err := client.Gen().CreateTransfer(cmd.Context(), body)
+	result, err := client.SDK().Transfers.CreateTransfer(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var result gen.CreateTransferResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
 		return err
 	}
 
@@ -355,8 +339,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	default:
 		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total $%.2f)",
 			domain, result.Order, result.TotalPaid))
-		if s := string(result.Transfer.Status); s != "" {
-			fmt.Fprintf(out.Writer, "  status: %s\n", out.StatusBadge(s))
+		// Nil-checked because the SDK types this as *Transfer where the
+		// generated client used a value. A response without a "transfer" key
+		// used to yield an empty status and no status line; unguarded here it
+		// is a nil dereference and the command panics instead of printing a
+		// successful transfer. Caught by TestRequestShape_Transfer, whose stub
+		// omits the key.
+		if result.Transfer != nil {
+			if s := string(result.Transfer.Status); s != "" {
+				fmt.Fprintf(out.Writer, "  status: %s\n", out.StatusBadge(s))
+			}
 		}
 		// The API flags non-blocking registry statuses that may still stall the
 		// transfer. JSON output carried these; table output silently dropped them,
@@ -365,8 +357,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			if w.Message != nil && *w.Message != "" {
 				out.Warn(*w.Message)
 			}
-			if w.Statuses != nil && len(*w.Statuses) > 0 {
-				out.Warn("registry statuses: " + strings.Join(*w.Statuses, ", "))
+			if len(w.Statuses) > 0 {
+				out.Warn("registry statuses: " + strings.Join(w.Statuses, ", "))
 			}
 		}
 		out.Hint("Transfers typically take 3–5 days — the gaining registrar and current owner must approve")
@@ -385,11 +377,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 // `canceled_pending_refund` IS terminal (canceled; only the refund is
 // outstanding).
 func isTerminalTransferStatus(status string) bool {
-	switch gen.TransferStatus(status) {
-	case gen.TransferStatusCompleted,
-		gen.TransferStatusFailed,
-		gen.TransferStatusCanceled,
-		gen.TransferStatusCanceledPendingRefund:
+	switch coreapigo.TransferStatus(status) {
+	case coreapigo.TransferStatusCompleted,
+		coreapigo.TransferStatusFailed,
+		coreapigo.TransferStatusCanceled,
+		coreapigo.TransferStatusCanceledPendingRefund:
 		return true
 	}
 	return false
@@ -417,14 +409,10 @@ func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, d
 		case <-ticker.C:
 		}
 		stop := out.Spin("Checking transfer status…")
-		resp, err := client.Gen().GetTransfer(cmd.Context(), domain)
+		t, err := client.SDK().Transfers.GetTransfer(cmd.Context(),
+			&coreapigo.GetTransferRequest{DomainName: domain})
 		stop()
 		if err != nil {
-			out.Warn(fmt.Sprintf("status check failed: %v", err))
-			continue
-		}
-		var t gen.Transfer
-		if err := api.Decode(resp, &t); err != nil {
 			out.Warn(fmt.Sprintf("status check failed: %v", err))
 			continue
 		}
@@ -492,7 +480,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	body := gen.CreateInternalTransferInJSONRequestBody{
+	body := coreapigo.CreateInternalTransferInRequest{
 		DomainName: domain,
 		AuthCode:   internalAuthCode,
 	}
@@ -505,12 +493,9 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	resp, err := client.Gen().CreateInternalTransferIn(cmd.Context(), body)
+	t, err := client.SDK().Transfers.CreateInternalTransferIn(cmd.Context(), &body)
 	if err != nil {
-		return err
-	}
-	var t gen.Transfer
-	if err := api.Decode(resp, &t); err != nil {
+		err = api.FromSDKError(err)
 		// A 403 here almost always means the account is not on the enterprise
 		// allowlist rather than that the credentials are wrong. Say so, instead
 		// of letting the generic "check your credentials" hint send the user off
@@ -529,7 +514,13 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(t)
 	default:
-		out.Success(fmt.Sprintf("Internal transfer initiated for %s (status: %s)", domain, t.Status))
+		// No status is reported here, and that is a fix rather than a
+		// simplification. This endpoint returns a DomainResponsePayload — the
+		// spec says so and the SDK types it that way — which has no status
+		// field. The generated client decoded that payload into a Transfer
+		// struct, so Status silently stayed empty and the line has always read
+		// "(status: )". The hint below is where a caller gets the real answer.
+		out.Success(fmt.Sprintf("Internal transfer initiated for %s", domain))
 		out.Hint(fmt.Sprintf("Run 'namecom transfer get %s' to check status", domain))
 	}
 	return nil
@@ -560,13 +551,11 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Cancelling transfer…")
-	resp, err := client.Gen().CancelTransfer(cmd.Context(), domain)
+	_, err = client.SDK().Transfers.CancelTransfer(cmd.Context(),
+		&coreapigo.CancelTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Cancelled transfer of %s", domain))
 	out.Hint("Run 'namecom transfer list' to see remaining active transfers")
@@ -597,15 +586,9 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	params := &gen.CancelOutboundTransferParams{
-		ContentType: gen.Applicationjson,
-	}
-	resp, err := client.Gen().CancelOutboundTransfer(cmd.Context(), domain, params)
+	result, err := client.SDK().Transfers.CancelOutboundTransfer(cmd.Context(),
+		&coreapigo.CancelOutboundTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
 	if err != nil {
-		return err
-	}
-	var result gen.CancelTransferOutResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
 		return err
 	}
 
@@ -629,15 +612,13 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Checking transfer eligibility…")
-	resp, err := client.Gen().GetTransferEligibility(cmd.Context(), domain)
+	elig, err := client.SDK().Transfers.GetTransferEligibility(cmd.Context(),
+		&coreapigo.GetTransferEligibilityRequest{DomainName: domain})
 	stop()
 	if err != nil {
 		return err
 	}
-	var result gen.TransferEligibilityResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
-		return err
-	}
+	result := elig
 
 	switch out.Format {
 	case output.FormatJSON:
@@ -662,7 +643,7 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func transferRows(out *output.Config, transfers []gen.Transfer) [][]string {
+func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]string {
 	rows := make([][]string, 0, len(transfers))
 	for _, t := range transfers {
 		rows = append(rows, []string{
@@ -675,4 +656,14 @@ func transferRows(out *output.Config, transfers []gen.Transfer) [][]string {
 
 func confirm(out *output.Config, yes bool, msg string) (bool, error) {
 	return cmdutil.Confirm(out, yes, msg)
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses. Same rationale as cmd/dns.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
 }

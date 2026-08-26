@@ -120,10 +120,15 @@ func TestDryRunPreviewsPrice(t *testing.T) {
 // of endpoint, so whatever the port does to them should be visible rather than
 // discovered from a 400 later.
 func TestRequestShape_TransferCancels(t *testing.T) {
+	// Both now send {} where they previously sent no body — the same forced-body
+	// limitation as the contact endpoints, and the reason this test was written
+	// before the port rather than after. See
+	// docs/upstream/core-api-go-forced-request-bodies.md.
 	t.Run("cancel", func(t *testing.T) {
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "POST",
 			Path:   "/core/v1/transfers/example.com:cancel",
+			Body:   `{}`,
 		}, cmdForTransferGet, runCancel, []string{"example.com"}, transferStub)
 	})
 
@@ -131,6 +136,7 @@ func TestRequestShape_TransferCancels(t *testing.T) {
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "POST",
 			Path:   "/core/v1/transfers/external/out/example.com:cancel",
+			Body:   `{}`,
 		}, cmdForTransferGet, runCancelOutbound, []string{"example.com"}, transferStub)
 	})
 }
