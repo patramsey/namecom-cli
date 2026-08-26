@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/api/gen"
@@ -265,7 +266,7 @@ func TestOrderRows_Currency(t *testing.T) {
 				Format: output.FormatTable, Color: output.ColorNever,
 				Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{},
 			}
-			rows := orderRows(out, []gen.Order{{FinalAmount: &amount, Currency: tc.currency}})
+			rows := orderRows(out, []*coreapigo.Order{{FinalAmount: &amount, Currency: tc.currency}})
 			if len(rows) != 1 {
 				t.Fatalf("expected 1 row, got %d", len(rows))
 			}
@@ -485,7 +486,7 @@ func TestOrderGet_ShowsOrderItems(t *testing.T) {
 func TestOrderRows_LargeAmountPrecision(t *testing.T) {
 	const raw = `{"id":1,"status":"success","createDate":"2026-01-15","finalAmount":1234567.89}`
 
-	var o gen.Order
+	var o coreapigo.Order
 	if err := json.Unmarshal([]byte(raw), &o); err != nil {
 		t.Fatalf("decoding order: %v", err)
 	}
@@ -494,7 +495,7 @@ func TestOrderRows_LargeAmountPrecision(t *testing.T) {
 		Format: output.FormatTable, Color: output.ColorNever,
 		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{},
 	}
-	rows := orderRows(out, []gen.Order{o})
+	rows := orderRows(out, []*coreapigo.Order{&o})
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}

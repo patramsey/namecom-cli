@@ -10,6 +10,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Changed
+- `namecom contact` and `namecom order` now call the official name.com Core SDK
+  instead of the vendored generated client, continuing the migration in #40.
+  Requests and output are unchanged except for one detail:
+
+  `contact verify` and `contact resend` now send `{}` as the request body where
+  they previously sent none. Both endpoints take no body, but the SDK models
+  them with a body field it marshals regardless — leaving it unset sends the
+  literal `null`, which a strict parser rejects for an object-typed body. `{}`
+  is the safe form of a change that cannot be avoided. Documented in
+  `docs/upstream/core-api-go-forced-request-bodies.md`.
+
+### Changed
 - `namecom dnssec`, `email`, `vanity-ns`, and `url` now call the official
   name.com Core SDK instead of the vendored generated client, continuing the
   migration in #40. Requests and output were compared against the previous
