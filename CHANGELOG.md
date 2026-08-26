@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `contact resend --dry-run` and `contact verify --dry-run` now print the
+  request instead of sending it. Both ignored `--dry-run` entirely, so
+  `contact resend --dry-run` delivered the verification email to the
+  registrant — the one command in that group where previewing and doing
+  differed by an email arriving in someone else's inbox. `--dry-run` is
+  documented as "for write operations, print the request instead of sending
+  it"; these were the only writes that did not honour it.
+
 ## [0.3.2] - 2026-08-23
 
 ### Changed
