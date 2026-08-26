@@ -1,5 +1,11 @@
 # Mitigations for the `core-api-go` retry defects — evaluated, not adopted
 
+> **Superseded as of v1.33.3 (2026-08-25).** Both defects are fixed upstream, so
+> neither mitigation below is needed against v1.33.3 or later. Kept because the
+> measurements are the evidence behind the #40 decision and because they still
+> apply to anyone pinned to v1.33.2 or earlier. See
+> [`README.md`](README.md) for the verification.
+
 **Nothing in this repository works around these defects.** This file records
 what a mitigation would look like and what it was measured to cost, so the
 information is available to the #40 decision and to the upstream reports
@@ -92,10 +98,10 @@ reports were verified against a local copy of v1.33.2 and are small. Both are
 filed as [#3](https://github.com/namedotcom/core-api-go/issues/3) and
 [#4](https://github.com/namedotcom/core-api-go/issues/4).
 
-**The migration is on hold until they are resolved.** These mitigations are
-recorded rather than applied, because waiting is cheaper than carrying them: the
-CLI works today on the generated client, and nothing forces the move on a
-schedule.
+The migration was held until they were resolved, rather than carrying either
+mitigation — waiting was cheaper, the CLI works on the generated client, and
+nothing forced the move on a schedule. **That wait paid off: v1.33.3 fixes both,
+so the migration can be costed on its merits with neither mitigation in play.**
 
 If that changes and the migration proceeds before a fix lands, mitigation 1 is
 not optional: it guards the money endpoints. Mitigation 2 is a latency question
