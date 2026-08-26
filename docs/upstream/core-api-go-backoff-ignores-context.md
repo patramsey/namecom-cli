@@ -1,6 +1,6 @@
 # Retry backoff ignores the request context
 
-**Filed 2026-08-20 as [namedotcom/core-api-go#4](https://github.com/namedotcom/core-api-go/issues/4).** Kept here so the reproduction stays with the repository that produced it.
+**Filed 2026-08-20 as [namedotcom/core-api-go#4](https://github.com/namedotcom/core-api-go/issues/4). Fixed upstream in v1.33.3 (2026-08-25); the issue is still open and unacknowledged.** The suggested fix below was adopted, factored into a `sleepWithContext` helper. Kept here so the reproduction and the measurements stay with the repository that produced them.
 
 
 **Version:** v1.33.2 · **Go:** 1.26.6

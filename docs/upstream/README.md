@@ -19,13 +19,41 @@ and what each was measured to cost, is recorded in
 
 ## Status
 
-**The Core SDK migration is on hold until #3 and #4 are resolved upstream.**
+**Both defects were fixed upstream in v1.33.3 (2026-08-25). The hold is lifted.**
 
-That is the standing decision for issue #40. #3 is the gate: with
-`option.WithoutRetries()` ignored at client scope, the SDK retries POSTs on 5xx
-against endpoints that do not honour idempotency keys, and the only fallback is
-to repeat the option across every call site — a hazard that has to be carried
-for as long as the defect stands rather than paid off once.
+Verified by measurement, not by reading the release: the two
+defect-demonstration tests written during the #40 spike are constructed to fail
+once the defects are gone, and both now fail against v1.33.3.
+
+| | v1.33.2 | v1.33.3 |
+|---|---|---|
+| client-scoped `WithoutRetries()`, one 500 | 2 requests | **1 request** |
+| 100ms deadline against `Retry-After: 2` | 2.001s | **100.8ms** |
+
+The upstream patches match what these reports proposed — `Retrier` now carries
+`disabled` and `Run` honours either source; the bare `time.Sleep` is now a
+`sleepWithContext` selecting on `ctx.Done()`. One refinement was added that this
+report did not anticipate: a request-scoped `attempts > 0` resets `disabled` to
+false, so a per-call attempt count deliberately overrides a client-scoped
+opt-out.
+
+**Issues #3 and #4 are still open upstream with no comment.** The fixes shipped
+without acknowledgement, so nothing in the tracker signals this. Left to
+upstream to comment and close.
+
+### What this means for #40
+
+The gate is gone. #3 was the blocker: with client-scoped `WithoutRetries()`
+ignored, the SDK retried POSTs on 5xx against endpoints that do not honour
+idempotency keys, and the only fallback was repeating the option across ~53 call
+sites where forgetting it fails silently. That is now a single client-scoped
+option that holds.
+
+What remains is the ordinary migration tradeoff, not a safety hazard. The other
+spike findings are unaffected — they are spec-derived (Fern renames, the type
+gotchas, `*int` vs `*int32` paging) rather than retry-related.
 
 Nothing here blocks the CLI. The vendored spec and generated client keep working
-and stay in place; this is a decision to wait, not a dependency to unpick.
+and stay in place. Any migration should re-run the spike against v1.33.3 first:
+it was evaluated at v1.33.2, and the retry layer is precisely the part that
+changed.
