@@ -7,9 +7,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -62,10 +62,10 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	// Run all queries in parallel — they are independent.
 	var (
-		totalDomains    int32
-		unlockedCount   int32
-		expiringDomains []gen.DomainResponsePayload
-		transfers       []gen.Transfer
+		totalDomains    int
+		unlockedCount   int
+		expiringDomains []*coreapigo.DomainResponsePayload
+		transfers       []*coreapigo.Transfer
 		transfersOK     bool
 		balance         *float64
 	)
@@ -78,14 +78,11 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	// Single page-1 request to get TotalCount — no need to page everything.
 	g.Go(func() error {
-		p := int32(1)
-		resp, err := client.Gen().ListDomains(gctx, &gen.ListDomainsParams{Page: &p})
+		p := 1
+		result, err := client.SDK().Domains.ListDomains(gctx,
+			&coreapigo.ListDomainsRequest{Page: &p})
 		if err != nil {
-			return err
-		}
-		var result gen.ListDomainsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			return err
+			return api.FromSDKError(err)
 		}
 		totalDomains = result.TotalCount
 		return nil
@@ -93,14 +90,11 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	// Count unlocked domains via the Locked=false filter.
 	g.Go(func() error {
-		p := int32(1)
-		resp, err := client.Gen().ListDomains(gctx, &gen.ListDomainsParams{Page: &p, Locked: &falseVal})
+		p := 1
+		result, err := client.SDK().Domains.ListDomains(gctx,
+			&coreapigo.ListDomainsRequest{Page: &p, Locked: &falseVal})
 		if err != nil {
-			return err
-		}
-		var result gen.ListDomainsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			return err
+			return api.FromSDKError(err)
 		}
 		unlockedCount = result.TotalCount
 		return nil
@@ -108,16 +102,12 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	// Fetch only domains expiring in the next 30 days.
 	g.Go(func() error {
-		p := int32(1)
+		p := 1
 		for {
-			params := &gen.ListDomainsParams{Page: &p, ExpireDateEnd: &expireEnd}
-			resp, err := client.Gen().ListDomains(gctx, params)
+			result, err := client.SDK().Domains.ListDomains(gctx,
+				&coreapigo.ListDomainsRequest{Page: &p, ExpireDateEnd: &expireEnd})
 			if err != nil {
-				return err
-			}
-			var result gen.ListDomainsResponseSchema
-			if err := api.Decode(resp, &result); err != nil {
-				return err
+				return api.FromSDKError(err)
 			}
 			expiringDomains = append(expiringDomains, result.Domains...)
 			next, ok := cmdutil.NextPage(p, result.NextPage, result.LastPage)
@@ -132,12 +122,8 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	// and every purchasing command can fail with 402 "Insufficient Funds", so
 	// being able to see the balance beforehand is the point of showing it.
 	g.Go(func() error {
-		resp, err := client.Gen().CheckAccountBalance(gctx)
+		result, err := client.SDK().AccountInfo.CheckAccountBalance(gctx)
 		if err != nil {
-			return nil
-		}
-		var result gen.CheckAccountBalanceResponseSchema
-		if api.Decode(resp, &result) != nil {
 			return nil
 		}
 		balance = &result.Balance
@@ -146,20 +132,17 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 
 	// Fetch transfers for pending count.
 	g.Go(func() error {
-		for tPage := ptrInt32(1); ; {
-			tResp, err := client.Gen().ListTransfers(gctx, &gen.ListTransfersParams{Page: tPage})
+		for tPage := ptrInt(1); ; {
+			tResult, err := client.SDK().Transfers.ListTransfers(gctx,
+				&coreapigo.ListTransfersRequest{Page: tPage})
 			if err != nil {
 				// Non-fatal: a status view is still useful without it. But leave
 				// transfersOK false so the count is reported as unknown rather
 				// than as zero.
 				return nil
 			}
-			var tResult gen.ListTransfersResponseSchema
-			if api.Decode(tResp, &tResult) != nil {
-				return nil
-			}
 			transfers = append(transfers, tResult.Transfers...)
-			cur := int32(0)
+			cur := 0
 			if tPage != nil {
 				cur = *tPage
 			}
@@ -224,10 +207,10 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	summary := statusSummary{
 		Profile:          profileName,
 		Endpoint:         client.BaseURL(),
-		DomainsTotal:     int(totalDomains),
+		DomainsTotal:     totalDomains,
 		ExpiringCritical: expCritical,
 		ExpiringSoon:     expSoon,
-		Unlocked:         int(unlockedCount),
+		Unlocked:         unlockedCount,
 		PendingTransfers: pendingCount,
 		ExpiringDomains:  expiringItems,
 		PendingDomains:   pendingDomains,
@@ -310,4 +293,4 @@ func renderStatus(out *output.Config, s statusSummary) {
 	out.Hint("Run 'namecom domain list' to see all domains")
 }
 
-func ptrInt32(n int32) *int32 { return &n }
+func ptrInt(n int) *int { return &n }
