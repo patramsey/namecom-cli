@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -9,9 +10,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -45,7 +46,7 @@ var (
 	listSort           string
 	listSortDir        string
 	listAll            bool
-	listPage           int32
+	listPage           int
 	listExpiringAfter  string
 	listExpiringBefore string
 )
@@ -58,7 +59,7 @@ func init() {
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (use with --output json for scripting)")
-	listCmd.Flags().Int32Var(&listPage, "page", 1, "page number to fetch (use with --all to start from a specific page)")
+	listCmd.Flags().IntVar(&listPage, "page", 1, "page number to fetch (use with --all to start from a specific page)")
 }
 
 // isFiltered reports whether any server-side filter flag is set.
@@ -95,8 +96,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 	spin := out.StartSpinner("Fetching domains…")
 
 	// Build query params from flags (shared across all page requests).
-	buildParams := func(page int32) *gen.ListDomainsParams {
-		p := &gen.ListDomainsParams{Page: &page}
+	buildParams := func(page int) *coreapigo.ListDomainsRequest {
+		p := &coreapigo.ListDomainsRequest{Page: &page}
 		if listSort != "" {
 			p.Sort = &listSort
 		}
@@ -120,19 +121,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return p
 	}
 
-	var domains []gen.DomainResponsePayload
-	var lastResult gen.ListDomainsResponseSchema
+	var domains []*coreapigo.DomainResponsePayload
+	var lastResult *coreapigo.ListDomainsResponse
 	var hasMore bool
 
 	// Fetch page 1 first to discover LastPage.
-	resp, err := client.Gen().ListDomains(ctx, buildParams(listPage))
+	lastResult, err := client.SDK().Domains.ListDomains(ctx, buildParams(listPage))
 	if err != nil {
 		spin.Stop()
-		return err
-	}
-	if err := api.Decode(resp, &lastResult); err != nil {
-		spin.Stop()
-		return err
+		return api.FromSDKError(err)
 	}
 	domains = append(domains, lastResult.Domains...)
 
@@ -145,29 +142,26 @@ func runList(cmd *cobra.Command, _ []string) error {
 			// refetched page 5 (duplicating it) and pulled in pages 2-4 the user
 			// asked to skip — while the printed count still matched totalCount, so
 			// it looked correct.
-			start := int(listPage)
-			last := int(*lastResult.LastPage)
-			pages := make([][]gen.DomainResponsePayload, last-start)
+			start := listPage
+			last := *lastResult.LastPage
+			pages := make([][]*coreapigo.DomainResponsePayload, last-start)
 			var mu sync.Mutex
 			g, gctx := errgroup.WithContext(ctx)
 			// Bound concurrency: an account with many pages would otherwise queue
 			// every request at once behind the shared rate limiter.
 			g.SetLimit(5)
 			for p := start + 1; p <= last; p++ {
-				p := int32(p) //nolint:gosec // G115: p <= last, and last is int(*lastResult.LastPage) — already an int32 from the API
-				idx := int(p) - start - 1
+				// No narrowing conversion any more: the SDK takes page numbers
+				// as int, which is what the loop already uses.
+				idx := p - start - 1
 				g.Go(func() error {
-					r, err := client.Gen().ListDomains(gctx, buildParams(p))
+					r, err := client.SDK().Domains.ListDomains(gctx, buildParams(p))
 					if err != nil {
-						return err
+						return api.FromSDKError(err)
 					}
-					var result gen.ListDomainsResponseSchema
-					if err := api.Decode(r, &result); err != nil {
-						return err
-					}
-					pages[idx] = result.Domains
+					pages[idx] = r.Domains
 					mu.Lock()
-					lastResult = result
+					lastResult = r
 					mu.Unlock()
 					return nil
 				})
@@ -188,18 +182,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 			// never terminates. Same hazard as cmd/dns/dns.go documents.
 			next := lastResult.NextPage
 			for next != nil && *next != 0 {
-				r, err := client.Gen().ListDomains(ctx, buildParams(*next))
+				r, err := client.SDK().Domains.ListDomains(ctx, buildParams(*next))
 				if err != nil {
 					spin.Stop()
-					return err
+					return api.FromSDKError(err)
 				}
-				var result gen.ListDomainsResponseSchema
-				if err := api.Decode(r, &result); err != nil {
-					spin.Stop()
-					return err
-				}
-				domains = append(domains, result.Domains...)
-				next = result.NextPage
+				domains = append(domains, r.Domains...)
+				next = r.NextPage
 			}
 		}
 	}
@@ -219,15 +208,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(domains, np, lastResult.TotalCount)
+		return out.JSONList(domains, np, int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(domains, np, lastResult.TotalCount)
+		return out.YAMLList(domains, np, int32Count(lastResult.TotalCount))
 	default:
 		if len(domains) == 0 {
 			if isFiltered(cmd) {
@@ -251,7 +240,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		out.Table(headers, rows)
 		out.Count(len(domains), "domain")
 		if hasMore && lastResult.TotalCount > 0 {
-			nextPage := int32(0)
+			nextPage := 0
 			if lastResult.NextPage != nil {
 				nextPage = *lastResult.NextPage
 			}
@@ -276,16 +265,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	stop := out.Spin("Fetching domain…")
-	resp, err := client.Gen().GetDomain(cmd.Context(), domain)
+	d, err := client.SDK().Domains.GetDomain(cmd.Context(),
+		&coreapigo.GetDomainRequest{DomainName: domain})
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
 			return fmt.Errorf("domain %q not found — run 'namecom domain list' to see your domains", args[0])
 		}
-		return err
-	}
-	var d gen.DomainResponsePayload
-	if err := api.Decode(resp, &d); err != nil {
 		return err
 	}
 
@@ -348,4 +334,27 @@ func formatNS(ns []string) string {
 		return ""
 	}
 	return strings.Join(ns, ", ")
+}
+
+// int32Page and int32Count narrow the SDK's int page number and total to the
+// int32 the output envelope uses. Same rationale as cmd/dns: the envelope's
+// types are shared with groups still on the generated client, so they are not
+// widened to suit one of them. The count is clamped rather than converted so a
+// value that cannot fit degrades to "very large" instead of wrapping negative.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
+}
+
+func int32Count(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < 0 {
+		return 0
+	}
+	return int32(n)
 }

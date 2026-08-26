@@ -10,6 +10,22 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- `domain check` no longer risks a panic when a lookup returns no result for one
+  of the names asked about. The safety net that reports "could not determine
+  availability" rather than implying the domain is taken is the code that would
+  have crashed.
+- `domain register` no longer risks a panic on a response without a `domain`
+  object; it falls back to the name that was requested.
+
+### Changed
+- `namecom domain` now calls the official name.com Core SDK instead of the
+  vendored generated client, completing the command-group migration in #40.
+  Every mutating request was compared against the previous client and is
+  byte-identical, including `domain update`, which needs a documented
+  workaround to stay that way — see
+  `docs/upstream/core-api-go-updatedomain-union.md`.
+
+### Fixed
 - `transfer internal-in` no longer prints an always-empty `(status: )`. That
   endpoint returns a domain payload, which carries no status field, but the
   response was being decoded into a transfer struct — so the status silently

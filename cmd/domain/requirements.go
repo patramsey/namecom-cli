@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -46,13 +46,14 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Fetching TLD requirements…")
-	resp, err := client.Gen().GetRequirement(cmd.Context(), tld)
+	result, err := client.SDK().DomainInfo.GetRequirement(cmd.Context(),
+		&coreapigo.GetRequirementRequest{Tld: tld})
 	stop()
 	if err != nil {
-		return err
-	}
-	var result gen.GetRequirementResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
+		// Converted before classifying: IsNotFound inspects *api.APIError, and
+		// the "pass the TLD without a leading dot" hint is the whole value of
+		// recognising a 404 here.
+		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
 			return fmt.Errorf("no requirements found for TLD %q — pass the TLD without a leading dot (e.g. 'fr', not '.fr')", tld)
 		}
@@ -65,7 +66,7 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		// requires, one per line, so `--tld-requirement` can be built from it.
 		var names []string
 		if result.Requirements.Fields != nil {
-			for name := range *result.Requirements.Fields {
+			for name := range result.Requirements.Fields {
 				names = append(names, name)
 			}
 			sort.Strings(names)
@@ -147,30 +148,26 @@ func runClaims(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	body := gen.CheckDomainClaimsJSONRequestBody{}
+	body := coreapigo.DomainClaimsCheckRequest{Domain: domainName}
 	if claimsPurchaseType != "" {
-		pt := gen.DomainClaimsCheckRequestPurchaseType(claimsPurchaseType)
+		pt := coreapigo.DomainClaimsCheckRequestPurchaseType(claimsPurchaseType)
 		body.PurchaseType = &pt
 	}
 
 	stop := out.Spin("Checking trademark claims…")
-	resp, err := client.Gen().CheckDomainClaims(cmd.Context(), domainName, body)
+	result, err := client.SDK().DomainInfo.CheckDomainClaims(cmd.Context(), &body)
 	stop()
 	if err != nil {
 		return err
 	}
-	var result gen.DomainClaimsCheckResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
-		return err
-	}
 
-	claimed := result.ClaimId != nil && *result.ClaimId != ""
+	claimed := result.ClaimID != nil && *result.ClaimID != ""
 
 	if out.QuietMode {
 		// Quiet mode is for scripting: print the claim ID when there is one and
 		// nothing at all when there isn't, so `-q` output is directly testable.
 		if claimed {
-			out.PrintQuiet([]string{*result.ClaimId})
+			out.PrintQuiet([]string{*result.ClaimID})
 		}
 		return nil
 	}

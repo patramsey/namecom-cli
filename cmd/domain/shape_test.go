@@ -51,6 +51,28 @@ func TestRequestShape_Domain(t *testing.T) {
 		}, build, runSetNS, []string{"example.com"}, domainStub)
 	})
 
+	// domain update is the case the SDK's types cannot express. It restates all
+	// three fields so an unset flag preserves the current value, but
+	// UpdateDomainRequestBody is an exclusive union whose MarshalJSON returns on
+	// the first non-nil variant — so building it that way would silently send
+	// only autorenewEnabled and drop locked and privacyEnabled. On this command
+	// "locked" is the transfer lock. See
+	// docs/upstream/core-api-go-updatedomain-union.md.
+	t.Run("update sends all three fields", func(t *testing.T) {
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForUpdate(t, srv)
+			if err := cmd.ParseFlags([]string{"--lock=false"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}
+		drifttest.AssertRequest(t, drifttest.Request{
+			Method: "PATCH",
+			Path:   "/core/v1/domains/example.com",
+			Body:   `{"autorenewEnabled":true,"locked":false,"privacyEnabled":false}`,
+		}, build, runUpdate, []string{"example.com"}, domainStub)
+	})
+
 	t.Run("register", func(t *testing.T) {
 		// register checks availability and price before purchasing, and
 		// drifttest answers every request with one stub, so this document has

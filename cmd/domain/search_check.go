@@ -5,9 +5,9 @@ import (
 	"strings"
 	"sync"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -25,12 +25,12 @@ import (
 // in runCheck cannot supply one: neither ZoneCheck nor GetPricingForDomain
 // returns a purchaseType, so results synthesized there can structurally only
 // represent a plain registration.
-func nonDefaultPurchaseType(r gen.SearchResult) (*string, *float64) {
+func nonDefaultPurchaseType(r *coreapigo.SearchResult) (*string, *float64) {
 	if r.PurchaseType == nil {
 		return nil, nil
 	}
 	pt := string(*r.PurchaseType)
-	if pt == "" || pt == string(gen.Registration) {
+	if pt == "" || pt == string(coreapigo.SearchPurchaseTypeRegistration) {
 		return nil, nil
 	}
 	return &pt, r.PurchasePrice
@@ -40,15 +40,15 @@ func nonDefaultPurchaseType(r gen.SearchResult) (*string, *float64) {
 // check/search endpoint already returned — no extra pricing API call. It takes
 // the whole SearchResult rather than a name and price so that purchaseType
 // travels with them; the API requires it for non-registration purchases.
-func inlineRegister(cmd *cobra.Command, r gen.SearchResult) error {
+func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
 	domainName := r.DomainName
-	years := int32(1)
-	body := gen.CreateDomainJSONRequestBody{
-		Domain: gen.DomainCreatePayload{
-			DomainName:       domainName,
+	years := 1
+	body := coreapigo.CreateDomainRequest{
+		Domain: &coreapigo.DomainCreatePayload{
+			DomainName:       &domainName,
 			AutorenewEnabled: new(bool),
 			PrivacyEnabled:   new(bool),
 		},
@@ -74,13 +74,9 @@ func inlineRegister(cmd *cobra.Command, r gen.SearchResult) error {
 	body.Claims = claims
 
 	stop := out.Spin(fmt.Sprintf("Registering %s…", domainName))
-	resp, err := client.Gen().CreateDomain(cmd.Context(), &gen.CreateDomainParams{}, body)
+	created, err := client.SDK().Domains.CreateDomain(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var created gen.CreateDomainResponseSchema
-	if err := api.Decode(resp, &created); err != nil {
 		return err
 	}
 	out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", created.Domain.DomainName, created.Order, created.TotalPaid))
@@ -120,13 +116,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	stop := out.Spin("Searching domains…")
-	resp, err := client.Gen().Search(cmd.Context(), gen.SearchJSONRequestBody{Keyword: args[0]})
+	result, err := client.SDK().Domains.Search(cmd.Context(),
+		&coreapigo.SearchRequest{Keyword: args[0]})
 	stop()
 	if err != nil {
-		return err
-	}
-	var result gen.SearchResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
 		return err
 	}
 	return renderSearchResults(out, result.Results)
@@ -161,13 +154,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// --authoritative (or sandbox mode) skips ZoneCheck and hits the registry directly.
 	if checkAuthoritative || cmdutil.IsSandbox(cmd) {
 		stop := out.Spin("Checking availability…")
-		resp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: args})
+		result, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
+			&coreapigo.AvailabilityRequest{DomainNames: args})
 		stop()
 		if err != nil {
-			return err
-		}
-		var result gen.SearchResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
 			return err
 		}
 		if err := renderSearchResults(out, result.Results); err != nil {
@@ -176,25 +166,22 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if result.Results == nil {
 			return nil
 		}
-		return maybeOfferRegister(cmd, out, *result.Results)
+		return maybeOfferRegister(cmd, out, result.Results)
 	}
 
 	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
 	// Available==true: available; Available==false: taken; Available==nil: TLD
 	// not supported by ZoneCheck, fall back to CheckAvailability for those.
 	stop := out.Spin("Checking availability…")
-	zoneResp, err := client.Gen().ZoneCheck(cmd.Context(), gen.ZoneCheckJSONRequestBody{DomainNames: args})
+	zoneResult, err := client.SDK().Domains.ZoneCheck(cmd.Context(),
+		&coreapigo.ZoneCheckRequest{DomainNames: args})
 	stop()
 	if err != nil {
 		return err
 	}
-	var zoneResult gen.ZoneCheckResponseSchema
-	if err := api.Decode(zoneResp, &zoneResult); err != nil {
-		return err
-	}
 
 	// Preserve input order in the final result slice.
-	finalResults := make([]gen.SearchResult, len(args))
+	finalResults := make([]*coreapigo.SearchResult, len(args))
 	matcher := newArgMatcher(args)
 
 	var unsupported []string
@@ -211,7 +198,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		sld, tld, _ := strings.Cut(r.DomainName, ".")
-		finalResults[idx] = gen.SearchResult{
+		finalResults[idx] = &coreapigo.SearchResult{
 			DomainName:  r.DomainName,
 			Purchasable: *r.Available,
 			Sld:         sld,
@@ -242,24 +229,18 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		wg.Add(1)
 		go func(domainName string, idx int) {
 			defer wg.Done()
-			pResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{})
+			pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
+				&coreapigo.GetPricingForDomainRequest{DomainName: domainName})
 			if err != nil {
 				mu.Lock()
-				pricingErr = err
-				mu.Unlock()
-				return
-			}
-			var pricing gen.PricingResponseSchema
-			if err := api.Decode(pResp, &pricing); err != nil {
-				mu.Lock()
-				pricingErr = err
+				pricingErr = api.FromSDKError(err)
 				mu.Unlock()
 				return
 			}
 			premium := pricing.Premium
 			sld, tld, _ := strings.Cut(domainName, ".")
 			mu.Lock()
-			finalResults[idx] = gen.SearchResult{
+			finalResults[idx] = &coreapigo.SearchResult{
 				DomainName:    domainName,
 				Purchasable:   true,
 				PurchasePrice: pricing.PurchasePrice,
@@ -278,16 +259,13 @@ func runCheck(cmd *cobra.Command, args []string) error {
 
 	// Step 3: CheckAvailability for TLDs ZoneCheck returned null for.
 	if len(unsupported) > 0 {
-		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: unsupported})
+		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
+			&coreapigo.AvailabilityRequest{DomainNames: unsupported})
 		if err != nil {
-			return fmt.Errorf("checking availability: %w", err)
-		}
-		var checkResult gen.SearchResponseSchema
-		if err := api.Decode(checkResp, &checkResult); err != nil {
-			return err
+			return fmt.Errorf("checking availability: %w", api.FromSDKError(err))
 		}
 		if checkResult.Results != nil {
-			for _, r := range *checkResult.Results {
+			for _, r := range checkResult.Results {
 				if idx, ok := matcher.match(r.DomainName); ok {
 					finalResults[idx] = r
 				}
@@ -302,15 +280,19 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// the domain the user asked about and leave it explicitly unpurchasable
 	// rather than silently asserting it is gone.
 	for _, i := range matcher.unclaimed() {
-		if finalResults[i].DomainName == "" {
+		// nil, not just zero-valued: the SDK returns []*SearchResult, so a slot
+		// no reply filled is a nil pointer rather than an empty struct. Reading
+		// through it panics, which would take out the very safety net this loop
+		// is.
+		if finalResults[i] == nil || finalResults[i].DomainName == "" {
 			sld, tld, _ := strings.Cut(args[i], ".")
-			finalResults[i] = gen.SearchResult{DomainName: args[i], Sld: sld, Tld: tld}
+			finalResults[i] = &coreapigo.SearchResult{DomainName: args[i], Sld: sld, Tld: tld}
 			out.Warn(fmt.Sprintf("could not determine availability for %s — run "+
 				"'namecom domain check --authoritative %s' to query the registry directly", args[i], args[i]))
 		}
 	}
 
-	if err := renderSearchResults(out, &finalResults); err != nil {
+	if err := renderSearchResults(out, finalResults); err != nil {
 		return err
 	}
 
@@ -329,7 +311,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 //   - --dry-run suppresses the offer entirely. There is no meaningful "preview"
 //     of an interactive purchase prompt, and the old code ignored --dry-run
 //     outright, so a dry run really bought the domain.
-func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []gen.SearchResult) error {
+func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []*coreapigo.SearchResult) error {
 	if cmdutil.IsDryRun(cmd) {
 		return nil
 	}
@@ -356,14 +338,14 @@ func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []gen.Se
 	return inlineRegister(cmd, r)
 }
 
-func renderSearchResults(out *output.Config, results *[]gen.SearchResult) error {
+func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) error {
 	if results == nil {
-		results = &[]gen.SearchResult{}
+		results = []*coreapigo.SearchResult{}
 	}
 
 	if out.QuietMode {
-		names := make([]string, 0, len(*results))
-		for _, r := range *results {
+		names := make([]string, 0, len(results))
+		for _, r := range results {
 			if r.Purchasable {
 				names = append(names, r.DomainName)
 			}
@@ -374,13 +356,13 @@ func renderSearchResults(out *output.Config, results *[]gen.SearchResult) error 
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(*results)
+		return out.JSON(results)
 	case output.FormatYAML:
-		return out.YAML(*results)
+		return out.YAML(results)
 	default:
 		headers := []string{"DOMAIN", "AVAILABILITY", "PRICE", "PREMIUM"}
-		rows := make([][]string, 0, len(*results))
-		for _, r := range *results {
+		rows := make([][]string, 0, len(results))
+		for _, r := range results {
 			price := out.Dim("—")
 			if r.Purchasable && r.PurchasePrice != nil {
 				price = fmt.Sprintf("$%.2f/yr", *r.PurchasePrice)
@@ -397,9 +379,9 @@ func renderSearchResults(out *output.Config, results *[]gen.SearchResult) error 
 			})
 		}
 		out.Table(headers, rows)
-		out.Count(len(*results), "result")
+		out.Count(len(results), "result")
 		var available []string
-		for _, r := range *results {
+		for _, r := range results {
 			if r.Purchasable {
 				available = append(available, r.DomainName)
 			}
