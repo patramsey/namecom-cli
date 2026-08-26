@@ -12,12 +12,13 @@ package contact
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -90,24 +91,19 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	spin := out.StartSpinner("Fetching unverified contacts…")
-	var page int32 = 1
-	var contacts []gen.UnverifiedContact
+	page := 1
+	var contacts []*coreapigo.UnverifiedContact
 	var hasMore bool
-	var lastResult gen.UnverifiedContactsResponseSchema
+	var lastResult *coreapigo.UnverifiedContactsResponse
 	for {
-		params := &gen.UnverifiedContactsListParams{Page: &page}
-		resp, err := client.Gen().UnverifiedContactsList(cmd.Context(), params)
+		result, err := client.SDK().ContactVerification.UnverifiedContactsList(cmd.Context(),
+			&coreapigo.UnverifiedContactsListRequest{Page: &page})
 		if err != nil {
 			spin.Stop()
 			return err
 		}
 		// Fresh variable per page — see cmd/dns/dns.go for why reusing one
 		// decode target both corrupts earlier pages and never terminates.
-		var result gen.UnverifiedContactsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			spin.Stop()
-			return err
-		}
 		contacts = append(contacts, result.UnverifiedContacts...)
 		lastResult = result
 		next, ok := cmdutil.NextPage(page, result.NextPage, &result.LastPage)
@@ -129,7 +125,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	if out.QuietMode {
 		ids := make([]string, 0, len(contacts))
 		for _, c := range contacts {
-			ids = append(ids, strconv.FormatInt(c.VerificationId, 10))
+			ids = append(ids, strconv.FormatInt(c.VerificationID, 10))
 		}
 		out.PrintQuiet(ids)
 		return nil
@@ -139,15 +135,15 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(contacts, np, lastResult.TotalCount)
+		return out.JSONList(contacts, np, int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(contacts, np, lastResult.TotalCount)
+		return out.YAMLList(contacts, np, int32Count(lastResult.TotalCount))
 	default:
 		if len(contacts) == 0 {
 			out.Empty("unverified contact", "Newly triggered verifications can take ~10 minutes to appear")
@@ -169,15 +165,15 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func unverifiedRows(out *output.Config, contacts []gen.UnverifiedContact) [][]string {
+func unverifiedRows(out *output.Config, contacts []*coreapigo.UnverifiedContact) [][]string {
 	rows := make([][]string, 0, len(contacts))
 	for _, c := range contacts {
 		email := ""
 		if c.Email != nil {
-			email = string(*c.Email)
+			email = *c.Email
 		}
 		rows = append(rows, []string{
-			strconv.FormatInt(c.VerificationId, 10),
+			strconv.FormatInt(c.VerificationID, 10),
 			email,
 			out.ExpiryDate(c.VerifyBy), // colors by urgency, same as domain expiry
 			joinDomains(c.Domains),
@@ -216,14 +212,10 @@ func runResend(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Resending verification email…")
-	resp, err := client.Gen().ResendContactVerificationEmail(cmd.Context(), id,
-		&gen.ResendContactVerificationEmailParams{})
+	result, err := client.SDK().ContactVerification.ResendContactVerificationEmail(cmd.Context(),
+		&coreapigo.ResendContactVerificationEmailRequest{VerificationID: id, Body: &coreapigo.EmptyObject{}})
 	stop()
 	if err != nil {
-		return err
-	}
-	var result gen.ContactVerificationResendResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
 		return err
 	}
 
@@ -244,7 +236,7 @@ func runResend(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("verification email not sent for record %d — throttled until %s "+
 			"(the API allows one resend per record every 15 minutes)",
-			result.VerificationId, result.NextEligibleAt.Format(time.RFC3339))
+			result.VerificationID, result.NextEligibleAt.Format(time.RFC3339))
 	}
 
 	switch out.Format {
@@ -253,7 +245,7 @@ func runResend(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Success(fmt.Sprintf("Verification email resent for record %d", result.VerificationId))
+		out.Success(fmt.Sprintf("Verification email resent for record %d", result.VerificationID))
 		out.Hint("The contact must click the link in the email; it cannot be confirmed from here")
 	}
 	return nil
@@ -276,13 +268,13 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Marking contact verified…")
-	resp, err := client.Gen().VerifyContact(cmd.Context(), id, &gen.VerifyContactParams{})
+	err = client.SDK().ContactVerification.VerifyContact(cmd.Context(),
+		&coreapigo.VerifyContactRequest{VerificationID: id, Body: &coreapigo.EmptyObject{}})
 	stop()
 	if err != nil {
-		return cmdutil.AsRestricted(err, "contact verify", "approved reseller")
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return cmdutil.AsRestricted(err, "contact verify", "approved reseller")
+		// Convert before classifying: AsRestricted inspects *api.APIError to
+		// recognise the 403 this reseller-only endpoint returns.
+		return cmdutil.AsRestricted(api.FromSDKError(err), "contact verify", "approved reseller")
 	}
 
 	out.Success(fmt.Sprintf("Contact verification record %d marked verified", id))
@@ -297,11 +289,37 @@ func runVerify(cmd *cobra.Command, args []string) error {
 // practice are far below the int32 ceiling, but parse at 32 bits so an
 // out-of-range id fails here with a clear message instead of silently
 // truncating into a request for a different record.
-func parseVerificationID(s string) (int32, error) {
+func parseVerificationID(s string) (int, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid verification ID %q: must be a number "+
 			"(run 'namecom contact unverified' to list them)", s)
 	}
-	return int32(n), nil
+	return int(n), nil
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses. Same rationale as cmd/dns.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
+}
+
+// int32Count narrows the SDK's int total to the int32 the output envelope
+// uses. Clamped rather than converted: a bare conversion is an overflow gosec
+// flags, and a wrapped negative count would be printed to the user as fact.
+// The API cannot return more than 2^31 records, so the clamp is unreachable —
+// it exists so the impossible case degrades to "a very large number" instead of
+// a nonsense one.
+func int32Count(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < 0 {
+		return 0
+	}
+	return int32(n)
 }

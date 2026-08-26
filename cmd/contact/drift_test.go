@@ -25,10 +25,17 @@ func build(t *testing.T, srv *httptest.Server) *cobra.Command {
 func TestRequestShape_Contact(t *testing.T) {
 	const resendResponse = `{"sent":true,"verificationId":9911,"nextEligibleAt":"2026-08-01T12:15:00Z"}`
 
+	// Both requests now carry an empty JSON object where the generated client
+	// sent no body at all. The SDK models these bodyless endpoints with a
+	// nillable Body field that it marshals regardless, so leaving it nil sends
+	// the literal `null` — worse, since a strict parser will reject that for an
+	// object-typed body while `{}` is unambiguous. There is no way to send no
+	// body. See docs/upstream/core-api-go-forced-request-bodies.md.
 	t.Run("resend", func(t *testing.T) {
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "POST",
 			Path:   "/core/v1/contacts/verify/9911:resend",
+			Body:   `{}`,
 		}, build, runResend, []string{"9911"}, resendResponse)
 	})
 
@@ -36,6 +43,7 @@ func TestRequestShape_Contact(t *testing.T) {
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "POST",
 			Path:   "/core/v1/contacts/verify/9911",
+			Body:   `{}`,
 		}, build, runVerify, []string{"9911"}, `{}`)
 	})
 }

@@ -3,12 +3,13 @@ package order
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -100,39 +101,29 @@ func runList(cmd *cobra.Command, _ []string) error {
 	autoPage := listAll || filtered
 
 	spin := out.StartSpinner("Fetching orders…")
-	var page int32 = 1
-	var orders []gen.Order
+	page := 1
+	var orders []*coreapigo.Order
 	var hasMore bool
-	var lastResult gen.ListOrdersResponseSchema
+	var lastResult *coreapigo.ListOrdersResponse
 	for {
-		params := &gen.ListOrdersParams{Page: &page}
+		req := &coreapigo.ListOrdersRequest{Page: &page}
 		if listDomain != "" {
-			params.DomainName = &listDomain
+			req.DomainName = &listDomain
 		}
 		if listSince != "" {
-			params.CreateDateStart = &listSince
+			req.CreateDateStart = &listSince
 		}
 		if listUntil != "" {
-			params.CreateDateEnd = &listUntil
+			req.CreateDateEnd = &listUntil
 		}
 		if listStatus != "" {
-			s := gen.ListOrdersParamsOrderStatus(listStatus)
-			params.OrderStatus = &s
+			s := coreapigo.ListOrdersRequestOrderStatus(listStatus)
+			req.OrderStatus = &s
 		}
-		resp, err := client.Gen().ListOrders(cmd.Context(), params)
+		result, err := client.SDK().Orders.ListOrders(cmd.Context(), req)
 		if err != nil {
 			spin.Stop()
-			return err
-		}
-		// Fresh variable each iteration: the JSON decoder reuses the existing
-		// slice backing array and the pointers inside it, so reusing one target
-		// lets page N overwrite values page 1 already appended. It also leaves a
-		// stale non-nil NextPage when the final page omits the key, which never
-		// terminates. See the same pattern in cmd/dns/dns.go.
-		var result gen.ListOrdersResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			spin.Stop()
-			return err
+			return api.FromSDKError(err)
 		}
 		orders = append(orders, result.Orders...)
 		lastResult = result
@@ -152,8 +143,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if out.QuietMode {
 		ids := make([]string, 0, len(orders))
 		for _, o := range orders {
-			if o.Id != nil {
-				ids = append(ids, strconv.Itoa(int(*o.Id)))
+			if o.ID != nil {
+				ids = append(ids, strconv.Itoa(*o.ID))
 			}
 		}
 		out.PrintQuiet(ids)
@@ -164,15 +155,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(orders, np, lastResult.TotalCount)
+		return out.JSONList(orders, np, int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(orders, np, lastResult.TotalCount)
+		return out.YAMLList(orders, np, int32Count(lastResult.TotalCount))
 	default:
 		if len(orders) == 0 {
 			out.Empty("order", "")
@@ -200,13 +191,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Fetching order…")
-	resp, err := client.Gen().GetOrder(cmd.Context(), id)
+	o, err := client.SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: int(id)})
 	stop()
 	if err != nil {
-		return err
-	}
-	var o gen.Order
-	if err := api.Decode(resp, &o); err != nil {
 		return err
 	}
 
@@ -218,19 +205,19 @@ func runGet(cmd *cobra.Command, args []string) error {
 	default:
 		out.Table(
 			[]string{"ID", "STATUS", "DATE", "TOTAL"},
-			orderRows(out, []gen.Order{o}),
+			orderRows(out, []*coreapigo.Order{o}),
 		)
 		// Show the line items. Their IDs are the required input to
 		// `order refund --item-ids`, and sharing list's renderer meant a single
 		// order rendered exactly like a list row — leaving no way to discover
 		// them without dropping to `-o json | jq`.
-		if o.OrderItems != nil && len(*o.OrderItems) > 0 {
+		if len(o.OrderItems) > 0 {
 			out.Table(
 				[]string{"ITEM ID", "NAME", "TYPE", "PRICE", "REFUNDABLE"},
-				orderItemRows(out, *o.OrderItems, o.Currency),
+				orderItemRows(out, o.OrderItems, o.Currency),
 			)
 			out.Hint("Run 'namecom order refund --order-id " +
-				strconv.Itoa(int(derefInt32(o.Id))) + " --item-ids <ITEM ID>' to refund a refundable item")
+				strconv.Itoa(derefInt(o.ID)) + " --item-ids <ITEM ID>' to refund a refundable item")
 		}
 		out.Hint("Run 'namecom order list' to see all orders")
 	}
@@ -243,12 +230,14 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	yes := cmdutil.IsYes(cmd)
 	dryRun := cmdutil.IsDryRun(cmd)
 
-	itemIDs := make([]int32, len(refundItemIDs))
-	copy(itemIDs, refundItemIDs)
+	itemIDs := make([]int, 0, len(refundItemIDs))
+	for _, id := range refundItemIDs {
+		itemIDs = append(itemIDs, int(id))
+	}
 
-	body := gen.ProcessRefundJSONRequestBody{
-		OrderId:      refundOrderID,
-		OrderItemIds: itemIDs,
+	body := coreapigo.RefundRequest{
+		OrderID:      int(refundOrderID),
+		OrderItemIDs: itemIDs,
 	}
 
 	if dryRun {
@@ -270,16 +259,11 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	}
 
 	// The root --idempotency-key (or an auto-generated one) is applied by the
-	// client request editor; no per-command flag is needed or wanted here.
-	params := &gen.ProcessRefundParams{}
-
-	resp, err := client.Gen().ProcessRefund(cmd.Context(), params, body)
+	// shared transport, not per call; no per-command flag is needed or wanted
+	// here.
+	result, err := client.SDK().Refunds.ProcessRefund(cmd.Context(), &body)
 	if err != nil {
-		return err
-	}
-	var result gen.RefundResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -305,7 +289,7 @@ func formatAmount(amount float64, currency *string) string {
 	return fmt.Sprintf("%.2f %s", amount, strings.ToUpper(*currency))
 }
 
-func derefInt32(n *int32) int32 {
+func derefInt(n *int) int {
 	if n == nil {
 		return 0
 	}
@@ -315,7 +299,7 @@ func derefInt32(n *int32) int32 {
 // orderItemRows renders an order's line items. Item IDs are what
 // `order refund --item-ids` consumes, and IsRefundable says whether a refund
 // is even possible — so both belong in the default view.
-func orderItemRows(out *output.Config, items []gen.OrderItem, currency *string) [][]string {
+func orderItemRows(out *output.Config, items []*coreapigo.OrderItem, currency *string) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, it := range items {
 		name := ""
@@ -327,7 +311,7 @@ func orderItemRows(out *output.Config, items []gen.OrderItem, currency *string) 
 			refundable = out.BoolBadge(true)
 		}
 		rows = append(rows, []string{
-			strconv.Itoa(int(it.Id)),
+			strconv.Itoa(it.ID),
 			name,
 			it.Type,
 			formatAmount(it.Price, currency),
@@ -337,12 +321,12 @@ func orderItemRows(out *output.Config, items []gen.OrderItem, currency *string) 
 	return rows
 }
 
-func orderRows(out *output.Config, orders []gen.Order) [][]string {
+func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 	rows := make([][]string, 0, len(orders))
 	for _, o := range orders {
 		id := ""
-		if o.Id != nil {
-			id = out.Dim(strconv.Itoa(int(*o.Id)))
+		if o.ID != nil {
+			id = out.Dim(strconv.Itoa(*o.ID))
 		}
 		status := ""
 		if o.Status != nil {
@@ -367,4 +351,30 @@ func parseID(s string) (int32, error) {
 		return 0, fmt.Errorf("invalid order ID %q: must be a number", s)
 	}
 	return int32(n), nil
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses. Same rationale as cmd/dns.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
+}
+
+// int32Count narrows the SDK's int total to the int32 the output envelope
+// uses. Clamped rather than converted: a bare conversion is an overflow gosec
+// flags, and a wrapped negative count would be printed to the user as fact.
+// The API cannot return more than 2^31 records, so the clamp is unreachable —
+// it exists so the impossible case degrades to "a very large number" instead of
+// a nonsense one.
+func int32Count(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < 0 {
+		return 0
+	}
+	return int32(n)
 }
