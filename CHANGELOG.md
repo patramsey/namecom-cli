@@ -10,6 +10,20 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Changed
+- `namecom dnssec`, `email`, `vanity-ns`, and `url` now call the official
+  name.com Core SDK instead of the vendored generated client, continuing the
+  migration in #40. Requests and output were compared against the previous
+  client and are unchanged, with one exception:
+
+  `url update` now sends a `host` field it previously omitted. The SDK models
+  create and update with a single input type whose `host` has no `omitempty`,
+  so the key cannot be left out. The value sent is the host read from the
+  record being updated — a restatement of what is already stored, not a
+  change — because an empty host on a URL forwarding means the apex and would
+  silently move the forwarding. Documented in
+  `docs/upstream/core-api-go-urlforwarding-host-required.md`.
+
+### Changed
 - `namecom dns` now calls the official name.com Core SDK instead of the
   vendored generated client. No user-visible change is intended and none was
   found: the requests it sends and the JSON it prints were compared against the

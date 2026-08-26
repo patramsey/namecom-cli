@@ -4,13 +4,13 @@ package email
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	openapi_types "github.com/oapi-codegen/runtime/types"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -93,26 +93,16 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	spin := out.StartSpinner("Fetching email forwardings…")
-	var page int32 = 1
-	var all []gen.EmailForwarding
+	page := 1
+	var all []*coreapigo.EmailForwarding
 	var hasMore bool
-	var lastResult gen.ListEmailForwardingsResponseSchema
+	var lastResult *coreapigo.ListEmailForwardingsResponse
 	for {
-		params := &gen.ListEmailForwardingsParams{Page: &page}
-		resp, err := client.Gen().ListEmailForwardings(cmd.Context(), domain, params)
+		result, err := client.SDK().EmailForwardings.ListEmailForwardings(cmd.Context(),
+			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page})
 		if err != nil {
 			spin.Stop()
-			return err
-		}
-		// Fresh variable each iteration: the JSON decoder reuses the existing
-		// slice backing array and the pointers inside it, so reusing one target
-		// lets page N overwrite values page 1 already appended. It also leaves a
-		// stale non-nil NextPage when the final page omits the key, which never
-		// terminates. See the same pattern in cmd/dns/dns.go.
-		var result gen.ListEmailForwardingsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			spin.Stop()
-			return err
+			return api.FromSDKError(err)
 		}
 		all = append(all, result.EmailForwarding...)
 		lastResult = result
@@ -142,13 +132,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.JSONList(all, np, 0)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = lastResult.NextPage
+			np = int32Page(lastResult.NextPage)
 		}
 		return out.YAMLList(all, np, 0)
 	default:
@@ -177,14 +167,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := client.Gen().GetEmailForwarding(cmd.Context(), domain, args[1])
+	entry, err := client.SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
+		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: args[1]})
 	stop()
 	if err != nil {
-		return err
-	}
-	var entry gen.EmailForwarding
-	if err := api.Decode(resp, &entry); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -195,7 +182,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	default:
 		out.Table(
 			[]string{"MAILBOX", "FORWARDS TO"},
-			emailRows([]gen.EmailForwarding{entry}),
+			emailRows([]*coreapigo.EmailForwarding{entry}),
 		)
 	}
 	return nil
@@ -250,9 +237,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	body := gen.CreateEmailForwardingJSONRequestBody{
-		EmailBox: mailbox,
-		EmailTo:  openapi_types.Email(createEmailTo),
+	body := coreapigo.CreateEmailForwardingRequest{
+		DomainName: domain,
+		EmailBox:   mailbox,
+		EmailTo:    createEmailTo,
 	}
 
 	if dryRun {
@@ -262,14 +250,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Creating email forwarding…")
-	resp, err := client.Gen().CreateEmailForwarding(cmd.Context(), domain, body)
+	entry, err := client.SDK().EmailForwardings.CreateEmailForwarding(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var entry gen.EmailForwarding
-	if err := api.Decode(resp, &entry); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -329,8 +313,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	body := gen.UpdateEmailForwardingJSONRequestBody{
-		EmailTo: &updateEmailTo,
+	body := coreapigo.EmailForwardingsUpdateEmailForwardingBody{
+		DomainName: domain,
+		EmailBox:   mailbox,
+		EmailTo:    &updateEmailTo,
 	}
 
 	if dryRun {
@@ -340,14 +326,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Updating email forwarding…")
-	resp, err := client.Gen().UpdateEmailForwarding(cmd.Context(), domain, mailbox, body)
+	entry, err := client.SDK().EmailForwardings.UpdateEmailForwarding(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
-	}
-	var entry gen.EmailForwarding
-	if err := api.Decode(resp, &entry); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	switch out.Format {
@@ -388,26 +370,35 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Deleting email forwarding…")
-	resp, err := client.Gen().DeleteEmailForwarding(cmd.Context(), domain, mailbox)
+	err = client.SDK().EmailForwardings.DeleteEmailForwarding(cmd.Context(),
+		&coreapigo.DeleteEmailForwardingRequest{DomainName: domain, EmailBox: mailbox})
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Deleted forwarding for %s@%s", mailbox, domain))
 	out.Hint(fmt.Sprintf("Run 'namecom email list %s' to see remaining forwardings", domain))
 	return nil
 }
 
-func emailRows(entries []gen.EmailForwarding) [][]string {
+func emailRows(entries []*coreapigo.EmailForwarding) [][]string {
 	rows := make([][]string, 0, len(entries))
 	for _, e := range entries {
 		rows = append(rows, []string{
 			e.EmailBox + "@" + e.DomainName,
-			string(e.EmailTo),
+			e.EmailTo,
 		})
 	}
 	return rows
+}
+
+// int32Page narrows the SDK's *int page number to the *int32 the output
+// envelope uses. Same rationale as cmd/dns: the envelope's type is shared with
+// groups still on the generated client, so it is not widened to match.
+func int32Page(p *int) *int32 {
+	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
+		return nil
+	}
+	v := int32(*p)
+	return &v
 }
