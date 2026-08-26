@@ -1,6 +1,6 @@
 # `option.WithXIdempotencyKey` sends the key with a literal `*` prefix
 
-**Not filed upstream yet.** Found while porting `namecom` to the SDK (#40).
+**Filed 2026-08-26 as [namedotcom/core-api-go#5](https://github.com/namedotcom/core-api-go/issues/5).** Found while porting `namecom` to the SDK (#40). Kept here so the reproduction and the measurements stay with the repository that produced them.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 

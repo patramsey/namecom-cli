@@ -1,8 +1,9 @@
 # `URLForwardingInput` forces a `host` key onto update requests
 
-**Not filed upstream yet.** Found while porting `namecom url` to the SDK
-(#40, slice 3). Recorded here for the same reason as the other reports in this
-directory: the analysis is the expensive part.
+**Not filed upstream.** Found while porting `namecom url` to the SDK (#40,
+slice 3). Lower priority than [#5] and [#6]: it changes one field on one
+endpoint, and the workaround restates a value that is already stored rather
+than inventing one. Worth filing if those two get attention.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 
@@ -86,3 +87,6 @@ This is the one request in the SDK migration whose wire shape differs from what
 the generated client sent. It is asserted explicitly in
 `cmd/url/shape_test.go` so the difference is visible and pinned rather than
 discovered later.
+
+[#5]: https://github.com/namedotcom/core-api-go/issues/5
+[#6]: https://github.com/namedotcom/core-api-go/issues/6

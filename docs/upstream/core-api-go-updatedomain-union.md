@@ -1,8 +1,6 @@
 # `UpdateDomainRequestBody` is an exclusive union, silently dropping fields
 
-**Not filed upstream yet.** Found while porting `namecom domain` to the SDK
-(#40, slice 6). This is the most serious of the modelling problems found during
-that migration.
+**Filed 2026-08-26 as [namedotcom/core-api-go#6](https://github.com/namedotcom/core-api-go/issues/6).** Found while porting `namecom domain` to the SDK (#40, slice 6). This is the most serious of the modelling problems found during that migration, and the reproduction is kept here rather than replaced by a link.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 

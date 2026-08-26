@@ -1,6 +1,6 @@
 # `option.WithoutRetries()` is silently ignored when set on the client
 
-**Filed 2026-08-20 as [namedotcom/core-api-go#3](https://github.com/namedotcom/core-api-go/issues/3). Fixed upstream in v1.33.3 (2026-08-25); the issue is still open and unacknowledged.** The suggested fix below was adopted almost verbatim, plus a refinement: a request-scoped `attempts > 0` now resets `disabled` to false. Kept here so the reproduction and the measurements stay with the repository that produced them.
+**Filed 2026-08-20 as [namedotcom/core-api-go#3](https://github.com/namedotcom/core-api-go/issues/3), fixed upstream in v1.33.3, closed 2026-08-26.** The suggested fix below was adopted almost verbatim, plus a refinement: a request-scoped `attempts > 0` now resets `disabled` to false. Kept here so the reproduction and the measurements stay with the repository that produced them.
 
 
 **Version:** v1.33.2 · **Go:** 1.26.6
