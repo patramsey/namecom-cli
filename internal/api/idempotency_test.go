@@ -179,3 +179,56 @@ func TestIdempotencyKeyAbsentOnReads(t *testing.T) {
 		t.Errorf("a read carried an idempotency key: %q", got)
 	}
 }
+
+// TestIdempotencyKeyStableAcrossRetries pins the property the whole scheme
+// depends on: every attempt at one write carries one key. A retry that changed
+// it would defeat the point of sending one at all.
+//
+// The mechanism is that retryTransport replays the same *http.Request and
+// headerTransport only fills headers that are absent, so the key set on the
+// first attempt persists. That holds regardless of how the two transports are
+// nested — checked by inverting them, which does not fail this test. What would
+// fail it is any change that rebuilds the request per attempt, or that stamps
+// the key unconditionally.
+//
+// PUT is used because retryTransport deliberately will not retry a POST on 5xx.
+func TestIdempotencyKeyStableAcrossRetries(t *testing.T) {
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("X-Idempotency-Key"))
+		if len(keys) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(Options{BaseURL: srv.URL, MaxRetries: 1})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, srv.URL+"/core/v1/thing", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := c.HTTPClient().Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if len(keys) != 2 {
+		t.Fatalf("expected the 500 to be retried once, got %d attempt(s)", len(keys))
+	}
+	if keys[0] == "" {
+		t.Fatal("no idempotency key was sent on a PUT")
+	}
+	if keys[0] != keys[1] {
+		t.Errorf("retry sent a different idempotency key:\n  attempt 1: %s\n  attempt 2: %s\n"+
+			"one write must go out under one key; something is rebuilding the "+
+			"request or re-stamping the header per attempt", keys[0], keys[1])
+	}
+}
