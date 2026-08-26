@@ -9,6 +9,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- `--dry-run` now previews the request body for `order refund`, `transfer
+  create`, `transfer internal-in`, `url create`, and `url update`. These
+  printed only a method and path, so `transfer create --dry-run` gave no
+  indication of what was being transferred or at what price, and `order refund
+  --dry-run` paraphrased the request in an ad-hoc line rather than showing it.
+
+  **The transfer auth code is redacted**, and deliberately: it authorises
+  moving a domain between registrars, and `--dry-run` output reaches terminal
+  scrollback and CI logs. It appears as `[redacted]` in the preview and is
+  sent normally on the real request.
+
 ### Fixed
 - `contact resend --dry-run` and `contact verify --dry-run` now print the
   request instead of sending it. Both ignored `--dry-run` entirely, so

@@ -318,8 +318,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", "/core/v1/transfers", nil)
-		fmt.Fprintf(out.Writer, "  domain=%s authCode=[redacted]\n", domain)
+		// Preview the real body rather than a nil, but never the auth code: it
+		// is the secret that authorises moving the domain, and --dry-run output
+		// lands in terminal scrollback and CI logs. Everything else is worth
+		// seeing — purchasePrice especially, since this command spends money.
+		preview := body
+		preview.AuthCode = "[redacted]"
+		out.DryRun("POST", "/core/v1/transfers", preview)
 		return nil
 	}
 
@@ -493,8 +498,10 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", "/core/v1/transfers/internal/in", nil)
-		fmt.Fprintf(out.Writer, "  domain=%s authCode=[redacted]\n", domain)
+		// Same redaction as the external transfer above.
+		preview := body
+		preview.AuthCode = "[redacted]"
+		out.DryRun("POST", "/core/v1/transfers/internal/in", preview)
 		return nil
 	}
 

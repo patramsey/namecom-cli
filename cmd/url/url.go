@@ -302,7 +302,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/url/forwarding", domain), nil)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/url/forwarding", domain), body)
 		fmt.Fprintf(out.Writer, "  host=%s to=%s type=%s\n", createHost, createForwardsTo, createType)
 		return nil
 	}
@@ -450,7 +450,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		out.DryRun("PATCH", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
+		out.DryRun("PATCH", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), body)
 		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", updateForwardsTo, updateType)
 		return nil
 	}
