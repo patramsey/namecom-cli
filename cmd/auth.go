@@ -146,13 +146,12 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 
 	stop := out.Spin("Checking credentials…")
-	resp, err := client.Gen().Hello(cmd.Context())
+	// Hello lives on the SDK's root client rather than a sub-client — it is the
+	// API's credential check, not part of a resource group.
+	_, err := client.SDK().Hello(cmd.Context())
 	stop()
 	if err != nil {
-		return err
-	}
-	if err := api.Decode(resp, nil); err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
 
 	ov := cmdutil.Overrides(cmd)

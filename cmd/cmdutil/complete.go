@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/spf13/cobra"
 )
 
@@ -20,15 +20,11 @@ func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cob
 	if !ok || client == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	p := int32(1)
-	perPage := int32(250)
-	params := &gen.ListDomainsParams{Page: &p, PerPage: &perPage}
-	resp, err := client.Gen().ListDomains(cmd.Context(), params)
+	p := 1
+	perPage := 250
+	result, err := client.SDK().Domains.ListDomains(cmd.Context(),
+		&coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage})
 	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-	var result gen.ListDomainsResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
 	names := make([]string, 0, len(result.Domains))
@@ -47,22 +43,18 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var completions []string
-	var page int32 = 1
+	page := 1
 	for {
-		params := &gen.ListRecordsParams{Page: &page}
-		resp, err := client.Gen().ListRecords(cmd.Context(), domain, params)
+		result, err := client.SDK().DNS.ListRecords(cmd.Context(),
+			&coreapigo.ListRecordsRequest{DomainName: domain, Page: &page})
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveError
 		}
-		var result gen.ListRecordsResponseSchema
-		if err := api.Decode(resp, &result); err != nil {
-			return nil, cobra.ShellCompDirectiveError
-		}
 		for _, r := range result.Records {
-			if r.Id == nil {
+			if r.ID == nil {
 				continue
 			}
-			id := strconv.Itoa(int(*r.Id))
+			id := strconv.Itoa(*r.ID)
 			typ, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
 			// "12345\tA @ → 1.2.3.4" — tab separates value from description in zsh/fish
 			completions = append(completions, fmt.Sprintf("%s\t%s %s → %s", id, typ, host, answer))

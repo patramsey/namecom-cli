@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- `namecom status`, `namecom auth status`, and shell completion now call the
+  official name.com Core SDK. With this, no command in the CLI calls the
+  vendored generated client — the last step of the migration in #40 before the
+  generated client itself can be removed. No user-visible change.
+
 ### Fixed
 - `domain check` no longer risks a panic when a lookup returns no result for one
   of the names asked about. The safety net that reports "could not determine
