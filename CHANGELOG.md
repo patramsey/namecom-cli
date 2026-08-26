@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- `namecom dns` now calls the official name.com Core SDK instead of the
+  vendored generated client. No user-visible change is intended and none was
+  found: the requests it sends and the JSON it prints were compared against the
+  previous client and are identical. Part of the migration tracked in #40.
+
 ### Fixed
 - The `Authorization` header is now bound to the API's hostname and is not sent
   to any other host. `net/http` already strips it when following a cross-host
