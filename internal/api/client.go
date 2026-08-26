@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	sdk "github.com/namedotcom/core-api-go/client"
 	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"golang.org/x/time/rate"
@@ -92,6 +93,7 @@ type Options struct {
 // Client is the configured API client.
 type Client struct {
 	gen        *gen.Client
+	sdk        *sdk.Namecom
 	baseURL    string
 	httpClient *http.Client
 	// editor applies the standard headers. It is registered on the generated
@@ -135,17 +137,6 @@ func New(opts Options) (*Client, error) {
 		timeout = defaultTimeout
 	}
 
-	httpClient := &http.Client{
-		Timeout: timeout,
-		Transport: &retryTransport{
-			base:       http.DefaultTransport,
-			limiter:    rate.NewLimiter(rate.Limit(rps), burst),
-			maxRetries: maxRetries,
-			logw:       opts.DebugLog,
-			onRetry:    opts.OnRetry,
-		},
-	}
-
 	ua := opts.UserAgent
 	if ua == "" {
 		ua = "namecom-cli"
@@ -153,27 +144,32 @@ func New(opts Options) (*Client, error) {
 	authHeader := "Basic " + base64.StdEncoding.EncodeToString(
 		[]byte(opts.Creds.Username+":"+opts.Creds.Token))
 
-	editor := func(ctx context.Context, req *http.Request) error {
-		// Don't clobber headers the caller set deliberately — `namecom api
-		// --header 'Authorization: …'` is a supported escape hatch.
-		if req.Header.Get("Authorization") == "" {
-			req.Header.Set("Authorization", authHeader)
-		}
-		if req.Header.Get("User-Agent") == "" {
-			req.Header.Set("User-Agent", ua)
-		}
-		if req.Header.Get("Accept") == "" {
-			req.Header.Set("Accept", "application/json")
-		}
-		// Only supply the per-invocation key when the caller hasn't set one.
-		// Editors run AFTER the generated request builder, so an unconditional
-		// Set() here silently overwrote a key the user passed explicitly —
-		// meaning a retried write sent a different key each attempt and could
-		// double-charge, which is precisely what the key exists to prevent.
-		if req.Header.Get("X-Idempotency-Key") == "" &&
-			(req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodDelete) {
-			req.Header.Set("X-Idempotency-Key", idempotencyKeyFor(ctx))
-		}
+	// headerTransport wraps retryTransport, not the reverse. See its doc
+	// comment: the idempotency key must be stamped once, before the retry loop
+	// replays the request.
+	httpClient := &http.Client{
+		Timeout: timeout,
+		Transport: &headerTransport{
+			authHeader: authHeader,
+			userAgent:  ua,
+			authHost:   hostOf(baseURL),
+			base: &retryTransport{
+				base:       http.DefaultTransport,
+				limiter:    rate.NewLimiter(rate.Limit(rps), burst),
+				maxRetries: maxRetries,
+				logw:       opts.DebugLog,
+				onRetry:    opts.OnRetry,
+			},
+		},
+	}
+
+	// The header rules now live in headerTransport, which every caller of this
+	// HTTP client goes through. This editor stays only so Prepare() keeps
+	// working for hand-built requests, and it delegates to the same
+	// implementation rather than restating it.
+	ht := &headerTransport{authHeader: authHeader, userAgent: ua, authHost: hostOf(baseURL)}
+	editor := func(_ context.Context, req *http.Request) error {
+		ht.apply(req)
 		return nil
 	}
 
@@ -184,7 +180,13 @@ func New(opts Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building API client: %w", err)
 	}
-	return &Client{gen: gc, baseURL: baseURL, httpClient: httpClient, editor: editor}, nil
+	return &Client{
+		gen:        gc,
+		sdk:        newSDK(baseURL, httpClient),
+		baseURL:    baseURL,
+		httpClient: httpClient,
+		editor:     editor,
+	}, nil
 }
 
 // Prepare applies the standard headers — auth, User-Agent, Accept, and the
@@ -205,6 +207,13 @@ func (c *Client) Prepare(req *http.Request) error {
 // methods. The configured HTTP client (auth, rate limit, retries) is applied
 // to every call.
 func (c *Client) Gen() *gen.Client { return c.gen }
+
+// SDK returns the Core SDK client, wired to the same transport as Gen().
+//
+// Both exist during the #40 migration. Command groups move across one at a
+// time; until the last one does, the generated client stays the one that
+// works. Nothing in cmd/ calls this yet.
+func (c *Client) SDK() *sdk.Namecom { return c.sdk }
 
 // BaseURL reports the base URL in use (production or sandbox).
 func (c *Client) BaseURL() string { return c.baseURL }

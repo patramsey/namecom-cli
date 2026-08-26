@@ -127,6 +127,11 @@ func suggestionHint(suggestions []string) string {
 	return b.String()
 }
 
+// pageNumber is the set of types the two API clients use for page numbers.
+type pageNumber interface {
+	~int | ~int32
+}
+
 // NextPage decides whether a paginated walk continues, given the page just
 // fetched and the nextPage/lastPage the API reported alongside it.
 //
@@ -140,7 +145,11 @@ func suggestionHint(suggestions []string) string {
 //
 // Two guards, both cheap: the page number must advance, and it must not run
 // past lastPage when the API reports one.
-func NextPage(current int32, nextPage, lastPage *int32) (int32, bool) {
+//
+// Generic over the page type because the two clients disagree about it: the
+// generated client reports int32, the Core SDK reports int. The guards are the
+// same either way, and inference means existing call sites are unchanged.
+func NextPage[T pageNumber](current T, nextPage, lastPage *T) (T, bool) {
 	if nextPage == nil || *nextPage == 0 {
 		return current, false
 	}

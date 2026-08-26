@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- The `Authorization` header is now bound to the API's hostname and is not sent
+  to any other host. `net/http` already strips it when following a cross-host
+  redirect, but header injection moved into the transport layer in this
+  release, and a transport runs again for the redirected request — which would
+  have put the credential back and handed it to whatever host the redirect
+  named. Caught before release by an existing test; noted because the property
+  is now enforced explicitly rather than inherited.
+
 ### Changed
 - `--dry-run` now previews the request body for `order refund`, `transfer
   create`, `transfer internal-in`, `url create`, and `url update`. These
