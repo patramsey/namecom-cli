@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -194,7 +194,7 @@ func TestPricing_Success(t *testing.T) {
 	purchase, renewal, transfer := 12.99, 14.99, 9.99
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{
 			PurchasePrice: &purchase,
 			RenewalPrice:  &renewal,
 			TransferPrice: &transfer,
@@ -248,9 +248,9 @@ func availabilityServer(t *testing.T, domain string, purchasable bool) *httptest
 			return
 		}
 		price := 12.99
-		results := []gen.SearchResult{{DomainName: domain, Purchasable: purchasable, PurchasePrice: &price}}
+		results := []*coreapigo.SearchResult{{DomainName: domain, Purchasable: purchasable, PurchasePrice: &price}}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -278,9 +278,9 @@ func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 		if r.URL.Path == "/core/v1/domains:checkAvailability" {
 			checkCalled = true
 			price := 12.99
-			results := []gen.SearchResult{{DomainName: "free.com", Purchasable: true, PurchasePrice: &price}}
+			results := []*coreapigo.SearchResult{{DomainName: "free.com", Purchasable: true, PurchasePrice: &price}}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 			return
 		}
 		// Stop at pricing — we don't need to simulate the full flow.
@@ -323,11 +323,11 @@ func TestRegister_DryRunMakesReadsButNeverWrites(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "checkAvailability"):
 			availChecked = true
-			results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			results := []*coreapigo.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		case strings.Contains(r.URL.Path, "getPricing"):
 			pricingChecked = true
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		case strings.Contains(r.URL.Path, "claims"):
 			claimsChecked = true
 			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
@@ -467,7 +467,7 @@ func TestDomainUpdate_NormalizesDomain(t *testing.T) {
 		if r.Method == http.MethodPatch || r.Method == http.MethodPut {
 			writePath = r.URL.Path
 		}
-		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+		_ = json.NewEncoder(w).Encode(coreapigo.DomainResponsePayload{DomainName: "example.com"})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -533,7 +533,7 @@ func TestRenew_YearsOutOfRange(t *testing.T) {
 // renewServer serves the given pricing for the getPricing call and records the
 // decoded body of the subsequent renew POST, so tests can assert on what we
 // actually send rather than only that no error came back.
-func renewServer(t *testing.T, pricing gen.PricingResponseSchema, got *map[string]any) *httptest.Server {
+func renewServer(t *testing.T, pricing coreapigo.PricingResponse, got *map[string]any) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -544,7 +544,7 @@ func renewServer(t *testing.T, pricing gen.PricingResponseSchema, got *map[strin
 		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
 			t.Errorf("decoding renew body: %v", err)
 		}
-		_ = json.NewEncoder(w).Encode(gen.RenewDomainResponseSchema{})
+		_ = json.NewEncoder(w).Encode(coreapigo.RenewDomainResponse{})
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -559,7 +559,7 @@ func renewServer(t *testing.T, pricing gen.PricingResponseSchema, got *map[strin
 func TestRenew_PremiumSendsPurchasePrice(t *testing.T) {
 	renewal := 2500.00
 	var gotBody map[string]any
-	srv := renewServer(t, gen.PricingResponseSchema{Premium: true, RenewalPrice: &renewal}, &gotBody)
+	srv := renewServer(t, coreapigo.PricingResponse{Premium: true, RenewalPrice: &renewal}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
 	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
@@ -582,7 +582,7 @@ func TestRenew_PremiumSendsPurchasePrice(t *testing.T) {
 func TestRenew_NonPremiumOmitsPurchasePrice(t *testing.T) {
 	renewal := 19.99
 	var gotBody map[string]any
-	srv := renewServer(t, gen.PricingResponseSchema{Premium: false, RenewalPrice: &renewal}, &gotBody)
+	srv := renewServer(t, coreapigo.PricingResponse{Premium: false, RenewalPrice: &renewal}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
 	if err := runRenew(cmd, []string{"example.com"}); err != nil {
@@ -603,7 +603,7 @@ func TestRenew_ExplicitPriceOverridesQuote(t *testing.T) {
 	quoted := 2500.00
 	confirmed := 1800.00
 	var gotBody map[string]any
-	srv := renewServer(t, gen.PricingResponseSchema{Premium: true, RenewalPrice: &quoted}, &gotBody)
+	srv := renewServer(t, coreapigo.PricingResponse{Premium: true, RenewalPrice: &quoted}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
 	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
@@ -666,12 +666,12 @@ func TestPricingQuoteUsesRequestedYears(t *testing.T) {
 				switch {
 				case strings.Contains(r.URL.Path, "getPricing"):
 					pricingYears = r.URL.Query().Get("years")
-					_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+					_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{
 						PurchasePrice: &price, RenewalPrice: &price,
 					})
 				case strings.Contains(r.URL.Path, "checkAvailability"):
-					results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
-					_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+					results := []*coreapigo.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+					_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 				default:
 					_, _ = w.Write([]byte(`{}`))
 				}
@@ -741,12 +741,12 @@ func TestYearsReachesTheWriteBody(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case strings.Contains(r.URL.Path, "getPricing"):
-					_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+					_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{
 						PurchasePrice: &price, RenewalPrice: &price,
 					})
 				case strings.Contains(r.URL.Path, "checkAvailability"):
-					results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
-					_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+					results := []*coreapigo.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+					_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 				case r.Method == http.MethodPost:
 					_ = json.NewDecoder(r.Body).Decode(&writeBody)
 					_, _ = w.Write([]byte(`{}`))
@@ -781,10 +781,10 @@ func TestRenew_DomainNormalized(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{RenewalPrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{RenewalPrice: &price})
 		default:
 			renewPath = r.URL.Path
-			_ = json.NewEncoder(w).Encode(gen.RenewDomainResponseSchema{})
+			_ = json.NewEncoder(w).Encode(coreapigo.RenewDomainResponse{})
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -889,7 +889,7 @@ func TestAuthCode_DomainNormalized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.AuthCodeResponseSchema{AuthCode: "SECRET123"})
+		_ = json.NewEncoder(w).Encode(coreapigo.AuthCodeResponse{AuthCode: "SECRET123"})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -998,16 +998,16 @@ func TestRegister_YearsOutOfRange(t *testing.T) {
 
 // checkThenCreateServer answers CheckAvailability with the given result and
 // records the body of the subsequent CreateDomain POST.
-func checkThenCreateServer(t *testing.T, result gen.SearchResult, got *map[string]any) *httptest.Server {
+func checkThenCreateServer(t *testing.T, result coreapigo.SearchResult, got *map[string]any) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "checkAvailability"):
-			results := []gen.SearchResult{result}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			results := []*coreapigo.SearchResult{&result}
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: result.PurchasePrice})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: result.PurchasePrice})
 		case strings.Contains(r.URL.Path, "claims"):
 			// register now always checks for trademark claims; no claim here.
 			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
@@ -1015,7 +1015,7 @@ func checkThenCreateServer(t *testing.T, result gen.SearchResult, got *map[strin
 			if err := json.NewDecoder(r.Body).Decode(got); err != nil {
 				t.Errorf("decoding create body: %v", err)
 			}
-			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -1030,9 +1030,9 @@ func checkThenCreateServer(t *testing.T, result gen.SearchResult, got *map[strin
 // purchaseType is not "registration", so the two must travel together.
 func TestRegister_ForwardsPurchaseTypeAndPrice(t *testing.T) {
 	price := 450.00
-	ptype := gen.SearchPurchaseType("aftermarket_b")
+	ptype := coreapigo.SearchPurchaseType("aftermarket_b")
 	var gotBody map[string]any
-	srv := checkThenCreateServer(t, gen.SearchResult{
+	srv := checkThenCreateServer(t, coreapigo.SearchResult{
 		DomainName: "example.com", Purchasable: true,
 		PurchasePrice: &price, PurchaseType: &ptype,
 	}, &gotBody)
@@ -1060,9 +1060,9 @@ func TestRegister_ForwardsPurchaseTypeAndPrice(t *testing.T) {
 // non-premium registration shouldn't pin a price.
 func TestRegister_PlainRegistrationOmitsPurchaseType(t *testing.T) {
 	price := 12.99
-	ptype := gen.SearchPurchaseType("registration")
+	ptype := coreapigo.SearchPurchaseType("registration")
 	var gotBody map[string]any
-	srv := checkThenCreateServer(t, gen.SearchResult{
+	srv := checkThenCreateServer(t, coreapigo.SearchResult{
 		DomainName: "example.com", Purchasable: true,
 		PurchasePrice: &price, PurchaseType: &ptype,
 	}, &gotBody)
@@ -1677,12 +1677,12 @@ func TestRegisterRenew_MultiYearPromptIsNotLabelledPerYear(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case strings.Contains(r.URL.Path, "getPricing"):
-					_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{
+					_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{
 						PurchasePrice: &price, RenewalPrice: &price,
 					})
 				case strings.Contains(r.URL.Path, "checkAvailability"):
-					results := []gen.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
-					_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+					results := []*coreapigo.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+					_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 				case strings.Contains(r.URL.Path, "claims"):
 					_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 				default:
@@ -1891,19 +1891,19 @@ func TestRegister_DryRunPreviewsTheRealBody(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "checkAvailability"):
-			ptype := gen.SearchPurchaseType("aftermarket_b")
-			results := []gen.SearchResult{{
+			ptype := coreapigo.SearchPurchaseType("aftermarket_b")
+			results := []*coreapigo.SearchResult{{
 				DomainName: "example.com", Purchasable: true,
 				PurchasePrice: &price, PurchaseType: &ptype,
 			}}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		case strings.Contains(r.URL.Path, "claims"):
 			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			created = true
-			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -1958,12 +1958,12 @@ func TestRegister_ClaimsCheckedForTheActualPurchaseType(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "checkAvailability"):
-			ptype := gen.SearchPurchaseType("landrush_eap")
-			results := []gen.SearchResult{{
+			ptype := coreapigo.SearchPurchaseType("landrush_eap")
+			results := []*coreapigo.SearchResult{{
 				DomainName: "example.com", Purchasable: true,
 				PurchasePrice: &price, PurchaseType: &ptype,
 			}}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		case strings.Contains(r.URL.Path, "claims"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -1972,9 +1972,9 @@ func TestRegister_ClaimsCheckedForTheActualPurchaseType(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
-			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
 		}
 	}))
 	t.Cleanup(srv.Close)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -204,7 +204,7 @@ func TestEmailUpdate_BadDomainArg(t *testing.T) {
 func TestEmailUpdate_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.EmailForwarding{
+		_ = json.NewEncoder(w).Encode(coreapigo.EmailForwarding{
 			EmailBox:   "info",
 			DomainName: "example.com",
 			EmailTo:    "new@gmail.com",
@@ -253,10 +253,10 @@ func TestEmailList_BadDomain(t *testing.T) {
 }
 
 func TestEmailList_Empty(t *testing.T) {
-	var nextPage int32
+	var nextPage int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListEmailForwardingsResponseSchema{NextPage: &nextPage})
+		_ = json.NewEncoder(w).Encode(coreapigo.ListEmailForwardingsResponse{NextPage: &nextPage})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -267,13 +267,13 @@ func TestEmailList_Empty(t *testing.T) {
 }
 
 func TestEmailList_ShowsEntries(t *testing.T) {
-	var nextPage int32
+	var nextPage int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		entries := []gen.EmailForwarding{
+		entries := []*coreapigo.EmailForwarding{
 			{EmailBox: "info", DomainName: "example.com", EmailTo: "dest@gmail.com"},
 		}
-		_ = json.NewEncoder(w).Encode(gen.ListEmailForwardingsResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.ListEmailForwardingsResponse{
 			EmailForwarding: entries,
 			NextPage:        &nextPage,
 		})
@@ -333,7 +333,7 @@ func TestEmailGet_BadDomain(t *testing.T) {
 func TestEmailGet_ReturnsEntry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.EmailForwarding{
+		_ = json.NewEncoder(w).Encode(coreapigo.EmailForwarding{
 			EmailBox:   "info",
 			DomainName: "example.com",
 			EmailTo:    "dest@gmail.com",

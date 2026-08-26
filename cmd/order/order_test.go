@@ -13,7 +13,6 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +20,7 @@ import (
 // orderServer builds an httptest.Server that serves paginated order list
 // responses. pages is a slice of order-ID slices; page i returns orders with
 // those IDs and sets NextPage accordingly. It records all request URLs.
-func orderServer(t *testing.T, pages [][]int32) (*httptest.Server, *[]string) {
+func orderServer(t *testing.T, pages [][]int) (*httptest.Server, *[]string) {
 	t.Helper()
 	var received []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,16 +35,16 @@ func orderServer(t *testing.T, pages [][]int32) (*httptest.Server, *[]string) {
 			http.Error(w, "page out of range", http.StatusNotFound)
 			return
 		}
-		var orders []gen.Order
+		var orders []*coreapigo.Order
 		for i := range pages[idx] {
-			orders = append(orders, gen.Order{Id: &pages[idx][i]})
+			orders = append(orders, &coreapigo.Order{ID: &pages[idx][i]})
 		}
-		var nextPage int32
+		var nextPage int
 		if idx+1 < len(pages) {
-			nextPage = int32(idx + 2)
+			nextPage = idx + 2
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListOrdersResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.ListOrdersResponse{
 			Orders:   orders,
 			NextPage: &nextPage,
 		})
@@ -78,7 +77,7 @@ func cmdForOrderList(t *testing.T, srv *httptest.Server, stdout, stderr *bytes.B
 }
 
 func TestOrderList_PaginationStopsAtFirstPage(t *testing.T) {
-	srv, requests := orderServer(t, [][]int32{
+	srv, requests := orderServer(t, [][]int{
 		{101, 102}, // page 1 — NextPage=2 set
 		{103},      // page 2 — should NOT be fetched
 	})
@@ -98,7 +97,7 @@ func TestOrderList_PaginationStopsAtFirstPage(t *testing.T) {
 }
 
 func TestOrderList_AllFetchesAllPages(t *testing.T) {
-	srv, requests := orderServer(t, [][]int32{
+	srv, requests := orderServer(t, [][]int{
 		{101}, // page 1
 		{102}, // page 2
 		{103}, // page 3 — no NextPage
@@ -122,7 +121,7 @@ func TestOrderList_AllFetchesAllPages(t *testing.T) {
 }
 
 func TestOrderList_SinceFilterPassedToAPI(t *testing.T) {
-	srv, requests := orderServer(t, [][]int32{{101}})
+	srv, requests := orderServer(t, [][]int{{101}})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForOrderList(t, srv, &stdout, &stderr)
 	listAll, listDomain, listUntil, listStatus = false, "", "", ""
@@ -139,7 +138,7 @@ func TestOrderList_SinceFilterPassedToAPI(t *testing.T) {
 }
 
 func TestOrderList_StatusFilterPassedToAPI(t *testing.T) {
-	srv, requests := orderServer(t, [][]int32{{101}})
+	srv, requests := orderServer(t, [][]int{{101}})
 	var stdout, stderr bytes.Buffer
 	cmd := cmdForOrderList(t, srv, &stdout, &stderr)
 	listAll, listDomain, listSince, listUntil = false, "", "", ""
@@ -156,7 +155,7 @@ func TestOrderList_StatusFilterPassedToAPI(t *testing.T) {
 }
 
 func TestOrderList_FilterAutoPages(t *testing.T) {
-	srv, requests := orderServer(t, [][]int32{
+	srv, requests := orderServer(t, [][]int{
 		{101}, // page 1 — NextPage=2
 		{102}, // page 2 — no NextPage
 	})
@@ -218,10 +217,10 @@ func TestOrderGet_BadID(t *testing.T) {
 }
 
 func TestOrderGet_Success(t *testing.T) {
-	var id int32 = 42
+	id := 42
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.Order{Id: &id})
+		_ = json.NewEncoder(w).Encode(coreapigo.Order{ID: &id})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -242,7 +241,7 @@ func TestOrderGet_Success(t *testing.T) {
 }
 
 // TestOrderRows_Currency guards a regression where the total was rendered with
-// a hardcoded "$" while gen.Order carries a Currency field documented as
+// a hardcoded "$" while coreapigo.Order carries a Currency field documented as
 // ('USD', 'CNY') — so a CNY order was displayed as dollars, understating or
 // overstating it by the exchange rate.
 func TestOrderRows_Currency(t *testing.T) {

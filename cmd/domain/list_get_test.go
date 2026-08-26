@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -71,18 +71,18 @@ func domainServer(t *testing.T, pages [][]string) (*httptest.Server, func() []st
 			http.Error(w, "page out of range", http.StatusNotFound)
 			return
 		}
-		var domains []gen.DomainResponsePayload
+		var domains []*coreapigo.DomainResponsePayload
 		for _, name := range pages[idx] {
 			n := name
-			domains = append(domains, gen.DomainResponsePayload{DomainName: n})
+			domains = append(domains, &coreapigo.DomainResponsePayload{DomainName: n})
 		}
-		var nextPage int32
-		lastPage := int32(len(pages))
+		var nextPage int
+		lastPage := len(pages)
 		if idx+1 < len(pages) {
-			nextPage = int32(idx + 2)
+			nextPage = idx + 2
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListDomainsResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.ListDomainsResponse{
 			Domains:  domains,
 			NextPage: &nextPage,
 			LastPage: &lastPage,
@@ -237,18 +237,18 @@ func domainServerNoLastPage(t *testing.T, pages [][]string) *httptest.Server {
 			http.Error(w, "page out of range", http.StatusNotFound)
 			return
 		}
-		var domains []gen.DomainResponsePayload
+		var domains []*coreapigo.DomainResponsePayload
 		for _, name := range pages[idx] {
 			n := name
-			domains = append(domains, gen.DomainResponsePayload{DomainName: n})
+			domains = append(domains, &coreapigo.DomainResponsePayload{DomainName: n})
 		}
-		var nextPage int32
+		var nextPage int
 		if idx+1 < len(pages) {
-			nextPage = int32(idx + 2)
+			nextPage = idx + 2
 		}
 		w.Header().Set("Content-Type", "application/json")
 		// Deliberately omit LastPage to trigger the sequential fallback.
-		_ = json.NewEncoder(w).Encode(gen.ListDomainsResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.ListDomainsResponse{
 			Domains:  domains,
 			NextPage: &nextPage,
 		})
@@ -337,7 +337,7 @@ func TestDomainGet_BadDomain(t *testing.T) {
 func TestDomainGet_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+		_ = json.NewEncoder(w).Encode(coreapigo.DomainResponsePayload{DomainName: "example.com"})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -370,7 +370,7 @@ func TestDomainGet_DomainNormalized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.DomainResponsePayload{DomainName: "example.com"})
+		_ = json.NewEncoder(w).Encode(coreapigo.DomainResponsePayload{DomainName: "example.com"})
 	}))
 	t.Cleanup(srv.Close)
 

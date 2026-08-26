@@ -1,60 +1,28 @@
-# namecom CLI — build, codegen, and test targets.
+# namecom CLI — build and test targets.
 
 BINARY      := namecom
 PKG         := github.com/patramsey/namecom-cli
 VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -X main.version=$(VERSION)
 
-# OpenAPI spec provenance.
-#   Source:  https://namedotcom-cdn.name.tools/api-info/namecom.api.yaml
-#   Upstream version: 1.27.1 (see info.version in the spec)
-#   SHA256:  bee62aaf8a8e7a3b980779da71af330735e30703b562523ca2954c6dfa2aa4cb
-SPEC        := namecom.api.yaml
-SPEC_SHA    := bee62aaf8a8e7a3b980779da71af330735e30703b562523ca2954c6dfa2aa4cb
-SPEC_30     := $(shell mktemp -t namecom.api.30.XXXX.yaml)
+# There is no codegen step any more. The API client is
+# github.com/namedotcom/core-api-go, upstream's own SDK — see #40. What used to
+# live here was a vendored OpenAPI spec, a Python preprocessor that downgraded
+# it from 3.1 to 3.0, an oapi-codegen invocation, a SHA pin on the spec, and a
+# CI check that the committed output still matched its own generator.
 
-# Pinned via the `tool` directive in go.mod (oapi-codegen v2.4.1).
-OAPI_CODEGEN := go tool oapi-codegen
-
-.PHONY: all build test test-int lint generate verify-spec verify-generate install release clean fmt
+.PHONY: all build test test-int lint install release clean fmt
 
 all: build
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
-# Regenerate the API client from the vendored spec. The vendored spec is
-# OpenAPI 3.1; scripts/spec_to_30.py downgrades it to a 3.0-compatible form
-# (oapi-codegen v2.4.x lacks full 3.1 support) before generation.
-generate: verify-spec
-	python3 scripts/spec_to_30.py $(SPEC) $(SPEC_30)
-	$(OAPI_CODEGEN) -config internal/api/gen/codegen.yaml $(SPEC_30)
-	gofmt -w internal/api/gen/zz_generated.go
-	@rm -f $(SPEC_30)
-
-# Fail if the committed generated code differs from what the current generator
-# produces. Bumping oapi-codegen changes its output, but nothing regenerates on
-# a dependency bump — so the tree can silently drift from its own generator
-# until someone runs `make generate` months later and finds a 2000-line diff
-# mixed in with their own work. CI runs this so the bump PR itself goes red.
-verify-generate: generate
-	@git diff --exit-code -- internal/api/gen/zz_generated.go \
-		|| { echo ""; \
-		     echo "zz_generated.go is out of date with the current oapi-codegen."; \
-		     echo "Run 'make generate' and commit the result."; \
-		     exit 1; }
-	@echo "generated code is up to date"
-
-# Fail loudly if the vendored spec drifts from the recorded SHA256 — forces a
-# deliberate re-vendor + provenance update rather than a silent change.
-verify-spec:
-	@echo "$(SPEC_SHA)  $(SPEC)" | shasum -a 256 -c - >/dev/null \
-		|| { echo "ERROR: $(SPEC) does not match recorded SHA256. Re-vendor deliberately and update SPEC_SHA in the Makefile."; exit 1; }
-
 test:
-	# -count=1 disables the test cache. internal/api/gen shells out to
-	# scripts/spec_to_30.py and reads namecom.api.yaml; Go's cache tracks
-	# neither, so a plain `go test` reports a stale pass after either changes.
+	# -count=1 kept deliberately. The reason it was added — a generated package
+	# shelling out to a Python preprocessor the cache could not see — is gone,
+	# but a cached pass is still a worse default than a slightly slower honest
+	# one for a suite this size.
 	go test -count=1 ./...
 
 # Integration suite against the sandbox API. Requires sandbox credentials.
@@ -65,7 +33,7 @@ lint:
 	golangci-lint run
 
 fmt:
-	gofmt -w $(shell find . -name '*.go' -not -path './internal/api/gen/*')
+	gofmt -w $(shell find . -name '*.go')
 
 install:
 	go install -ldflags "$(LDFLAGS)" .

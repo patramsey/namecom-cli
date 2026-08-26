@@ -12,7 +12,6 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -24,11 +23,11 @@ func TestSearch_ShowsResults(t *testing.T) {
 	price := 12.99
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		results := []gen.SearchResult{
+		results := []*coreapigo.SearchResult{
 			{DomainName: "acme.com", Purchasable: avail, PurchasePrice: &price},
 			{DomainName: "acme.io", Purchasable: false},
 		}
-		_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+		_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -57,8 +56,8 @@ func TestSearch_ShowsResults(t *testing.T) {
 func TestSearch_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		var empty []gen.SearchResult
-		_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &empty})
+		var empty []*coreapigo.SearchResult
+		_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: empty})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -131,13 +130,13 @@ func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/core/v1/zonecheck":
-			results := []gen.ZoneCheckResult{
+			results := []*coreapigo.ZoneCheckResult{
 				{DomainName: "free.com", Available: &free},
 				{DomainName: "taken.co.uk", Available: &taken},
 			}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 2})
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 2})
 		case "/core/v1/domains/free.com:getPricing":
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -150,7 +149,7 @@ func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
 		t.Fatalf("runCheck: %v", err)
 	}
 
-	var got []gen.SearchResult
+	var got []*coreapigo.SearchResult
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
 	}
@@ -188,11 +187,11 @@ func TestCheck_ZoneCheckAvailableGetsPricing(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/core/v1/zonecheck":
-			results := []gen.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		case "/core/v1/domains/free.com:getPricing":
 			pricingCalled = true
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -217,8 +216,8 @@ func TestCheck_ZoneCheckUnavailableSkipsPricing(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/core/v1/zonecheck":
-			results := []gen.ZoneCheckResult{{DomainName: "taken.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "taken.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		default:
 			pricingCalled = true
 			t.Errorf("unexpected request for unavailable domain: %s %s", r.Method, r.URL)
@@ -245,12 +244,12 @@ func TestCheck_ZoneCheckNullFallsBackToCheckAvailability(t *testing.T) {
 		switch r.URL.Path {
 		case "/core/v1/zonecheck":
 			// null Available signals unsupported TLD.
-			results := []gen.ZoneCheckResult{{DomainName: "example.xyz", Available: nil}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "example.xyz", Available: nil}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		case "/core/v1/domains:checkAvailability":
 			checkAvailCalled = true
-			results := []gen.SearchResult{{DomainName: "example.xyz", Purchasable: true, PurchasePrice: &price}}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			results := []*coreapigo.SearchResult{{DomainName: "example.xyz", Purchasable: true, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -279,8 +278,8 @@ func TestCheck_AuthoritativeBypassesZoneCheck(t *testing.T) {
 			t.Error("ZoneCheck should not be called with --authoritative")
 			http.Error(w, "unexpected", http.StatusInternalServerError)
 		case "/core/v1/domains:checkAvailability":
-			results := []gen.SearchResult{{DomainName: "free.com", Purchasable: true, PurchasePrice: &price}}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			results := []*coreapigo.SearchResult{{DomainName: "free.com", Purchasable: true, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -326,7 +325,7 @@ func TestRenderSearchResults_JSONOutput(t *testing.T) {
 	if err := renderSearchResults(out, results); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var decoded []gen.SearchResult
+	var decoded []*coreapigo.SearchResult
 	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
 	}
@@ -366,14 +365,14 @@ func TestCheck_UnexpectedZoneCheckDomainSkippedForPricing(t *testing.T) {
 		switch r.URL.Path {
 		case "/core/v1/zonecheck":
 			// API returns the requested domain AND an extra one we didn't ask for.
-			results := []gen.ZoneCheckResult{
+			results := []*coreapigo.ZoneCheckResult{
 				{DomainName: "free.com", Available: &avail},
 				{DomainName: "unexpected.com", Available: &avail},
 			}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 2})
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 2})
 		case "/core/v1/domains/free.com:getPricing":
 			pricingCalls = append(pricingCalls, r.URL.Path)
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			// Any request for "unexpected.com" pricing would land here.
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
@@ -400,11 +399,11 @@ func TestCheck_PricingPopulatedFromGetPricing(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/core/v1/zonecheck":
-			results := []gen.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		case "/core/v1/domains/free.com:getPricing":
 			pricingPrice = price
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -440,10 +439,10 @@ func TestCheck_SandboxBypassesZoneCheck(t *testing.T) {
 			t.Error("ZoneCheck should not be called in sandbox mode")
 			http.Error(w, "unexpected zonecheck call", http.StatusInternalServerError)
 		case "/core/v1/domains:checkAvailability":
-			results := []gen.SearchResult{
+			results := []*coreapigo.SearchResult{
 				{DomainName: "example.com", Purchasable: avail, PurchasePrice: &price},
 			}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -461,7 +460,7 @@ func TestCheck_SandboxBypassesZoneCheck(t *testing.T) {
 }
 
 // TestInlineRegister_ForwardsPurchaseType covers the second registration path.
-// runCheck's --authoritative branch holds a real gen.SearchResult with
+// runCheck's --authoritative branch holds a real coreapigo.SearchResult with
 // PurchaseType populated, but handed inlineRegister only the domain name and
 // price, so aftermarket results were registered as plain registrations. This
 // path can't be driven end-to-end (it's gated on an interactive TTY), so drive
@@ -481,7 +480,7 @@ func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decoding create body: %v", err)
 		}
-		_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+		_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -514,13 +513,13 @@ func checkRegisterServer(t *testing.T, registered *bool) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "zonecheck"):
-			results := []gen.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/domains"):
 			*registered = true
-			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -601,8 +600,8 @@ func TestCheck_SandboxByProfileBypassesZoneCheck(t *testing.T) {
 			t.Error("ZoneCheck must not run when the resolved profile is sandbox")
 			http.Error(w, "unexpected", http.StatusInternalServerError)
 		case strings.Contains(r.URL.Path, "checkAvailability"):
-			results := []gen.SearchResult{{DomainName: "example.com", Purchasable: avail, PurchasePrice: &price}}
-			_ = json.NewEncoder(w).Encode(gen.SearchResponseSchema{Results: &results})
+			results := []*coreapigo.SearchResult{{DomainName: "example.com", Purchasable: avail, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -638,10 +637,10 @@ func TestCheck_NormalizesDomainArgs(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "zonecheck"):
 			// The API answers with the canonical lowercase name.
-			results := []gen.ZoneCheckResult{{DomainName: "example.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "example.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -654,7 +653,7 @@ func TestCheck_NormalizesDomainArgs(t *testing.T) {
 		t.Fatalf("runCheck: %v", err)
 	}
 
-	var got []gen.SearchResult
+	var got []*coreapigo.SearchResult
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
@@ -684,10 +683,10 @@ func TestCheck_MatchesPunycodeResponse(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "zonecheck"):
 			// Canonical punycode reply for the Unicode name we asked about.
-			results := []gen.ZoneCheckResult{{DomainName: "xn--caf-dma.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(gen.ZoneCheckResponseSchema{Results: results, Total: 1})
+			results := []*coreapigo.ZoneCheckResult{{DomainName: "xn--caf-dma.com", Available: &avail}}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
 		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(gen.PricingResponseSchema{PurchasePrice: &price})
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -700,7 +699,7 @@ func TestCheck_MatchesPunycodeResponse(t *testing.T) {
 		t.Fatalf("runCheck: %v", err)
 	}
 
-	var got []gen.SearchResult
+	var got []*coreapigo.SearchResult
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
@@ -803,7 +802,7 @@ func TestInlineRegister_ChecksTrademarkClaims(t *testing.T) {
 			}`))
 		default:
 			created = true
-			_ = json.NewEncoder(w).Encode(gen.CreateDomainResponseSchema{})
+			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -919,7 +918,7 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 		t.Fatalf("runCheck: %v", err)
 	}
 
-	var got []gen.SearchResult
+	var got []*coreapigo.SearchResult
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}

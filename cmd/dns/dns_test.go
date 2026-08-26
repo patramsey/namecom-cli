@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -243,11 +243,11 @@ func TestDNSCreate_DomainNormalized(t *testing.T) {
 		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		recType := "A"
-		recID := int32(1)
+		recID := 1
 		recHost := "@"
 		recAnswer := "1.2.3.4"
-		_ = json.NewEncoder(w).Encode(gen.Record{
-			Id:     &recID,
+		_ = json.NewEncoder(w).Encode(coreapigo.Record{
+			ID:     &recID,
 			Type:   &recType,
 			Host:   &recHost,
 			Answer: &recAnswer,
@@ -271,11 +271,11 @@ func TestDNSCreate_DomainNormalized(t *testing.T) {
 
 // ---- dns list ---------------------------------------------------------------
 
-func recordServer(t *testing.T, records []gen.Record, nextPage int32) *httptest.Server {
+func recordServer(t *testing.T, records []*coreapigo.Record, nextPage int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListRecordsResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.ListRecordsResponse{
 			Records:  records,
 			NextPage: &nextPage,
 		})
@@ -309,7 +309,7 @@ func TestDNSList_ShowsRecords(t *testing.T) {
 	recType := "A"
 	recHost := "www"
 	recAnswer := "1.2.3.4"
-	records := []gen.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	records := []*coreapigo.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
 	srv := recordServer(t, records, 0)
 
 	var stdout bytes.Buffer
@@ -343,7 +343,7 @@ func TestDNSList_HasMoreHint(t *testing.T) {
 	recType := "A"
 	recHost := "@"
 	recAnswer := "1.2.3.4"
-	records := []gen.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	records := []*coreapigo.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
 	// nextPage=2 signals there are more pages.
 	srv := recordServer(t, records, 2)
 
@@ -377,7 +377,7 @@ func TestDNSList_TypeFilter(t *testing.T) {
 	hostAt := "@"
 	answerA := "1.2.3.4"
 	answerMX := "mail.example.com"
-	records := []gen.Record{
+	records := []*coreapigo.Record{
 		{Host: &hostAt, Answer: &answerA, Type: &typeA},
 		{Host: &hostAt, Answer: &answerMX, Type: &typeMX},
 	}
@@ -405,7 +405,7 @@ func TestDNSList_TypeFilter(t *testing.T) {
 
 // paginatedRecordServer serves multiple pages of DNS records. It routes
 // by the ?page= query param; pages[0] = page 1, pages[1] = page 2, etc.
-func paginatedRecordServer(t *testing.T, pages [][]gen.Record) *httptest.Server {
+func paginatedRecordServer(t *testing.T, pages [][]*coreapigo.Record) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pageNum := 1
@@ -419,12 +419,12 @@ func paginatedRecordServer(t *testing.T, pages [][]gen.Record) *httptest.Server 
 			http.Error(w, "page out of range", http.StatusNotFound)
 			return
 		}
-		var nextPage int32
+		var nextPage int
 		if idx+1 < len(pages) {
-			nextPage = int32(idx + 2)
+			nextPage = idx + 2
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListRecordsResponseSchema{
+		_ = json.NewEncoder(w).Encode(coreapigo.ListRecordsResponse{
 			Records:  pages[idx],
 			NextPage: &nextPage,
 		})
@@ -439,7 +439,7 @@ func TestDNSList_AllFetchesAllPages(t *testing.T) {
 	host2 := "mail"
 	ans1 := "1.2.3.4"
 	ans2 := "5.6.7.8"
-	pages := [][]gen.Record{
+	pages := [][]*coreapigo.Record{
 		{{Host: &host1, Answer: &ans1, Type: &typeA}}, // page 1 — NextPage=2
 		{{Host: &host2, Answer: &ans2, Type: &typeA}}, // page 2 — NextPage=0
 	}
@@ -567,8 +567,8 @@ func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
 	recType := "A"
 	recHost := "@"
 	recAnswer := "1.2.3.4"
-	recID := int32(123)
-	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+	recID := int(123)
+	record := coreapigo.Record{ID: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
@@ -600,13 +600,13 @@ func TestDNSUpdate_SuccessPath(t *testing.T) {
 	recType := "A"
 	recHost := "www"
 	recAnswer := "1.2.3.4"
-	recID := int32(42)
+	recID := int(42)
 	// A deliberately realistic record: the API replaces the whole record on
 	// PUT, so every field the user did not pass has to survive the round trip.
 	// ttl is 3600 rather than 300 because 300 is --ttl's default — a fixture
 	// using it cannot tell "preserved the record's TTL" apart from "ignored the
 	// record and sent the flag default", which is the bug worth catching.
-	record := gen.Record{Id: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer, Ttl: 3600}
+	record := coreapigo.Record{ID: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer, TTL: 3600}
 
 	var putPath string
 	var putBody []byte
@@ -666,7 +666,7 @@ func TestDNSList_JSONEnvelope(t *testing.T) {
 	recType := "A"
 	recHost := "@"
 	recAnswer := "1.2.3.4"
-	records := []gen.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	records := []*coreapigo.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
 	srv := recordServer(t, records, 0)
 
 	var stdout bytes.Buffer
