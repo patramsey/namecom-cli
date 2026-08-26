@@ -9,6 +9,23 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `transfer internal-in` no longer prints an always-empty `(status: )`. That
+  endpoint returns a domain payload, which carries no status field, but the
+  response was being decoded into a transfer struct — so the status silently
+  stayed blank on every successful run. The line now omits it; `transfer get`
+  is where the status comes from, and the command already says so.
+- `transfer create` no longer risks a panic on a response without a `transfer`
+  object. Previously that produced an empty status; under the new client the
+  field is a pointer, so it needed a nil check rather than a dereference.
+
+### Changed
+- `namecom transfer` now calls the official name.com Core SDK instead of the
+  vendored generated client, continuing the migration in #40. `transfer cancel`
+  and `transfer cancel-outbound` now send `{}` where they previously sent no
+  body, for the reason documented in
+  `docs/upstream/core-api-go-forced-request-bodies.md`.
+
 ### Changed
 - `namecom contact` and `namecom order` now call the official name.com Core SDK
   instead of the vendored generated client, continuing the migration in #40.

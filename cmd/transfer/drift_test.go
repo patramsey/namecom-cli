@@ -110,6 +110,37 @@ func TestDryRunPreviewsPrice(t *testing.T) {
 	}
 }
 
+// TestRequestShape_TransferCancels pins the two cancel operations, which are
+// POSTs the API accepts with no request body at all.
+//
+// Added before the SDK port deliberately. The equivalent contact endpoints
+// turned out to be modelled with a body the SDK marshals regardless, so leaving
+// it unset sent a literal `null` — see
+// docs/upstream/core-api-go-forced-request-bodies.md. These are the same shape
+// of endpoint, so whatever the port does to them should be visible rather than
+// discovered from a 400 later.
+func TestRequestShape_TransferCancels(t *testing.T) {
+	// Both now send {} where they previously sent no body — the same forced-body
+	// limitation as the contact endpoints, and the reason this test was written
+	// before the port rather than after. See
+	// docs/upstream/core-api-go-forced-request-bodies.md.
+	t.Run("cancel", func(t *testing.T) {
+		drifttest.AssertRequest(t, drifttest.Request{
+			Method: "POST",
+			Path:   "/core/v1/transfers/example.com:cancel",
+			Body:   `{}`,
+		}, cmdForTransferGet, runCancel, []string{"example.com"}, transferStub)
+	})
+
+	t.Run("cancel-outbound", func(t *testing.T) {
+		drifttest.AssertRequest(t, drifttest.Request{
+			Method: "POST",
+			Path:   "/core/v1/transfers/external/out/example.com:cancel",
+			Body:   `{}`,
+		}, cmdForTransferGet, runCancelOutbound, []string{"example.com"}, transferStub)
+	})
+}
+
 // TestRequestShape_Transfer pins the wire request for the two transfer writes
 // that carry a body. The auth code is asserted present here — redaction is a
 // property of the preview, not of what is sent.
