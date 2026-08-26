@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,7 +18,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -595,38 +596,53 @@ func TestTransferCreate_QuotesPriceBeforeCharging(t *testing.T) {
 // countTransferStatusConstants below, which fails if the two drift.
 func allTransferStatuses() []string {
 	return []string{
-		string(gen.TransferStatusCanceled),
-		string(gen.TransferStatusCanceledPendingRefund),
-		string(gen.TransferStatusCompleted),
-		string(gen.TransferStatusFailed),
-		string(gen.TransferStatusPending),
-		string(gen.TransferStatusPendingInsert),
-		string(gen.TransferStatusPendingNewAuthCode),
-		string(gen.TransferStatusPendingRegistryUnlock),
-		string(gen.TransferStatusPendingTransfer),
-		string(gen.TransferStatusPendingUnlock),
-		string(gen.TransferStatusRejected),
-		string(gen.TransferStatusSubmittingTransfer),
+		string(coreapigo.TransferStatusCanceled),
+		string(coreapigo.TransferStatusCanceledPendingRefund),
+		string(coreapigo.TransferStatusCompleted),
+		string(coreapigo.TransferStatusFailed),
+		string(coreapigo.TransferStatusPending),
+		string(coreapigo.TransferStatusPendingInsert),
+		string(coreapigo.TransferStatusPendingNewAuthCode),
+		string(coreapigo.TransferStatusPendingRegistryUnlock),
+		string(coreapigo.TransferStatusPendingTransfer),
+		string(coreapigo.TransferStatusPendingUnlock),
+		string(coreapigo.TransferStatusRejected),
+		string(coreapigo.TransferStatusSubmittingTransfer),
 	}
 }
 
-// TestAllTransferStatusesIsComplete keeps allTransferStatuses honest by
-// counting the TransferStatus constants in the generated source. Without this,
-// a regen that adds a status would leave the hand-written list short and the
-// classification guard would silently stop covering it.
+// TestAllTransferStatusesIsComplete keeps allTransferStatuses honest by counting
+// the TransferStatus constants the SDK declares. Without this, an SDK bump that
+// adds a status would leave the hand-written list short and the classification
+// guard would silently stop covering it.
+//
+// It used to read internal/api/gen/zz_generated.go, which no longer exists. The
+// source now lives in the module cache, so the module directory is resolved
+// through `go list` rather than assumed — the path embeds the version, and
+// hardcoding it would make this test quietly stop checking the moment the SDK
+// was upgraded, which is precisely the event it exists to catch.
 func TestAllTransferStatusesIsComplete(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "internal", "api", "gen", "zz_generated.go"))
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/namedotcom/core-api-go").Output()
 	if err != nil {
-		t.Fatalf("reading generated source: %v", err)
+		t.Fatalf("resolving the SDK module directory: %v", err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		t.Fatal("go list returned no directory for the SDK module")
+	}
+
+	src, err := os.ReadFile(filepath.Join(dir, "transfers.go"))
+	if err != nil {
+		t.Fatalf("reading SDK source: %v", err)
 	}
 	re := regexp.MustCompile(`(?m)^\tTransferStatus\w+\s+TransferStatus = `)
 	got := len(re.FindAllString(string(src), -1))
 	if got == 0 {
-		t.Fatal("found no TransferStatus constants — has the generated layout changed?")
+		t.Fatal("found no TransferStatus constants — has the SDK's layout changed?")
 	}
 	if want := len(allTransferStatuses()); got != want {
-		t.Errorf("generated source declares %d TransferStatus constants but allTransferStatuses lists %d — "+
-			"a spec regen added or removed one; classify it in TestIsTerminalTransferStatus", got, want)
+		t.Errorf("the SDK declares %d TransferStatus constants but allTransferStatuses lists %d — "+
+			"an SDK bump added or removed one; classify it in TestIsTerminalTransferStatus", got, want)
 	}
 }
 

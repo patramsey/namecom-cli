@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -87,10 +87,10 @@ func TestVanityList_BadDomain(t *testing.T) {
 }
 
 func TestVanityList_Empty(t *testing.T) {
-	var nextPage int32
+	var nextPage int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListVanityNameserversResponseSchema{NextPage: &nextPage})
+		_ = json.NewEncoder(w).Encode(coreapigo.ListVanityNameserversResponse{NextPage: &nextPage})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -130,8 +130,8 @@ func TestVanityGet_BadDomain(t *testing.T) {
 func TestVanityGet_ReturnsEntry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{
-			Hostname: "ns1.example.com",
+		_ = json.NewEncoder(w).Encode(coreapigo.VanityNameserverResponse{
+			Hostname: strPtr("ns1.example.com"),
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -168,7 +168,7 @@ func TestVanityCreate_DomainNormalized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{Hostname: "ns1.example.com"})
+		_ = json.NewEncoder(w).Encode(coreapigo.VanityNameserverResponse{Hostname: strPtr("ns1.example.com")})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -211,7 +211,7 @@ func TestVanityCreate_HostnameSentAsLabel(t *testing.T) {
 					t.Errorf("decoding create body: %v", err)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{Hostname: tc.hostname})
+				_ = json.NewEncoder(w).Encode(coreapigo.VanityNameserverResponse{Hostname: &tc.hostname})
 			}))
 			t.Cleanup(srv.Close)
 
@@ -263,8 +263,8 @@ func TestVanityUpdate_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.VanityNameserverResponseSchema{
-			Hostname: "ns1.example.com",
+		_ = json.NewEncoder(w).Encode(coreapigo.VanityNameserverResponse{
+			Hostname: strPtr("ns1.example.com"),
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -442,3 +442,5 @@ func TestVanityList_PagesToTheEnd(t *testing.T) {
 		}
 	})
 }
+
+func strPtr(s string) *string { return &s }

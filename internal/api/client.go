@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	sdk "github.com/namedotcom/core-api-go/client"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"golang.org/x/time/rate"
 )
@@ -92,14 +91,13 @@ type Options struct {
 
 // Client is the configured API client.
 type Client struct {
-	gen        *gen.Client
 	sdk        *sdk.Namecom
 	baseURL    string
 	httpClient *http.Client
 	// editor applies the standard headers. It is registered on the generated
 	// client and also exposed via Prepare for callers that build their own
 	// requests; keeping one implementation stops the two paths from drifting.
-	editor gen.RequestEditorFn
+	editor func(context.Context, *http.Request) error
 }
 
 // New builds a Client from the resolved credentials and options.
@@ -173,15 +171,7 @@ func New(opts Options) (*Client, error) {
 		return nil
 	}
 
-	gc, err := gen.NewClient(baseURL,
-		gen.WithHTTPClient(httpClient),
-		gen.WithRequestEditorFn(editor),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("building API client: %w", err)
-	}
 	return &Client{
-		gen:        gc,
 		sdk:        newSDK(baseURL, httpClient),
 		baseURL:    baseURL,
 		httpClient: httpClient,
@@ -203,16 +193,11 @@ func (c *Client) Prepare(req *http.Request) error {
 	return c.editor(req.Context(), req)
 }
 
-// Gen returns the underlying generated client for calling typed endpoint
-// methods. The configured HTTP client (auth, rate limit, retries) is applied
-// to every call.
-func (c *Client) Gen() *gen.Client { return c.gen }
-
-// SDK returns the Core SDK client, wired to the same transport as Gen().
+// SDK returns the Core SDK client, wired to this Client's transport.
 //
-// Both exist during the #40 migration. Command groups move across one at a
-// time; until the last one does, the generated client stays the one that
-// works. Nothing in cmd/ calls this yet.
+// This is the only API client now. It shares the HTTP client built in New, so
+// every call goes through headerTransport (auth, User-Agent, idempotency key)
+// and retryTransport (rate limiting, retry policy, the deadline guard).
 func (c *Client) SDK() *sdk.Namecom { return c.sdk }
 
 // BaseURL reports the base URL in use (production or sandbox).

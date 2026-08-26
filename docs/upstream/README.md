@@ -15,6 +15,7 @@ being replaced by a link.
 | [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
 | [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
 | [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
+| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
 
 Neither is worked around in this repository. What a mitigation would look like,
 and what each was measured to cost, is recorded in

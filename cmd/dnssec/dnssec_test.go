@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -84,7 +84,7 @@ func TestDNSSECList_BadDomain(t *testing.T) {
 func TestDNSSECList_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListDNSSECsResponseSchema{})
+		_ = json.NewEncoder(w).Encode(coreapigo.ListDnsseCsResponse{})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -129,7 +129,7 @@ func TestDNSSECCreate_DomainNormalized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.DNSSEC{Digest: "abc123"})
+		_ = json.NewEncoder(w).Encode(coreapigo.Dnssec{Digest: "abc123"})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -164,7 +164,7 @@ func TestDNSSECGet_BadDomain(t *testing.T) {
 func TestDNSSECGet_ReturnsKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.DNSSEC{KeyTag: 1234, Digest: "abc123"})
+		_ = json.NewEncoder(w).Encode(coreapigo.Dnssec{KeyTag: 1234, Digest: "abc123"})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -229,8 +229,8 @@ func TestDNSSECDelete_DomainNormalized(t *testing.T) {
 func TestDNSSECList_JSONUsesDataEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(gen.ListDNSSECsResponseSchema{
-			Dnssec: []gen.DNSSEC{{KeyTag: 1234, Algorithm: 8, DigestType: 2, Digest: "ABCD"}},
+		_ = json.NewEncoder(w).Encode(coreapigo.ListDnsseCsResponse{
+			Dnssec: []*coreapigo.Dnssec{{KeyTag: 1234, Algorithm: 8, DigestType: 2, Digest: "ABCD"}},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -254,7 +254,7 @@ func TestDNSSECList_JSONUsesDataEnvelope(t *testing.T) {
 	}
 
 	var env struct {
-		Data []gen.DNSSEC `json:"data"`
+		Data []coreapigo.Dnssec `json:"data"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
 		t.Fatalf("output is not a data envelope: %v\noutput: %s", err, buf.String())

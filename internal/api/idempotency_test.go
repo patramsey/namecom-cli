@@ -2,11 +2,11 @@ package api
 
 import (
 	"context"
+	coreapigo "github.com/namedotcom/core-api-go"
+	"github.com/namedotcom/core-api-go/option"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 )
 
 // TestIdempotencyKeyExplicitWins guards a money bug: the client's request
@@ -37,8 +37,19 @@ func TestIdempotencyKeyExplicitWins(t *testing.T) {
 	const explicit = "USER-SUPPLIED-KEY"
 	ctx := ContextWithIdempotencyKey(context.Background(), "PER-INVOCATION-UUID")
 	key := explicit
-	if _, err := c.Gen().CreateDomain(ctx, &gen.CreateDomainParams{XIdempotencyKey: &key},
-		gen.CreateDomainJSONRequestBody{Domain: gen.DomainCreatePayload{DomainName: "example.com"}}); err != nil {
+	// The header is set directly rather than through
+	// option.WithXIdempotencyKey, which corrupts the value: the SDK builds it
+	// as fmt.Sprintf("*%v", *key), so the caller's key goes out with a literal
+	// asterisk in front of it. That is a generator bug, not a usage error —
+	// see docs/upstream/core-api-go-idempotency-key-asterisk.md. This test is
+	// about our transport preserving a key the caller already set, so it sets
+	// one the honest way.
+	name := "example.com"
+	h := http.Header{}
+	h.Set("X-Idempotency-Key", key)
+	if _, err := c.SDK().Domains.CreateDomain(ctx,
+		&coreapigo.CreateDomainRequest{Domain: &coreapigo.DomainCreatePayload{DomainName: &name}},
+		option.WithHTTPHeader(h)); err != nil {
 		t.Fatalf("CreateDomain: %v", err)
 	}
 
@@ -64,8 +75,9 @@ func TestIdempotencyKeyFallsBackToContext(t *testing.T) {
 	}
 
 	ctx := ContextWithIdempotencyKey(context.Background(), "PER-INVOCATION-UUID")
-	if _, err := c.Gen().CreateDomain(ctx, &gen.CreateDomainParams{},
-		gen.CreateDomainJSONRequestBody{Domain: gen.DomainCreatePayload{DomainName: "example.com"}}); err != nil {
+	name := "example.com"
+	if _, err := c.SDK().Domains.CreateDomain(ctx,
+		&coreapigo.CreateDomainRequest{Domain: &coreapigo.DomainCreatePayload{DomainName: &name}}); err != nil {
 		t.Fatalf("CreateDomain: %v", err)
 	}
 
@@ -103,8 +115,9 @@ func TestIdempotencyKeyIsPerOperation(t *testing.T) {
 	// Three record creations, the shape `dns import` produces.
 	ctx := context.Background()
 	for _, host := range []string{"a", "b", "c"} {
-		if _, err := c.Gen().CreateRecord(ctx, "example.com", gen.CreateRecordJSONRequestBody{
-			Type: "A", Host: host, Answer: "1.2.3.4",
+		if _, err := c.SDK().DNS.CreateRecord(ctx, &coreapigo.DNSCreateRecordBody{
+			DomainName: "example.com",
+			Type:       "A", Host: host, Answer: "1.2.3.4",
 		}); err != nil {
 			t.Fatalf("CreateRecord(%s): %v", host, err)
 		}
@@ -144,8 +157,9 @@ func TestIdempotencyKeyPinnedAcrossOperations(t *testing.T) {
 
 	ctx := ContextWithIdempotencyKey(context.Background(), "PINNED-123")
 	for _, host := range []string{"a", "b"} {
-		if _, err := c.Gen().CreateRecord(ctx, "example.com", gen.CreateRecordJSONRequestBody{
-			Type: "A", Host: host, Answer: "1.2.3.4",
+		if _, err := c.SDK().DNS.CreateRecord(ctx, &coreapigo.DNSCreateRecordBody{
+			DomainName: "example.com",
+			Type:       "A", Host: host, Answer: "1.2.3.4",
 		}); err != nil {
 			t.Fatalf("CreateRecord(%s): %v", host, err)
 		}
@@ -172,7 +186,8 @@ func TestIdempotencyKeyAbsentOnReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
 	}
-	if _, err := c.Gen().ListRecords(context.Background(), "example.com", &gen.ListRecordsParams{}); err != nil {
+	if _, err := c.SDK().DNS.ListRecords(context.Background(),
+		&coreapigo.ListRecordsRequest{DomainName: "example.com"}); err != nil {
 		t.Fatalf("ListRecords: %v", err)
 	}
 	if got != "" {

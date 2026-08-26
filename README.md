@@ -311,15 +311,14 @@ namecom completion fish  > ~/.config/fish/completions/namecom.fish
 make build      # compile to ./namecom
 make test       # go test ./...
 make lint       # golangci-lint run
-make generate   # regenerate internal/api/gen/ from namecom.api.yaml
 ```
 
-The API client in `internal/api/gen/` is code-generated from `namecom.api.yaml` (a vendored OpenAPI 3.1 spec). See [`internal/api/gen/README.md`](internal/api/gen/README.md) for details on the codegen pipeline.
+The API client is [`github.com/namedotcom/core-api-go`](https://github.com/namedotcom/core-api-go), name.com's own SDK. There is no code generation step.
 
 ## Contributing
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-setup, the checks CI runs, and what to know before touching the generated
+setup, the checks CI runs, and what to know before touching the API
 API client or a command that writes. Participation is governed by the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 

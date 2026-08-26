@@ -9,6 +9,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Removed
+- The vendored OpenAPI spec, the Python preprocessor that downgraded it from
+  3.1 to 3.0, and the 23,381-line generated API client are gone, along with
+  `make generate`, `make verify-spec`, the `verify-generate` CI step, and the
+  `oapi-codegen` tool dependency. The CLI runs entirely on
+  `github.com/namedotcom/core-api-go`, name.com's own SDK. This completes the
+  migration tracked in #40 — about 40,000 lines removed.
+
+  Building no longer requires Python.
+
 ### Changed
 - `namecom status`, `namecom auth status`, and shell completion now call the
   official name.com Core SDK. With this, no command in the CLI calls the

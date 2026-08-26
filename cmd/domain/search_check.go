@@ -77,11 +77,18 @@ func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	created, err := client.SDK().Domains.CreateDomain(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return err
+		return api.FromSDKError(err)
 	}
-	out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", created.Domain.DomainName, created.Order, created.TotalPaid))
-	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", created.Domain.DomainName))
-	out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", created.Domain.DomainName))
+	// Same nil guard as `domain register`: created.Domain is a pointer in the
+	// SDK, so a response without a domain object would panic here rather than
+	// print an empty name. Fall back to the name we asked to register.
+	registered := domainName
+	if created.Domain != nil && created.Domain.DomainName != "" {
+		registered = created.Domain.DomainName
+	}
+	out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", registered, created.Order, created.TotalPaid))
+	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", registered))
+	out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", registered))
 	return nil
 }
 
