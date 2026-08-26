@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/api/gen"
@@ -308,21 +309,21 @@ func outWithFormat(format output.Format, buf *bytes.Buffer) *output.Config {
 func TestRenderSearchResults_EmptyResults(t *testing.T) {
 	var buf bytes.Buffer
 	out := outWithFormat(output.FormatTable, &buf)
-	results := []gen.SearchResult{}
-	if err := renderSearchResults(out, &results); err != nil {
+	results := []*coreapigo.SearchResult{}
+	if err := renderSearchResults(out, results); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestRenderSearchResults_JSONOutput(t *testing.T) {
 	price := 12.99
-	results := []gen.SearchResult{
+	results := []*coreapigo.SearchResult{
 		{DomainName: "free.com", Purchasable: true, PurchasePrice: &price},
 		{DomainName: "taken.com", Purchasable: false},
 	}
 	var buf bytes.Buffer
 	out := outWithFormat(output.FormatJSON, &buf)
-	if err := renderSearchResults(out, &results); err != nil {
+	if err := renderSearchResults(out, results); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var decoded []gen.SearchResult
@@ -336,14 +337,14 @@ func TestRenderSearchResults_JSONOutput(t *testing.T) {
 
 func TestRenderSearchResults_QuietMode(t *testing.T) {
 	price := 9.99
-	results := []gen.SearchResult{
+	results := []*coreapigo.SearchResult{
 		{DomainName: "available.com", Purchasable: true, PurchasePrice: &price},
 		{DomainName: "taken.com", Purchasable: false},
 	}
 	var buf bytes.Buffer
 	out := outWithFormat(output.FormatTable, &buf)
 	out.QuietMode = true
-	if err := renderSearchResults(out, &results); err != nil {
+	if err := renderSearchResults(out, results); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got := buf.String()
@@ -467,7 +468,7 @@ func TestCheck_SandboxBypassesZoneCheck(t *testing.T) {
 // inlineRegister directly.
 func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
 	price := 450.00
-	ptype := gen.SearchPurchaseType("aftermarket_b")
+	ptype := coreapigo.SearchPurchaseType("aftermarket_b")
 
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -485,7 +486,7 @@ func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForCheck(t, srv)
-	result := gen.SearchResult{
+	result := &coreapigo.SearchResult{
 		DomainName: "example.com", Purchasable: true,
 		PurchasePrice: &price, PurchaseType: &ptype,
 	}
@@ -809,7 +810,7 @@ func TestInlineRegister_ChecksTrademarkClaims(t *testing.T) {
 
 	cmd := cmdForCheck(t, srv)
 	price := 12.99
-	err := inlineRegister(cmd, gen.SearchResult{
+	err := inlineRegister(cmd, &coreapigo.SearchResult{
 		DomainName: "tiktok.page", Purchasable: true, PurchasePrice: &price,
 	})
 

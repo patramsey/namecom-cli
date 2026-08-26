@@ -118,7 +118,7 @@ func cmdForDomainList(t *testing.T, srv *httptest.Server, stdout, stderr *bytes.
 	cmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "")
 	cmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "")
 	cmd.Flags().BoolVar(&listAll, "all", false, "")
-	cmd.Flags().Int32Var(&listPage, "page", 1, "")
+	cmd.Flags().IntVar(&listPage, "page", 1, "")
 	cmd.Flags().StringVar(&listSort, "sort", "", "")
 	return cmd
 }

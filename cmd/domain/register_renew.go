@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
-	"github.com/patramsey/namecom-cli/internal/api/gen"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -113,19 +113,16 @@ func runRegister(cmd *cobra.Command, args []string) error {
 
 	{
 		stop := out.Spin("Checking availability of " + domainName + "…")
-		checkResp, err := client.Gen().CheckAvailability(cmd.Context(), gen.CheckAvailabilityJSONRequestBody{DomainNames: []string{domainName}})
+		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
+			&coreapigo.AvailabilityRequest{DomainNames: []string{domainName}})
 		stop()
 		if err != nil {
 			return fmt.Errorf("checking availability: %w", err)
 		}
-		var checkResult gen.SearchResponseSchema
-		if err := api.Decode(checkResp, &checkResult); err != nil {
-			return err
-		}
-		if checkResult.Results == nil || len(*checkResult.Results) == 0 {
+		if len(checkResult.Results) == 0 {
 			return fmt.Errorf("%s is not available for registration", domainName)
 		}
-		r := (*checkResult.Results)[0]
+		r := (checkResult.Results)[0]
 		if !r.Purchasable {
 			msg := domainName + " is not available for registration"
 			if r.Reason != nil && *r.Reason != "" {
@@ -150,14 +147,11 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// explicitly warns against ("If passing purchasePrice make sure to adjust it
 	// accordingly").
 	out.Step("Checking pricing for " + domainName + "…")
-	pricingYears := int32(registerYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds registerYears to 1..10
-	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{Years: &pricingYears})
+	pricingYears := registerYears
+	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
+		&coreapigo.GetPricingForDomainRequest{DomainName: domainName, Years: &pricingYears})
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
-	}
-	var pricing gen.PricingResponseSchema
-	if err := api.Decode(pricingResp, &pricing); err != nil {
-		return err
 	}
 
 	regPrice := ""
@@ -190,15 +184,16 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	years := int32(registerYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds registerYears to 1..10
-	payload := gen.DomainCreatePayload{
-		DomainName:       domainName,
+	// No narrowing conversion any more: the SDK takes years as int.
+	years := registerYears
+	payload := coreapigo.DomainCreatePayload{
+		DomainName:       &domainName,
 		AutorenewEnabled: &registerAutorenew,
 		PrivacyEnabled:   &registerPrivacy,
 	}
 
-	body := gen.CreateDomainJSONRequestBody{
-		Domain: payload,
+	body := coreapigo.CreateDomainRequest{
+		Domain: &payload,
 		Years:  &years,
 	}
 	if registerContactsFile != "" {
@@ -206,7 +201,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("reading contacts file: %w", err)
 		}
-		var contacts gen.ContactsRequest
+		var contacts coreapigo.ContactsRequest
 		if err := json.Unmarshal(f, &contacts); err != nil {
 			return fmt.Errorf("parsing contacts file: %w", err)
 		}
@@ -214,7 +209,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	}
 	body.Claims = claims
 	if len(tldReqs) > 0 {
-		body.TldRequirements = &tldReqs
+		body.TldRequirements = tldReqs
 	}
 	body.PurchaseType = checkPurchaseType
 	if registerPrice > 0 {
@@ -238,13 +233,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	out.Step("Registering " + domainName + "…")
 	// The root --idempotency-key (or an auto-generated one) is applied by the
 	// client request editor; no per-command flag is needed or wanted here.
-	params := &gen.CreateDomainParams{}
-	resp, err := client.Gen().CreateDomain(cmd.Context(), params, body)
+	created, err := client.SDK().Domains.CreateDomain(cmd.Context(), &body)
 	if err != nil {
-		return err
-	}
-	var created gen.CreateDomainResponseSchema
-	if err := api.Decode(resp, &created); err != nil {
 		return err
 	}
 
@@ -254,16 +244,24 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(created)
 	default:
-		out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", created.Domain.DomainName, created.Order, created.TotalPaid))
+		// created.Domain is a pointer in the SDK where the generated client used
+		// a value, so a response without a "domain" object panics rather than
+		// printing an empty name. Fall back to the name we asked to register,
+		// which is what the user typed and cannot be wrong here.
+		registered := domainName
+		if created.Domain != nil && created.Domain.DomainName != "" {
+			registered = created.Domain.DomainName
+		}
+		out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", registered, created.Order, created.TotalPaid))
 		// A new registration can trigger ICANN contact verification, and an
 		// unverified contact can get the domain registry-locked (typically 15
 		// days). The verification record is not queryable for ~10 minutes after
 		// creation, so point at the check rather than performing it here.
 		out.Hint(fmt.Sprintf("ICANN may require contact email verification — run "+
-			"'namecom domain contacts get %s' in a few minutes to check", created.Domain.DomainName))
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", created.Domain.DomainName))
+			"'namecom domain contacts get %s' in a few minutes to check", registered))
+		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", registered))
 		if !registerAutorenew {
-			out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", created.Domain.DomainName))
+			out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", registered))
 		}
 	}
 	return nil
@@ -323,14 +321,11 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	// the request body will carry, so the price we show and the price we send
 	// can't diverge on multi-year renewals.
 	out.Step("Checking renewal pricing for " + domainName + "…")
-	pricingYears := int32(renewYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds renewYears to 1..10
-	pricingResp, err := client.Gen().GetPricingForDomain(cmd.Context(), domainName, &gen.GetPricingForDomainParams{Years: &pricingYears})
+	pricingYears := renewYears
+	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
+		&coreapigo.GetPricingForDomainRequest{DomainName: domainName, Years: &pricingYears})
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
-	}
-	var pricing gen.PricingResponseSchema
-	if err := api.Decode(pricingResp, &pricing); err != nil {
-		return err
 	}
 
 	renewPriceStr := ""
@@ -351,8 +346,8 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	years := int32(renewYears) //nolint:gosec // G115: cmdutil.ValidYears above bounds renewYears to 1..10
-	body := gen.RenewDomainJSONRequestBody{Years: &years}
+	years := renewYears
+	body := coreapigo.DomainsRenewDomainBody{DomainName: domainName, Years: &years}
 	if renewPrice > 0 {
 		body.PurchasePrice = &renewPrice
 	} else if pricing.Premium && pricing.RenewalPrice != nil {
@@ -367,12 +362,8 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	resp, err := client.Gen().RenewDomain(cmd.Context(), domainName, body)
+	renewed, err := client.SDK().Domains.RenewDomain(cmd.Context(), &body)
 	if err != nil {
-		return err
-	}
-	var renewed gen.RenewDomainResponseSchema
-	if err := api.Decode(resp, &renewed); err != nil {
 		return err
 	}
 
@@ -382,7 +373,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(renewed)
 	default:
-		orderNum := int32(0)
+		orderNum := 0
 		if renewed.Order != nil {
 			orderNum = *renewed.Order
 		}
@@ -412,7 +403,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 //
 // Returns nil when the domain has no claims, which is the overwhelmingly common
 // case and leaves the request body untouched.
-func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, purchaseType *string, dryRun bool) (*gen.DomainClaimsInfo, error) {
+func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, purchaseType *string, dryRun bool) (*coreapigo.DomainClaimsInfo, error) {
 	client := cmdutil.APIClient(cmd)
 
 	// Claims applicability is per-purchase-type: ResellerTldInfo.claimsCheckRequired
@@ -420,23 +411,19 @@ func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, pu
 	// Sending an empty body defaults the API to "registration", so a landrush or
 	// aftermarket acquisition of a trademarked name could report no claim — and
 	// the gate would silently not fire for the transaction actually being made.
-	body := gen.CheckDomainClaimsJSONRequestBody{}
+	body := coreapigo.DomainClaimsCheckRequest{Domain: domainName}
 	if purchaseType != nil && *purchaseType != "" {
-		pt := gen.DomainClaimsCheckRequestPurchaseType(*purchaseType)
+		pt := coreapigo.DomainClaimsCheckRequestPurchaseType(*purchaseType)
 		body.PurchaseType = &pt
 	}
 
-	resp, err := client.Gen().CheckDomainClaims(cmd.Context(), domainName, body)
+	result, err := client.SDK().DomainInfo.CheckDomainClaims(cmd.Context(), &body)
 	if err != nil {
-		return nil, fmt.Errorf("checking trademark claims: %w", err)
-	}
-	var result gen.DomainClaimsCheckResponseSchema
-	if err := api.Decode(resp, &result); err != nil {
-		return nil, fmt.Errorf("checking trademark claims: %w", err)
+		return nil, fmt.Errorf("checking trademark claims: %w", api.FromSDKError(err))
 	}
 
 	// No claim on this name: nothing to show, nothing to send.
-	if result.ClaimId == nil || *result.ClaimId == "" {
+	if result.ClaimID == nil || *result.ClaimID == "" {
 		return nil, nil
 	}
 
@@ -447,8 +434,8 @@ func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, pu
 		// preview must still show the claims block that the real request would
 		// carry, which is the whole point of inspecting it first.
 		out.Hint("This domain has a trademark claim; registering it will require --acknowledge-claim")
-		return &gen.DomainClaimsInfo{
-			ClaimId:   result.ClaimId,
+		return &coreapigo.DomainClaimsInfo{
+			ClaimID:   result.ClaimID,
 			NotBefore: result.NotBefore,
 			NotAfter:  result.NotAfter,
 		}, nil
@@ -471,8 +458,8 @@ func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, pu
 		}
 	}
 
-	return &gen.DomainClaimsInfo{
-		ClaimId:   result.ClaimId,
+	return &coreapigo.DomainClaimsInfo{
+		ClaimID:   result.ClaimID,
 		NotBefore: result.NotBefore,
 		NotAfter:  result.NotAfter,
 	}, nil
@@ -481,7 +468,7 @@ func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, pu
 // renderClaimsNotice displays the registry's own claim notice plus the matching
 // trademarks. The notice text is supplied by the API and exists precisely to be
 // shown to the registrant, so it is printed verbatim.
-func renderClaimsNotice(out *output.Config, r gen.DomainClaimsCheckResponseSchema) {
+func renderClaimsNotice(out *output.Config, r *coreapigo.DomainClaimsCheckResponse) {
 	lines := []string{"TRADEMARK CLAIM on " + r.Domain}
 	if r.ClaimsNotice != nil && *r.ClaimsNotice != "" {
 		lines = append(lines, *r.ClaimsNotice)

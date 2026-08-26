@@ -1321,7 +1321,7 @@ func TestList_SortAcceptsAnyServerSideField(t *testing.T) {
 	cmd := baseCmd(t, srv)
 	cmd.Flags().StringVar(&listSort, "sort", "", "")
 	cmd.Flags().StringVar(&listSortDir, "sort-dir", "", "")
-	cmd.Flags().Int32Var(&listPage, "page", 1, "")
+	cmd.Flags().IntVar(&listPage, "page", 1, "")
 	t.Cleanup(func() { listSort = ""; listSortDir = ""; listPage = 1 })
 	if err := cmd.ParseFlags([]string{"--sort", "renewalPrice"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
@@ -1351,7 +1351,7 @@ func TestList_SortDirection(t *testing.T) {
 		cmd := baseCmd(t, srv)
 		cmd.Flags().StringVar(&listSort, "sort", "", "")
 		cmd.Flags().StringVar(&listSortDir, "sort-dir", "", "")
-		cmd.Flags().Int32Var(&listPage, "page", 1, "")
+		cmd.Flags().IntVar(&listPage, "page", 1, "")
 		t.Cleanup(func() { listSort = ""; listSortDir = ""; listPage = 1 })
 		if err := cmd.ParseFlags([]string{"--sort", "expireDate", "--sort-dir", "desc"}); err != nil {
 			t.Fatalf("ParseFlags: %v", err)
@@ -1371,7 +1371,7 @@ func TestList_SortDirection(t *testing.T) {
 		cmd := baseCmd(t, srv)
 		cmd.Flags().StringVar(&listSort, "sort", "", "")
 		cmd.Flags().StringVar(&listSortDir, "sort-dir", "", "")
-		cmd.Flags().Int32Var(&listPage, "page", 1, "")
+		cmd.Flags().IntVar(&listPage, "page", 1, "")
 		t.Cleanup(func() { listSort = ""; listSortDir = ""; listPage = 1 })
 		if err := cmd.ParseFlags([]string{"--sort-dir", "descending"}); err != nil {
 			t.Fatalf("ParseFlags: %v", err)
