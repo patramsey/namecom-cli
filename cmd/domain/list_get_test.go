@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -383,5 +384,60 @@ func TestDomainGet_DomainNormalized(t *testing.T) {
 	}
 	if !contains(receivedPath, "example.com") {
 		t.Errorf("expected 'example.com' in path, got: %q", receivedPath)
+	}
+}
+
+// TestDomainList_JSONEnvelope covers the JSON and YAML branches of the list
+// output. Function-level coverage read as covered because runList is entered
+// through the table path; the format switch inside it never ran.
+//
+// `domain list` is the most likely of all these commands to be consumed by a
+// script — it is the one that enumerates what an account owns — so its
+// envelope, and the nextPage that tells a caller to ask for more, are worth
+// pinning.
+func TestDomainList_JSONEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		format output.Format
+		want   string
+	}{
+		{"json", output.FormatJSON, `"data"`},
+		{"yaml", output.FormatYAML, "data:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				// nextPage present and --all unset, so the walk stops early
+				// with more available — the branch that fills the envelope's
+				// nextPage.
+				_, _ = w.Write([]byte(`{"domains":[{"domainName":"example.com","expireDate":"2027-01-01"}],` +
+					`"totalCount":2,"nextPage":2,"lastPage":2}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			var stdout, stderr bytes.Buffer
+			cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+			out := &output.Config{
+				Format: tc.format, Color: output.ColorNever,
+				Writer: &stdout, EWriter: &stderr,
+			}
+			cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
+
+			if err := runList(cmd, nil); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			got := stdout.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("expected a %s envelope containing %q, got: %q", tc.name, tc.want, got)
+			}
+			// The payload, not just the envelope: `"data": null` contains
+			// `"data"` too, so the key alone passes on an empty result.
+			if !strings.Contains(got, "example.com") {
+				t.Errorf("%s envelope carried no domains: %q", tc.name, got)
+			}
+			if !strings.Contains(strings.ToLower(got), "nextpage") {
+				t.Errorf("%s envelope omitted nextPage despite more results: %q", tc.name, got)
+			}
+		})
 	}
 }
