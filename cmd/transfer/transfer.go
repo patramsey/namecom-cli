@@ -4,7 +4,6 @@ package transfer
 import (
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -162,13 +161,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = int32Page(lastResult.NextPage)
+			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
 		return out.JSONList(transfers, np, 0)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = int32Page(lastResult.NextPage)
+			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
 		return out.YAMLList(transfers, np, 0)
 	default:
@@ -656,14 +655,4 @@ func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]strin
 
 func confirm(out *output.Config, yes bool, msg string) (bool, error) {
 	return cmdutil.Confirm(out, yes, msg)
-}
-
-// int32Page narrows the SDK's *int page number to the *int32 the output
-// envelope uses. Same rationale as cmd/dns.
-func int32Page(p *int) *int32 {
-	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
-		return nil
-	}
-	v := int32(*p)
-	return &v
 }

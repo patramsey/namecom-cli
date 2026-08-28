@@ -3,7 +3,6 @@ package order
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -155,15 +154,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = int32Page(lastResult.NextPage)
+			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(orders, np, int32Count(lastResult.TotalCount))
+		return out.JSONList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = int32Page(lastResult.NextPage)
+			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(orders, np, int32Count(lastResult.TotalCount))
+		return out.YAMLList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		if len(orders) == 0 {
 			out.Empty("order", "")
@@ -351,30 +350,4 @@ func parseID(s string) (int32, error) {
 		return 0, fmt.Errorf("invalid order ID %q: must be a number", s)
 	}
 	return int32(n), nil
-}
-
-// int32Page narrows the SDK's *int page number to the *int32 the output
-// envelope uses. Same rationale as cmd/dns.
-func int32Page(p *int) *int32 {
-	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
-		return nil
-	}
-	v := int32(*p)
-	return &v
-}
-
-// int32Count narrows the SDK's int total to the int32 the output envelope
-// uses. Clamped rather than converted: a bare conversion is an overflow gosec
-// flags, and a wrapped negative count would be printed to the user as fact.
-// The API cannot return more than 2^31 records, so the clamp is unreachable —
-// it exists so the impossible case degrades to "a very large number" instead of
-// a nonsense one.
-func int32Count(n int) int32 {
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if n < 0 {
-		return 0
-	}
-	return int32(n)
 }

@@ -35,6 +35,15 @@ func Check(current string) string {
 	if current == "" || current == "dev" {
 		return ""
 	}
+	// A `git describe` build — "v0.4.0-2-g48cf186", or anything "-dirty" — is
+	// not the release it is derived from, and semver orders it *below* that
+	// release even though in git terms it is ahead. Comparing would tell
+	// someone who just built HEAD to "upgrade" to the version they are already
+	// past. There is nothing useful to say about an untagged build, so say
+	// nothing.
+	if semver.Prerelease("v"+strings.TrimPrefix(current, "v")) != "" {
+		return ""
+	}
 	latest, err := latestVersion()
 	if err != nil || latest == "" {
 		return ""
@@ -122,9 +131,20 @@ func writeCache(version string) {
 // isNewer returns true if candidate is a strictly higher semver than current.
 // Both values are expected without a leading "v"; this function adds it for
 // golang.org/x/mod/semver which requires canonical "vX.Y.Z" form.
+// isNewer reports whether candidate is a later release than current.
+//
+// Both sides are normalised to a single leading "v" rather than having one
+// prepended blindly. The two build paths disagree about the prefix: goreleaser
+// sets main.version from {{.Version}} ("0.4.0"), while the Makefile sets it
+// from `git describe` ("v0.4.0-2-g48cf186"). Prepending to the latter produced
+// "vv0.4.0-…", which is not valid semver, so this returned false and the
+// upgrade notice silently never appeared for locally built binaries.
+//
+// Anything that is not valid semver on either side reports false. A version
+// this cannot parse is not grounds for telling someone to upgrade.
 func isNewer(candidate, current string) bool {
-	c := "v" + candidate
-	cur := "v" + current
+	c := "v" + strings.TrimPrefix(candidate, "v")
+	cur := "v" + strings.TrimPrefix(current, "v")
 	if !semver.IsValid(c) || !semver.IsValid(cur) {
 		return false
 	}

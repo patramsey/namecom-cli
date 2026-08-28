@@ -119,3 +119,62 @@ func TestCompleteRecordIDs(t *testing.T) {
 		}
 	})
 }
+
+// TestCompleteDomains covers domain-name completion, the sibling of
+// CompleteRecordIDs above and the last completion path with no test.
+//
+// The cases that matter are the ones where returning nothing is correct.
+// Completion runs on every tab press, so an error must degrade to "no
+// suggestions" rather than printing anything: whatever a completion function
+// writes to stdout, the shell tries to interpret as candidates.
+func TestCompleteDomains(t *testing.T) {
+	t.Run("returns domain names", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"domains":[{"domainName":"example.com"},{"domainName":"example.org"}]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		got, directive := CompleteDomains(cmdWithClient(t, srv), nil, "")
+		if len(got) != 2 || got[0] != "example.com" || got[1] != "example.org" {
+			t.Errorf("CompleteDomains = %v, want the two domain names", got)
+		}
+		if directive != cobra.ShellCompDirectiveNoFileComp {
+			t.Errorf("directive = %v, want NoFileComp — filenames are never valid here", directive)
+		}
+	})
+
+	t.Run("suggests nothing once an argument is present", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			t.Error("completion made a request when the argument was already supplied")
+		}))
+		t.Cleanup(srv.Close)
+
+		got, _ := CompleteDomains(cmdWithClient(t, srv), []string{"example.com"}, "")
+		if got != nil {
+			t.Errorf("CompleteDomains = %v, want nil for an already-satisfied argument", got)
+		}
+	})
+
+	t.Run("an API error suggests nothing rather than erroring visibly", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Authentication Failed"}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		got, directive := CompleteDomains(cmdWithClient(t, srv), nil, "")
+		if got != nil {
+			t.Errorf("CompleteDomains = %v, want nil on an API error", got)
+		}
+		if directive != cobra.ShellCompDirectiveError {
+			t.Errorf("directive = %v, want Error", directive)
+		}
+	})
+
+	// There is deliberately no "nil context" case. cmd.Context() is nil only on
+	// a hand-built &cobra.Command{}; ExecuteC always sets one, so such a test
+	// asserts against a command that cannot reach this function in the real
+	// binary — and it fails by panicking inside cobra rather than in anything
+	// this package owns.
+}

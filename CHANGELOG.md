@@ -9,6 +9,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- The "a newer version is available" notice now works for binaries built with
+  `make build` or `make install`. It compared versions by prepending `v` to
+  both sides, so a version string that already had one — which is what `git
+  describe` produces — became `vv0.4.0`, failed to parse, and reported "no
+  update" every time. Release binaries were unaffected; the two build paths
+  formatted the version differently.
+
+  Builds from an untagged commit now say nothing at all rather than offering an
+  "upgrade" to the release they are already ahead of.
+
 ## [0.4.0] - 2026-08-26
 
 The CLI now runs on [`github.com/namedotcom/core-api-go`](https://github.com/namedotcom/core-api-go),

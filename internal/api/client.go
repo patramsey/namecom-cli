@@ -1,15 +1,12 @@
-// Package api wraps the generated name.com Core API client with credential
-// injection, client-side rate limiting, bounded retries, and error
-// normalization. Command code calls Gen() for typed endpoint methods and
-// Decode() to turn responses into model values or *APIError.
+// Package api wraps the name.com Core SDK with credential injection,
+// client-side rate limiting, bounded retries, and error normalization. Command
+// code calls SDK() for typed endpoint methods and FromSDKError() to turn an SDK
+// error into the *APIError the exit-code mapping understands.
 package api
 
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -206,22 +203,3 @@ func (c *Client) BaseURL() string { return c.baseURL }
 // HTTPClient returns the underlying http.Client (with auth, rate limiting, and
 // retry applied) for raw requests via `namecom api`.
 func (c *Client) HTTPClient() *http.Client { return c.httpClient }
-
-// Decode reads a response from a generated endpoint method: on a 2xx status it
-// unmarshals the JSON body into out (which may be nil to discard the body); on
-// any other status it returns a normalized *APIError. It always closes the
-// body.
-func Decode(resp *http.Response, out any) error {
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return parseError(resp)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
-	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("decoding response: %w", err)
-	}
-	return nil
-}

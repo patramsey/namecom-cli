@@ -662,6 +662,41 @@ func TestDNSUpdate_SuccessPath(t *testing.T) {
 	}
 }
 
+// TestDNSList_YAMLEnvelope is the YAML counterpart of the JSON test below.
+//
+// The two branches are separate statements, so covering one leaves the other
+// cold — and `-o yaml` is a documented output mode, not an alias. Splitting a
+// format switch is exactly where a change lands in one arm and not the other.
+func TestDNSList_YAMLEnvelope(t *testing.T) {
+	recType := "A"
+	recHost := "@"
+	recAnswer := "1.2.3.4"
+	records := []*coreapigo.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	srv := recordServer(t, records, 0)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	out := &output.Config{
+		Format:  output.FormatYAML,
+		Color:   output.ColorNever,
+		Writer:  &stdout,
+		EWriter: &bytes.Buffer{},
+	}
+	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "data:") {
+		t.Errorf("expected a YAML list envelope with a data key, got: %q", got)
+	}
+	// The payload, not just the envelope: an empty list still emits `data:`.
+	if !strings.Contains(got, "1.2.3.4") {
+		t.Errorf("YAML envelope carried no records: %q", got)
+	}
+}
+
 func TestDNSList_JSONEnvelope(t *testing.T) {
 	recType := "A"
 	recHost := "@"

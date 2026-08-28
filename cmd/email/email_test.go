@@ -492,3 +492,54 @@ func TestEmailList_StuckNextPageTerminates(t *testing.T) {
 		t.Errorf("made %d requests, want 2 (page 1 -> 2, then the page stops advancing)", requests)
 	}
 }
+
+// TestEmailList_JSONEnvelope covers the JSON and YAML branches of the list
+// output. Function-level coverage read as covered because runList is entered
+// through the table path; the format switch inside it never ran.
+//
+// `-o json` is the mode a script consumes, and nextPage is how that script
+// learns there is more to fetch — the table path has a human-readable hint
+// instead, so this branch is the only place that information exists for an
+// automated caller.
+func TestEmailList_JSONEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		format output.Format
+		want   string
+	}{
+		{"json", output.FormatJSON, `"data"`},
+		{"yaml", output.FormatYAML, "data:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"emailForwarding":[{"emailBox":"sales","emailTo":"a@b.test"}],"totalCount":2,"nextPage":2,"lastPage":2}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			var stdout, stderr bytes.Buffer
+			cmd := cmdForEmailList(t, srv)
+			out := &output.Config{
+				Format: tc.format, Color: output.ColorNever,
+				Writer: &stdout, EWriter: &stderr,
+			}
+			cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
+
+			if err := runList(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			got := stdout.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("expected a %s envelope containing %q, got: %q", tc.name, tc.want, got)
+			}
+			// The payload, not just the envelope: `"data": null` contains
+			// `"data"` too, so the key alone passes on an empty result.
+			if !strings.Contains(got, "sales") {
+				t.Errorf("%s envelope carried no records: %q", tc.name, got)
+			}
+			if !strings.Contains(strings.ToLower(got), "nextpage") {
+				t.Errorf("%s envelope omitted nextPage despite more results: %q", tc.name, got)
+			}
+		})
+	}
+}
