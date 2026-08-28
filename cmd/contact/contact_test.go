@@ -216,3 +216,76 @@ func TestUnverified_QuietFetchesEveryPage(t *testing.T) {
 		}
 	}
 }
+
+// TestUnverified_JSONEnvelope covers the JSON and YAML branches of the list
+// output, which had no test at all.
+//
+// Function-level coverage reported this file at 100% because runUnverified is
+// entered through the table path; the format switch inside it was never
+// exercised. `-o json` is the automation contract — the mode a script depends
+// on, and the one where a silent change is least likely to be noticed by a
+// human — so it is the branch that most deserves a test, not the least.
+func TestUnverified_JSONEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		format output.Format
+		want   string
+	}{
+		{"json", output.FormatJSON, `"data"`},
+		{"yaml", output.FormatYAML, "data:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"unverifiedContacts":[{"verificationId":9911,` +
+					`"domainName":"example.com","email":"a@b.test"}],"totalCount":1}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd, stdout, _ := contactCmd(t, srv, tc.format)
+			if err := runUnverified(cmd, nil); err != nil {
+				t.Fatalf("runUnverified: %v", err)
+			}
+			got := stdout.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("expected a %s envelope containing %q, got: %q", tc.name, tc.want, got)
+			}
+			// Assert the payload, not just the envelope. `"data": null` still
+			// contains `"data"`, so checking for the key alone passes while the
+			// command emits an empty result — which is exactly what happened
+			// when this test was first written against the wrong stub key.
+			if !strings.Contains(got, "9911") {
+				t.Errorf("%s envelope carried no contacts: %q", tc.name, got)
+			}
+		})
+	}
+}
+
+// TestUnverified_JSONEnvelopeCarriesNextPage covers the branch that only runs
+// when the walk stopped early with more results available.
+//
+// nextPage is the whole reason the JSON envelope differs from the table: a
+// script has no "showing the first page" hint to read, so this field is how it
+// learns to ask for more. Without it the caller sees a complete-looking result
+// set that silently is not.
+func TestUnverified_JSONEnvelopeCarriesNextPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"unverifiedContacts":[{"verificationId":9911,"domainName":"example.com"}],` +
+			`"totalCount":2,"nextPage":2,"lastPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, format := range []output.Format{output.FormatJSON, output.FormatYAML} {
+		t.Run(string(format), func(t *testing.T) {
+			cmd, stdout, _ := contactCmd(t, srv, format)
+			if err := runUnverified(cmd, nil); err != nil {
+				t.Fatalf("runUnverified: %v", err)
+			}
+			if !strings.Contains(strings.ToLower(stdout.String()), "nextpage") {
+				t.Errorf("%s envelope omitted the next page despite more results being available: %q",
+					format, stdout.String())
+			}
+		})
+	}
+}
