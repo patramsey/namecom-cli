@@ -2,7 +2,6 @@ package domain
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -208,15 +207,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
-			np = int32Page(lastResult.NextPage)
+			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(domains, np, int32Count(lastResult.TotalCount))
+		return out.JSONList(domains, np, cmdutil.Int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
-			np = int32Page(lastResult.NextPage)
+			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(domains, np, int32Count(lastResult.TotalCount))
+		return out.YAMLList(domains, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		if len(domains) == 0 {
 			if isFiltered(cmd) {
@@ -334,27 +333,4 @@ func formatNS(ns []string) string {
 		return ""
 	}
 	return strings.Join(ns, ", ")
-}
-
-// int32Page and int32Count narrow the SDK's int page number and total to the
-// int32 the output envelope uses. Same rationale as cmd/dns: the envelope's
-// types are shared with groups still on the generated client, so they are not
-// widened to suit one of them. The count is clamped rather than converted so a
-// value that cannot fit degrades to "very large" instead of wrapping negative.
-func int32Page(p *int) *int32 {
-	if p == nil || *p > math.MaxInt32 || *p < math.MinInt32 {
-		return nil
-	}
-	v := int32(*p)
-	return &v
-}
-
-func int32Count(n int) int32 {
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if n < 0 {
-		return 0
-	}
-	return int32(n)
 }

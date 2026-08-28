@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -203,9 +202,9 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSONList(records, int32Page(nextPage), 0)
+		return out.JSONList(records, cmdutil.Int32Page(nextPage), 0)
 	case output.FormatYAML:
-		return out.YAMLList(records, int32Page(nextPage), 0)
+		return out.YAMLList(records, cmdutil.Int32Page(nextPage), 0)
 	default:
 		if len(records) == 0 {
 			// Distinguish "this zone is empty" from "nothing matched the filter".
@@ -861,23 +860,4 @@ func readImportData(path string) ([]byte, error) {
 	// G304: reading a caller-named file is this function's entire purpose —
 	// --file is the documented way to pass an import payload.
 	return os.ReadFile(path) //nolint:gosec
-}
-
-// int32Page narrows the SDK's *int page number to the *int32 the output
-// envelope uses.
-//
-// The envelope's type is not changed to match, because that would change the
-// JSON shape emitted by every command group — including the ones still on the
-// generated client — for the sake of a field that is a small positive integer
-// either way. A page number that does not fit in an int32 cannot have come from
-// this API; it is dropped rather than silently truncated to a wrong page.
-func int32Page(p *int) *int32 {
-	if p == nil {
-		return nil
-	}
-	if *p > math.MaxInt32 || *p < math.MinInt32 {
-		return nil
-	}
-	v := int32(*p)
-	return &v
 }
