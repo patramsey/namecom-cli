@@ -471,6 +471,20 @@ func TestOrderGet_ShowsOrderItems(t *testing.T) {
 	if !strings.Contains(strings.ToLower(got), "refundable") {
 		t.Errorf("order get should indicate which items are refundable; output:\n%s", got)
 	}
+	// Type and price are what distinguish two line items on the same order —
+	// a registration from a renewal, and what each one cost. Without these the
+	// TYPE and PRICE columns can render empty and every assertion above still
+	// passes, since ID and name come from different fields.
+	for _, want := range []string{"registration", "renewal"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("order get should show the item type %q; output:\n%s", want, got)
+		}
+	}
+	for _, want := range []string{"$19.99", "$9.99"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("order get should show the item price %q; output:\n%s", want, got)
+		}
+	}
 }
 
 // TestOrderRows_LargeAmountPrecision guards money precision. The spec declares

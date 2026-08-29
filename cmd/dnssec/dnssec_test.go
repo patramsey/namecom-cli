@@ -164,7 +164,17 @@ func TestDNSSECGet_BadDomain(t *testing.T) {
 func TestDNSSECGet_ReturnsKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(coreapigo.Dnssec{KeyTag: 1234, Digest: "abc123"})
+		// Algorithm and DigestType carry real DNSSEC values (13 =
+		// ECDSAP256SHA256, 2 = SHA-256) rather than the zero value, so the
+		// columns that render them can be told apart from an empty cell.
+		// The other two fields are chosen not to contain the digits "13" or
+		// "2", which keeps each assertion below attributable to one column.
+		_ = json.NewEncoder(w).Encode(coreapigo.Dnssec{
+			KeyTag:     5678,
+			Algorithm:  13,
+			DigestType: 2,
+			Digest:     "AABBCCDDEEFF",
+		})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -179,7 +189,7 @@ func TestDNSSECGet_ReturnsKey(t *testing.T) {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
 	got := buf.String()
-	for _, want := range []string{"1234", "abc123"} {
+	for _, want := range []string{"5678", "13", "2", "AABBCCDDEEFF"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("get output is missing %q:\n%s", want, got)
 		}

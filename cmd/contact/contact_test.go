@@ -123,8 +123,16 @@ func TestUnverified_WarnsAboutRegistryLock(t *testing.T) {
 	if !strings.Contains(strings.ToLower(combined), "lock") {
 		t.Errorf("output must state the registry-lock consequence: %s", combined)
 	}
-	if !strings.Contains(combined, "example.com") {
-		t.Errorf("affected domains must be shown: %s", combined)
+	// Assert the joined form, not a bare "example.com": the email in this
+	// fixture is alice@example.com, so a substring check for the domain passes
+	// even when the DOMAINS column renders empty. joinDomains collapses the
+	// two domains to "example.com (+1 more)", which only the column produces.
+	if !strings.Contains(combined, "(+1 more)") {
+		t.Errorf("affected domains must be shown, collapsed by joinDomains: %s", combined)
+	}
+	// The deadline is the reason to act; a blank column loses the urgency.
+	if !strings.Contains(combined, "2026-08-20") {
+		t.Errorf("the verify-by date must be shown: %s", combined)
 	}
 }
 
