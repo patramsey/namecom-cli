@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-29
+
+A patch release: two visible bugs, no change to what any command asks for or
+returns. Both were found after v0.4.0 shipped — one by a user reading a table,
+one by a test sweep.
+
 ### Fixed
 - `domain check` and `domain search` now state whether a domain is premium
   instead of leaving the PREMIUM column blank. The column rendered an empty
@@ -332,7 +338,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/patramsey/namecom-cli/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/patramsey/namecom-cli/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/patramsey/namecom-cli/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/patramsey/namecom-cli/compare/v0.3.0...v0.3.1
