@@ -31,7 +31,18 @@
 # RE-RECORDING: the registration is real within the sandbox account, so once
 # this succeeds the domain below is taken and the next run stops at "not
 # available". Pick a fresh name, verify it first with `namecom domain check`,
-# and update every occurrence in this file.
+# and update every occurrence in this file. There is no way to re-use a name:
+# the tape depends on the domain being available, so every re-record costs one.
+#
+# KEEP THE NAME TO 16 CHARACTERS OR FEWER. At this width and font size the
+# terminal is about 75 columns, and the longest line the demo prints is
+#
+#   → Run 'namecom domain autorenew on <domain>' to enable auto-renewal
+#
+# which is 59 columns plus the domain. `driftwoodco.com` (15) ended flush with
+# the right edge; a 17-character name wrapped and left a single "l" stranded on
+# its own line. Check the recording, not just the tape — nothing here fails
+# when the name is too long, it just looks broken.
 #
 # Keep this in sync: re-run it whenever a change touches what these commands
 # print (flags, output formatting, hints, prompts, sample values).
@@ -75,7 +86,7 @@ Sleep 600ms
 # shell, which is exactly how an earlier take ended up running "amecom".
 # Measured: domain check 0.46s, inline registration 2.86s, dns create 0.31s.
 # The rest is reading time. Re-measure before shortening these further.
-Type "namecom domain check driftwoodco.com"
+Type "namecom domain check lanterncove.com"
 Sleep 300ms
 Enter
 
@@ -93,7 +104,7 @@ Sleep 4500ms
 
 # Point the new domain somewhere. Nothing is typed after this, so the trailing
 # sleep is purely for reading and can be trimmed freely.
-Type "namecom dns create driftwoodco.com --type A --answer 1.2.3.4"
+Type "namecom dns create lanterncove.com --type A --answer 1.2.3.4"
 Sleep 300ms
 Enter
 Sleep 2s
