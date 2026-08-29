@@ -10,6 +10,22 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- `domain check` and `domain search` now state whether a domain is premium
+  instead of leaving the PREMIUM column blank. The column rendered an empty
+  cell for every non-premium domain, which read as a column that had failed to
+  render rather than as an answer — and it was the only boolean in the CLI that
+  did not print an explicit yes/no.
+
+  A purchasable domain now reads `yes` or `no`; an unavailable one reads `—`,
+  matching how the PRICE column already treats a domain you cannot buy. The
+  distinction follows the API contract: `premium` is returned only for
+  purchasable domains, so its absence there means "not premium" rather than
+  "unknown".
+
+  This is worth stating plainly because premium status changes what registering
+  costs and what the request must carry — a premium registration has to send
+  `purchasePrice`.
+
 - The "a newer version is available" notice now works for binaries built with
   `make build` or `make install`. It compared versions by prepending `v` to
   both sides, so a version string that already had one — which is what `git

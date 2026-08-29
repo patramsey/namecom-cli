@@ -928,3 +928,99 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderSearchResults_PremiumColumnAlwaysAnswers pins that the PREMIUM
+// column states an answer rather than going blank.
+//
+// The column rendered "" for every non-premium domain, so `domain check` on an
+// ordinary name printed an empty cell — indistinguishable from a column that
+// had failed to render, and the only boolean in the CLI that did not use
+// BoolBadge. Premium is not cosmetic: the SDK documents that when it is true,
+// purchasePrice must be passed on Create Domain, so "we didn't say" and "no"
+// are different answers to the user.
+//
+// SearchResult.Premium is a *bool with three states, and the SDK documents the
+// field as "only returned for purchasable domains" with `omitempty` on the
+// wire. So for a purchasable domain an absent premium means false, while for
+// an unpurchasable one the question does not arise.
+func TestRenderSearchResults_PremiumColumnAlwaysAnswers(t *testing.T) {
+	premium := true
+	notPremium := false
+	price := 17.99
+
+	tests := []struct {
+		name    string
+		result  *coreapigo.SearchResult
+		want    string
+		notWant string
+	}{
+		{
+			name:   "premium true says yes",
+			result: &coreapigo.SearchResult{DomainName: "gold.com", Purchasable: true, PurchasePrice: &price, Premium: &premium},
+			want:   "yes",
+		},
+		{
+			name:    "premium false says no",
+			result:  &coreapigo.SearchResult{DomainName: "plain.com", Purchasable: true, PurchasePrice: &price, Premium: &notPremium},
+			want:    "no",
+			notWant: "yes",
+		},
+		{
+			// The reported case: CheckAvailability omits premium entirely for
+			// an ordinary purchasable domain.
+			name:    "premium omitted on a purchasable domain says no",
+			result:  &coreapigo.SearchResult{DomainName: "beeeers.com", Purchasable: true, PurchasePrice: &price},
+			want:    "no",
+			notWant: "yes",
+		},
+		{
+			// Premium is a property of a purchase that cannot be made, so
+			// neither yes nor no is true. Matches the PRICE column, which
+			// already renders an em dash for an unpurchasable domain.
+			name:    "unpurchasable domain says neither",
+			result:  &coreapigo.SearchResult{DomainName: "taken.com", Purchasable: false},
+			want:    "—",
+			notWant: "yes",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			out := outWithFormat(output.FormatTable, &buf)
+			if err := renderSearchResults(out, []*coreapigo.SearchResult{tc.result}); err != nil {
+				t.Fatalf("renderSearchResults: %v", err)
+			}
+			got := buf.String()
+
+			// The PREMIUM cell is the last column; isolate the data row so the
+			// assertion cannot be satisfied by the header or the hint line.
+			var row string
+			for _, line := range strings.Split(got, "\n") {
+				if strings.Contains(line, tc.result.DomainName) {
+					row = line
+					break
+				}
+			}
+			if row == "" {
+				t.Fatalf("no row rendered for %s:\n%s", tc.result.DomainName, got)
+			}
+			premiumCell := strings.TrimSpace(lastCell(row))
+			if premiumCell != tc.want {
+				t.Errorf("PREMIUM cell = %q, want %q\nfull row: %s", premiumCell, tc.want, row)
+			}
+			if tc.notWant != "" && premiumCell == tc.notWant {
+				t.Errorf("PREMIUM cell must not be %q", tc.notWant)
+			}
+		})
+	}
+}
+
+// lastCell returns the final table cell of a rendered row.
+func lastCell(row string) string {
+	cells := strings.Split(strings.Trim(strings.TrimSpace(row), "│"), "│")
+	if len(cells) == 0 {
+		return ""
+	}
+	return cells[len(cells)-1]
+}

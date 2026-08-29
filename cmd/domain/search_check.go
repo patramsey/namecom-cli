@@ -374,9 +374,17 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 			if r.Purchasable && r.PurchasePrice != nil {
 				price = fmt.Sprintf("$%.2f/yr", *r.PurchasePrice)
 			}
-			premium := ""
-			if derefBool(r.Premium) {
-				premium = out.BoolBadge(true)
+			// SearchResult.Premium is a *bool, and the SDK documents it as
+			// "only returned for purchasable domains" with omitempty on the
+			// wire. So an absent value is not "unknown": for a purchasable
+			// domain it means false, and for an unpurchasable one the question
+			// does not arise. Rendering "" for both left every ordinary domain
+			// with an empty cell that read as a broken column — and this was
+			// the only boolean in the CLI not using BoolBadge. Premium is not
+			// cosmetic: when true, purchasePrice must be sent on register.
+			premium := out.Dim("—")
+			if r.Purchasable {
+				premium = out.BoolBadge(derefBool(r.Premium))
 			}
 			rows = append(rows, []string{
 				r.DomainName,
