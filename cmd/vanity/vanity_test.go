@@ -130,8 +130,13 @@ func TestVanityGet_BadDomain(t *testing.T) {
 func TestVanityGet_ReturnsEntry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// Glue records are the point of a vanity nameserver: the hostname
+		// without its IPs is not a usable delegation. The fixture carries them
+		// so the IPS column is distinguishable from an empty cell.
+		// 192.0.2.0/24 is the RFC 5737 documentation range.
 		_ = json.NewEncoder(w).Encode(coreapigo.VanityNameserverResponse{
 			Hostname: strPtr("ns1.example.com"),
+			Ips:      []string{"192.0.2.10", "192.0.2.11"},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -146,8 +151,14 @@ func TestVanityGet_ReturnsEntry(t *testing.T) {
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
-	if got := buf.String(); !strings.Contains(got, "ns1.example.com") {
+	got := buf.String()
+	if !strings.Contains(got, "ns1.example.com") {
 		t.Errorf("get output is missing the nameserver hostname:\n%s", got)
+	}
+	for _, want := range []string{"192.0.2.10", "192.0.2.11"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("get output is missing the glue record %q:\n%s", want, got)
+		}
 	}
 }
 

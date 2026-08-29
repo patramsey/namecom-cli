@@ -133,7 +133,12 @@ func TestURLGet_BadID(t *testing.T) {
 func TestURLGet_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":7,"host":"@","forwardsTo":"https://example.com","type":"redirect"}`))
+		// A named host rather than "@": the apex renders as a single character
+		// that also appears in ordinary output, so it cannot be asserted on
+		// distinctly and the HOST column could blank out unnoticed. Host is
+		// also the field behind the upstream omitempty defect, which makes it
+		// the one most worth pinning here.
+		_, _ = w.Write([]byte(`{"id":7,"host":"www","forwardsTo":"https://example.com","type":"redirect"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -150,7 +155,7 @@ func TestURLGet_Success(t *testing.T) {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
 	got := buf.String()
-	for _, want := range []string{"7", "https://example.com", "redirect"} {
+	for _, want := range []string{"7", "www", "https://example.com", "redirect"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("get output is missing %q:\n%s", want, got)
 		}

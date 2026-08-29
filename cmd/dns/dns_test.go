@@ -309,7 +309,18 @@ func TestDNSList_ShowsRecords(t *testing.T) {
 	recType := "A"
 	recHost := "www"
 	recAnswer := "1.2.3.4"
-	records := []*coreapigo.Record{{Host: &recHost, Answer: &recAnswer, Type: &recType}}
+	// A second record of a different type, carrying a priority: TYPE and
+	// PRIORITY are columns the single A record cannot exercise. "A" is also a
+	// poor thing to assert on — it occurs inside the ANSWER header — whereas
+	// "MX" and its priority appear only where the record renders them.
+	mxType := "MX"
+	mxHost := "@"
+	mxAnswer := "mail.example.com"
+	mxPriority := int64(10)
+	records := []*coreapigo.Record{
+		{Host: &recHost, Answer: &recAnswer, Type: &recType},
+		{Host: &mxHost, Answer: &mxAnswer, Type: &mxType, Priority: &mxPriority},
+	}
 	srv := recordServer(t, records, 0)
 
 	var stdout bytes.Buffer
@@ -324,6 +335,15 @@ func TestDNSList_ShowsRecords(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "1.2.3.4") {
 		t.Errorf("expected '1.2.3.4' in output, got: %q", stdout.String())
+	}
+	// The record type decides what the answer means; a blank TYPE column makes
+	// an MX and a CNAME to the same host indistinguishable.
+	if !strings.Contains(stdout.String(), "MX") {
+		t.Errorf("expected the record type 'MX' in output, got: %q", stdout.String())
+	}
+	// Priority is what orders MX delivery; it renders in its own column.
+	if !strings.Contains(stdout.String(), "10") {
+		t.Errorf("expected the MX priority '10' in output, got: %q", stdout.String())
 	}
 }
 
@@ -374,11 +394,14 @@ func TestDNSList_EmptyRecords(t *testing.T) {
 func TestDNSList_TypeFilter(t *testing.T) {
 	typeA := "A"
 	typeMX := "MX"
+	// A named host rather than "@": the filtered view renders its own HOST
+	// column, and a single "@" cannot be told apart from an empty cell.
+	hostWWW := "www"
 	hostAt := "@"
 	answerA := "1.2.3.4"
 	answerMX := "mail.example.com"
 	records := []*coreapigo.Record{
-		{Host: &hostAt, Answer: &answerA, Type: &typeA},
+		{Host: &hostWWW, Answer: &answerA, Type: &typeA},
 		{Host: &hostAt, Answer: &answerMX, Type: &typeMX},
 	}
 	srv := recordServer(t, records, 0)
@@ -398,8 +421,47 @@ func TestDNSList_TypeFilter(t *testing.T) {
 	if !strings.Contains(out, "1.2.3.4") {
 		t.Errorf("expected A record answer in filtered output, got: %q", out)
 	}
+	if !strings.Contains(out, "www") {
+		t.Errorf("expected the A record host in filtered output, got: %q", out)
+	}
 	if strings.Contains(out, "mail.example.com") {
 		t.Errorf("MX record should be filtered out, but appears in output: %q", out)
+	}
+}
+
+// TestDNSList_FilteredViewShowsTypeColumn covers the TYPE column of the flat
+// (filtered) table. The unfiltered listing groups by type and renders the label
+// as a section header via recordRowsNoType, so it never exercises this column;
+// only `--type` reaches recordRows. Filtering on MX rather than A is deliberate
+// — "A" occurs inside the "ANSWER" header, so asserting on it would pass
+// against an empty column.
+func TestDNSList_FilteredViewShowsTypeColumn(t *testing.T) {
+	typeMX := "MX"
+	hostAt := "@"
+	answerMX := "mail.example.com"
+	priority := int64(10)
+	records := []*coreapigo.Record{
+		{Host: &hostAt, Answer: &answerMX, Type: &typeMX, Priority: &priority},
+	}
+	srv := recordServer(t, records, 0)
+
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll = false
+	if err := cmd.ParseFlags([]string{"--type", "MX"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { listType = "" })
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "MX") {
+		t.Errorf("expected the record type 'MX' in the filtered table, got: %q", out)
+	}
+	if !strings.Contains(out, "mail.example.com") {
+		t.Errorf("expected the MX answer in the filtered table, got: %q", out)
 	}
 }
 
