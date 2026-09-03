@@ -275,7 +275,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// DomainName is the path parameter, not a body field — it is tagged
+	// `json:"-"`. SDK v1.33.5 dropped the CreateURLForwardingRequest wrapper
+	// that used to carry it, so it has to be set here or the request POSTs to
+	// /core/v1/domains//url/forwarding with an empty segment.
 	body := coreapigo.URLForwardingInput{
+		DomainName: domain,
 		Host:       createHost,
 		ForwardsTo: createForwardsTo,
 		Type:       coreapigo.URLForwardingInputType(createType),
@@ -294,8 +299,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Creating URL forwarding…")
-	entry, err := client.SDK().URLForwardings.CreateURLForwarding(cmd.Context(),
-		&coreapigo.CreateURLForwardingRequest{DomainName: domain, Body: &body})
+	entry, err := client.SDK().URLForwardings.CreateURLForwarding(cmd.Context(), &body)
 	stop()
 	if err != nil {
 		return err
@@ -412,28 +416,25 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		fwdTypeStr = updateType
 	}
 
-	// Title and Meta have no `omitempty` in the request body, so leaving them
-	// nil transmits an explicit `"title":null` — the server reads that as a
-	// deliberate clear, not an omission. Seed both from the current entry so
-	// an unset flag preserves what's already there.
-	// This request carries a "host" key that the generated client did not send,
-	// and that is a deliberate, unavoidable change rather than an oversight.
+	// No host key is sent. SDK v1.33.5 introduced URLForwardingUpdate, where
+	// Host is *string with omitempty and documented as "Omit this field to keep
+	// the existing host. Send an empty string to move the forwarding to the
+	// apex."
 	//
-	// The SDK models create and update with a single URLForwardingInput whose
-	// Host has no omitempty, so the key is always serialised. Its explicit-field
-	// machinery does not help: HandleExplicitFields only strips omitempty from
-	// fields that were set, it does not omit unset ones. There is no way to
-	// express "leave the host alone" through this type.
+	// Update previously shared URLForwardingInput with create, whose Host had no
+	// omitempty, so the key was always serialised and there was no way to say
+	// "leave the host alone". Sending back the host fetched a moment earlier was
+	// the safe workaround — a no-op restatement, since a literal "" is the apex
+	// rather than "unchanged" and would have moved the forwarding. Omitting the
+	// field says that directly, and drops the read-modify-write race the
+	// restatement carried.
 	//
-	// Sending the host fetched a moment ago is the safe form of that. A literal
-	// would send "host":"" — and an empty host on a URL forwarding is the apex,
-	// not "unchanged", so it could silently move the forward. Seeding from the
-	// current record makes the field a no-op restatement of what is already
-	// there. See docs/upstream/core-api-go-urlforwarding-host-required.md.
-	body := coreapigo.URLForwardingInput{
-		Host:       derefStr(current.Host),
-		ForwardsTo: updateForwardsTo,
-		Type:       coreapigo.URLForwardingInputType(fwdTypeStr),
+	// Title and Meta are still seeded from the current entry so an unset flag
+	// preserves what is already there.
+	fwdType := coreapigo.URLForwardingUpdateType(fwdTypeStr)
+	body := coreapigo.URLForwardingUpdate{
+		ForwardsTo: &updateForwardsTo,
+		Type:       &fwdType,
 		Title:      current.Title,
 		Meta:       current.Meta,
 	}

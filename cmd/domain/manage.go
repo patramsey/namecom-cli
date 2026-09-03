@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	coreapigo "github.com/namedotcom/core-api-go"
-	"github.com/namedotcom/core-api-go/option"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -38,25 +37,23 @@ var lockCmd = &cobra.Command{
 // each of which the spec marks `deprecated: true` with "deprecated in favor of
 // the new UpdateDomain API. This will be removed in a future release."
 //
-// Only the field being changed is sent. All three body fields are *bool with
+// Only the field being changed is sent. All three fields are *bool with
 // omitempty, and the schema combines them with anyOf, so a partial body is
 // valid and leaves the other two untouched — no read-modify-write needed.
 //
 // Note PurchasePrivacy is deliberately not used for `privacy on`: the spec
 // describes it as "a billable action" that purchases and enables, whereas
 // UpdateDomain is the documented successor to the deprecated toggle.
-func applyDomainToggle(cmd *cobra.Command, domainName string, body *coreapigo.UpdateDomainRequestBody) error {
+func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest) error {
 	client := cmdutil.APIClient(cmd)
-	_, err := client.SDK().Domains.UpdateDomain(cmd.Context(), &coreapigo.UpdateDomainRequest{
-		DomainName: domainName,
-		Body:       body,
-	})
+	_, err := client.SDK().Domains.UpdateDomain(cmd.Context(), req)
 	return api.FromSDKError(err)
 }
 
-// toggleDryRun prints the UpdateDomain request a toggle would send.
-func toggleDryRun(out *output.Config, domainName string, body *coreapigo.UpdateDomainRequestBody) {
-	out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domainName), body)
+// toggleDryRun prints the UpdateDomain request a toggle would send. DomainName
+// is tagged `json:"-"`, so marshalling the request yields the body alone.
+func toggleDryRun(out *output.Config, req *coreapigo.UpdateDomainRequest) {
+	out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", req.DomainName), req)
 }
 
 func runLock(cmd *cobra.Command, args []string) error {
@@ -72,14 +69,12 @@ func runLock(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	body := &coreapigo.UpdateDomainRequestBody{
-		UpdateDomainRequestBodyLocked: &coreapigo.UpdateDomainRequestBodyLocked{Locked: enable},
-	}
+	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, Locked: &enable}
 	if dryRun {
-		toggleDryRun(out, domainName, body)
+		toggleDryRun(out, req)
 		return nil
 	}
-	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+	if err := applyDomainToggle(cmd, req); err != nil {
 		return err
 	}
 	if enable {
@@ -121,14 +116,12 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	body := &coreapigo.UpdateDomainRequestBody{
-		UpdateDomainRequestBodyAutorenewEnabled: &coreapigo.UpdateDomainRequestBodyAutorenewEnabled{AutorenewEnabled: enable},
-	}
+	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, AutorenewEnabled: &enable}
 	if dryRun {
-		toggleDryRun(out, domainName, body)
+		toggleDryRun(out, req)
 		return nil
 	}
-	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+	if err := applyDomainToggle(cmd, req); err != nil {
 		return err
 	}
 	if enable {
@@ -171,11 +164,9 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	body := &coreapigo.UpdateDomainRequestBody{
-		UpdateDomainRequestBodyPrivacyEnabled: &coreapigo.UpdateDomainRequestBodyPrivacyEnabled{PrivacyEnabled: enable},
-	}
+	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
 	if dryRun {
-		toggleDryRun(out, domainName, body)
+		toggleDryRun(out, req)
 		return nil
 	}
 	// Enabling privacy can incur a charge on accounts without a bundled privacy
@@ -190,7 +181,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	if err := applyDomainToggle(cmd, domainName, body); err != nil {
+	if err := applyDomainToggle(cmd, req); err != nil {
 		return err
 	}
 	if enable {
@@ -528,42 +519,40 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	autorenew := current.AutorenewEnabled
 	privacy := current.PrivacyEnabled
 	locked := current.Locked
-	// Built as a plain map rather than the SDK's UpdateDomainRequestBody, and
-	// this is not a shortcut — that type cannot express this request.
+	// All three fields are sent on every call: this is a read-modify-write that
+	// restates the current values, so an unset flag preserves what is already
+	// there rather than clearing it.
 	//
-	// The spec combines the three fields with anyOf, meaning "at least one",
-	// and this command deliberately sends all three: it is a read-modify-write
-	// that restates the current values so an unset flag preserves what is
-	// already there. Fern modelled that anyOf as an exclusive union whose
-	// MarshalJSON returns on the FIRST non-nil variant, so setting all three
-	// silently transmits only autorenewEnabled and drops locked and
-	// privacyEnabled — on a command where "locked" is the transfer lock.
+	// Until SDK v1.33.5 that could not be expressed with the typed request.
+	// The spec combines the three with anyOf, meaning "at least one", but Fern
+	// modelled it as an exclusive union whose MarshalJSON returned on the FIRST
+	// non-nil variant — so setting all three silently transmitted only
+	// autorenewEnabled and dropped locked and privacyEnabled, on a command
+	// where "locked" is the transfer lock. The workaround was a raw
+	// map[string]any passed through option.WithBodyProperties.
 	//
-	// option.WithBodyProperties with a nil Body sends exactly this map, which
-	// is byte-identical to what the generated client sent. Pinned by
-	// TestRequestShape_Domain. See
-	// docs/upstream/core-api-go-updatedomain-union.md.
-	body := map[string]any{
-		"autorenewEnabled": autorenew,
-		"privacyEnabled":   privacy,
-		"locked":           locked,
-	}
-
+	// v1.33.5 removed the union: the fields are now flat on the request, each
+	// *bool with omitempty, and a non-nil pointer to false still serialises.
+	// The bytes on the wire are unchanged, which TestRequestShape_Domain pins.
 	if cmd.Flags().Changed("autorenew") {
-		v, _ := cmd.Flags().GetBool("autorenew")
-		body["autorenewEnabled"] = v
+		autorenew, _ = cmd.Flags().GetBool("autorenew")
 	}
 	if cmd.Flags().Changed("privacy") {
-		v, _ := cmd.Flags().GetBool("privacy")
-		body["privacyEnabled"] = v
+		privacy, _ = cmd.Flags().GetBool("privacy")
 	}
 	if cmd.Flags().Changed("lock") {
-		v, _ := cmd.Flags().GetBool("lock")
-		body["locked"] = v
+		locked, _ = cmd.Flags().GetBool("lock")
+	}
+
+	req := &coreapigo.UpdateDomainRequest{
+		DomainName:       domain,
+		AutorenewEnabled: &autorenew,
+		PrivacyEnabled:   &privacy,
+		Locked:           &locked,
 	}
 
 	if dryRun {
-		out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domain), body)
+		out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domain), req)
 		return nil
 	}
 
@@ -592,9 +581,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	updated, err := client.SDK().Domains.UpdateDomain(cmd.Context(),
-		&coreapigo.UpdateDomainRequest{DomainName: domain},
-		option.WithBodyProperties(body))
+	updated, err := client.SDK().Domains.UpdateDomain(cmd.Context(), req)
 	if err != nil {
 		return api.FromSDKError(err)
 	}

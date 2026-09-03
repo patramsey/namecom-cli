@@ -71,18 +71,16 @@ to regenerate.
 
 The SDK is Fern-generated and has defects this project has already been bitten
 by. Each is written up in [`docs/upstream/`](docs/upstream/) with a
-reproduction, and each is pinned by a test that fails if the workaround is
-removed:
+reproduction. Three were fixed upstream in v1.33.4/v1.33.5 and their workarounds
+have been removed; one remains:
 
-- `domain update` builds a `map[string]any` rather than the SDK's typed body,
-  because that type is an exclusive union that silently drops every field but
-  the first — including the transfer lock.
-- `option.WithXIdempotencyKey` is never used; it prefixes the key with `*`.
-  `internal/api/headers.go` sets that header for every write.
-- `url update` sends the host it just read, because the type cannot omit it and
-  an empty host means the apex.
 - Endpoints that take no body are given `&EmptyObject{}`, because a nil body
   marshals to `null`.
+
+The reports for the fixed three are kept rather than deleted, because the
+requests they describe are still pinned by tests — `url update` asserts that no
+`host` key is sent, and `domain update` asserts that all three of
+`autorenewEnabled`, `privacyEnabled` and `locked` reach the wire.
 
 If you change what a command sends, expect a `shape_test.go` or `drift_test.go`
 to fail. Those assert the exact method, path, and body, and they were written
