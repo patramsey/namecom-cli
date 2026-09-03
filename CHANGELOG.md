@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-03
+
+A dependency release. Nothing changes about what you type or what comes back;
+two commands put a slightly different request on the wire, and one of those is a
+request the CLI had wanted to send all along.
+
 ### Changed
 - The name.com Core SDK is now pinned to v1.33.5, which fixes three defects this
   project had been working around. Two workarounds are gone as a result.
@@ -27,6 +33,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   in re-sending a value read moments earlier.
 
   Neither change alters what you type or what comes back.
+
+- `golang.org/x/mod` moved to v0.40.0. It parses the version strings behind the
+  "a newer version is available" check; nothing about that check changes.
 
 ## [0.4.1] - 2026-08-29
 
@@ -357,7 +366,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/patramsey/namecom-cli/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/patramsey/namecom-cli/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/patramsey/namecom-cli/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/patramsey/namecom-cli/compare/v0.3.1...v0.3.2

@@ -12,10 +12,10 @@ being replaced by a link.
 |---|---|---|
 | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | [#3](https://github.com/namedotcom/core-api-go/issues/3) — **fixed in v1.33.3** |
 | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | [#4](https://github.com/namedotcom/core-api-go/issues/4) — **fixed in v1.33.3** |
-| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — **fixed in v1.33.4** |
+| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — **fixed in v1.33.4**, closed |
 | [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
-| [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — **fixed in v1.33.5** |
-| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — **fixed in v1.33.5** |
+| [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — **fixed in v1.33.5**, closed |
+| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — **fixed in v1.33.5**, closed |
 
 Neither is worked around in this repository. What a mitigation would look like,
 and what each was measured to cost, is recorded in
@@ -49,19 +49,33 @@ bug the bump introduced: v1.33.5 dropped the `CreateURLForwardingRequest`
 wrapper that carried `DomainName`, so the path silently became
 `/core/v1/domains//url/forwarding` until the field was set on the input itself.
 
-### On the two that were fixed
+### On reporting to this tracker
 
-#3 and #4 were filed 2026-08-20 and fixed in v1.33.3 five days later, without a
-comment on either issue. Both were verified by measurement here before being
-closed:
+All five filed reports were fixed. None was acknowledged first, and none was
+closed by the maintainers — every fix shipped silently, and each was found by
+reading the released module rather than by any notice on the issue.
+
+| filed | fixed | gap |
+|---|---|---|
+| #3, #4 — 2026-08-20 | v1.33.3 | 5 days |
+| #7 — 2026-08-26 | v1.33.4 | ~6 days |
+| #5, #6 — 2026-08-26 | v1.33.5 | ~7 days |
+
+#3 and #4 were verified by measurement before being closed:
 
 | | v1.33.2 | v1.33.3 |
 |---|---|---|
 | client-scoped `WithoutRetries()`, one 500 | 2 requests | **1 request** |
 | 100ms deadline against `Retry-After: 2` | 2.001s | **100.8ms** |
 
-Worth recording for anyone deciding whether reporting to this tracker is worth
-the effort: the silence is not an answer, but the fixes shipped.
+All five were closed from this side, each with a comment naming the version that
+fixed it, so the tracker states what the code already did.
+
+Worth recording for anyone deciding whether reporting here is worth the effort:
+the silence is not an answer, but the fixes shipped — every time, within a week.
+The practical consequence is that a fix arrives without notice, so the way to
+learn about one is to watch releases and read the diff, not to wait on the
+issue. Dependabot found v1.33.4 here before anyone thought to look.
 
 [#5]: https://github.com/namedotcom/core-api-go/issues/5
 [#7]: https://github.com/namedotcom/core-api-go/issues/7
