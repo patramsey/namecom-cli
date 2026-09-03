@@ -1,6 +1,6 @@
 # `URLForwardingInput` forces a `host` key onto update requests
 
-**Filed 2026-08-26 as [namedotcom/core-api-go#7](https://github.com/namedotcom/core-api-go/issues/7).**
+**Filed 2026-08-26 as [namedotcom/core-api-go#7](https://github.com/namedotcom/core-api-go/issues/7). Fixed in v1.33.4:** update no longer shares a type with create — the new `URLForwardingUpdate` has `Host *string` with `omitempty`, documented as "Omit this field to keep the existing host." `url update` now sends no `host` key at all.
 Found while porting `namecom url` to the SDK (#40, slice 3). Kept here so the
 reproduction and the measurements stay with the repository that produced them.
 

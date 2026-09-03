@@ -31,18 +31,24 @@ func TestRequestShape_URL(t *testing.T) {
 			}
 			return cmd
 		}
-		// This expectation CHANGED with the port, and it is the only request in
-		// slice 3 that did. The generated client sent no "host" key; the SDK
-		// cannot express that, because create and update share one
-		// URLForwardingInput whose Host has no omitempty.
+		// No "host" key, which is what the generated client sent before the SDK
+		// migration and what the API means by "leave the host alone".
 		//
-		// The value is the host fetched from the record being updated, so the
-		// key is a restatement of what is already stored rather than a change.
-		// A struct literal without it would send "host":"" — the apex — which
-		// would silently move the forwarding. See
-		// docs/upstream/core-api-go-urlforwarding-host-required.md.
+		// This expectation has now moved twice. The port to the SDK had to add
+		// the key, because create and update shared one URLForwardingInput
+		// whose Host had no omitempty — so the value sent was the host fetched
+		// from the record being updated, a restatement rather than a change,
+		// since a literal "" is the apex and would have moved the forwarding.
+		// SDK v1.33.5 fixed that (upstream #7) by giving update its own
+		// URLForwardingUpdate with Host as *string,omitempty, so the key is
+		// gone again.
+		//
+		// Asserting its absence is the point: this is the request the whole
+		// upstream issue was about, and a future SDK bump that reintroduces a
+		// mandatory host must fail here rather than silently move a customer's
+		// forwarding to the apex.
 		drifttest.AssertRequest(t, drifttest.Request{
-			Method: "PATCH", Path: "/core/v1/urlforwarding/example.com/7", Body: `{"forwardsTo":"https://elsewhere.example","host":"@","type":"redirect"}`,
+			Method: "PATCH", Path: "/core/v1/urlforwarding/example.com/7", Body: `{"forwardsTo":"https://elsewhere.example","type":"redirect"}`,
 		}, build, runUpdate, []string{"example.com", "7"}, stub)
 	})
 	t.Run("delete", func(t *testing.T) {

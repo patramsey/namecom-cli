@@ -81,6 +81,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/namedotcom/core-api-go v1.33.3 h1:192Zk1/iGlE1NQVGa5DZkqIdnR0KT9BSQm+pUOS/j6A=
 github.com/namedotcom/core-api-go v1.33.3/go.mod h1:0rjYfuJejSP5M0a44t4kColJcxPlCWDdE2wsN8K31cg=
+github.com/namedotcom/core-api-go v1.33.5 h1:+iRrAmw7sFqaPLJbXuS4UWaRJP/fF1lQbt1+QQ+sNv8=
+github.com/namedotcom/core-api-go v1.33.5/go.mod h1:0rjYfuJejSP5M0a44t4kColJcxPlCWDdE2wsN8K31cg=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=

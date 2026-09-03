@@ -51,12 +51,20 @@ func TestRequestShape_Domain(t *testing.T) {
 		}, build, runSetNS, []string{"example.com"}, domainStub)
 	})
 
-	// domain update is the case the SDK's types cannot express. It restates all
-	// three fields so an unset flag preserves the current value, but
-	// UpdateDomainRequestBody is an exclusive union whose MarshalJSON returns on
-	// the first non-nil variant — so building it that way would silently send
-	// only autorenewEnabled and drop locked and privacyEnabled. On this command
-	// "locked" is the transfer lock. See
+	// domain update restates all three fields so an unset flag preserves the
+	// current value, and this pins that all three actually reach the wire.
+	//
+	// The SDK could not express that until v1.33.5: UpdateDomainRequestBody was
+	// an exclusive union whose MarshalJSON returned on the first non-nil
+	// variant, so building it that way sent only autorenewEnabled and silently
+	// dropped locked and privacyEnabled — on a command where "locked" is the
+	// transfer lock. The workaround was a raw map through
+	// option.WithBodyProperties; v1.33.5 removed the union (upstream #6) and the
+	// map is gone.
+	//
+	// The expected body below did not change across either the workaround or its
+	// removal, which is the assurance worth having: this test is what proves the
+	// typed request now sends what the map used to. See
 	// docs/upstream/core-api-go-updatedomain-union.md.
 	t.Run("update sends all three fields", func(t *testing.T) {
 		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {

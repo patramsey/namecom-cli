@@ -1,6 +1,6 @@
 # `UpdateDomainRequestBody` is an exclusive union, silently dropping fields
 
-**Filed 2026-08-26 as [namedotcom/core-api-go#6](https://github.com/namedotcom/core-api-go/issues/6).** Found while porting `namecom domain` to the SDK (#40, slice 6). This is the most serious of the modelling problems found during that migration, and the reproduction is kept here rather than replaced by a link.
+**Filed 2026-08-26 as [namedotcom/core-api-go#6](https://github.com/namedotcom/core-api-go/issues/6). Fixed in v1.33.5:** the union is gone — `UpdateDomainRequest` now carries `autorenewEnabled`, `privacyEnabled` and `locked` as flat `*bool` fields with `omitempty`, so all three can be sent together. The `map[string]any` workaround was removed from `domain update`. Found while porting `namecom domain` to the SDK (#40, slice 6). This is the most serious of the modelling problems found during that migration, and the reproduction is kept here rather than replaced by a link.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 

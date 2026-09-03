@@ -12,10 +12,10 @@ being replaced by a link.
 |---|---|---|
 | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | [#3](https://github.com/namedotcom/core-api-go/issues/3) — **fixed in v1.33.3** |
 | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | [#4](https://github.com/namedotcom/core-api-go/issues/4) — **fixed in v1.33.3** |
-| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — open |
+| [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — **fixed in v1.33.4** |
 | [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
-| [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — open |
-| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — open |
+| [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — **fixed in v1.33.5** |
+| [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — **fixed in v1.33.5** |
 
 Neither is worked around in this repository. What a mitigation would look like,
 and what each was measured to cost, is recorded in
@@ -27,24 +27,27 @@ and what each was measured to cost, is recorded in
 vendored spec, the Python preprocessor, and the generated client were removed in
 #62. See #40 for how it went.
 
-Two of the six reports here are fixed upstream and closed. Four stand, and three
-of those are worked around in this repository:
+**Five of the six reports here are fixed upstream.** One stands, and it is the
+only one still worked around in this repository:
 
-| report | what this repo does |
-|---|---|
-| `updatedomain-union` ([#6]) | `domain update` builds a `map[string]any` and passes `option.WithBodyProperties`. The typed body would silently drop the transfer lock. |
-| `idempotency-key-asterisk` ([#5]) | `option.WithXIdempotencyKey` is never used; `internal/api/headers.go` sets the header for every write. |
-| `urlforwarding-host-required` ([#7]) | `url update` sends the host it just fetched, because the type cannot omit it and an empty host means the apex. |
-| `forced-request-bodies` | bodyless endpoints are given `&EmptyObject{}` so they send `{}` rather than `null`. |
+| report | status | what this repo does |
+|---|---|---|
+| `updatedomain-union` ([#6]) | fixed v1.33.5 | nothing — the union is gone and `domain update` uses the typed request. The `map[string]any` and `option.WithBodyProperties` were removed. |
+| `urlforwarding-host-required` ([#7]) | fixed v1.33.4 | nothing — `url update` now omits `host` entirely, which is what "leave it alone" means. |
+| `idempotency-key-asterisk` ([#5]) | fixed v1.33.5 | `internal/api/headers.go` still owns the header. `option.WithXIdempotencyKey` is now safe to use, but there is no reason to: the transport sets it centrally for every write. |
+| `forced-request-bodies` | not filed, unchanged | bodyless endpoints are given `&EmptyObject{}` so they send `{}` rather than `null`. |
 
-**Each workaround is used in exactly one place and pinned by a test that fails
-if it is removed.** That is deliberate: the natural instinct on reading any of
-them is to replace it with the obvious typed call, and in three of the four
-cases the obvious call is silently wrong rather than broken.
+The sequence that removed the first two was the one written here before there
+was anything to remove: bump the SDK, delete the workaround, watch the pinning
+test fail, and update it — in that order, so the test proves the fix rather than
+being adjusted to match it.
 
-If a report is fixed upstream, the sequence is: bump the SDK, delete the
-workaround, watch the pinning test fail, and update it — in that order, so the
-test proves the fix rather than being adjusted to match it.
+It paid off twice. `TestRequestShape_Domain` passed **unchanged** through the
+removal of the map, which is what proves the typed request now sends the same
+three fields the map did. And `TestRequestShape_URL/create` failed loudly on a
+bug the bump introduced: v1.33.5 dropped the `CreateURLForwardingRequest`
+wrapper that carried `DomainName`, so the path silently became
+`/core/v1/domains//url/forwarding` until the field was set on the input itself.
 
 ### On the two that were fixed
 

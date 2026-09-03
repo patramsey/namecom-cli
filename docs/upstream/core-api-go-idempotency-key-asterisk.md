@@ -1,6 +1,6 @@
 # `option.WithXIdempotencyKey` sends the key with a literal `*` prefix
 
-**Filed 2026-08-26 as [namedotcom/core-api-go#5](https://github.com/namedotcom/core-api-go/issues/5).** Found while porting `namecom` to the SDK (#40). Kept here so the reproduction and the measurements stay with the repository that produced them.
+**Filed 2026-08-26 as [namedotcom/core-api-go#5](https://github.com/namedotcom/core-api-go/issues/5). Fixed in v1.33.5:** the header is now built with `fmt.Sprintf("%v", …)` instead of `fmt.Sprintf("*%v", …)`. This repository still sets the header in `internal/api/headers.go` rather than using the option, which remains the simpler arrangement. Found while porting `namecom` to the SDK (#40). Kept here so the reproduction and the measurements stay with the repository that produced them.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 

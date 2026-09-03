@@ -9,6 +9,25 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- The name.com Core SDK is now pinned to v1.33.5, which fixes three defects this
+  project had been working around. Two workarounds are gone as a result.
+
+  `domain update` no longer assembles its request as a raw map. The SDK's typed
+  body used to be an exclusive union that silently transmitted one field and
+  dropped the rest — including `locked`, the transfer lock — so the command
+  bypassed it. The three fields are now flat on the request and the typed call
+  sends all of them. The bytes on the wire are unchanged.
+
+  `url update` no longer sends a `host` key. The type it shared with `create`
+  could not omit the field, so the command sent back the host it had just
+  fetched — a restatement, since an empty host means the apex rather than
+  "unchanged". Update now has its own type where the field can be omitted, which
+  is what the API means by leaving the host alone, and it removes the small race
+  in re-sending a value read moments earlier.
+
+  Neither change alters what you type or what comes back.
+
 ## [0.4.1] - 2026-08-29
 
 A patch release: two visible bugs, no change to what any command asks for or
