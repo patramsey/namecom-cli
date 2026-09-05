@@ -72,22 +72,25 @@ brews:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    # Printed during the cask -> formula migration, which `brew update`
-    # performs automatically but cannot finish: formula_installer.rb refuses to
-    # link while a cask of the same name is installed, and the instruction brew
-    # prints on its own stops at the uninstall. Following only that leaves no
-    # namecom on PATH at all. There is no formula DSL that overrides the check,
-    # so the remaining step has to be told to the user, and this is the one
-    # place it appears at the moment they need it.
-    caveats: |
-      If you are upgrading from the Homebrew cask (v0.2.4 - v0.3.1), two
-      steps remain:
-
-        brew uninstall --cask --force namecom
-        brew link namecom
-
-      Without the second, namecom will not be on your PATH. Fresh installs
-      need neither.
+    # No caveats. One was carried from v0.3.2 through v0.4.2, telling anyone
+    # upgrading from the Homebrew cask (v0.2.4 - v0.3.1) to run
+    #
+    #   brew uninstall --cask --force namecom && brew link namecom
+    #
+    # because `brew update` performs the cask -> formula migration but cannot
+    # finish it: formula_installer.rb refuses to link while a cask of the same
+    # name is installed, and brew's own message stops at the uninstall.
+    #
+    # That was true and necessary at the time. It is removed now because
+    # caveats print on EVERY install, so the audience has inverted: the cask
+    # was last published in v0.3.1, five releases back, and effectively
+    # everyone reading this today is a fresh installer being handed recovery
+    # steps for a path they were never on.
+    #
+    # The steps are not lost. They remain in the v0.3.2 CHANGELOG entry and in
+    # #49, which is where someone still stranded on the cask would look.
+    #
+    # If a cask is ever published again, this is the block to restore.
 
 changelog:
   sort: asc

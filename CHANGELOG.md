@@ -9,6 +9,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Removed
+- The Homebrew formula no longer prints the cask-migration caveat. It told
+  anyone upgrading from the cask (v0.2.4-v0.3.1) to run `brew uninstall --cask
+  --force namecom && brew link namecom`, which was necessary when the formula
+  came back in v0.3.2 — but caveats print on every install, and the cask was
+  last published five releases ago. Effectively everyone who reads it now is a
+  fresh installer being handed recovery steps for a path they were never on.
+
+  The steps remain in the v0.3.2 entry below.
+
 ## [0.4.2] - 2026-09-03
 
 A dependency release. Nothing changes about what you type or what comes back;
@@ -162,8 +172,9 @@ any command asks you for, prints on success, or returns as an exit code.
   ```
 
   Without the second command `namecom` will not be on your PATH. Fresh
-  installs need neither, and the formula prints both as caveats during the
-  migration.
+  installs need neither. The formula printed both as caveats from v0.3.2
+  through v0.4.2; that notice was removed once fresh installers outnumbered
+  the people it was written for, so this entry is now where the steps live.
 
 ### Removed
 - The cask's `postflight` hook that stripped `com.apple.quarantine`. It
