@@ -1,9 +1,14 @@
 # Bodyless endpoints are modelled with a body that cannot be omitted
 
-**Not filed upstream.** Found while porting `namecom contact` to the SDK (#40,
-slice 4). The least severe of the four: `{}` is accepted where `null` is not,
-so the workaround is a one-line construction with no data risk. Worth filing if
-[#5], [#6], or [#7] get attention.
+**Filed 2026-09-05 as [namedotcom/core-api-go#8](https://github.com/namedotcom/core-api-go/issues/8).**
+Found while porting `namecom contact` to the SDK (#40, slice 4), and held back
+for ten days as the least severe of the four: `{}` is accepted where `null` is
+not, so the workaround is a one-line construction with no data risk.
+
+It was held on an explicit condition — "worth filing if [#5], [#6], or [#7] get
+attention." All three were fixed, so the condition was met and it was filed,
+with the reproduction re-run against v1.33.5 rather than restating the v1.33.3
+finding.
 
 **Version:** v1.33.3 · **Go:** 1.26.6
 
