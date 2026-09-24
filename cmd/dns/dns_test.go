@@ -1278,3 +1278,48 @@ func TestDNSImport_ValidatesBeforeWriting(t *testing.T) {
 		t.Errorf("error should identify the offending record, got: %v", err)
 	}
 }
+
+// notFoundServer answers every request with the API's 404 envelope.
+func notFoundServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestDNSNotFound_KeepsExitCodeUnderFriendlyMessage covers both dns sites that
+// replace a 404 with a friendlier message. They used fmt.Errorf, which kept the
+// text and dropped the status code, so the command exited 1 instead of the
+// documented 4. Each case asserts both halves: the message a person reads,
+// and the 404 a script's exit-code check depends on.
+func TestDNSNotFound_KeepsExitCodeUnderFriendlyMessage(t *testing.T) {
+	t.Run("dns list on an unknown domain", func(t *testing.T) {
+		var stdout bytes.Buffer
+		cmd := cmdForList(t, notFoundServer(t), &stdout)
+		listAll, listType = false, ""
+		err := runList(cmd, []string{"example.com"})
+		assertFriendlyNotFound(t, err, `domain "example.com" not found`)
+	})
+	t.Run("dns update on an unknown record", func(t *testing.T) {
+		cmd := cmdForUpdate(t, notFoundServer(t))
+		err := runUpdate(cmd, []string{"example.com", "42"})
+		assertFriendlyNotFound(t, err, "record 42 not found on example.com")
+	})
+}
+
+func assertFriendlyNotFound(t *testing.T, err error, wantMsg string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected a not-found error, got nil")
+	}
+	if !strings.Contains(err.Error(), wantMsg) {
+		t.Errorf("message = %q, want it to contain %q", err.Error(), wantMsg)
+	}
+	if !cmdutil.IsNotFound(err) {
+		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
+	}
+}

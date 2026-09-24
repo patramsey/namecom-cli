@@ -1000,3 +1000,28 @@ func TestTransferList_JSONEnvelope(t *testing.T) {
 		})
 	}
 }
+
+// TestTransferGet_NotFoundKeepsExitCode: `transfer get` on a domain with no
+// transfer shows a friendlier message than the API's "Not Found", and must
+// still exit 4. It was a fmt.Errorf, which kept the text and dropped the 404 —
+// and before the SDK error was normalized, the friendly message never fired
+// at all, so users saw the raw `404: {"message":"Not Found"}`.
+func TestTransferGet_NotFoundKeepsExitCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	err := runGet(cmdForTransferGet(t, srv), []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected a not-found error, got nil")
+	}
+	if want := `no transfer found for "example.com"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("message = %q, want it to contain %q", err.Error(), want)
+	}
+	if !cmdutil.IsNotFound(err) {
+		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
+	}
+}

@@ -381,3 +381,21 @@ func TestDomainClaims_APIError(t *testing.T) {
 		t.Errorf("error should surface the API message, got: %v", err)
 	}
 }
+
+// TestDomainRequirements_NotFoundKeepsExitCode: an unknown TLD gets a hint
+// about the leading dot, and must still exit 4. The hint was built with
+// fmt.Errorf, which kept the text and dropped the 404.
+func TestDomainRequirements_NotFoundKeepsExitCode(t *testing.T) {
+	srv, _ := jsonServer(t, http.StatusNotFound, `{"message":"Not Found"}`)
+	var buf bytes.Buffer
+	err := runRequirements(cmdWithOutput(t, srv, tableOut(&buf)), []string{"zzqqx"})
+	if err == nil {
+		t.Fatal("expected a not-found error, got nil")
+	}
+	if want := `no requirements found for TLD "zzqqx"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("message = %q, want it to contain %q", err.Error(), want)
+	}
+	if !cmdutil.IsNotFound(err) {
+		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
+	}
+}
