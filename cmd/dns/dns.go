@@ -642,7 +642,7 @@ func recordRows(out *output.Config, records []*coreapigo.Record) [][]string {
 		rows = append(rows, []string{
 			out.Dim(id),
 			out.TypeBadge(derefStr(r.Type)),
-			derefStr(r.Host),
+			displayHost(r.Host),
 			derefStr(r.Answer),
 			out.Dim(ttl),
 			priority,
@@ -704,7 +704,7 @@ func recordRowsNoType(out *output.Config, records []*coreapigo.Record) [][]strin
 		}
 		rows = append(rows, []string{
 			out.Dim(id),
-			derefStr(r.Host),
+			displayHost(r.Host),
 			derefStr(r.Answer),
 			out.Dim(strconv.FormatInt(r.TTL, 10)),
 			priority,
@@ -860,4 +860,15 @@ func readImportData(path string) ([]byte, error) {
 	// G304: reading a caller-named file is this function's entire purpose —
 	// --file is the documented way to pass an import payload.
 	return os.ReadFile(path) //nolint:gosec
+}
+
+// displayHost renders a record's host for a table. The API returns the apex as
+// an empty string, which printed as an empty cell — indistinguishable from a
+// column that failed to render. "@" is the spelling --host takes for the apex,
+// so input and output now agree. JSON and YAML keep the API's value.
+func displayHost(h *string) string {
+	if h == nil || *h == "" {
+		return "@"
+	}
+	return *h
 }

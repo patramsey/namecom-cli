@@ -521,7 +521,7 @@ func urlRows(entries []*coreapigo.URLForwardingResponse) [][]string {
 		}
 		rows = append(rows, []string{
 			id,
-			derefStr(u.Host),
+			displayHost(u.Host),
 			u.ForwardsTo,
 			string(u.Type),
 		})
@@ -537,10 +537,13 @@ func parseID(s string) (int, error) {
 	return int(n), nil
 }
 
-// derefStr returns the value behind a *string, or "" when it is nil.
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
+// displayHost renders a record's host for a table. The API returns the apex as
+// an empty string, which printed as an empty cell — indistinguishable from a
+// column that failed to render. "@" is the spelling --host takes for the apex,
+// so input and output now agree. JSON and YAML keep the API's value.
+func displayHost(h *string) string {
+	if h == nil || *h == "" {
+		return "@"
 	}
-	return *s
+	return *h
 }
