@@ -201,7 +201,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return fmt.Errorf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain)
+			return cmdutil.NotFound(err, fmt.Sprintf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain))
 		}
 		return err
 	}

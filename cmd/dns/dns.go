@@ -172,7 +172,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return fmt.Errorf("domain %q not found — run 'namecom domain list' to see your domains", domain)
+			return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
 		}
 		return err
 	}
@@ -337,7 +337,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		// instead of 4.
 		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
-			return fmt.Errorf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain)
+			return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
 		}
 		return err
 	}

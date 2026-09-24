@@ -55,7 +55,7 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		// recognising a 404 here.
 		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
-			return fmt.Errorf("no requirements found for TLD %q — pass the TLD without a leading dot (e.g. 'fr', not '.fr')", tld)
+			return cmdutil.NotFound(err, fmt.Sprintf("no requirements found for TLD %q — pass the TLD without a leading dot (e.g. 'fr', not '.fr')", tld))
 		}
 		return err
 	}

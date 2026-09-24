@@ -361,8 +361,16 @@ func TestDomainGet_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 404 domain, got nil")
 	}
-	if !contains(err.Error(), "not found") {
-		t.Errorf("expected 'not found' in error, got: %v", err)
+	// Assert the friendly message specifically. A bare "not found" is
+	// satisfied by the stub's own response body, so it passed even while the
+	// command printed the raw `404: {"message":"not found",...}`.
+	if want := `domain "example.com" not found`; !contains(err.Error(), want) {
+		t.Errorf("expected %q in error, got: %v", want, err)
+	}
+	// And the 404 must survive under the friendlier text, or the command exits
+	// 1 instead of the documented 4.
+	if !cmdutil.IsNotFound(err) {
+		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
 	}
 }
 

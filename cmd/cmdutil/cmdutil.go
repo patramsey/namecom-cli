@@ -79,6 +79,27 @@ func IsSandbox(cmd *cobra.Command) bool {
 
 // IsNotFound reports whether err is a 404 API error.
 func IsNotFound(err error) bool {
+	// Normalized first: an SDK error that was never converted is still a 404,
+	// and checking only for *api.APIError is why the friendly not-found
+	// messages in domain get and transfer get never fired.
 	var apiErr *api.APIError
-	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
+	return errors.As(api.NormalizeError(err), &apiErr) && apiErr.StatusCode == 404
 }
+
+// NotFound replaces a not-found error's message with a friendlier one while
+// keeping the error underneath, so the command still exits 4.
+//
+// Five commands turned a detected 404 into fmt.Errorf("… not found — run …").
+// The message improved and the classification was thrown away: exitCode found
+// no *api.APIError in a plain string error and returned 1.
+func NotFound(err error, msg string) error {
+	return &notFoundError{msg: msg, err: api.NormalizeError(err)}
+}
+
+type notFoundError struct {
+	msg string
+	err error
+}
+
+func (e *notFoundError) Error() string { return e.msg }
+func (e *notFoundError) Unwrap() error { return e.err }

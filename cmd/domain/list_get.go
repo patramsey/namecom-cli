@@ -269,7 +269,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return fmt.Errorf("domain %q not found — run 'namecom domain list' to see your domains", args[0])
+			return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", args[0]))
 		}
 		return err
 	}
