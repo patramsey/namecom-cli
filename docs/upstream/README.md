@@ -13,7 +13,7 @@ being replaced by a link.
 | [`core-api-go-withoutretries-ignored.md`](core-api-go-withoutretries-ignored.md) | `namedotcom/core-api-go` v1.33.2 | [#3](https://github.com/namedotcom/core-api-go/issues/3) — **fixed in v1.33.3** |
 | [`core-api-go-backoff-ignores-context.md`](core-api-go-backoff-ignores-context.md) | `namedotcom/core-api-go` v1.33.2 | [#4](https://github.com/namedotcom/core-api-go/issues/4) — **fixed in v1.33.3** |
 | [`core-api-go-urlforwarding-host-required.md`](core-api-go-urlforwarding-host-required.md) | `namedotcom/core-api-go` v1.33.3 | [#7](https://github.com/namedotcom/core-api-go/issues/7) — **fixed in v1.33.4**, closed |
-| [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | not filed |
+| [`core-api-go-forced-request-bodies.md`](core-api-go-forced-request-bodies.md) | `namedotcom/core-api-go` v1.33.3 | [#8](https://github.com/namedotcom/core-api-go/issues/8) — open |
 | [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — **fixed in v1.33.5**, closed |
 | [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — **fixed in v1.33.5**, closed |
 
@@ -27,15 +27,15 @@ and what each was measured to cost, is recorded in
 vendored spec, the Python preprocessor, and the generated client were removed in
 #62. See #40 for how it went.
 
-**Five of the six reports here are fixed upstream.** One stands, and it is the
-only one still worked around in this repository:
+**Five of the six reports here are fixed upstream, and all six are now filed.**
+One stands, and it is the only one still worked around in this repository:
 
 | report | status | what this repo does |
 |---|---|---|
 | `updatedomain-union` ([#6]) | fixed v1.33.5 | nothing — the union is gone and `domain update` uses the typed request. The `map[string]any` and `option.WithBodyProperties` were removed. |
 | `urlforwarding-host-required` ([#7]) | fixed v1.33.4 | nothing — `url update` now omits `host` entirely, which is what "leave it alone" means. |
 | `idempotency-key-asterisk` ([#5]) | fixed v1.33.5 | `internal/api/headers.go` still owns the header. `option.WithXIdempotencyKey` is now safe to use, but there is no reason to: the transport sets it centrally for every write. |
-| `forced-request-bodies` | not filed, unchanged | bodyless endpoints are given `&EmptyObject{}` so they send `{}` rather than `null`. |
+| `forced-request-bodies` ([#8]) | filed 2026-09-05, unfixed | bodyless endpoints are given `&EmptyObject{}` so they send `{}` rather than `null`. |
 
 The sequence that removed the first two was the one written here before there
 was anything to remove: bump the SDK, delete the workaround, watch the pinning
@@ -71,6 +71,13 @@ reading the released module rather than by any notice on the issue.
 All five were closed from this side, each with a comment naming the version that
 fixed it, so the tracker states what the code already did.
 
+The sixth, `forced-request-bodies`, was held back for ten days on the grounds
+that it was the least severe and the workaround carried no data risk. That
+judgement was made when the sample was two-for-two; at five-for-five it no
+longer held, and it was filed as [#8]. The lesson is about the threshold rather
+than the bug: "not worth filing" was really "not worth filing to a tracker that
+might ignore it", and that premise turned out to be wrong.
+
 Worth recording for anyone deciding whether reporting here is worth the effort:
 the silence is not an answer, but the fixes shipped — every time, within a week.
 The practical consequence is that a fix arrives without notice, so the way to
@@ -80,3 +87,4 @@ issue. Dependabot found v1.33.4 here before anyone thought to look.
 [#5]: https://github.com/namedotcom/core-api-go/issues/5
 [#7]: https://github.com/namedotcom/core-api-go/issues/7
 [#6]: https://github.com/namedotcom/core-api-go/issues/6
+[#8]: https://github.com/namedotcom/core-api-go/issues/8
