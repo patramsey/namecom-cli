@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -911,5 +912,15 @@ func TestURLList_JSONEnvelope(t *testing.T) {
 				t.Errorf("%s envelope omitted nextPage despite more results: %q", tc.name, got)
 			}
 		})
+	}
+}
+
+// TestURLRows_ApexHostShowsAt pins the same for URL forwarding, whose API
+// documents the apex as an empty host.
+func TestURLRows_ApexHostShowsAt(t *testing.T) {
+	apex := ""
+	rows := urlRows([]*coreapigo.URLForwardingResponse{{Host: &apex, ForwardsTo: "https://example.org", Type: "redirect"}})
+	if got := rows[0][1]; got != "@" {
+		t.Errorf("HOST = %q, want %q", got, "@")
 	}
 }

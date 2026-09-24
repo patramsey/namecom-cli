@@ -153,6 +153,12 @@ func TestBuildAPIURL_CannotRetargetAnotherHost(t *testing.T) {
 		`\\evil.example\steal`,
 		"https://user:pass@evil.example/steal",
 		"//evil.example",
+		// Query strings are passed through, so they must not open a way round
+		// the guard: a host hidden before or inside the query stays a path.
+		"//evil.example?x=1",
+		"https://evil.example/steal?perPage=1",
+		"?@evil.example",
+		"/core/v1/domains?next=//evil.example",
 	}
 	for _, p := range hostile {
 		t.Run(p, func(t *testing.T) {
@@ -183,6 +189,13 @@ func TestBuildAPIURL_KeepsLegitimatePaths(t *testing.T) {
 		"/core/v1/domains":             "https://api.name.com/core/v1/domains",
 		"core/v1/domains":              "https://api.name.com/core/v1/domains",
 		"/core/v1/domains/example.com": "https://api.name.com/core/v1/domains/example.com",
+		// Query strings reach the server intact. url.JoinPath escapes "?" as
+		// part of the path, so these became /core/v1/orders%3FperPage=2 and
+		// the API answered 403 — every filter, sort, and page parameter was
+		// unreachable through the command meant as the escape hatch.
+		"/core/v1/orders?perPage=2":          "https://api.name.com/core/v1/orders?perPage=2",
+		"/core/v1/orders?perPage=2&dir=desc": "https://api.name.com/core/v1/orders?perPage=2&dir=desc",
+		"/core/v1/domains?domainName=*.io":   "https://api.name.com/core/v1/domains?domainName=*.io",
 	}
 	for in, want := range cases {
 		got, err := buildAPIURL(base, in)

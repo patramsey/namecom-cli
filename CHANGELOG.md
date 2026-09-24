@@ -22,6 +22,24 @@ Releases before `0.2.0` predate this file. Their notes are on the
   This regressed in v0.4.0 with the move to the Core SDK, whose errors had to be
   converted at each call site to be recognised. They are now converted once for
   every command.
+- `status` no longer reports expired domains as "expiring within 7 days". Its
+  query had no lower date bound, so every already-expired domain came back and
+  counted as critical — a domain that expired two years ago showed as
+  `1 expiring within 7 days` with `(-793 days)`, a red alarm that could never
+  clear. Expired domains now get their own count, an **Expired** section, and
+  `(expired 793 days ago)`. In JSON, `expiring_critical` no longer includes
+  them and a new `expired` count does.
+- `namecom api` can send a query string. `?` was escaped into the path, so
+  `namecom api GET "/core/v1/orders?perPage=2"` returned a 403 and every filter,
+  sort, and page parameter was unreachable. The protection against a path
+  redirecting the request to another host is unchanged.
+- `order list` shows the newest orders first. It used the API's ascending
+  default, so on a long history the first page was its oldest orders and
+  anything recent — including everything `order refund` can still act on — sat
+  behind every other page. The DATE column also now reads `2026-04-06` like
+  every other command, rather than a raw `2026-04-06T11:39:11Z`.
+- `dns list`, `url list`, and `url get` show the apex host as `@`, the same
+  spelling `--host` accepts, rather than an empty cell.
 
 ### Removed
 - The Homebrew formula no longer prints the cask-migration caveat. It told

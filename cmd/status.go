@@ -31,6 +31,7 @@ type statusSummary struct {
 	Profile          string `json:"profile"`
 	Endpoint         string `json:"endpoint"`
 	DomainsTotal     int    `json:"domains_total"`
+	Expired          int    `json:"expired"`
 	ExpiringCritical int    `json:"expiring_critical"` // <7 days
 	ExpiringSoon     int    `json:"expiring_soon"`     // 7-30 days
 	Unlocked         int    `json:"unlocked"`
@@ -51,6 +52,51 @@ type expiryItem struct {
 	Domain  string `json:"domain"`
 	Expires string `json:"expires"`
 	Days    int    `json:"days"`
+	Expired bool   `json:"expired,omitempty"`
+}
+
+type expiryCounts struct {
+	expired, critical, soon int
+	items                   []expiryItem
+}
+
+// classifyExpiry buckets the domains the expiry query returned.
+//
+// That query has an upper bound (now+30d) and no lower one, so it returns every
+// domain that has already expired as well. They are counted separately:
+// bucketing on `days < 7` alone put a domain that expired two years ago in
+// "expiring within 7 days", because a negative count satisfies it — a red
+// alarm on the summary line that could never clear.
+//
+// Expired is decided on the timestamp, not the day count. days truncates toward
+// zero, so a domain that lapsed two hours ago has days == 0 and would otherwise
+// look like one expiring later today.
+//
+// Expired domains are reported rather than dropped: one still inside the
+// registry's grace period is the most urgent thing on the account.
+func classifyExpiry(domains []*coreapigo.DomainResponsePayload, now time.Time) expiryCounts {
+	var c expiryCounts
+	for _, d := range domains {
+		if d.ExpireDate == nil {
+			continue
+		}
+		item := expiryItem{
+			Domain:  d.DomainName,
+			Expires: d.ExpireDate.Format("2006-01-02"),
+			Days:    int(d.ExpireDate.Sub(now).Hours() / 24),
+		}
+		switch {
+		case !d.ExpireDate.After(now):
+			item.Expired = true
+			c.expired++
+		case item.Days < 7:
+			c.critical++
+		default:
+			c.soon++
+		}
+		c.items = append(c.items, item)
+	}
+	return c
 }
 
 func runStatus(cmd *cobra.Command, _ []string) error {
@@ -163,21 +209,8 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	stop()
 
 	// Compute stats from the targeted results.
-	var expCritical, expSoon int
-	var expiringItems []expiryItem
-	for _, d := range expiringDomains {
-		if d.ExpireDate == nil {
-			continue
-		}
-		days := int(d.ExpireDate.Sub(now).Hours() / 24)
-		if days < 7 {
-			expCritical++
-			expiringItems = append(expiringItems, expiryItem{d.DomainName, d.ExpireDate.Format("2006-01-02"), days})
-		} else {
-			expSoon++
-			expiringItems = append(expiringItems, expiryItem{d.DomainName, d.ExpireDate.Format("2006-01-02"), days})
-		}
-	}
+	exp := classifyExpiry(expiringDomains, now)
+	expExpired, expCritical, expSoon, expiringItems := exp.expired, exp.critical, exp.soon, exp.items
 
 	var pendingDomains []string
 	for _, t := range transfers {
@@ -208,6 +241,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		Profile:          profileName,
 		Endpoint:         client.BaseURL(),
 		DomainsTotal:     totalDomains,
+		Expired:          expExpired,
 		ExpiringCritical: expCritical,
 		ExpiringSoon:     expSoon,
 		Unlocked:         unlockedCount,
@@ -240,10 +274,13 @@ func renderStatus(out *output.Config, s statusSummary) {
 	// Domain summary line.
 	total := out.Dim(strconv.Itoa(s.DomainsTotal) + " domains")
 	expPart := ""
+	if s.Expired > 0 {
+		expPart = "  " + out.Red(strconv.Itoa(s.Expired)+" expired")
+	}
 	if s.ExpiringCritical > 0 {
-		expPart = "  " + out.Red(strconv.Itoa(s.ExpiringCritical)+" expiring within 7 days")
+		expPart += "  " + out.Red(strconv.Itoa(s.ExpiringCritical)+" expiring within 7 days")
 	} else if s.ExpiringSoon > 0 {
-		expPart = "  " + out.Amber(strconv.Itoa(s.ExpiringSoon)+" expiring within 30 days")
+		expPart += "  " + out.Amber(strconv.Itoa(s.ExpiringSoon)+" expiring within 30 days")
 	}
 	transferPart := ""
 	if s.PendingTransfers != nil && *s.PendingTransfers > 0 {
@@ -261,11 +298,26 @@ func renderStatus(out *output.Config, s statusSummary) {
 		fmt.Fprintf(out.Writer, "%s  %s\n", out.Dim("Balance"), fmt.Sprintf("$%.2f", *s.Balance))
 	}
 
-	// Expiring domains section.
-	if len(s.ExpiringDomains) > 0 {
+	// Expired and expiring domains, each under its own heading.
+	var expired, expiring []expiryItem
+	for _, e := range s.ExpiringDomains {
+		if e.Expired {
+			expired = append(expired, e)
+		} else {
+			expiring = append(expiring, e)
+		}
+	}
+	if len(expired) > 0 {
+		fmt.Fprintln(out.Writer)
+		fmt.Fprintln(out.Writer, "Expired")
+		for _, e := range expired {
+			fmt.Fprintf(out.Writer, "  %-30s %s  %s\n", e.Domain, e.Expires, out.Red(expiredAgo(-e.Days)))
+		}
+	}
+	if len(expiring) > 0 {
 		fmt.Fprintln(out.Writer)
 		fmt.Fprintln(out.Writer, "Expiring soon")
-		for _, e := range s.ExpiringDomains {
+		for _, e := range expiring {
 			days := fmt.Sprintf("(%d days)", e.Days)
 			if e.Days < 7 {
 				days = out.Red(days)
@@ -287,10 +339,21 @@ func renderStatus(out *output.Config, s statusSummary) {
 
 	// Footer hints.
 	fmt.Fprintln(out.Writer)
-	if s.ExpiringCritical > 0 || s.ExpiringSoon > 0 {
+	if s.Expired > 0 || s.ExpiringCritical > 0 || s.ExpiringSoon > 0 {
 		out.Hint("Run 'namecom domain renew <domain>' to renew expiring domains")
 	}
 	out.Hint("Run 'namecom domain list' to see all domains")
 }
 
 func ptrInt(n int) *int { return &n }
+
+// expiredAgo phrases an elapsed day count for an expired domain.
+func expiredAgo(days int) string {
+	switch days {
+	case 0:
+		return "(expired today)"
+	case 1:
+		return "(expired 1 day ago)"
+	}
+	return fmt.Sprintf("(expired %d days ago)", days)
+}

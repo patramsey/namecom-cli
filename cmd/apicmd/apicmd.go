@@ -118,8 +118,15 @@ func runAPI(cmd *cobra.Command, args []string) error {
 // wasn't contacted" is not a real check: if a hostile path DOES retarget the
 // request, the local test server simply never runs and the assertions pass
 // vacuously — and even a failed connection means the credential already left.
+//
+// The query string is split off before joining and reattached verbatim. JoinPath
+// treats its whole argument as a path, so it escaped "?" to "%3F" and every
+// query parameter became part of a path the API does not have — a 403 for any
+// filter, sort, or page. Reattaching it to the already-checked URL cannot move
+// the request: RawQuery never changes the host.
 func buildAPIURL(base, rawPath string) (string, error) {
-	u, err := url.JoinPath(base, rawPath)
+	pathPart, query, hasQuery := strings.Cut(rawPath, "?")
+	u, err := url.JoinPath(base, pathPart)
 	if err != nil {
 		return "", fmt.Errorf("building URL: %w", err)
 	}
@@ -136,5 +143,12 @@ func buildAPIURL(base, rawPath string) (string, error) {
 		return "", fmt.Errorf("path %q would send the request to %s://%s, not %s — refusing",
 			rawPath, joined.Scheme, joined.Host, base)
 	}
-	return u, nil
+	if !hasQuery {
+		return u, nil
+	}
+	if _, err := url.ParseQuery(query); err != nil {
+		return "", fmt.Errorf("invalid query string %q: %w", query, err)
+	}
+	joined.RawQuery = query
+	return joined.String(), nil
 }

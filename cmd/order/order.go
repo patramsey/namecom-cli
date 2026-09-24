@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -104,8 +105,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 	var orders []*coreapigo.Order
 	var hasMore bool
 	var lastResult *coreapigo.ListOrdersResponse
+	// Newest first. The API defaults to ascending, so without this the first
+	// page of a long history was its oldest orders and anything recent — the
+	// orders people look for, and the ones `order refund` can still act on —
+	// sat behind every other page.
+	dir := "desc"
 	for {
-		req := &coreapigo.ListOrdersRequest{Page: &page}
+		req := &coreapigo.ListOrdersRequest{Page: &page, Dir: &dir}
 		if listDomain != "" {
 			req.DomainName = &listDomain
 		}
@@ -174,7 +180,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		)
 		out.Count(len(orders), "order")
 		if hasMore {
-			out.Hint("Showing first page — use --since, --domain, or --status to narrow results; --all for full history")
+			out.Hint("Showing the newest orders — use --since, --domain, or --status to narrow results; --all for full history")
 		}
 	}
 	return nil
@@ -333,7 +339,7 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 		}
 		date := ""
 		if o.CreateDate != nil {
-			date = out.Dim(*o.CreateDate)
+			date = out.Dim(orderDate(*o.CreateDate))
 		}
 		total := ""
 		if o.FinalAmount != nil {
@@ -350,4 +356,14 @@ func parseID(s string) (int32, error) {
 		return 0, fmt.Errorf("invalid order ID %q: must be a number", s)
 	}
 	return int32(n), nil
+}
+
+// orderDate prints an order's creation time as YYYY-MM-DD, the form every other
+// command uses, rather than the API's raw RFC 3339 timestamp. A value that does
+// not parse is shown as-is rather than hidden.
+func orderDate(s string) string {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return s
 }

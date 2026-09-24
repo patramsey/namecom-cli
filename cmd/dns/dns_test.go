@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	coreapigo "github.com/namedotcom/core-api-go"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -1321,5 +1322,22 @@ func assertFriendlyNotFound(t *testing.T, err error, wantMsg string) {
 	}
 	if !cmdutil.IsNotFound(err) {
 		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
+	}
+}
+
+// TestRecordRows_ApexHostShowsAt pins that the apex renders as "@", the same
+// spelling `dns create --host` takes and defaults to. The API returns the apex
+// host as "", which rendered as an empty cell — indistinguishable from a
+// column that failed to render.
+func TestRecordRows_ApexHostShowsAt(t *testing.T) {
+	apex, typ, answer := "", "A", "1.2.3.4"
+	rec := []*coreapigo.Record{{Host: &apex, Type: &typ, Answer: &answer, TTL: 300}}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+
+	if got := recordRows(out, rec)[0][2]; got != "@" {
+		t.Errorf("flat view HOST = %q, want %q", got, "@")
+	}
+	if got := recordRowsNoType(out, rec)[0][1]; got != "@" {
+		t.Errorf("grouped view HOST = %q, want %q", got, "@")
 	}
 }
