@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -149,4 +151,67 @@ func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
 			t.Errorf("a failed transfers lookup must not claim a count, got %#v", v)
 		}
 	})
+}
+
+// TestClassifyExpiry_SeparatesExpiredFromExpiring pins that a domain already
+// past its expiry date is counted as expired, not as "expiring within 7 days".
+//
+// status asks for domains expiring before now+30d with no lower bound, so
+// every expired domain comes back too, and the classifier bucketed on
+// `days < 7` — which a negative day count always satisfies. A sandbox domain
+// that expired 793 days earlier was reported as "1 expiring within 7 days",
+// a red alarm that could never clear.
+func TestClassifyExpiry_SeparatesExpiredFromExpiring(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { t := now.Add(d); return &t }
+	day := 24 * time.Hour
+
+	domains := []*coreapigo.DomainResponsePayload{
+		{DomainName: "long-dead.com", ExpireDate: at(-793 * day)},
+		{DomainName: "just-lapsed.com", ExpireDate: at(-2 * time.Hour)}, // under a day: days rounds to 0
+		{DomainName: "this-week.com", ExpireDate: at(3 * day)},
+		{DomainName: "this-month.com", ExpireDate: at(20 * day)},
+		{DomainName: "no-date.com"},
+	}
+	got := classifyExpiry(domains, now)
+
+	if got.expired != 2 {
+		t.Errorf("expired = %d, want 2 (long-dead and just-lapsed)", got.expired)
+	}
+	if got.critical != 1 {
+		t.Errorf("expiring within 7 days = %d, want 1 (this-week only; expired domains are not 'expiring')", got.critical)
+	}
+	if got.soon != 1 {
+		t.Errorf("expiring within 30 days = %d, want 1", got.soon)
+	}
+	for _, it := range got.items {
+		wantExpired := it.Domain == "long-dead.com" || it.Domain == "just-lapsed.com"
+		if it.Expired != wantExpired {
+			t.Errorf("%s: Expired = %v, want %v", it.Domain, it.Expired, wantExpired)
+		}
+	}
+}
+
+// TestStatus_RendersExpiredAsExpired pins the text: an expired domain reads
+// "expired N days ago", not "(-793 days)" under an "Expiring soon" heading.
+func TestStatus_RendersExpiredAsExpired(t *testing.T) {
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	renderStatus(out, statusSummary{
+		DomainsTotal: 2, Expired: 1, ExpiringCritical: 1,
+		ExpiringDomains: []expiryItem{
+			{Domain: "long-dead.com", Expires: "2024-07-22", Days: -793, Expired: true},
+			{Domain: "this-week.com", Expires: "2026-09-27", Days: 3},
+		},
+	})
+	got := buf.String()
+
+	for _, want := range []string{"1 expired", "1 expiring within 7 days", "expired 793 days ago", "(3 days)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "-793") {
+		t.Errorf("status shows a negative day count instead of saying the domain expired:\n%s", got)
+	}
 }
