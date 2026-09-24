@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,7 +92,7 @@ func TestOrderList_PaginationStopsAtFirstPage(t *testing.T) {
 	if len(*requests) != 1 {
 		t.Errorf("expected 1 request (first page only), got %d: %v", len(*requests), *requests)
 	}
-	if !contains(stdout.String(), "Showing first page") {
+	if !contains(stdout.String(), "Showing the newest orders") {
 		t.Errorf("expected pagination hint in output: %q", stdout.String())
 	}
 }
@@ -115,7 +116,7 @@ func TestOrderList_AllFetchesAllPages(t *testing.T) {
 	if len(*requests) != 3 {
 		t.Errorf("expected 3 requests (all pages), got %d: %v", len(*requests), *requests)
 	}
-	if contains(stdout.String(), "Showing first page") {
+	if contains(stdout.String(), "Showing the newest orders") {
 		t.Errorf("should not show pagination hint when --all fetches everything")
 	}
 }
@@ -579,5 +580,48 @@ func TestOrderList_JSONEnvelope(t *testing.T) {
 				t.Errorf("%s envelope omitted nextPage despite more results: %q", tc.name, got)
 			}
 		})
+	}
+}
+
+// TestOrderList_NewestFirst pins that every page is requested newest-first.
+//
+// The API's default direction is ascending, and order list set none, so on an
+// account with 9,116 orders a bare `order list` showed the first 500 — 2019
+// through the previous April — and none of the orders placed since. The recent
+// orders are the ones anyone listing orders is looking for, and the ones
+// `order refund` can still act on.
+func TestOrderList_NewestFirst(t *testing.T) {
+	srv, requests := orderServer(t, [][]int{{3, 2}, {1}})
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForOrderList(t, srv, &stdout, &stderr)
+	listAll = true
+	t.Cleanup(func() { listAll = false })
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if len(*requests) != 2 {
+		t.Fatalf("expected 2 page requests, got %d: %v", len(*requests), *requests)
+	}
+	for _, r := range *requests {
+		u, err := url.Parse(r)
+		if err != nil {
+			t.Fatalf("bad request URL %q: %v", r, err)
+		}
+		if got := u.Query().Get("dir"); got != "desc" {
+			t.Errorf("request %q has dir=%q, want desc — every page must use the same direction", r, got)
+		}
+	}
+}
+
+// TestOrderRows_DateMatchesOtherCommands pins the DATE column to the
+// YYYY-MM-DD form every other command prints, rather than the API's raw
+// RFC 3339 timestamp.
+func TestOrderRows_DateMatchesOtherCommands(t *testing.T) {
+	id, status, created := 1, "success", "2026-04-06T11:39:11Z"
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	rows := orderRows(out, []*coreapigo.Order{{ID: &id, Status: &status, CreateDate: &created}})
+	if got := rows[0][2]; got != "2026-04-06" {
+		t.Errorf("DATE = %q, want %q", got, "2026-04-06")
 	}
 }
