@@ -9,6 +9,20 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- Commands that look something up now exit **4** when it does not exist, as
+  the exit-code table documents. Nine exited 1 instead — `domain get`,
+  `domain contacts get`, `domain auth-code`, `dnssec get`, `url get`,
+  `vanity-ns get`, `transfer get`, `order get`, and `dns list` — so a script
+  checking `$? -eq 4` could not tell "not found" from any other failure. Most of
+  them also printed the raw response body, `404: {"message":"Not Found"}`, as
+  their error; `domain get` and `transfer get` had friendlier not-found
+  messages that never appeared.
+
+  This regressed in v0.4.0 with the move to the Core SDK, whose errors had to be
+  converted at each call site to be recognised. They are now converted once for
+  every command.
+
 ### Removed
 - The Homebrew formula no longer prints the cask-migration caveat. It told
   anyone upgrading from the cask (v0.2.4-v0.3.1) to run `brew uninstall --cask

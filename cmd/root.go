@@ -111,6 +111,7 @@ func Execute() {
 	})
 
 	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
+		err = normalizeError(err)
 		cfg := resolvedOut
 		if cfg == nil {
 			cfg = output.DefaultConfig()
@@ -402,6 +403,9 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+	// Normalized here as well as in Execute, so the classification cannot
+	// depend on a caller remembering to do it first.
+	err = normalizeError(err)
 	// Classification set by the failing path itself. Checked before the API
 	// error so a wrapped auth failure still reports 3.
 	if _, ok := errors.AsType[*cmdutil.UsageError](err); ok {
@@ -458,3 +462,9 @@ func baseURLWarning(raw string) string {
 	}
 	return fmt.Sprintf("--base-url is set: requests and your API credentials are being sent to %s, not name.com", u.Host)
 }
+
+// normalizeError converts a Core SDK error into the CLI's *api.APIError before
+// it is rendered or classified. Doing it here, once, means a command that
+// returns an SDK error unconverted still exits 4 on a 404 — see
+// api.NormalizeError for why per-call-site conversion was not enough.
+func normalizeError(err error) error { return api.NormalizeError(err) }

@@ -1,9 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	coreapigo "github.com/namedotcom/core-api-go"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -129,5 +135,88 @@ func TestBaseURLOverride_Rejected(t *testing.T) {
 		if err := validateBaseURL(good); err != nil {
 			t.Errorf("validateBaseURL(%q) should accept, got: %v", good, err)
 		}
+	}
+}
+
+// sdkNotFound returns the error the Core SDK itself produces for a 404, by
+// making a real call against a stub — not an error constructed by hand.
+//
+// That distinction is the whole point. TestExitCode above only ever fed
+// exitCode an *api.APIError, the pre-migration client's type, so it kept
+// passing while every command that returned the SDK's own error unconverted
+// exited 1 on a 404 instead of 4. A fixture built from the type the code
+// already understands cannot catch a failure to understand a different one.
+func sdkNotFound(t *testing.T) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	_, err = client.SDK().Domains.GetDomain(context.Background(),
+		&coreapigo.GetDomainRequest{DomainName: "example.com"})
+	if err == nil {
+		t.Fatal("stub returned 404 but the SDK reported no error")
+	}
+	if _, ok := errors.AsType[*api.APIError](err); ok {
+		t.Fatal("fixture is already an *api.APIError; it would not exercise the SDK's own error type")
+	}
+	return err
+}
+
+// TestExitCode_SDKNotFound pins the contract for the error commands actually
+// return. Nine commands (domain get, transfer get, order get, …) exited 1 on a
+// 404 because their SDK error reached exitCode unconverted.
+func TestExitCode_SDKNotFound(t *testing.T) {
+	sdkErr := sdkNotFound(t)
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"raw SDK 404", sdkErr},
+		{"wrapped SDK 404", fmt.Errorf("fetching domain: %w", sdkErr)},
+		{"friendly not-found message over an SDK 404",
+			cmdutil.NotFound(sdkErr, `domain "example.com" not found`)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := exitCode(tc.err); got != 4 {
+				t.Errorf("exit code = %d, want 4 (not found)", got)
+			}
+		})
+	}
+}
+
+// TestNormalizeError_Message pins what the user reads. Unconverted, the SDK's
+// error prints as `404: {"message":"Not Found"}` — the raw response body.
+func TestNormalizeError_Message(t *testing.T) {
+	sdkErr := sdkNotFound(t)
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"raw SDK 404", sdkErr, "Not Found"},
+		{"context around it is kept", fmt.Errorf("fetching domain: %w", sdkErr), "fetching domain: Not Found"},
+		{"friendly message is kept verbatim",
+			cmdutil.NotFound(sdkErr, `domain "example.com" not found`), `domain "example.com" not found`},
+		{"non-API error is untouched", errors.New("boom"), "boom"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeError(tc.err).Error()
+			if got != tc.want {
+				t.Errorf("message = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, `{"message"`) {
+				t.Errorf("message leaks the raw response body: %q", got)
+			}
+		})
 	}
 }
