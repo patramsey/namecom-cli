@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	coreapigo "github.com/namedotcom/core-api-go"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -502,6 +503,47 @@ func TestVanityList_JSONEnvelope(t *testing.T) {
 			}
 			if !strings.Contains(strings.ToLower(got), "nextpage") {
 				t.Errorf("%s envelope omitted nextPage despite more results: %q", tc.name, got)
+			}
+		})
+	}
+}
+
+// TestVanityUpdate_EmptyIPsClearsGlueRecords pins the bytes `--ips ""` puts on
+// the wire. The API documents "Providing an empty array will remove all
+// existing IPs", and splitIPs returns a non-nil empty slice precisely so the
+// body carries [] rather than null.
+//
+// That was never checked on the wire, and it was not true. Up to SDK v1.33.5
+// the field was tagged omitempty, which drops an empty slice just as it drops
+// a nil one, so the request body was {} — the clear was silently discarded and
+// the command reported success. TestSplitIPs passed throughout, because it
+// asserts what splitIPs returns, not what reaches the server. v1.33.6 removed
+// the omitempty.
+func TestVanityUpdate_EmptyIPsClearsGlueRecords(t *testing.T) {
+	tests := []struct {
+		name, ips, want string
+	}{
+		{"empty clears", "", `{"ips":[]}`},
+		{"a value is sent", "192.0.2.1", `{"ips":["192.0.2.1"]}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var body string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				body = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(coreapigo.VanityNameserverResponse{Hostname: strPtr("ns1.example.com")})
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForUpdate(t, srv)
+			updateIPs = tc.ips
+			if err := runUpdate(cmd, []string{"example.com", "ns1.example.com"}); err != nil {
+				t.Fatalf("runUpdate: %v", err)
+			}
+			if body != tc.want {
+				t.Errorf("request body = %s, want %s", body, tc.want)
 			}
 		})
 	}

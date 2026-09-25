@@ -9,6 +9,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `vanity-ns update --ips ""` clears a vanity nameserver's glue records, as
+  documented. It sent an empty request body instead, so nothing was cleared
+  and the command still reported success. The SDK tagged the field
+  `omitempty`, which drops an empty list just as it drops a missing one; SDK
+  v1.33.6 removed the tag.
+
+### Changed
+- The name.com Core SDK is now pinned to v1.34.0. Apart from the fix above,
+  nothing changes what any command sends or prints.
+
 ## [0.4.3] - 2026-09-24
 
 Bug fixes found by running every command against the sandbox rather than by

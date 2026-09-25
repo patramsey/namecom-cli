@@ -315,7 +315,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	body := coreapigo.EmailForwardingsUpdateEmailForwardingBody{
 		DomainName: domain,
 		EmailBox:   mailbox,
-		EmailTo:    &updateEmailTo,
+		EmailTo:    updateEmailTo,
 	}
 
 	if dryRun {
