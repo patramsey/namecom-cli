@@ -9,6 +9,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-24
+
+Bug fixes found by running every command against the sandbox rather than by
+reading the code. Nothing changes what any command asks you for.
+
+Three of them change output a script might depend on, all toward what was
+documented or intended: lookup commands now exit 4 on not-found instead of 1,
+`order list` returns newest first, and `status` JSON no longer counts expired
+domains in `expiring_critical`. Check any script that parses those.
+
 ### Fixed
 - Commands that look something up now exit **4** when it does not exist, as
   the exit-code table documents. Nine exited 1 instead — `domain get`,
@@ -409,7 +419,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/patramsey/namecom-cli/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/patramsey/namecom-cli/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/patramsey/namecom-cli/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/patramsey/namecom-cli/compare/v0.3.2...v0.4.0
