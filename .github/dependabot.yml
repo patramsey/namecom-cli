@@ -1,20 +1,41 @@
 version: 2
 
 updates:
-  # Go modules. Monthly and grouped: this repo has 12 direct dependencies
-  # behind 164 total, so ungrouped weekly updates would be a stream of PRs for
-  # transitive modules the CLI never calls. One reviewable PR a month is the
-  # point — see the govulncheck step in ci.yml for the reachability-aware
-  # signal that actually says whether we are exposed.
+  # Go modules. Grouped, so the 164 modules behind 12 direct dependencies
+  # arrive as one reviewable PR rather than a stream of them — see the
+  # govulncheck step in ci.yml for the reachability-aware signal that says
+  # whether we are actually exposed.
+  #
+  # Weekly, and the Core SDK excluded from the group so it always gets a PR of
+  # its own. This was monthly with the SDK grouped in, and both halves hurt:
+  #
+  # - Lag. core-api-go v1.33.6 sat unproposed for two weeks. This SDK ships
+  #   fixes to defects this repo reported, and a monthly check meant finding
+  #   them by reading its release page instead.
+  # - Coupling. The SDK breaks in patch releases (v1.33.4 and v1.33.6 both
+  #   needed code changes), so a group containing it tends to arrive red — as
+  #   #69 did — holding every unrelated, safe bump in the group hostage to it.
+  #
+  # Dependabot allows only one entry per ecosystem and directory, so a separate
+  # weekly schedule for the SDK alone is not expressible; exclude-patterns is
+  # the way to split it out. The cost is at most one grouped PR a week instead
+  # of one a month.
+  #
+  # Do NOT auto-merge the SDK PR. v1.33.6 changed a request body on the wire
+  # (vanity-ns update --ips "") with every test still green; it was found by
+  # capturing request bodies, not by CI. A passing build is not evidence that
+  # nothing a command sends has changed.
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
     open-pull-requests-limit: 5
     groups:
       go-dependencies:
         patterns:
           - "*"
+        exclude-patterns:
+          - "github.com/namedotcom/core-api-go"
         update-types:
           - minor
           - patch
