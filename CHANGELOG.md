@@ -9,6 +9,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-24
+
+A patch release for one bug and a dependency refresh. Nothing changes what any
+command asks you for or what it prints.
+
 ### Fixed
 - `vanity-ns update --ips ""` clears a vanity nameserver's glue records, as
   documented. It sent an empty request body instead, so nothing was cleared
@@ -19,6 +24,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ### Changed
 - The name.com Core SDK is now pinned to v1.34.0. Apart from the fix above,
   nothing changes what any command sends or prints.
+- `golang.org/x/mod`, `x/sync`, `x/term`, and `x/time` each moved up one minor
+  version. They handle the version check, concurrency, terminal detection, and
+  rate limiting; none changes what the CLI sends or prints.
 
 ## [0.4.3] - 2026-09-24
 
@@ -430,7 +438,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/patramsey/namecom-cli/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/patramsey/namecom-cli/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/patramsey/namecom-cli/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/patramsey/namecom-cli/compare/v0.4.0...v0.4.1
