@@ -118,6 +118,38 @@ func TestVanityList_Empty(t *testing.T) {
 	}
 }
 
+// An empty list is `[]`, not `null`, so `jq '.data[]'` iterates nothing
+// rather than failing. The stub is the sandbox's real empty response.
+func TestVanityList_EmptyIsArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"vanityNameservers":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		format output.Format
+		want   string
+	}{
+		{output.FormatJSON, `"data": []`},
+		{output.FormatYAML, "data: []"},
+	} {
+		t.Run(string(tc.format), func(t *testing.T) {
+			cmd := baseCmd(t, srv)
+			cmd.Flags().BoolVar(&listAll, "all", false, "")
+			t.Cleanup(func() { listAll = false })
+			out := cmdutil.Out(cmd)
+			out.Format = tc.format
+			if err := runList(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			if got := out.Writer.(*bytes.Buffer).String(); !strings.Contains(got, tc.want) {
+				t.Errorf("empty list should print %s, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 // ---- get --------------------------------------------------------------------
 
 func TestVanityGet_BadDomain(t *testing.T) {

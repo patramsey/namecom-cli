@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	coreapigo "github.com/namedotcom/core-api-go"
 	"gopkg.in/yaml.v3"
 )
 
@@ -863,4 +865,144 @@ func TestExpiryStyleThresholds(t *testing.T) {
 			t.Errorf("ExpiryDate(900 days) = %q, want a year-scale relative time", got)
 		}
 	})
+}
+
+// ---- YAML / JSON parity -----------------------------------------------------
+
+// YAML used to be encoded straight from the Go value, so yaml.v3 — which
+// ignores `json` tags — named every key after the lowercased Go field
+// (`domainname`, `domainstotal`) and printed omitempty fields as `null`. A
+// script had to know two schemas for one command. Both formats must carry the
+// same keys, in the same order, with the same values.
+func TestYAML_MatchesJSON(t *testing.T) {
+	// Real record shapes from the sandbox: priority is present on the MX
+	// record and omitted on the others, which is where `priority: null` came
+	// from. The TXT answer carries quotes and a semicolon.
+	const recordsJSON = `{"totalCount":3,"from":1,"to":3,"records":[` +
+		`{"answer":"has \"quotes\" and ; semicolon","domainName":"namecom-smoke-37de95.com","fqdn":"q.namecom-smoke-37de95.com.","host":"q","id":13518071,"ttl":300,"type":"TXT"},` +
+		`{"answer":"192.0.2.1","domainName":"namecom-smoke-37de95.com","fqdn":"www.namecom-smoke-37de95.com.","host":"www","id":13518084,"ttl":300,"type":"A"},` +
+		`{"answer":"mx6.name.com","domainName":"namecom-smoke-37de95.com","fqdn":"namecom-smoke-37de95.com.","host":"","id":13518104,"priority":10,"ttl":300,"type":"MX"}]}`
+	var resp coreapigo.ListRecordsResponse
+	if err := json.Unmarshal([]byte(recordsJSON), &resp); err != nil {
+		t.Fatalf("decoding fixture: %v", err)
+	}
+	const urlJSON = `{"domainName":"namecom-smoke-37de95.com","forwardsTo":"https://example.com/m","host":"m","meta":"desc","type":"masked","id":37192}`
+	var fwd coreapigo.URLForwarding
+	if err := json.Unmarshal([]byte(urlJSON), &fwd); err != nil {
+		t.Fatalf("decoding fixture: %v", err)
+	}
+	np := int32(2)
+
+	cases := []struct {
+		name string
+		v    any
+		list bool
+	}{
+		{"single record", resp.Records[0], false},
+		{"list envelope", resp.Records, true},
+		{"url forwarding pointer", &fwd, false},
+		{"strings that look like other types", map[string]any{
+			"yes": "yes", "n": "123", "null": "null", "empty": "", "f": 1.5, "big": int64(1) << 60, "b": false, "z": nil,
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var jb, yb bytes.Buffer
+			jc := &Config{Format: FormatJSON, Writer: &jb}
+			yc := &Config{Format: FormatYAML, Writer: &yb}
+			if tc.list {
+				if err := jc.JSONList(tc.v, &np, 3); err != nil {
+					t.Fatalf("JSONList: %v", err)
+				}
+				if err := yc.YAMLList(tc.v, &np, 3); err != nil {
+					t.Fatalf("YAMLList: %v", err)
+				}
+			} else {
+				if err := jc.JSON(tc.v); err != nil {
+					t.Fatalf("JSON: %v", err)
+				}
+				if err := yc.YAML(tc.v); err != nil {
+					t.Fatalf("YAML: %v", err)
+				}
+			}
+			assertSameDocument(t, jb.Bytes(), yb.Bytes())
+		})
+	}
+}
+
+// Error and Success build their envelopes here rather than taking a caller's
+// value, but they are the same contract and must hold to it.
+func TestYAML_EnvelopesMatchJSON(t *testing.T) {
+	err := errors.New("creating A www: Invalid answer (details: out of range)")
+	for name, emit := range map[string]func(*Config){
+		"error":   func(c *Config) { c.Error(err) },
+		"success": func(c *Config) { c.Success("Deleted record 42") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var jo, yo bytes.Buffer
+			emit(&Config{Format: FormatJSON, Color: ColorNever, Writer: &jo, EWriter: &jo})
+			emit(&Config{Format: FormatYAML, Color: ColorNever, Writer: &yo, EWriter: &yo})
+			assertSameDocument(t, jo.Bytes(), yo.Bytes())
+		})
+	}
+}
+
+// assertSameDocument parses both outputs with the YAML parser — JSON is YAML —
+// and requires the trees to agree on every key, its position, and every
+// scalar's value and resolved type.
+func assertSameDocument(t *testing.T, jsonOut, yamlOut []byte) {
+	t.Helper()
+	var jn, yn yaml.Node
+	if err := yaml.Unmarshal(jsonOut, &jn); err != nil {
+		t.Fatalf("parsing JSON output: %v\n%s", err, jsonOut)
+	}
+	if err := yaml.Unmarshal(yamlOut, &yn); err != nil {
+		t.Fatalf("parsing YAML output: %v\n%s", err, yamlOut)
+	}
+	if msg := nodeDiff(&jn, &yn, "$"); msg != "" {
+		t.Errorf("YAML differs from JSON at %s\njson:\n%s\nyaml:\n%s", msg, jsonOut, yamlOut)
+	}
+}
+
+func nodeDiff(a, b *yaml.Node, path string) string {
+	if a.Kind != b.Kind {
+		return fmt.Sprintf("%s: kind %v vs %v", path, a.Kind, b.Kind)
+	}
+	switch a.Kind {
+	case yaml.ScalarNode:
+		if a.ShortTag() != b.ShortTag() || a.Value != b.Value {
+			return fmt.Sprintf("%s: %s %q vs %s %q", path, a.ShortTag(), a.Value, b.ShortTag(), b.Value)
+		}
+		return ""
+	case yaml.MappingNode:
+		if len(a.Content) != len(b.Content) {
+			return fmt.Sprintf("%s: keys %v vs %v", path, mapKeys(a), mapKeys(b))
+		}
+		for i := 0; i < len(a.Content); i += 2 {
+			if a.Content[i].Value != b.Content[i].Value {
+				return fmt.Sprintf("%s: keys %v vs %v", path, mapKeys(a), mapKeys(b))
+			}
+			if d := nodeDiff(a.Content[i+1], b.Content[i+1], path+"."+a.Content[i].Value); d != "" {
+				return d
+			}
+		}
+		return ""
+	}
+	if len(a.Content) != len(b.Content) {
+		return fmt.Sprintf("%s: %d vs %d children", path, len(a.Content), len(b.Content))
+	}
+	for i := range a.Content {
+		if d := nodeDiff(a.Content[i], b.Content[i], fmt.Sprintf("%s[%d]", path, i)); d != "" {
+			return d
+		}
+	}
+	return ""
+}
+
+func mapKeys(n *yaml.Node) []string {
+	var keys []string
+	for i := 0; i < len(n.Content); i += 2 {
+		keys = append(keys, n.Content[i].Value)
+	}
+	return keys
 }
