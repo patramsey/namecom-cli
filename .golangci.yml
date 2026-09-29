@@ -29,13 +29,6 @@ linters:
         path: "_test\\.go"
         text: "(G104|G115|G304|G306)"
 
-      # spec_transform_test.go shells out to scripts/spec_to_30.py with paths it
-      # constructed itself, to assert the preprocessor's behavior. The subprocess
-      # is the thing under test.
-      - linters: [gosec]
-        path: "internal/api/gen/spec_transform_test\\.go"
-        text: "G204"
-
 # golangci-lint truncates by default: max-issues-per-linter 50, and
 # max-same-issues 3 per distinct message. Enabling gosec surfaced 15 findings
 # under those defaults and 21 without them — the six hidden ones were real

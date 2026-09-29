@@ -8,8 +8,6 @@
 
 - [ ] `go build ./... && go vet ./... && make lint` clean
 - [ ] `go test -race -count=1 ./...` passing
-- [ ] `make verify-generate` clean, if this touches `namecom.api.yaml`,
-      `scripts/spec_to_30.py`, or the `oapi-codegen` version
 - [ ] `CHANGELOG.md` updated under `[Unreleased]`, if this is user-facing
 
 ## Mutating commands
