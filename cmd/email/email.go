@@ -161,11 +161,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	stop := out.Spin("Fetching email forwarding…")
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
+	stop := out.Spin("Fetching email forwarding…")
 	entry, err := client.SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
 		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: args[1]})
 	stop()

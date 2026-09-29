@@ -16,6 +16,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `sandbox: true`, so the new production token was sent to the sandbox API and
   rejected; switching a profile to `token_cmd` kept the plaintext `token`,
   which still took precedence. Unknown keys and comments are still preserved.
+- `domain contacts get` and `domain requirements` no longer crash when the API
+  leaves out the contacts, TLD info, or requirements object. `contacts get`
+  prints the empty result; `requirements` shows dashes for capabilities it was
+  not given, and `-q` prints nothing.
+- `email get`, `url get`, `vanity-ns get`, and `dnssec get` check the domain
+  argument before starting the spinner. An invalid domain left the spinner
+  running while the error was printed.
 
 ## [0.4.4] - 2026-09-24
 

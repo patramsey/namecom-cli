@@ -1505,6 +1505,25 @@ func TestContactsGet_SurfacesVerificationStatus(t *testing.T) {
 	}
 }
 
+// Contacts is a pointer with omitempty in the SDK. The table path dereferenced
+// it for the verification warning, so a GetDomain response without "contacts"
+// panicked. It must render as empty instead.
+func TestContactsGet_OmittedContactsDoesNotPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForContactsGet(t, srv)
+	if err := runContactsGet(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runContactsGet: %v", err)
+	}
+	if got := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); strings.Contains(strings.ToLower(got), "verif") {
+		t.Errorf("no contacts means nothing to warn about, got:\n%s", got)
+	}
+}
+
 // claimsServer answers the full register flow. claimsBody is the
 // CheckDomainClaims response; the create body is recorded for assertions.
 func claimsServer(t *testing.T, claimsBody string, gotCreate *map[string]any, claimsCalled *bool) *httptest.Server {

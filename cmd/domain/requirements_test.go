@@ -205,6 +205,44 @@ func TestDomainRequirements_QuietWithNoFieldsPrintsNothing(t *testing.T) {
 	}
 }
 
+// tldInfo and requirements are both pointers in the SDK. A response that leaves
+// either one out used to panic: -q read Requirements.Fields and the table read
+// TldInfo.* without a nil check.
+func TestDomainRequirements_OmittedObjectsDoNotPanic(t *testing.T) {
+	t.Run("quiet", func(t *testing.T) {
+		srv, _ := jsonServer(t, http.StatusOK, `{"tldInfo":{"allowedRegistrationYears":[1]}}`)
+		var stdout bytes.Buffer
+		out := tableOut(&stdout)
+		out.QuietMode = true
+		cmd := cmdWithOutput(t, srv, out)
+
+		if err := runRequirements(cmd, []string{"com"}); err != nil {
+			t.Fatalf("runRequirements: %v", err)
+		}
+		if strings.TrimSpace(stdout.String()) != "" {
+			t.Errorf("quiet output should be empty without requirements, got: %q", stdout.String())
+		}
+	})
+	t.Run("table", func(t *testing.T) {
+		srv, _ := jsonServer(t, http.StatusOK, `{"requirements":{}}`)
+		var stdout bytes.Buffer
+		cmd := cmdWithOutput(t, srv, tableOut(&stdout))
+
+		if err := runRequirements(cmd, []string{"com"}); err != nil {
+			t.Fatalf("runRequirements: %v", err)
+		}
+		got := stdout.String()
+		if !strings.Contains(got, "DNSSEC") {
+			t.Errorf("table should still render its rows, got:\n%s", got)
+		}
+		// Missing capabilities are unknown, not unsupported: a "no" badge would
+		// be a claim the API never made.
+		if strings.Contains(got, "no") || strings.Contains(got, "yes") {
+			t.Errorf("an omitted tldInfo must not render yes/no badges, got:\n%s", got)
+		}
+	})
+}
+
 func TestDomainRequirements_StructuredOutput(t *testing.T) {
 	for _, format := range []output.Format{output.FormatJSON, output.FormatYAML} {
 		t.Run(string(format), func(t *testing.T) {

@@ -186,11 +186,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	stop := out.Spin("Fetching URL forwarding…")
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
+	stop := out.Spin("Fetching URL forwarding…")
 	entry, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()

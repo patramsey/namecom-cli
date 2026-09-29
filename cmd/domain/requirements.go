@@ -65,7 +65,7 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		// type. The useful scriptable answer is which fields the registry
 		// requires, one per line, so `--tld-requirement` can be built from it.
 		var names []string
-		if result.Requirements.Fields != nil {
+		if result.Requirements != nil {
 			for name := range result.Requirements.Fields {
 				names = append(names, name)
 			}
@@ -81,14 +81,20 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		info := result.TldInfo
+		info, badge := result.TldInfo, out.BoolBadge
+		if info == nil {
+			// An omitted tldInfo means the capabilities are unknown, not
+			// unsupported, so render dashes rather than a column of "no".
+			info = &coreapigo.ResellerTldInfo{}
+			badge = func(bool) string { return "—" }
+		}
 		out.Title(tld)
 		out.KVTable([][]string{
 			{"Registration years", joinYears(info.AllowedRegistrationYears)},
-			{"DNSSEC", out.BoolBadge(info.SupportsDnssec)},
-			{"WHOIS privacy", out.BoolBadge(info.SupportsPrivacy)},
-			{"Transfer lock", out.BoolBadge(info.SupportsTransferLock)},
-			{"Premium domains", out.BoolBadge(info.SupportsPremium)},
+			{"DNSSEC", badge(info.SupportsDnssec)},
+			{"WHOIS privacy", badge(info.SupportsPrivacy)},
+			{"Transfer lock", badge(info.SupportsTransferLock)},
+			{"Premium domains", badge(info.SupportsPremium)},
 		})
 		// The requirements themselves are nested and conditional; a table would
 		// misrepresent them, so point at the structured view rather than
