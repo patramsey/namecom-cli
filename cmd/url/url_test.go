@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -272,6 +274,62 @@ func TestURLCreate_BadDomainArg(t *testing.T) {
 	err := runCreate(cmd, []string{"nodot"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot, got nil")
+	}
+}
+
+// The API treats host "" and "@" as different hosts. A forwarding on "" replaces
+// every apex A record and adds a "*" wildcard, and deleting it removes every
+// apex A record — including ones the user created. `dns create` already refused
+// an empty --host; `url create` sent it. A whitespace-only host is the same
+// mistake and gets the same answer.
+func TestURLCreate_EmptyHostIsUsageError(t *testing.T) {
+	for _, host := range []string{"", "  "} {
+		t.Run(strconv.Quote(host), func(t *testing.T) {
+			srv := neverCalledServer(t)
+			cmd := cmdForURLCreate(t, srv)
+			if err := cmd.ParseFlags([]string{"--to", "https://example.com", "--host", host}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+
+			err := runCreate(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatalf("--host %q was accepted; it must be rejected before anything is sent", host)
+			}
+			if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+				t.Errorf("--host %q error is not a UsageError, so it exits 1 instead of 2: %v", host, err)
+			}
+			if !strings.Contains(err.Error(), "use @") {
+				t.Errorf("error should point at @ for the apex, got: %v", err)
+			}
+		})
+	}
+}
+
+// An unset --host still means the apex, spelled "@" on the wire.
+func TestURLCreate_DefaultHostIsApex(t *testing.T) {
+	var sentBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":7,"domainName":"example.com","host":"@","forwardsTo":"https://example.com","type":"redirect"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForURLCreate(t, srv)
+	if err := cmd.ParseFlags([]string{"--to", "https://example.com"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	var sent struct {
+		Host *string `json:"host"`
+	}
+	if err := json.Unmarshal(sentBody, &sent); err != nil {
+		t.Fatalf("request body was not JSON: %v (%s)", err, sentBody)
+	}
+	if sent.Host == nil || *sent.Host != "@" {
+		t.Errorf("host sent with no --host = %v, want \"@\" (%s)", sent.Host, sentBody)
 	}
 }
 

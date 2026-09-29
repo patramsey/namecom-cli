@@ -40,6 +40,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   list`, `vanity-ns list`, `email list`, and `dns list` printed `"data": null`,
   so `jq '.data[]'` failed with "Cannot iterate over null" on an account or
   zone with nothing in it.
+- `url create --host ""` is now a usage error (exit 2) pointing at `@`, as it
+  already was for `dns create`. It sent an empty host, which the API treats
+  as distinct from `@`: the forwarding replaced every apex A record, and
+  deleting it removed them all. A whitespace-only `--host` is refused the same
+  way on both commands. The `--host` help now notes that a forwarding on a
+  subdomain replaces that host's existing A records.
 
 ## [0.4.5] - 2026-09-28
 

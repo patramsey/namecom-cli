@@ -87,7 +87,7 @@ var deleteCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
 
-	createCmd.Flags().StringVar(&createHost, "host", "@", "subdomain host (@ for apex)")
+	createCmd.Flags().StringVar(&createHost, "host", "@", "subdomain host (@ for apex); a forwarding on a subdomain replaces its existing A records")
 	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL")
 	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: redirect, 302, masked")
 	createCmd.Flags().StringVar(&createTitle, "title", "", "page title (masked only)")
@@ -231,6 +231,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
+		return err
+	}
+
+	// The API treats host "" as distinct from "@": a forwarding on "" replaces
+	// every apex A record and adds a "*" wildcard, and deleting it removes
+	// every apex A record. Refuse it the way `dns create` does, before the
+	// form asks for anything else.
+	if err := cmdutil.ValidDNSHost(createHost); err != nil {
 		return err
 	}
 
