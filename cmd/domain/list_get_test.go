@@ -7,6 +7,7 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -514,5 +515,49 @@ func TestDomainList_SequentialFallbackStuckNextPageTerminates(t *testing.T) {
 	defer mu.Unlock()
 	if requests != 2 {
 		t.Errorf("made %d requests, want 2 (page 1 -> 2, then the page stops advancing)", requests)
+	}
+}
+
+// The API treats expireDateEnd as exclusive — found against the sandbox, #150
+// — so --expiring-before, documented as "on or before", must send the next day.
+// expireDateStart is inclusive and goes through unchanged.
+func TestDomainList_ExpiringBeforeIsInclusive(t *testing.T) {
+	cases := []struct {
+		args      []string
+		wantStart string
+		wantEnd   string
+	}{
+		{[]string{"--expiring-before", "2028-09-29"}, "", "2028-09-30"},
+		{[]string{"--expiring-after", "2028-09-29", "--expiring-before", "2028-09-29"}, "2028-09-29", "2028-09-30"},
+		{[]string{"--expiring-before", "2028-12-31"}, "", "2029-01-01"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			srv, requests := domainServer(t, [][]string{{"acme.io"}})
+			var stdout, stderr bytes.Buffer
+			cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+			listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+			if err := cmd.ParseFlags(tc.args); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			if err := runList(cmd, nil); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			reqs := requests()
+			if len(reqs) == 0 {
+				t.Fatal("no request sent")
+			}
+			u, err := url.Parse(reqs[0])
+			if err != nil {
+				t.Fatalf("parse %q: %v", reqs[0], err)
+			}
+			q := u.Query()
+			if got := q.Get("expireDateStart"); got != tc.wantStart {
+				t.Errorf("expireDateStart = %q, want %q", got, tc.wantStart)
+			}
+			if got := q.Get("expireDateEnd"); got != tc.wantEnd {
+				t.Errorf("expireDateEnd = %q, want %q", got, tc.wantEnd)
+			}
+		})
 	}
 }
