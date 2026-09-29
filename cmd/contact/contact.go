@@ -11,6 +11,7 @@
 package contact
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -205,16 +206,21 @@ func runResend(cmd *cobra.Command, args []string) error {
 	// registrant — an irreversible, externally visible side effect and exactly
 	// what someone reaches for --dry-run to avoid. It previously ignored the
 	// flag and sent the email anyway.
-	if cmdutil.IsDryRun(cmd) {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/contacts/verify/%d:resend", id), nil)
-		return nil
-	}
-
-	stop := out.Spin("Resending verification email…")
-	result, err := client.SDK().ContactVerification.ResendContactVerificationEmail(cmd.Context(),
-		&coreapigo.ResendContactVerificationEmailRequest{VerificationID: id, Body: &coreapigo.EmptyObject{}})
-	stop()
-	if err != nil {
+	//
+	// NoBody: the {} sent is the SDK's EmptyObject placeholder
+	// (namedotcom/core-api-go#8), not a body the user supplies.
+	var result *coreapigo.ContactVerificationResendResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/contacts/verify/%d:resend", id),
+		Spin:   "Resending verification email…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		var err error
+		result, err = client.SDK().ContactVerification.ResendContactVerificationEmail(ctx,
+			&coreapigo.ResendContactVerificationEmailRequest{VerificationID: id, Body: &coreapigo.EmptyObject{}})
+		return err
+	})
+	if err != nil || !sent {
 		return err
 	}
 
@@ -261,15 +267,17 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	// Same omission as resend: this marks a contact verified through a
 	// reseller-only endpoint and had no --dry-run branch.
-	if cmdutil.IsDryRun(cmd) {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/contacts/verify/%d", id), nil)
-		return nil
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/contacts/verify/%d", id),
+		Spin:   "Marking contact verified…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		return client.SDK().ContactVerification.VerifyContact(ctx,
+			&coreapigo.VerifyContactRequest{VerificationID: id, Body: &coreapigo.EmptyObject{}})
+	})
+	if !sent {
+		return err
 	}
-
-	stop := out.Spin("Marking contact verified…")
-	err = client.SDK().ContactVerification.VerifyContact(cmd.Context(),
-		&coreapigo.VerifyContactRequest{VerificationID: id, Body: &coreapigo.EmptyObject{}})
-	stop()
 	if err != nil {
 		// Convert before classifying: AsRestricted inspects *api.APIError to
 		// recognise the 403 this reseller-only endpoint returns.

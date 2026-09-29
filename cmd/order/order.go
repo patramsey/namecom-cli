@@ -2,6 +2,7 @@
 package order
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,10 +14,6 @@ import (
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
-
-func confirmRefund(out *output.Config, yes bool, orderID int32, itemIDs []int32) (bool, error) {
-	return cmdutil.Confirm(out, yes, fmt.Sprintf("Refund order %d, items %v? This cannot be undone.", orderID, itemIDs))
-}
 
 // Cmd is the `namecom order` parent command.
 var Cmd = &cobra.Command{
@@ -235,9 +232,6 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runRefund(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
-
 	itemIDs := make([]int, 0, len(refundItemIDs))
 	for _, id := range refundItemIDs {
 		itemIDs = append(itemIDs, int(id))
@@ -248,30 +242,27 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		OrderItemIDs: itemIDs,
 	}
 
-	if dryRun {
-		// Previously printed a hand-rolled "orderId=… itemIds=…" line beside a
-		// nil body, so the preview was a paraphrase of the request rather than
-		// the request. Nothing here is secret, and a refund is worth seeing
-		// exactly as it will be sent.
-		out.DryRun("POST", "/core/v1/refund", body)
-		return nil
-	}
-
-	ok, err := confirmRefund(out, yes, refundOrderID, refundItemIDs)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
+	// The preview is the body itself. It previously printed a hand-rolled
+	// "orderId=… itemIds=…" line beside a nil body, so the preview was a
+	// paraphrase of the request rather than the request. Nothing here is
+	// secret, and a refund is worth seeing exactly as it will be sent.
+	//
 	// The root --idempotency-key (or an auto-generated one) is applied by the
 	// shared transport, not per call; no per-command flag is needed or wanted
 	// here.
-	result, err := client.SDK().Refunds.ProcessRefund(cmd.Context(), &body)
-	if err != nil {
+	var result *coreapigo.RefundResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.RefundRequest]{
+		Method: "POST",
+		Path:   "/core/v1/refund",
+		Body:   body,
+		Prompt: fmt.Sprintf("Refund order %d, items %v? This cannot be undone.", body.OrderID, body.OrderItemIDs),
+	}, func(ctx context.Context, body coreapigo.RefundRequest) error {
+		var err error
+		result, err = client.SDK().Refunds.ProcessRefund(ctx, &body)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	// The call succeeding says nothing about each item: the API returns 200
