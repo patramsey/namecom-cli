@@ -9,15 +9,56 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
-### Fixed
-- A 5xx whose body explains the failure no longer gets the hint "try again
-  shortly". The API answers 500 for some validation errors — `vanity-ns
-  create` with a reserved IP, for one — so the hint now reads "name.com
-  returned a server error; if it persists, the request itself may be invalid".
-  An empty or non-JSON 5xx body, or a bare "Server error", keeps the old
-  wording. The error message and exit code are unchanged; only the `hint`
-  text (and the `hint` field of the JSON/YAML error envelope) differs.
+## [0.4.7] - 2026-09-29
 
+Eleven bug fixes and two changes in how write commands behave. Most came from
+a second pass over the sandbox smoke-test findings and from live checks
+against the sandbox API.
+
+Two changes affect scripts directly:
+
+- **`domain set-ns` and `domain contacts set` now ask for confirmation.**
+  Scripts must pass `--yes`.
+- **`--dry-run` prints a JSON document whenever the output format is JSON**,
+  including the default when stdout is piped. Pass `-o table` for the old
+  `METHOD /path` text.
+
+Other output a script might see change, all toward what was documented or
+intended:
+
+- `order list --until` and `domain list --expiring-before` now include the date
+  they name.
+- `namecom api -o json` writes only the error envelope to stderr, with the
+  response body in `error.details`. An unknown HTTP method exits **2**.
+- `dns create --type CAA` (and a CAA record in `dns import`) exits **2**.
+- `config show` prints the endpoint with `https://`, and `config
+  list-profiles` marks the active profile rather than the `default:` key.
+- `dns export` of an empty zone prints `[]` instead of `null`.
+- The register confirmation prompt and the hint on some 5xx errors are
+  worded differently.
+
+### Fixed
+- `order list --until DATE` now includes orders placed on DATE, as its help
+  says. The API treats `createDateEnd` as exclusive — midnight at the start of
+  the day — so the command left that day out, and `--since D --until D`
+  returned nothing. The CLI now sends the following day as `createDateEnd`;
+  a script that worked around this by passing the next day will now get one
+  extra day of orders.
+- `domain list --expiring-before DATE` now includes domains that expire on
+  DATE, as its help says. The API treats the end of the range as exclusive, so
+  a domain expiring on the named day was left out; the CLI now sends the day
+  after. A script that passed the next day to work around this will see one
+  more day of domains.
+- `dns create` offered `CAA` in its `--type` help, its "--type is required"
+  message and its interactive type picker, but the API rejects CAA on create.
+  `dns create --type CAA`, and a CAA record in a `dns import` file, are now a
+  usage error (exit 2) saying the API does not accept CAA records, before any
+  request is sent. `dns list --type CAA` is unchanged.
+- `order refund` drops repeated `--item-ids` before sending, keeping the
+  first-seen order, and warns on stderr naming the IDs it dropped. It sent
+  them as given, so `--item-ids 9,9` refunded item 9, then reported the second
+  copy as failed ("already refunded") and exited 1. The `--dry-run` preview
+  and the confirmation prompt show the deduplicated list.
 - `domain register` no longer labels a registry premium price "/yr". The
   prompt reads e.g. `at $1000.00 (premium; renews at $24.99/yr)`, since the
   premium is charged on the purchase and the name renews at its own price. For
@@ -25,15 +66,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   API does not guarantee for those purchase types, and notes when a
   non-default `--years` may not apply. The prompt text changed, so a script
   that parses the non-interactive "pass --yes to confirm" error will see the
-  new wording. (#132)
-- `dns export` printed `null` for a zone with no records, in both JSON and
-  YAML. It now prints `[]`, like the list commands. `dns import` already
-  treated both as an empty file, so older exports still import as a no-op.
-- `dns create` offered `CAA` in its `--type` help, its "--type is required"
-  message and its interactive type picker, but the API rejects CAA on create.
-  `dns create --type CAA`, and a CAA record in a `dns import` file, are now a
-  usage error (exit 2) saying the API does not accept CAA records, before any
-  request is sent. `dns list --type CAA` is unchanged.
+  new wording.
+- `namecom api -o json` (and `-o yaml`) writes only the error envelope to
+  stderr on a non-2xx response. It also wrote `HTTP <status>` and the raw
+  response body ahead of the envelope, so stderr was not one parseable
+  document. The body now appears in the envelope as `error.details` — parsed
+  if it is JSON, as a string if not. Table mode is unchanged, as are exit codes.
+- `namecom api` rejects an unknown HTTP method as a usage error (exit **2**)
+  naming the accepted ones — GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, in
+  any case — before sending anything. `api FOO /x` was sent, drew a 403 from
+  the server, and exited 3 with advice to run `auth login`.
 - `config list-profiles` marks the profile API commands would use, resolved
   the same way as `config show` and `auth status`: `--profile`, then
   `NAMECOM_PROFILE`, then the `default:` key, then the lone profile. It
@@ -46,11 +88,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   so the two commands showed the same value in different forms. The
   `endpoint` field in `-o json` and `-o yaml` changes accordingly; a script
   that compares it to a bare host needs updating.
-- `order refund` drops repeated `--item-ids` before sending, keeping the
-  first-seen order, and warns on stderr naming the IDs it dropped. It sent
-  them as given, so `--item-ids 9,9` refunded item 9, then reported the second
-  copy as failed ("already refunded") and exited 1. The `--dry-run` preview
-  and the confirmation prompt show the deduplicated list.
+- `dns export` printed `null` for a zone with no records, in both JSON and
+  YAML. It now prints `[]`, like the list commands. `dns import` already
+  treated both as an empty file, so older exports still import as a no-op.
+- A 5xx whose body explains the failure no longer gets the hint "try again
+  shortly". The API answers 500 for some validation errors — `vanity-ns
+  create` with a reserved IP, for one — so the hint now reads "name.com
+  returned a server error; if it persists, the request itself may be invalid".
+  An empty or non-JSON 5xx body, or a bare "Server error", keeps the old
+  wording. The error message and exit code are unchanged; only the `hint`
+  text (and the `hint` field of the JSON/YAML error envelope) differs.
+
 ### Changed
 - `domain set-ns` and `domain contacts set` now ask for confirmation, like
   other destructive writes. **Scripts that run either command must now pass
@@ -59,26 +107,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   contact roles being replaced — and warns when the registrant is among them,
   since that can trigger ICANN verification or a transfer lock. `--dry-run`
   still never prompts.
-- `order list --until DATE` now includes orders placed on DATE, as its help
-  says. The API treats `createDateEnd` as exclusive — midnight at the start of
-  the day — so the command left that day out, and `--since D --until D`
-  returned nothing. The CLI now sends the following day as `createDateEnd`;
-  a script that worked around this by passing the next day will now get one
-  extra day of orders.
-
-### Documentation
-- `order list` and `order get` help, and the `--since`/`--until` flag help, now
-  note that name.com's order timestamps currently run several hours behind UTC
-  despite the `Z` suffix (about 6h, most likely US Mountain time), and that the
-  server-side date filters use the same clock, so orders placed near midnight
-  UTC can land on the previous day. This is an API issue; the CLI prints the
-  timestamps as the API returns them and does not shift them (#134).
-- `domain list --expiring-before DATE` now includes domains that expire on
-  DATE, as its help says. The API treats the end of the range as exclusive, so
-  a domain expiring on the named day was left out; the CLI now sends the day
-  after. A script that passed the next day to work around this will see one
-  more day of domains.
-### Changed
 - `--dry-run` prints a JSON or YAML document in those output modes:
   `{"dry_run": true, "method": "POST", "path": "/core/v1/…", "body": {…}}`,
   with `body` left out for a request that has none. `dns import --dry-run`
@@ -88,15 +116,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the document, or pass `-o table` to keep the text form.** Table mode is
   unchanged, except that `dns import --dry-run` now indents each body like
   every other command's preview.
-- `namecom api -o json` (and `-o yaml`) writes only the error envelope to
-  stderr on a non-2xx response. It also wrote `HTTP <status>` and the raw
-  response body ahead of the envelope, so stderr was not one parseable
-  document. The body now appears in the envelope as `error.details` — parsed
-  if it is JSON, as a string if not. Table mode is unchanged, as are exit codes.
-- `namecom api` rejects an unknown HTTP method as a usage error (exit **2**)
-  naming the accepted ones — GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, in
-  any case — before sending anything. `api FOO /x` was sent, drew a 403 from
-  the server, and exited 3 with advice to run `auth login`.
+
+### Documentation
+- `order list` and `order get` help, and the `--since`/`--until` flag help, now
+  note that name.com's order timestamps currently run several hours behind UTC
+  despite the `Z` suffix (about 6h, most likely US Mountain time), and that the
+  server-side date filters use the same clock, so orders placed near midnight
+  UTC can land on the previous day. This is an API issue; the CLI prints the
+  timestamps as the API returns them and does not shift them (#134).
 
 ## [0.4.6] - 2026-09-29
 
@@ -727,7 +754,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/patramsey/namecom-cli/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/patramsey/namecom-cli/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/patramsey/namecom-cli/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/patramsey/namecom-cli/compare/v0.4.3...v0.4.4
