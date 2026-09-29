@@ -57,6 +57,9 @@ func init() {
 // it wrote every profile's credentials straight into any pipe, redirect, or CI
 // log. This type exposes only what the table view already showed, plus booleans
 // saying how the credential is supplied.
+//
+// Default marks the active profile, the one API commands would use, not merely
+// the file's `default:` key; the name is kept for existing scripts.
 type profileView struct {
 	Name         string `json:"name" yaml:"name"`
 	Username     string `json:"username" yaml:"username"`
@@ -66,7 +69,7 @@ type profileView struct {
 	UsesTokenCmd bool   `json:"usesTokenCmd" yaml:"usesTokenCmd"`
 }
 
-func redactProfiles(cfgFile *config.File, names []string) []profileView {
+func redactProfiles(cfgFile *config.File, names []string, active string) []profileView {
 	views := make([]profileView, 0, len(names))
 	for _, name := range names {
 		p := cfgFile.Profiles[name]
@@ -74,7 +77,7 @@ func redactProfiles(cfgFile *config.File, names []string) []profileView {
 			Name:         name,
 			Username:     p.Username,
 			Endpoint:     endpointFor(p.Sandbox),
-			Default:      name == cfgFile.Default,
+			Default:      name == active,
 			HasToken:     p.Token != "",
 			UsesTokenCmd: p.TokenCmd != "",
 		})
@@ -124,11 +127,18 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 	}
 	sort.Strings(names)
 
+	// Mark the profile API commands would use, resolved as config show and
+	// auth status resolve it: --profile, NAMECOM_PROFILE, the `default:` key,
+	// then the implied default. Comparing against the `default:` key alone
+	// marked a different profile than the one in use when NAMECOM_PROFILE was
+	// set, and none at all for a lone profile with no key.
+	active := config.ActiveProfile(cfgFile, cmdutil.Overrides(cmd).Profile)
+
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(redactProfiles(cfgFile, names))
+		return out.JSON(redactProfiles(cfgFile, names, active))
 	case output.FormatYAML:
-		return out.YAML(redactProfiles(cfgFile, names))
+		return out.YAML(redactProfiles(cfgFile, names, active))
 	default:
 		rows := make([][]string, 0, len(names))
 		for _, name := range names {
@@ -138,7 +148,7 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 				endpoint = "api.dev.name.com"
 			}
 			def := ""
-			if name == cfgFile.Default {
+			if name == active {
 				def = out.BoolBadge(true)
 			}
 			rows = append(rows, []string{name, p.Username, endpoint, def})

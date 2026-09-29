@@ -305,3 +305,59 @@ func assertDescribesSandy(t *testing.T, got string) {
 		t.Errorf("reported the production endpoint for a sandbox profile: %s", got)
 	}
 }
+
+// TestListProfiles_MarksActiveProfile pins #129: list-profiles marked the
+// profile named by the file's `default:` key, while every API command, `config
+// show` and `auth status` use config.ActiveProfile. With NAMECOM_PROFILE set it
+// marked a different profile than the one in use, and with one profile and no
+// `default:` key it marked none.
+func TestListProfiles_MarksActiveProfile(t *testing.T) {
+	two := "default: prod\nprofiles:\n  prod:\n    username: alice\n    token: x\n" +
+		"  staging:\n    username: bob\n    token: y\n"
+	cases := []struct {
+		name     string
+		contents string
+		env      string
+		flag     string
+		want     string
+	}{
+		{name: "explicit default key", contents: two, want: "prod"},
+		{name: "NAMECOM_PROFILE beats default key", contents: two, env: "staging", want: "staging"},
+		{name: "--profile beats NAMECOM_PROFILE", contents: two, env: "prod", flag: "staging", want: "staging"},
+		{name: "lone profile, no default key", contents: "profiles:\n  work:\n    username: w\n    token: x\n", want: "work"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.contents), 0o600); err != nil {
+				t.Fatalf("writing config: %v", err)
+			}
+			t.Setenv("NAMECOM_CONFIG", path)
+			t.Setenv("NAMECOM_PROFILE", tc.env)
+
+			var buf bytes.Buffer
+			out := &output.Config{Format: output.FormatJSON, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+			cmd := &cobra.Command{}
+			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+			ctx = context.WithValue(ctx, cmdutil.KeyOverrides, config.Overrides{Profile: tc.flag})
+			cmd.SetContext(ctx)
+			if err := runListProfiles(cmd, nil); err != nil {
+				t.Fatalf("runListProfiles: %v", err)
+			}
+
+			var views []profileView
+			if err := json.Unmarshal(buf.Bytes(), &views); err != nil {
+				t.Fatalf("parsing output: %v\n%s", err, buf.String())
+			}
+			var marked []string
+			for _, v := range views {
+				if v.Default {
+					marked = append(marked, v.Name)
+				}
+			}
+			if len(marked) != 1 || marked[0] != tc.want {
+				t.Errorf("marked %v, want exactly [%s]", marked, tc.want)
+			}
+		})
+	}
+}
