@@ -64,6 +64,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   on/off value other than `on` or `off` in `domain lock|autorenew|privacy`. A
   script that treated exit 1 from these as a usage mistake needs to check for
   2. The messages are unchanged.
+- `namecom api` now honours `--dry-run`. It ignored the flag and sent the
+  request, so `api POST /core/v1/domains --data … --dry-run` would register
+  the domain. Every method other than GET and HEAD now prints the method, path
+  with its query string, and body (indented if it is JSON, quoted if not)
+  instead of sending it; GET and HEAD still run, as the flag's help says.
 
 ## [0.4.5] - 2026-09-28
 
