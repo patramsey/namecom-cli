@@ -51,35 +51,49 @@ func TestRequestShape_Domain(t *testing.T) {
 		}, build, runSetNS, []string{"example.com"}, domainStub)
 	})
 
-	// domain update restates all three fields so an unset flag preserves the
-	// current value, and this pins that all three actually reach the wire.
+	// domain update sends only the fields whose flags were passed (#116).
 	//
-	// The SDK could not express that until v1.33.5: UpdateDomainRequestBody was
-	// an exclusive union whose MarshalJSON returned on the first non-nil
-	// variant, so building it that way sent only autorenewEnabled and silently
-	// dropped locked and privacyEnabled — on a command where "locked" is the
-	// transfer lock. The workaround was a raw map through
-	// option.WithBodyProperties; v1.33.5 removed the union (upstream #6) and the
-	// map is gone.
+	// It used to read the domain and restate all three fields, so every update
+	// carried the current `locked` — and during the 60-day transfer lock after
+	// registration or transfer the API rejects any request containing `locked`,
+	// even an unchanged true. `domain update --autorenew=false` failed with
+	// "Domain can not be unlocked until …" although --lock was never passed.
 	//
-	// The expected body below did not change across either the workaround or its
-	// removal, which is the assurance worth having: this test is what proves the
-	// typed request now sends what the map used to. See
+	// UpdateDomain is a PATCH that takes "one, or any combination of the
+	// parameters", and since SDK v1.33.5 each field is a flat *bool with
+	// omitempty, so a field left nil is left alone. domainStub has locked and
+	// autorenewEnabled true: a body restating current state would show them.
+	//
+	// Before v1.33.5 the three could not be sent together at all — the SDK
+	// modelled them as an exclusive union that kept only the first — so the
+	// combinations also pin that every passed flag reaches the wire. See
 	// docs/upstream/core-api-go-updatedomain-union.md.
-	t.Run("update sends all three fields", func(t *testing.T) {
-		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
-			cmd := cmdForUpdate(t, srv)
-			if err := cmd.ParseFlags([]string{"--lock=false"}); err != nil {
-				t.Fatalf("ParseFlags: %v", err)
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		body  string
+	}{
+		{"update --autorenew alone", []string{"--autorenew=false"}, `{"autorenewEnabled":false}`},
+		{"update --privacy alone", []string{"--privacy=true"}, `{"privacyEnabled":true}`},
+		{"update --lock alone", []string{"--lock=false"}, `{"locked":false}`},
+		{"update --autorenew --privacy", []string{"--autorenew=true", "--privacy=false"},
+			`{"autorenewEnabled":true,"privacyEnabled":false}`},
+		{"update all three", []string{"--autorenew=false", "--privacy=true", "--lock=true"},
+			`{"autorenewEnabled":false,"privacyEnabled":true,"locked":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForUpdate(t, srv)
+				if err := cmd.ParseFlags(tc.flags); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
 			}
-			return cmd
-		}
-		drifttest.AssertRequest(t, drifttest.Request{
-			Method: "PATCH",
-			Path:   "/core/v1/domains/example.com",
-			Body:   `{"autorenewEnabled":true,"locked":false,"privacyEnabled":false}`,
-		}, build, runUpdate, []string{"example.com"}, domainStub)
-	})
+			drifttest.AssertRequest(t, drifttest.Request{
+				Method: "PATCH", Path: "/core/v1/domains/example.com", Body: tc.body,
+			}, build, runUpdate, []string{"example.com"}, domainStub)
+		})
+	}
 
 	t.Run("register", func(t *testing.T) {
 		// register checks availability and price before purchasing, and
