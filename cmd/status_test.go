@@ -7,6 +7,7 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // statusServer answers the calls runStatus makes. balanceStatus lets a test
@@ -102,6 +104,36 @@ func TestStatus_OmitsBalanceWhenUnavailable(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "balance") &&
 		!strings.Contains(strings.ToLower(got), "unavailable") {
 		t.Errorf("if balance is mentioned at all it must be marked unavailable:\n%s", got)
+	}
+}
+
+// TestStatus_YAMLKeysMatchJSON pins #111 for the one struct this package
+// defines itself. Its json tags are snake_case, so YAML encoded from the Go
+// value said `domainstotal` where JSON said `domains_total`, and the omitted
+// balance came out as `balance: null`.
+func TestStatus_YAMLKeysMatchJSON(t *testing.T) {
+	srv := statusServer(t, http.StatusForbidden, `{"message":"Permission Denied"}`)
+	keys := map[output.Format][]string{}
+	for _, f := range []output.Format{output.FormatJSON, output.FormatYAML} {
+		cmd, buf := statusCmdFor(t, srv)
+		cmdutil.Out(cmd).Format = f
+		if err := runStatus(cmd, nil); err != nil {
+			t.Fatalf("runStatus(%s): %v", f, err)
+		}
+		var doc yaml.Node // JSON is YAML, so one parser reads both
+		if err := yaml.Unmarshal(buf.Bytes(), &doc); err != nil {
+			t.Fatalf("parsing %s output: %v\n%s", f, err, buf.String())
+		}
+		m := doc.Content[0]
+		for i := 0; i < len(m.Content); i += 2 {
+			keys[f] = append(keys[f], m.Content[i].Value)
+		}
+	}
+	if !slices.Equal(keys[output.FormatJSON], keys[output.FormatYAML]) {
+		t.Errorf("YAML keys differ from JSON keys\njson: %v\nyaml: %v", keys[output.FormatJSON], keys[output.FormatYAML])
+	}
+	if !slices.Contains(keys[output.FormatYAML], "domains_total") || slices.Contains(keys[output.FormatYAML], "balance") {
+		t.Errorf("YAML should use json tag names and omit the unavailable balance, got %v", keys[output.FormatYAML])
 	}
 }
 

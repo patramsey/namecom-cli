@@ -10,6 +10,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -183,8 +184,88 @@ func (c *Config) JSON(v any) error {
 }
 
 // YAML encodes v as YAML to the configured writer.
+//
+// v is converted through its JSON encoding rather than handed to yaml.v3
+// directly. yaml.v3 ignores `json` tags, and the SDK types carry no `yaml`
+// ones, so every key came out as the lowercased Go field name (`domainname`
+// for `domainName`, `domainstotal` for `domains_total`) and every omitempty
+// field as `null`. Going through JSON makes the json tags — and any
+// MarshalJSON — decide the keys for both formats, so YAML says exactly what
+// JSON says.
 func (c *Config) YAML(v any) error {
-	return yaml.NewEncoder(c.Writer).Encode(v)
+	return writeYAML(c.Writer, v)
+}
+
+func writeYAML(w io.Writer, v any) error {
+	node, err := yamlNode(v)
+	if err != nil {
+		return err
+	}
+	enc := yaml.NewEncoder(w)
+	if err := enc.Encode(node); err != nil {
+		return err
+	}
+	return enc.Close()
+}
+
+// yamlNode builds a YAML tree from v's JSON encoding. A yaml.Node rather than
+// a map[string]any, because yaml.v3 sorts map keys and JSON output keeps
+// struct field order: the tree preserves it.
+func yamlNode(v any) (*yaml.Node, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	return jsonToNode(dec)
+}
+
+// jsonToNode consumes one JSON value from dec and returns it as a node.
+func jsonToNode(dec *json.Decoder) (*yaml.Node, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch t := tok.(type) {
+	case json.Delim:
+		n := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		if t == '{' {
+			n.Kind, n.Tag = yaml.MappingNode, "!!map"
+		}
+		for dec.More() {
+			if n.Kind == yaml.MappingNode {
+				key, err := dec.Token()
+				if err != nil {
+					return nil, err
+				}
+				n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key.(string)})
+			}
+			child, err := jsonToNode(dec)
+			if err != nil {
+				return nil, err
+			}
+			n.Content = append(n.Content, child)
+		}
+		if _, err := dec.Token(); err != nil { // closing delimiter
+			return nil, err
+		}
+		return n, nil
+	case string:
+		// The explicit !!str tag makes the encoder quote a string that would
+		// otherwise read back as another type ("123", "true", "null").
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: t}, nil
+	case json.Number:
+		tag := "!!int"
+		if strings.ContainsAny(t.String(), ".eE") {
+			tag = "!!float"
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: t.String()}, nil
+	case bool:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: fmt.Sprint(t)}, nil
+	default: // nil
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}, nil
+	}
 }
 
 // listEnvelope wraps paginated list results with metadata for agent consumers.
@@ -410,7 +491,7 @@ func (c *Config) Success(msg string) {
 		_ = enc.Encode(map[string]any{"success": true, "message": msg})
 		return
 	case FormatYAML:
-		_ = yaml.NewEncoder(c.Writer).Encode(map[string]any{"success": true, "message": msg})
+		_ = writeYAML(c.Writer, map[string]any{"success": true, "message": msg})
 		return
 	}
 	if c.ColorEnabled() {
@@ -461,7 +542,7 @@ func (c *Config) Error(err error) {
 			env["hint"] = hint
 		}
 		if c.Format == FormatYAML {
-			_ = yaml.NewEncoder(c.EWriter).Encode(env)
+			_ = writeYAML(c.EWriter, env)
 			return
 		}
 		enc := json.NewEncoder(c.EWriter)

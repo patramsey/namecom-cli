@@ -29,6 +29,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   reads as relative: `example.net.example.com.`. A target that already ends in
   `.`, and the root `.` of a null MX or SRV, are left as they are. The zone
   output changes for any script that parses it; JSON export is unchanged.
+- `-o yaml` uses the same keys as `-o json`. It named keys after the
+  lowercased Go fields (`domainname`, `emailto`, `domainstotal`) instead of
+  the JSON names (`domainName`, `emailTo`, `domains_total`), and printed
+  fields JSON leaves out as `null` (`priority: null`, `meta: null`). YAML is
+  now derived from the JSON encoding, so keys, their order, and omissions
+  match on every command. **This changes YAML keys: scripts that parse
+  `-o yaml` output must switch to the JSON names.**
 
 ## [0.4.5] - 2026-09-28
 
