@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/huh"
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -500,6 +501,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 				// spaces (SPF, DKIM) parses as several separate strings and no
 				// longer describes the same record.
 				rdata = quoteTXT(rdata)
+			case "ANAME":
+				// ANAME is name.com's own type, not a standard RR, so a zone
+				// parser rejects the line — and with it the whole file. Keep
+				// the record visible as a comment instead.
+				fmt.Fprintf(out.Writer, "; ANAME not representable in a zone file: %s\t%d\tIN\tANAME\t%s\n",
+					derefStr(r.Fqdn), r.TTL, rdata)
+				continue
 			}
 			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
 				derefStr(r.Fqdn), r.TTL, rtype, rdata)
@@ -858,15 +866,38 @@ func derefInt64(n *int64) int64 {
 	return *n
 }
 
-// quoteTXT wraps TXT rdata in a quoted character-string, escaping embedded
-// backslashes and quotes, unless it is already quoted.
+// maxCharString is the RFC 1035 limit on one character-string, in bytes.
+const maxCharString = 255
+
+// quoteTXT wraps TXT rdata in quoted character-strings, escaping embedded
+// backslashes and quotes, unless it is already quoted. A value over 255 bytes
+// (a 2048-bit DKIM key, say) is split into several strings, which is how a
+// zone file spells one long TXT value. The split is on bytes of the unescaped
+// value, so it can never fall inside an escape sequence, and it backs off to a
+// UTF-8 boundary so a character is not cut in two.
 func quoteTXT(s string) string {
 	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
 		return s
 	}
-	escaped := strings.ReplaceAll(s, `\`, `\\`)
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-	return `"` + escaped + `"`
+	escape := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	var parts []string
+	for {
+		n := len(s)
+		if n > maxCharString {
+			n = maxCharString
+			for n > 0 && !utf8.RuneStart(s[n]) {
+				n--
+			}
+			if n == 0 { // not UTF-8 at all; split on the byte limit
+				n = maxCharString
+			}
+		}
+		parts = append(parts, `"`+escape.Replace(s[:n])+`"`)
+		s = s[n:]
+		if s == "" {
+			return strings.Join(parts, " ")
+		}
+	}
 }
 
 // readImportData reads the import payload from a path, or from stdin when the

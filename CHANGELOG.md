@@ -79,6 +79,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `dns create`, and rejects a TTL under 300 before writing any record. A
   missing TTL was sent as 0 and failed partway through, after the records
   before it had already been created.
+- `dns export --zone` output loads in standard zone parsers. TXT values over
+  255 bytes, such as a 2048-bit DKIM key, are split into several quoted
+  strings as RFC 1035 requires, and ANAME records, which have no standard
+  zone-file form, are written as comments instead of as records.
 
 ## [0.4.4] - 2026-09-24
 

@@ -1035,6 +1035,90 @@ func TestDNSExport_ZoneQuotesTXT(t *testing.T) {
 	}
 }
 
+// TestQuoteTXT_SplitsLongValues guards zone output that standard parsers
+// reject. RFC 1035 caps a character-string at 255 bytes, and a 2048-bit DKIM
+// key is about 400; quoteTXT wrote it as a single quoted string. It must be
+// split into several, each at most 255 bytes of the unescaped value, and the
+// split must fall between characters, never inside an escape sequence.
+func TestQuoteTXT_SplitsLongValues(t *testing.T) {
+	// A quote lands at byte 254, so a split that escaped first and cut the
+	// escaped text at 255 would separate its backslash from the quote.
+	value := strings.Repeat("a", 254) + `"` + strings.Repeat("b", 300)
+
+	got := quoteTXT(value)
+
+	var chunks []string
+	for rest := got; rest != ""; {
+		if rest[0] != '"' {
+			t.Fatalf("expected a quoted character-string at %q in %q", rest, got)
+		}
+		end := 1
+		for ; end < len(rest); end++ {
+			if rest[end] == '\\' {
+				end++
+				continue
+			}
+			if rest[end] == '"' {
+				break
+			}
+		}
+		if end >= len(rest) {
+			t.Fatalf("unterminated character-string in %q", got)
+		}
+		inner := rest[1:end]
+		unescaped := strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(inner)
+		if len(unescaped) > 255 {
+			t.Errorf("character-string is %d bytes, max 255", len(unescaped))
+		}
+		chunks = append(chunks, unescaped)
+		rest = strings.TrimPrefix(rest[end+1:], " ")
+	}
+	if len(chunks) != 3 {
+		t.Errorf("expected 3 character-strings for a %d-byte value, got %d: %q", len(value), len(chunks), got)
+	}
+	if joined := strings.Join(chunks, ""); joined != value {
+		t.Errorf("split changed the value:\n got %q\nwant %q", joined, value)
+	}
+}
+
+// TestQuoteTXT_ShortValueIsOneString pins that a value under the limit is
+// still written as exactly one quoted string.
+func TestQuoteTXT_ShortValueIsOneString(t *testing.T) {
+	if got, want := quoteTXT(`say "hi"`), `"say \"hi\""`; got != want {
+		t.Errorf("quoteTXT = %q, want %q", got, want)
+	}
+}
+
+// TestDNSExport_ZoneANAMEIsComment pins that ANAME, a name.com-specific type
+// with no standard RR, is written as a comment. Written as a record, the line
+// made the whole file unparseable by BIND, NSD, and miekg/dns.
+func TestDNSExport_ZoneANAMEIsComment(t *testing.T) {
+	srv := recordsServer(t, `{"records":[`+
+		`{"id":1,"type":"ANAME","host":"","fqdn":"example.com.","answer":"target.example.net.","ttl":300},`+
+		`{"id":2,"type":"A","host":"www","fqdn":"www.example.com.","answer":"1.2.3.4","ttl":300}`+
+		`],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), buf.String())
+	}
+	if !strings.HasPrefix(lines[0], ";") {
+		t.Errorf("ANAME must be written as a comment, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "target.example.net.") {
+		t.Errorf("the ANAME comment should keep the record's target, got: %q", lines[0])
+	}
+	if strings.HasPrefix(lines[1], ";") {
+		t.Errorf("an A record must not be commented out, got: %q", lines[1])
+	}
+}
+
 // TestDNSExport_ZoneMXWithoutPriority pins that an MX record whose priority is
 // absent still emits a priority field. Omitting it produces a zone line with
 // the wrong number of fields, which parsers reject.
