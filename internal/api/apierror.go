@@ -20,6 +20,10 @@ type APIError struct {
 	// RetryAfter carries the Retry-After header from a 429, when the server
 	// sent one. Zero means it did not.
 	RetryAfter time.Duration
+	// explained is set when a 5xx body was the API's envelope with something
+	// specific to say, rather than an empty body, a proxy's page, or a bare
+	// "Server error". See UserHint.
+	explained bool
 }
 
 func (e *APIError) Error() string {
@@ -48,6 +52,12 @@ func (e *APIError) UserHint() string {
 		return "rate limited — wait a moment and try again"
 	}
 	if e.StatusCode >= 500 {
+		// The API answers 500 for some validation failures — a reserved IP on
+		// vanity-ns create, for one. When it says why, retrying will not help,
+		// so don't call it transient; the message is already on the error line.
+		if e.explained {
+			return "name.com returned a server error; if it persists, the request itself may be invalid"
+		}
 		return "name.com API error — try again shortly"
 	}
 	return ""
@@ -69,6 +79,8 @@ func ErrorFromResponse(statusCode int, body []byte) *APIError {
 	if err := json.Unmarshal(body, &env); err == nil && env.Message != "" {
 		e.Message = env.Message
 		e.Details = env.Details
+		e.explained = statusCode >= 500 &&
+			(strings.TrimSpace(env.Details) != "" || !isGenericServerMessage(env.Message, statusCode))
 	} else {
 		e.Message = summarizeBody(body, statusCode)
 	}
@@ -85,6 +97,13 @@ func ErrorFromResponse(statusCode int, body []byte) *APIError {
 		}
 	}
 	return e
+}
+
+// isGenericServerMessage reports whether a 5xx envelope's message says nothing
+// beyond the status itself, e.g. "Server error" or "Internal Server Error".
+func isGenericServerMessage(msg string, statusCode int) bool {
+	m := strings.TrimSpace(msg)
+	return strings.EqualFold(m, "server error") || strings.EqualFold(m, http.StatusText(statusCode))
 }
 
 // maxFallbackMessage bounds how much of a non-JSON error body becomes the
