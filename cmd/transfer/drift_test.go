@@ -89,6 +89,40 @@ func TestDryRunNeverPrintsAuthCode(t *testing.T) {
 	}
 }
 
+// TestDryRunDoesNotPrompt pins that --dry-run works without --yes when stdin is
+// not a TTY, as in CI. Both commands used to confirm before checking
+// --dry-run, so they failed with "pass --yes to confirm in non-interactive
+// mode" — or, in a terminal, asked the user to approve a transfer that would
+// not be sent. drifttest.WithDryRun used to set --yes on the dry-run half too,
+// which is why the tests above did not notice.
+func TestDryRunDoesNotPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(*testing.T, *httptest.Server) *cobra.Command
+		run   drifttest.Run
+	}{
+		{"create", cmdForTransferCreate, runCreate},
+		{"internal-in", cmdForInternalIn, runInternalIn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(failIfWritten(t))
+			t.Cleanup(srv.Close)
+
+			cmd := tc.build(t, srv)
+			if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			cmd = drifttest.WithDryRun(t, cmd, true)
+			if cmdutil.IsYes(cmd) {
+				t.Fatal("test setup: --yes must be unset for this to prove anything")
+			}
+			if err := tc.run(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("--dry-run without --yes should not prompt or fail: %v", err)
+			}
+		})
+	}
+}
+
 // TestDryRunPreviewsPrice pins the payload half that motivated showing the body
 // at all: `transfer create --price` spends money, and the preview used to name
 // only the method and path.

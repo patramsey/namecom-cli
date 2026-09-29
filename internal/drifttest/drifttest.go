@@ -54,21 +54,26 @@ type Run func(cmd *cobra.Command, args []string) error
 
 // WithDryRun attaches a root command carrying --dry-run and --yes so
 // cmdutil.IsDryRun / IsYes see them, mirroring how the real CLI wires
-// persistent flags. --yes is always set: these commands confirm before
-// mutating, and the live half must not block on a prompt.
+// persistent flags.
+//
+// Exactly one of the two is set. The live half gets --yes, because these
+// commands confirm before mutating and it must not block on a prompt. The
+// dry-run half does not: --dry-run must never prompt, and go test is not a
+// TTY, so a command that asks anyway fails with "pass --yes to confirm in
+// non-interactive mode" — exactly what a CI user sees. Setting --yes here too
+// is what let `transfer create --dry-run` ask for confirmation unnoticed.
 func WithDryRun(t *testing.T, child *cobra.Command, dryRun bool) *cobra.Command {
 	t.Helper()
 	root := &cobra.Command{Use: "namecom"}
 	var dr, yes bool
 	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
 	root.PersistentFlags().BoolVar(&yes, "yes", false, "")
-	if err := root.PersistentFlags().Set("yes", "true"); err != nil {
-		t.Fatalf("setting yes flag: %v", err)
-	}
+	flag := "yes"
 	if dryRun {
-		if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
-			t.Fatalf("setting dry-run flag: %v", err)
-		}
+		flag = "dry-run"
+	}
+	if err := root.PersistentFlags().Set(flag, "true"); err != nil {
+		t.Fatalf("setting %s flag: %v", flag, err)
 	}
 	root.AddCommand(child)
 	return child
@@ -129,7 +134,7 @@ func AssertRequest(t *testing.T, want Request, build Build, run Run, args []stri
 func AssertDryRunMatches(t *testing.T, build Build, run Run, args []string, stubResponse string) {
 	t.Helper()
 
-	printed := dryRunLine(t, build, run, args, stubResponse)
+	printed, _ := dryRunLine(t, build, run, args, stubResponse)
 
 	var last string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,9 +157,9 @@ func AssertDryRunMatches(t *testing.T, build Build, run Run, args []string, stub
 }
 
 // dryRunLine runs the command with --dry-run and extracts the METHOD /path line
-// it printed. A dry run must not reach the network: the stub server fails the
-// test if it is contacted.
-func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse string) string {
+// it printed, plus everything printed after it. A dry run must not write: the
+// test fails if the stub server sees anything but a read.
+func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse string) (line, rest string) {
 	t.Helper()
 
 	var wrote string
@@ -179,7 +184,8 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	}
 	out := buf.String()
 
-	for _, line := range strings.Split(out, "\n") {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
 		f := strings.Fields(line)
 		if len(f) >= 2 && httpMethods[f[0]] && strings.HasPrefix(f[1], "/") {
 			// Checked after a line is found so the more useful failure wins:
@@ -188,12 +194,60 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 			if wrote != "" {
 				t.Errorf("--dry-run performed a write: %s; it must only print", wrote)
 			}
-			return f[0] + " " + f[1]
+			return f[0] + " " + f[1], strings.Join(lines[i+1:], "\n")
 		}
 	}
 	if wrote != "" {
 		t.Fatalf("--dry-run printed no METHOD/path line and performed a write (%s): %q", wrote, out)
 	}
 	t.Fatalf("no dry-run METHOD/path line found in output: %q", out)
-	return ""
+	return "", ""
+}
+
+// AssertDryRunBodyMatches asserts that the body --dry-run prints is the body
+// the command really sends, compared as canonical JSON.
+//
+// This is the stricter sibling of AssertDryRunMatches, for commands whose
+// preview carries no secret and so has no reason to differ from the wire. A
+// preview built by hand from the command's inputs, rather than from the value
+// handed to the SDK, drifts silently whenever the SDK wraps or reshapes it.
+func AssertDryRunBodyMatches(t *testing.T, build Build, run Run, args []string, stubResponse string) {
+	t.Helper()
+
+	printed := dryRunBody(t, build, run, args, stubResponse)
+
+	var sent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sent = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(stubResponse))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := WithDryRun(t, build(t, srv), false)
+	if err := run(cmd, args); err != nil {
+		t.Fatalf("live invocation failed: %v", err)
+	}
+	if got, want := canonJSON(printed), canonJSON(sent); got != want {
+		t.Errorf("--dry-run previews a body the command does not send:\n  printed: %s\n  sent:    %s", got, want)
+	}
+}
+
+// dryRunBody runs the command with --dry-run and returns the JSON document
+// printed after the METHOD /path line, or "" if none was printed.
+func dryRunBody(t *testing.T, build Build, run Run, args []string, stubResponse string) string {
+	t.Helper()
+
+	_, rest := dryRunLine(t, build, run, args, stubResponse)
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ""
+	}
+	// The body is the first JSON value; anything printed after it is not.
+	var v json.RawMessage
+	if err := json.NewDecoder(strings.NewReader(rest)).Decode(&v); err != nil {
+		t.Fatalf("--dry-run printed something after the request line that is not a JSON body: %q", rest)
+	}
+	return string(v)
 }
