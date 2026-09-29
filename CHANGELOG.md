@@ -93,6 +93,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   response body ahead of the envelope, so stderr was not one parseable
   document. The body now appears in the envelope as `error.details` — parsed
   if it is JSON, as a string if not. Table mode is unchanged, as are exit codes.
+- `namecom api` rejects an unknown HTTP method as a usage error (exit **2**)
+  naming the accepted ones — GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, in
+  any case — before sending anything. `api FOO /x` was sent, drew a 403 from
+  the server, and exited 3 with advice to run `auth login`.
 
 ## [0.4.6] - 2026-09-29
 

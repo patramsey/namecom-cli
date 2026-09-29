@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -34,6 +35,12 @@ and body — instead of sent. GET and HEAD still run.`,
 	RunE: runAPI,
 }
 
+// allowedMethods are the methods `namecom api` sends, matched case-insensitively.
+var allowedMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+	http.MethodPatch, http.MethodDelete, http.MethodOptions,
+}
+
 var (
 	apiBody    string
 	apiHeaders []string
@@ -45,9 +52,16 @@ func init() {
 }
 
 func runAPI(cmd *cobra.Command, args []string) error {
+	method := strings.ToUpper(args[0])
+	// Checked before anything else, including --dry-run. nginx answers an
+	// unknown method with 403, which exited 3 with an `auth login` hint for
+	// what was a typo.
+	if !slices.Contains(allowedMethods, method) {
+		return cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %q: must be one of %s",
+			args[0], strings.Join(allowedMethods, ", ")))
+	}
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	method := strings.ToUpper(args[0])
 	rawPath := args[1]
 
 	base := client.BaseURL()

@@ -271,3 +271,38 @@ func TestExitCode_InvalidPositionalArg(t *testing.T) {
 		})
 	}
 }
+
+// TestExitCode_APIUnknownMethod guards issue #133. `namecom api FOO /x` was
+// sent as-is; nginx answers an unknown method with 403, which exits 3 and
+// tells the user to run `auth login` — for a typo in the method. The method
+// is checked first, so the stub fails the test if a request goes out.
+func TestExitCode_APIUnknownMethod(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s: an unknown method must fail before any API call", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	withConfig(t, loneProfile)
+
+	// --dry-run too: a method that is not one cannot be previewed either.
+	for _, extra := range [][]string{nil, {"--dry-run"}} {
+		for _, method := range []string{"FOO", "gett", "CONNECT"} {
+			t.Run(strings.Join(append([]string{method}, extra...), " "), func(t *testing.T) {
+				prev := gf
+				t.Cleanup(func() { gf = prev; rootCmd.SetArgs(nil) })
+				args := append([]string{"--base-url", srv.URL, "-o", "json", "api", method, "/core/v1/hello"}, extra...)
+				rootCmd.SetArgs(args)
+				err := cmdutil.ClassifyCobraUsage(rootCmd.ExecuteContext(context.Background()))
+				if err == nil {
+					t.Fatalf("namecom api %s succeeded; want a usage error", method)
+				}
+				if msg := err.Error(); !strings.Contains(msg, method) || !strings.Contains(msg, "PATCH") {
+					t.Errorf("error should name the method and the allowed ones, got: %v", err)
+				}
+				if got := exitCode(err); got != 2 {
+					t.Errorf("namecom api %s exited %d (%v); want 2", method, got, err)
+				}
+			})
+		}
+	}
+}
