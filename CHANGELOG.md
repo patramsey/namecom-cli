@@ -46,6 +46,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   so the two commands showed the same value in different forms. The
   `endpoint` field in `-o json` and `-o yaml` changes accordingly; a script
   that compares it to a bare host needs updating.
+- `order refund` drops repeated `--item-ids` before sending, keeping the
+  first-seen order, and warns on stderr naming the IDs it dropped. It sent
+  them as given, so `--item-ids 9,9` refunded item 9, then reported the second
+  copy as failed ("already refunded") and exited 1. The `--dry-run` preview
+  and the confirmation prompt show the deduplicated list.
 
 ## [0.4.6] - 2026-09-29
 
