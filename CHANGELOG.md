@@ -50,6 +50,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `url update --dry-run` shows the forwarding type that will be sent. Its
   summary line printed the `--type` default of `redirect`, so a masked
   forwarding looked as if it was about to be converted.
+- `order refund` no longer reports success for items the API refused. It
+  counted every item in the response as refunded, so an item outside the
+  refund grace period printed `✓ Refunded $0.00 for 1 item(s)` and exited 0.
+  Only refunded items are counted now; each failed or canceled item is
+  printed with the server's reason, and the command exits 1 if any item was
+  not refunded. `-o json` still prints the full per-item result.
 
 ## [0.4.4] - 2026-09-24
 

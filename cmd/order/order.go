@@ -274,14 +274,57 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		return api.FromSDKError(err)
 	}
 
+	// The call succeeding says nothing about each item: the API returns 200
+	// with per-item "failed" or "canceled" results (outside the grace period,
+	// for one), and counting len(Results) reported those as refunded.
+	var refunded, failed int
+	var problems []string
+	for _, r := range result.Results {
+		if r == nil {
+			continue
+		}
+		switch r.OrderItemStatus {
+		case coreapigo.RefundItemResultOrderItemStatusRefunded:
+			refunded++
+			continue
+		case coreapigo.RefundItemResultOrderItemStatusFailed, coreapigo.RefundItemResultOrderItemStatusCanceled:
+			failed++
+		}
+		// Anything else ("initialized", or a status this build does not know)
+		// is not confirmed as refunded, so it is reported but not counted as a
+		// failure.
+		msg := fmt.Sprintf("item %d: refund %s", r.OrderItemID, r.OrderItemStatus)
+		if r.OrderItemStatus == "" {
+			msg = fmt.Sprintf("item %d: refund status not reported", r.OrderItemID)
+		}
+		if r.Message != nil && *r.Message != "" {
+			msg += " — " + *r.Message
+		}
+		problems = append(problems, msg)
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(result)
+		if err := out.JSON(result); err != nil {
+			return err
+		}
 	case output.FormatYAML:
-		return out.YAML(result)
+		if err := out.YAML(result); err != nil {
+			return err
+		}
 	default:
-		out.Success(fmt.Sprintf("Refunded $%.2f for %d item(s)", result.TotalRefundAmount, len(result.Results)))
+		if refunded > 0 {
+			out.Success(fmt.Sprintf("Refunded $%.2f for %d item(s)", result.TotalRefundAmount, refunded))
+		}
+		for _, p := range problems {
+			out.Warn(p)
+		}
 		out.Hint("Run 'namecom order list' to see updated order status")
+	}
+	if failed > 0 {
+		// Exit 1: the request was valid and authorized, the API declined part
+		// of it — a runtime outcome, not a usage or credential problem.
+		return fmt.Errorf("%d of %d item(s) were not refunded", failed, len(result.Results))
 	}
 	return nil
 }
