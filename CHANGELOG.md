@@ -88,6 +88,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the document, or pass `-o table` to keep the text form.** Table mode is
   unchanged, except that `dns import --dry-run` now indents each body like
   every other command's preview.
+- `namecom api -o json` (and `-o yaml`) writes only the error envelope to
+  stderr on a non-2xx response. It also wrote `HTTP <status>` and the raw
+  response body ahead of the envelope, so stderr was not one parseable
+  document. The body now appears in the envelope as `error.details` — parsed
+  if it is JSON, as a string if not. Table mode is unchanged, as are exit codes.
 
 ## [0.4.6] - 2026-09-29
 

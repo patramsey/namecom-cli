@@ -14,6 +14,7 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -114,13 +115,21 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
-			_, _ = os.Stderr.Write(respBody)
-			fmt.Fprintln(os.Stderr)
 			// Return the normalized error type so root.go's exit-code mapping and
 			// UserHint apply here too. A plain fmt.Errorf collapsed every failure to
 			// exit 1, hiding the documented auth/rate-limit codes from scripts.
-			return api.ErrorFromResponse(resp.StatusCode, respBody)
+			apiErr := api.ErrorFromResponse(resp.StatusCode, respBody)
+			// In JSON and YAML modes the error envelope is all that goes to
+			// stderr, so it stays one parseable document; the body rides in
+			// it as details. Printing it here as well put three things there.
+			if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
+				apiErr.Body = respBody
+				return apiErr
+			}
+			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
+			_, _ = out.EWriter.Write(respBody)
+			fmt.Fprintln(out.EWriter)
+			return apiErr
 		}
 
 		fmt.Fprintf(out.Writer, "%s\n", respBody)

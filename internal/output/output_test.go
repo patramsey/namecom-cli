@@ -15,6 +15,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// detailedErr is an error carrying envelope details, like *api.APIError with
+// a kept response body.
+type detailedErr struct{ details any }
+
+func (detailedErr) Error() string       { return "Not Found" }
+func (e detailedErr) ErrorDetails() any { return e.details }
+
 // noColor returns a Config with color disabled — tests the pure string logic.
 func noColor() *Config { return &Config{Color: ColorNever} }
 
@@ -295,6 +302,25 @@ func TestError_StructuredFormats(t *testing.T) {
 		}
 		if env["error"] == nil {
 			t.Errorf("expected an \"error\" key, got: %s", got)
+		}
+	})
+
+	// A raw JSON body as details must come out as a mapping in YAML, not the
+	// byte array a json.RawMessage would otherwise marshal to.
+	t.Run("yaml details", func(t *testing.T) {
+		var ew bytes.Buffer
+		c := &Config{Format: FormatYAML, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		c.Error(fmt.Errorf("wrapped: %w", detailedErr{json.RawMessage(`{"message":"Not Found"}`)}))
+		var env struct {
+			Error struct {
+				Details map[string]any `yaml:"details"`
+			} `yaml:"error"`
+		}
+		if err := yaml.Unmarshal(ew.Bytes(), &env); err != nil {
+			t.Fatalf("YAML error output is not parseable: %v\n%s", err, ew.String())
+		}
+		if env.Error.Details["message"] != "Not Found" {
+			t.Errorf("details should be the parsed body, got:\n%s", ew.String())
 		}
 	})
 
