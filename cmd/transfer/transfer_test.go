@@ -1025,3 +1025,38 @@ func TestTransferGet_NotFoundKeepsExitCode(t *testing.T) {
 		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
 	}
 }
+
+// TestTransferList_QuietFetchesEveryPage: without --all, the walk stopped after
+// page 1 and the "showing first page" hint lives in the table branch that
+// --quiet returns before reaching, so a script got a truncated list with no
+// warning. Quiet mode must page fully.
+func TestTransferList_QuietFetchesEveryPage(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`{"transfers":[{"domainName":"two.com","status":"completed"}],"lastPage":2}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"transfers":[{"domainName":"one.com","status":"pending"}],"nextPage":2,"lastPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForTransferList(t, srv)
+	out := cmdutil.Out(cmd)
+	out.QuietMode = true
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if requests != 2 {
+		t.Errorf("made %d page requests, want 2", requests)
+	}
+	got := out.Writer.(*bytes.Buffer).String()
+	for _, d := range []string{"one.com", "two.com"} {
+		if !strings.Contains(got, d) {
+			t.Errorf("--quiet must emit every transfer, missing %q; got: %q", d, got)
+		}
+	}
+}

@@ -90,7 +90,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	// When a filter is active, auto-paginate — results are small and the user
 	// expects to see everything matching, not just the first page.
-	autoPage := listAll || isFiltered(cmd)
+	// --quiet also auto-paginates: it returns before the "Showing first page"
+	// hint, so stopping early would truncate silently — see
+	// cmd/contact/contact.go.
+	autoPage := listAll || isFiltered(cmd) || out.QuietMode
 
 	spin := out.StartSpinner("Fetching domains…")
 
@@ -179,15 +182,18 @@ func runList(cmd *cobra.Command, _ []string) error {
 			// decoder overwrite pointers in already-appended pages, and leaves a
 			// stale non-nil NextPage when the last page omits the key, which
 			// never terminates. Same hazard as cmd/dns/dns.go documents.
-			next := lastResult.NextPage
-			for next != nil && *next != 0 {
-				r, err := client.SDK().Domains.ListDomains(ctx, buildParams(*next))
+			//
+			// cmdutil.NextPage guards the other half: a server that keeps
+			// answering nextPage:2 would otherwise refetch page 2 forever.
+			page, ok := cmdutil.NextPage(listPage, lastResult.NextPage, lastResult.LastPage)
+			for ok {
+				r, err := client.SDK().Domains.ListDomains(ctx, buildParams(page))
 				if err != nil {
 					spin.Stop()
 					return api.FromSDKError(err)
 				}
 				domains = append(domains, r.Domains...)
-				next = r.NextPage
+				page, ok = cmdutil.NextPage(page, r.NextPage, r.LastPage)
 			}
 		}
 	}

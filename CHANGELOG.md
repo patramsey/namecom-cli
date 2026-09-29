@@ -30,6 +30,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   now shows the sent price, and an acquisition price reads as a flat fee
   (`$2500.00 flat (aftermarket_b, not per year)`), since the API does not
   multiply it by `--years`.
+- `--quiet` on `url list`, `email list`, `vanity-ns list`, `transfer list`,
+  `order list`, and `domain list` now prints every page. Without `--all` it
+  stopped after the first page, and the "showing first page" hint it would
+  have printed is suppressed in quiet mode, so a script piping the output got
+  a truncated list with no warning.
+- `domain list --all` no longer loops forever against a server that keeps
+  reporting the same next page without a last page. Each repeat fetched the
+  same page again and added its domains to the output a second time.
 
 ## [0.4.4] - 2026-09-24
 

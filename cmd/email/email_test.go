@@ -543,3 +543,38 @@ func TestEmailList_JSONEnvelope(t *testing.T) {
 		})
 	}
 }
+
+// TestEmailList_QuietFetchesEveryPage: without --all, the walk stopped after
+// page 1 and the "showing first page" hint lives in the table branch that
+// --quiet returns before reaching, so a script got a truncated list with no
+// warning. Quiet mode must page fully.
+func TestEmailList_QuietFetchesEveryPage(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`{"emailForwarding":[{"domainName":"example.com","emailBox":"bbb","emailTo":"b@example.com"}],"lastPage":2}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"emailForwarding":[{"domainName":"example.com","emailBox":"aaa","emailTo":"a@example.com"}],"nextPage":2,"lastPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForEmailList(t, srv)
+	out := cmdutil.Out(cmd)
+	out.QuietMode = true
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if requests != 2 {
+		t.Errorf("made %d page requests, want 2", requests)
+	}
+	got := out.Writer.(*bytes.Buffer).String()
+	for _, box := range []string{"aaa", "bbb"} {
+		if !strings.Contains(got, box) {
+			t.Errorf("--quiet must emit every forwarding, missing %q; got: %q", box, got)
+		}
+	}
+}

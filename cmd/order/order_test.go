@@ -625,3 +625,30 @@ func TestOrderRows_DateMatchesOtherCommands(t *testing.T) {
 		t.Errorf("DATE = %q, want %q", got, "2026-04-06")
 	}
 }
+
+// TestOrderList_QuietFetchesEveryPage: unfiltered and without --all, the walk
+// stopped after page 1 and the "showing the newest orders" hint lives in the
+// table branch that --quiet returns before reaching, so a script got a
+// truncated list with no warning. Quiet mode must page fully.
+func TestOrderList_QuietFetchesEveryPage(t *testing.T) {
+	srv, requests := orderServer(t, [][]int{
+		{101}, // page 1 — NextPage=2
+		{102}, // page 2 — no NextPage
+	})
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForOrderList(t, srv, &stdout, &stderr)
+	listAll, listDomain, listSince, listUntil, listStatus = false, "", "", "", ""
+	cmdutil.Out(cmd).QuietMode = true
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if len(*requests) != 2 {
+		t.Errorf("expected 2 requests, got %d: %v", len(*requests), *requests)
+	}
+	for _, id := range []string{"101", "102"} {
+		if !strings.Contains(stdout.String(), id) {
+			t.Errorf("--quiet must emit every order, missing %q; got: %q", id, stdout.String())
+		}
+	}
+}

@@ -139,9 +139,10 @@ type pageNumber interface {
 // which trusts the server to eventually stop saying "there is more". A server
 // that keeps answering `nextPage: 2` — a caching bug, a filter interaction, a
 // proxy replaying a response — walked forever at the client's full rate limit.
-// `domain list` escaped it by bounding on lastPage; the other seven list
-// commands and record-ID completion did not, and `dns list --all` against such
-// a server never returned.
+// Every list command and record-ID completion had it; `dns list --all` against
+// such a server never returned. `domain list` looked safe because its parallel
+// path bounds on lastPage, but the sequential fallback it takes when lastPage
+// is absent looped on nextPage alone until it too was routed through here.
 //
 // Two guards, both cheap: the page number must advance, and it must not run
 // past lastPage when the API reports one.

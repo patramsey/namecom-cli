@@ -924,3 +924,38 @@ func TestURLRows_ApexHostShowsAt(t *testing.T) {
 		t.Errorf("HOST = %q, want %q", got, "@")
 	}
 }
+
+// TestURLList_QuietFetchesEveryPage: without --all, the walk stopped after page
+// 1 and the "showing first page" hint lives in the table branch that --quiet
+// returns before reaching — so `url list -q | xargs ...` silently acted on the
+// first page only. Quiet mode must page fully.
+func TestURLList_QuietFetchesEveryPage(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`{"urlForwarding":[{"id":222,"host":"bbb.example.com"}],"lastPage":2}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"urlForwarding":[{"id":111,"host":"aaa.example.com"}],"nextPage":2,"lastPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForURLList(t, srv)
+	out := cmdutil.Out(cmd)
+	out.QuietMode = true
+
+	if err := runList(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if requests != 2 {
+		t.Errorf("made %d page requests, want 2", requests)
+	}
+	got := out.Writer.(*bytes.Buffer).String()
+	for _, id := range []string{"111", "222"} {
+		if !strings.Contains(got, id) {
+			t.Errorf("--quiet must emit every forwarding, missing %q; got: %q", id, got)
+		}
+	}
+}
