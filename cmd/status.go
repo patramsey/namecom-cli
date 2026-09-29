@@ -10,6 +10,7 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -220,15 +221,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	ov := cmdutil.Overrides(cmd)
-	cfgFile := cmdutil.CfgFile(cmd)
-	profileName := cfgFile.Default
-	if profileName == "" {
-		profileName = "default"
-	}
-	if ov.Profile != "" {
-		profileName = ov.Profile
-	}
+	profileName := config.ActiveProfile(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd).Profile)
 
 	// Only claim a count if the fetch actually completed.
 	var pendingCount *int

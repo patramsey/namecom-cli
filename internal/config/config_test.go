@@ -663,3 +663,68 @@ func TestResolveImpliedDefault(t *testing.T) {
 		}
 	})
 }
+
+// TestIdentity_AgreesWithResolve pins the property the describing commands
+// depend on: whatever profile, username and endpoint Identity reports is what
+// Resolve hands the API client. `auth logout`, `auth status`, `status` and
+// `config show` each carried their own shorter chain — flag, `default:`, then
+// the literal "default" — so under NAMECOM_PROFILE they named, and logout
+// deleted, a different profile from the one in use.
+func TestIdentity_AgreesWithResolve(t *testing.T) {
+	two := &File{Default: "prod", Profiles: map[string]Profile{
+		"prod":    {Username: "produser", Token: "p"},
+		"staging": {Username: "stageuser", Token: "s", Sandbox: true},
+	}}
+	lone := &File{Profiles: map[string]Profile{"work": {Username: "w", Token: "t"}}}
+
+	tests := []struct {
+		name string
+		f    *File
+		ov   Overrides
+		env  map[string]string
+	}{
+		{"file default", two, Overrides{}, nil},
+		{"NAMECOM_PROFILE", two, Overrides{}, map[string]string{"NAMECOM_PROFILE": "staging"}},
+		{"flag beats env", two, Overrides{Profile: "prod"}, map[string]string{"NAMECOM_PROFILE": "staging"}},
+		{"lone profile not named default", lone, Overrides{}, nil},
+		{"NAMECOM_USERNAME and NAMECOM_SANDBOX", two, Overrides{}, map[string]string{"NAMECOM_USERNAME": "envuser", "NAMECOM_SANDBOX": "1"}},
+		{"--sandbox=false beats a sandbox profile", two, Overrides{Profile: "staging", SandboxSet: true}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+				t.Setenv(k, tt.env[k])
+			}
+			want, err := Resolve(tt.f, tt.ov)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			want.Token = ""
+			if got := Identity(tt.f, tt.ov); got != want {
+				t.Errorf("Identity = %+v, Resolve = %+v", got, want)
+			}
+			if got := ActiveProfile(tt.f, tt.ov.Profile); got != want.Profile {
+				t.Errorf("ActiveProfile = %q, Resolve chose %q", got, want.Profile)
+			}
+		})
+	}
+}
+
+// TestIdentity_NeverRunsTokenCmd: describing credentials must not unlock a
+// vault, and must work when no token is available at all.
+func TestIdentity_NeverRunsTokenCmd(t *testing.T) {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+		t.Setenv(k, "")
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	f := &File{Profiles: map[string]Profile{
+		"work": {Username: "w", TokenCmd: "touch " + marker + "; printf tok"},
+	}}
+	got := Identity(f, Overrides{})
+	if got.Profile != "work" || got.Username != "w" || got.Token != "" {
+		t.Errorf("Identity = %+v, want profile work, username w, no token", got)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("Identity ran token_cmd")
+	}
+}

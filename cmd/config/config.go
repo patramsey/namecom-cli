@@ -3,7 +3,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -177,27 +176,26 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Honor the same profile selection every other command uses: --profile,
-	// then NAMECOM_PROFILE, then the file's default. Reading only the default
-	// meant `config show --profile sandbox` — the command's own documented
-	// example — reported the production profile's endpoint instead.
-	profileName := cmdutil.Overrides(cmd).Profile
-	if profileName == "" {
-		profileName = os.Getenv("NAMECOM_PROFILE")
-	}
-	if profileName == "" {
-		profileName = cfgFile.Default
-	}
-	if profileName == "" {
-		profileName = "default"
-	}
+	// Describe exactly what API commands would use: config.Identity applies
+	// Resolve's precedence for the profile (--profile, NAMECOM_PROFILE, the
+	// file's default, the implied default), the username and the endpoint. A
+	// chain of its own here reported the wrong profile or endpoint, and told a
+	// user with one working profile to run `auth login`, which overwrites.
+	id := config.Identity(cfgFile, cmdutil.Overrides(cmd))
+	profileName := id.Profile
 	p, ok := cfgFile.Profiles[profileName]
 	if !ok {
+		switch {
+		case len(cfgFile.Profiles) == 0:
+			return fmt.Errorf("no profiles configured — run 'namecom auth login' to set up credentials")
+		case profileName == "":
+			return fmt.Errorf("%d profiles exist but none is the default — pass --profile or run 'namecom config use <profile>'", len(cfgFile.Profiles))
+		}
 		return fmt.Errorf("no profile %q configured — run 'namecom auth login' to set up credentials", profileName)
 	}
 
 	endpoint := "api.name.com"
-	if p.Sandbox {
+	if id.Sandbox {
 		endpoint = "api.dev.name.com"
 	}
 	tokenDisplay := "••••••••" //nolint:gosec // G101 false positive: a mask shown in place of the token, not a credential
@@ -211,21 +209,21 @@ func runShow(cmd *cobra.Command, _ []string) error {
 	case output.FormatJSON:
 		return out.JSON(map[string]string{
 			"profile":  profileName,
-			"username": p.Username,
+			"username": id.Username,
 			"endpoint": endpoint,
 			"config":   path,
 		})
 	case output.FormatYAML:
 		return out.YAML(map[string]string{
 			"profile":  profileName,
-			"username": p.Username,
+			"username": id.Username,
 			"endpoint": endpoint,
 			"config":   path,
 		})
 	default:
 		out.KVTable([][]string{
 			{"Profile", profileName},
-			{"Username", p.Username},
+			{"Username", id.Username},
 			{"Token", tokenDisplay},
 			{"Endpoint", endpoint},
 			{"Config file", out.Dim(path)},
