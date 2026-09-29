@@ -13,6 +13,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `domain register` now reads `--contacts-file` before asking you to confirm
   the purchase. A missing or malformed file was reported only after you had
   approved the price.
+- `domain renew --price` and `transfer create --price` now confirm the price
+  they send. Both prompts quoted the standard price while the request carried
+  the `--price` override — the same mismatch fixed for `domain register` in
+  0.4.5.
 
 ## [0.4.5] - 2026-09-28
 

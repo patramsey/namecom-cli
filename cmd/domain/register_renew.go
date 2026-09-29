@@ -307,6 +307,26 @@ func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, stand
 	return fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, years, price)
 }
 
+// renewPrompt is the renewal confirmation for body, quoting the price body
+// carries — --price, or the premium price merged from the quote — and the
+// standard renewal price only when it carries none. Quoting the standard price
+// unconditionally meant `renew --price 1800` asked "at $2500.00/yr?" and then
+// submitted 1800, the renew side of #83.
+func renewPrompt(domainName string, body coreapigo.DomainsRenewDomainBody, standard *float64) string {
+	years := 1
+	if body.Years != nil {
+		years = *body.Years
+	}
+	price := ""
+	switch {
+	case body.PurchasePrice != nil:
+		price = formatTermPrice(*body.PurchasePrice, years)
+	case standard != nil:
+		price = formatTermPrice(*standard, years)
+	}
+	return fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, years, price)
+}
+
 func registerForm() error {
 	yearsStr := "1"
 	form := huh.NewForm(
@@ -377,10 +397,6 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		body.PurchasePrice = pricing.RenewalPrice
 	}
 
-	renewPriceStr := ""
-	if pricing.RenewalPrice != nil {
-		renewPriceStr = formatTermPrice(*pricing.RenewalPrice, renewYears)
-	}
 	// See runRegister: --dry-run must not prompt, and must not hard-error in a
 	// non-interactive shell for an action it will never perform.
 	var renewed *coreapigo.RenewDomainResponse
@@ -388,7 +404,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/domains/%s:renew", domainName),
 		Body:   body,
-		Prompt: fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, *body.Years, renewPriceStr),
+		Prompt: renewPrompt(domainName, body, pricing.RenewalPrice),
 	}, func(ctx context.Context, body coreapigo.DomainsRenewDomainBody) error {
 		var err error
 		renewed, err = client.SDK().Domains.RenewDomain(ctx, &body)

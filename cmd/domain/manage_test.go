@@ -620,6 +620,41 @@ func TestRenew_ExplicitPriceOverridesQuote(t *testing.T) {
 	}
 }
 
+// TestRenew_PromptQuotesThePriceSent is the renew side of #83: with --price,
+// the prompt quoted the standard renewal price while the body carried the
+// override. Without --yes in a non-interactive test, Confirm's error carries
+// the prompt.
+func TestRenew_PromptQuotesThePriceSent(t *testing.T) {
+	defer output.StubInteractive(false)()
+	quoted := 2500.00
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.Contains(r.URL.Path, "getPricing") {
+			t.Errorf("renewed without confirmation: %s %s", r.Method, r.URL)
+		}
+		_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{Premium: true, RenewalPrice: &quoted})
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRenew(t, srv)
+	if err := cmd.PersistentFlags().Set("yes", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runRenew(cmd, []string{"premium.io"})
+	if err == nil {
+		t.Fatal("expected the non-interactive confirm error")
+	}
+	if !strings.Contains(err.Error(), "$1800.00") {
+		t.Errorf("prompt does not quote the price sent ($1800.00):\n%v", err)
+	}
+	if strings.Contains(err.Error(), "2500") {
+		t.Errorf("prompt quotes the standard renewal price, which is not sent:\n%v", err)
+	}
+}
+
 // TestPricingQuoteUsesRequestedYears guards a regression where both runRegister
 // and runRenew passed an empty GetPricingForDomainParams{}, ignoring --years.
 // The API defaults to the minimum period, so `--years 3` quoted the 1-year

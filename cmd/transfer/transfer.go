@@ -275,15 +275,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// their prompt; transfer asked only "Initiate transfer of X?", so the user
 	// approved a charge they had never seen. A pricing failure must not block
 	// the transfer — fall back to an unpriced prompt.
-	priceMsg := ""
+	var quoted *float64
 	if pricing, perr := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domain}); perr == nil {
-		if pricing.TransferPrice != nil {
-			priceMsg = fmt.Sprintf(" for $%.2f", *pricing.TransferPrice)
-			if createPrivacy {
-				priceMsg += " plus WHOIS privacy"
-			}
-		}
+		quoted = pricing.TransferPrice
 	}
 
 	body := coreapigo.CreateTransferRequest{
@@ -306,7 +301,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Path:    "/core/v1/transfers",
 		Body:    body,
 		Preview: redactTransferAuthCode,
-		Prompt:  fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg),
+		Prompt:  transferPrompt(domain, body, quoted),
 		Spin:    "Initiating transfer…",
 	}, func(ctx context.Context, body coreapigo.CreateTransferRequest) error {
 		var err error
@@ -630,6 +625,25 @@ func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]strin
 		})
 	}
 	return rows
+}
+
+// transferPrompt is the confirmation for a transfer create. It quotes the
+// price body carries when --price set one, and the standard transfer price
+// otherwise; quoting the standard price unconditionally meant the user
+// approved one amount while the request carried another.
+func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted *float64) string {
+	price := quoted
+	if body.PurchasePrice != nil {
+		price = body.PurchasePrice
+	}
+	priceMsg := ""
+	if price != nil {
+		priceMsg = fmt.Sprintf(" for $%.2f", *price)
+		if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
+			priceMsg += " plus WHOIS privacy"
+		}
+	}
+	return fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg)
 }
 
 // redactedAuthCode replaces the auth code in a --dry-run preview.
