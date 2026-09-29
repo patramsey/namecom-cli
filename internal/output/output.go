@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -276,23 +277,32 @@ type listEnvelope struct {
 	Total    int32  `json:"total,omitempty" yaml:"total,omitempty"`
 }
 
-// JSONList encodes data as a pagination envelope: {"data":[…],"nextPage":N,"total":N}.
-// nextPage is omitted when nil or zero; total is omitted when zero.
-func (c *Config) JSONList(data any, nextPage *int32, total int32) error {
+// newListEnvelope builds the envelope both list encoders share.
+//
+// A nil slice becomes an empty one. List commands accumulate pages with
+// append, and appending an empty page to a nil slice leaves it nil, so an
+// empty list encoded as `"data": null` — which `jq '.data[]'` refuses to
+// iterate — although the API itself had returned `[]`.
+func newListEnvelope(data any, nextPage *int32, total int32) listEnvelope {
+	if v := reflect.ValueOf(data); v.Kind() == reflect.Slice && v.IsNil() {
+		data = reflect.MakeSlice(v.Type(), 0, 0).Interface()
+	}
 	env := listEnvelope{Data: data, Total: total}
 	if nextPage != nil && *nextPage != 0 {
 		env.NextPage = nextPage
 	}
-	return c.JSON(env)
+	return env
+}
+
+// JSONList encodes data as a pagination envelope: {"data":[…],"nextPage":N,"total":N}.
+// nextPage is omitted when nil or zero; total is omitted when zero.
+func (c *Config) JSONList(data any, nextPage *int32, total int32) error {
+	return c.JSON(newListEnvelope(data, nextPage, total))
 }
 
 // YAMLList encodes data as a pagination envelope in YAML.
 func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
-	env := listEnvelope{Data: data, Total: total}
-	if nextPage != nil && *nextPage != 0 {
-		env.NextPage = nextPage
-	}
-	return c.YAML(env)
+	return c.YAML(newListEnvelope(data, nextPage, total))
 }
 
 // Table renders rows as a styled table. headers is the column header row.

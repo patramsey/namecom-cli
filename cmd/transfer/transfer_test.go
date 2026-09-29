@@ -214,6 +214,37 @@ func TestTransferList_Empty(t *testing.T) {
 	}
 }
 
+// An empty list is `[]`, not `null`: `transfer list -o json | jq '.data[]'`
+// failed with "Cannot iterate over null". The stub is the sandbox's real
+// empty response.
+func TestTransferList_EmptyIsArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"totalCount":0,"from":0,"to":0,"transfers":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		format output.Format
+		want   string
+	}{
+		{output.FormatJSON, `"data": []`},
+		{output.FormatYAML, "data: []"},
+	} {
+		t.Run(string(tc.format), func(t *testing.T) {
+			cmd := cmdForTransferList(t, srv)
+			out := cmdutil.Out(cmd)
+			out.Format = tc.format
+			if err := runList(cmd, nil); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			if got := out.Writer.(*bytes.Buffer).String(); !strings.Contains(got, tc.want) {
+				t.Errorf("empty list should print %s, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestTransferList_ShowsEntries(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

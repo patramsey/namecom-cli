@@ -266,6 +266,36 @@ func TestEmailList_Empty(t *testing.T) {
 	}
 }
 
+// An empty list is `[]`, not `null`, so `jq '.data[]'` iterates nothing
+// rather than failing. The stub has the sandbox's response shape.
+func TestEmailList_EmptyIsArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"emailForwarding":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		format output.Format
+		want   string
+	}{
+		{output.FormatJSON, `"data": []`},
+		{output.FormatYAML, "data: []"},
+	} {
+		t.Run(string(tc.format), func(t *testing.T) {
+			cmd := cmdForEmailList(t, srv)
+			out := cmdutil.Out(cmd)
+			out.Format = tc.format
+			if err := runList(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			if got := out.Writer.(*bytes.Buffer).String(); !strings.Contains(got, tc.want) {
+				t.Errorf("empty list should print %s, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestEmailList_ShowsEntries(t *testing.T) {
 	var nextPage int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

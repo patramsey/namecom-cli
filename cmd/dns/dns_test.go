@@ -392,6 +392,41 @@ func TestDNSList_EmptyRecords(t *testing.T) {
 	}
 }
 
+// An empty zone lists as `[]`, not `null`, so `jq '.data[]'` iterates nothing
+// rather than failing. Also covers a --type filter that matches nothing, which
+// reslices records and must not turn [] back into null.
+func TestDNSList_EmptyIsArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"totalCount":0,"from":0,"to":0,"records":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		format output.Format
+		typ    string
+		want   string
+	}{
+		{output.FormatJSON, "", `"data": []`},
+		{output.FormatYAML, "", "data: []"},
+		{output.FormatJSON, "MX", `"data": []`},
+	} {
+		t.Run(string(tc.format)+tc.typ, func(t *testing.T) {
+			var stdout bytes.Buffer
+			cmd := cmdForList(t, srv, &stdout)
+			listAll, listType = false, tc.typ
+			t.Cleanup(func() { listType = "" })
+			cmdutil.Out(cmd).Format = tc.format
+			if err := runList(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			if got := stdout.String(); !strings.Contains(got, tc.want) {
+				t.Errorf("empty list should print %s, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestDNSList_TypeFilter(t *testing.T) {
 	typeA := "A"
 	typeMX := "MX"

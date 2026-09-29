@@ -36,6 +36,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   now derived from the JSON encoding, so keys, their order, and omissions
   match on every command. **This changes YAML keys: scripts that parse
   `-o yaml` output must switch to the JSON names.**
+- An empty list prints `"data": []` in JSON and `data: []` in YAML. `transfer
+  list`, `vanity-ns list`, `email list`, and `dns list` printed `"data": null`,
+  so `jq '.data[]'` failed with "Cannot iterate over null" on an account or
+  zone with nothing in it.
 
 ## [0.4.5] - 2026-09-28
 
