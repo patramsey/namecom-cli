@@ -61,7 +61,15 @@ sending it. If you add or change a mutating command, extend the matching
 `TestDryRunMatchesRealRequest_*` test in that package — those tests run each
 command twice (once with `--dry-run` to capture what is *printed*, once
 against an `httptest` stub to capture what is *sent*) and assert the two
-agree. Hand-written dry-run strings drift silently otherwise.
+agree, body included (`drifttest.AssertDryRunBodyMatches`). Hand-written
+dry-run strings drift silently otherwise.
+
+Send the write through `cmdutil.RunWrite` rather than checking `--dry-run`
+and calling `Confirm` by hand. Build the request body once and put it in the
+`Write`: RunWrite previews that value under `--dry-run` without prompting,
+otherwise confirms (when `Prompt` is set) and hands the same value to your
+send callback. If the prompt quotes anything from the request — a price, a
+year count — format it from the body, so the user approves what is sent.
 
 ## Working with the API client
 
