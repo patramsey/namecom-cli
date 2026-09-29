@@ -18,6 +18,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   wording. The error message and exit code are unchanged; only the `hint`
   text (and the `hint` field of the JSON/YAML error envelope) differs.
 
+- `domain register` no longer labels a registry premium price "/yr". The
+  prompt reads e.g. `at $1000.00 (premium; renews at $24.99/yr)`, since the
+  premium is charged on the purchase and the name renews at its own price. For
+  aftermarket, expiring and backorder names it drops "for N year(s)", which the
+  API does not guarantee for those purchase types, and notes when a
+  non-default `--years` may not apply. The prompt text changed, so a script
+  that parses the non-interactive "pass --yes to confirm" error will see the
+  new wording. (#132)
+
 ## [0.4.6] - 2026-09-29
 
 Twelve bug fixes, most found by running every command against the name.com

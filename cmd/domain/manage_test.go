@@ -2344,3 +2344,123 @@ func TestRequirements_QuietListsRequiredFields(t *testing.T) {
 		}
 	}
 }
+
+// TestRegister_PromptWordingByPurchaseKind guards issue #132. With the price
+// right (#83), the words around it still misled:
+//
+//   - A registry premium name read "at $1000.00/yr" for shoe.luxe, whose
+//     premium applies to the purchase while it renews at $24.99 (sandbox
+//     pricing, pricing_premium_shoe_luxe). "/yr" says $1000 every year.
+//   - An aftermarket name read "for 3 year(s)", which the API does not
+//     guarantee for acquisition purchase types.
+//
+// The pricing shapes are the sandbox's, not hand-invented ones.
+func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	tests := []struct {
+		name         string
+		years        string
+		pricing      string // GetPricingForDomain response
+		purchaseType string // availability check purchaseType
+		checkPrice   float64
+		want         []string
+		notWant      []string
+	}{
+		{
+			name:         "premium with renewal price",
+			years:        "1",
+			pricing:      `{"premium":true,"purchasePrice":1000,"renewalPrice":24.99,"transferPrice":24.99}`,
+			purchaseType: "registration", checkPrice: 1000,
+			want:    []string{"Register shoe.luxe for 1 year(s) at $1000.00 (premium; renews at $24.99/yr)?"},
+			notWant: []string{"$1000.00/yr"},
+		},
+		{
+			name:         "premium without renewal price",
+			years:        "1",
+			pricing:      `{"premium":true,"purchasePrice":1000}`,
+			purchaseType: "registration", checkPrice: 1000,
+			want:    []string{"at $1000.00 (premium)?"},
+			notWant: []string{"/yr", "renews"},
+		},
+		{
+			name: "premium multi-year",
+			// The years:2 figures are totals for the term, renewal included:
+			// PricingResponse.RenewalPrice is "the total renewal cost for the
+			// requested years".
+			years:        "2",
+			pricing:      `{"premium":true,"purchasePrice":1523.08,"renewalPrice":1523.08,"transferPrice":761.54}`,
+			purchaseType: "registration", checkPrice: 761.54,
+			want:    []string{"for 2 year(s) at $1523.08 total for 2 years (premium; renews at $1523.08 total for 2 years)?"},
+			notWant: []string{"/yr"},
+		},
+		{
+			name:         "aftermarket drops the year count",
+			years:        "3",
+			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99}`,
+			purchaseType: "aftermarket_b", checkPrice: 2500,
+			want:    []string{"Register shoe.luxe at $2500.00 flat (aftermarket_b, not per year", "--years 3"},
+			notWant: []string{"year(s)", "/yr", "12.99"},
+		},
+		{
+			name:         "aftermarket single year says nothing of years",
+			years:        "1",
+			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99}`,
+			purchaseType: "aftermarket_b", checkPrice: 2500,
+			want:    []string{"Register shoe.luxe at $2500.00 flat (aftermarket_b, not per year)?"},
+			notWant: []string{"year(s)", "--years"},
+		},
+		{
+			name:         "standard unchanged",
+			years:        "1",
+			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99,"transferPrice":12.99}`,
+			purchaseType: "registration", checkPrice: 12.99,
+			want:    []string{"Register shoe.luxe for 1 year(s) at $12.99/yr?"},
+			notWant: []string{"premium"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "checkAvailability"):
+					ptype := coreapigo.SearchPurchaseType(tt.purchaseType)
+					price := tt.checkPrice
+					results := []*coreapigo.SearchResult{{
+						DomainName: "shoe.luxe", Purchasable: true,
+						PurchasePrice: &price, PurchaseType: &ptype,
+					}}
+					_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
+				case strings.Contains(r.URL.Path, "getPricing"):
+					_, _ = w.Write([]byte(tt.pricing))
+				case strings.Contains(r.URL.Path, "claims"):
+					_, _ = w.Write([]byte(`{"domain":"shoe.luxe","claims":[],"claimsProcessActive":false,"claimId":null,"notBefore":null,"notAfter":null,"claimsNotice":""}`))
+				default:
+					t.Errorf("registered without confirmation: %s %s", r.Method, r.URL)
+					http.Error(w, "unexpected", http.StatusInternalServerError)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForRegister(t, srv)
+			if err := cmd.Flags().Set("years", tt.years); err != nil {
+				t.Fatal(err)
+			}
+			err := runRegister(cmd, []string{"shoe.luxe"})
+			if err == nil {
+				t.Fatal("expected the non-interactive confirm error")
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("prompt lacks %q:\n%v", w, err)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(err.Error(), nw) {
+					t.Errorf("prompt should not contain %q:\n%v", nw, err)
+				}
+			}
+		})
+	}
+}
