@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +35,12 @@ and body — instead of sent. GET and HEAD still run.`,
 	RunE: runAPI,
 }
 
+// allowedMethods are the methods `namecom api` sends, matched case-insensitively.
+var allowedMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+	http.MethodPatch, http.MethodDelete, http.MethodOptions,
+}
+
 var (
 	apiBody    string
 	apiHeaders []string
@@ -44,9 +52,16 @@ func init() {
 }
 
 func runAPI(cmd *cobra.Command, args []string) error {
+	method := strings.ToUpper(args[0])
+	// Checked before anything else, including --dry-run. nginx answers an
+	// unknown method with 403, which exited 3 with an `auth login` hint for
+	// what was a typo.
+	if !slices.Contains(allowedMethods, method) {
+		return cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %q: must be one of %s",
+			args[0], strings.Join(allowedMethods, ", ")))
+	}
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	method := strings.ToUpper(args[0])
 	rawPath := args[1]
 
 	base := client.BaseURL()
@@ -114,13 +129,21 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
-			_, _ = os.Stderr.Write(respBody)
-			fmt.Fprintln(os.Stderr)
 			// Return the normalized error type so root.go's exit-code mapping and
 			// UserHint apply here too. A plain fmt.Errorf collapsed every failure to
 			// exit 1, hiding the documented auth/rate-limit codes from scripts.
-			return api.ErrorFromResponse(resp.StatusCode, respBody)
+			apiErr := api.ErrorFromResponse(resp.StatusCode, respBody)
+			// In JSON and YAML modes the error envelope is all that goes to
+			// stderr, so it stays one parseable document; the body rides in
+			// it as details. Printing it here as well put three things there.
+			if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
+				apiErr.Body = respBody
+				return apiErr
+			}
+			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
+			_, _ = out.EWriter.Write(respBody)
+			fmt.Fprintln(out.EWriter)
+			return apiErr
 		}
 
 		fmt.Fprintf(out.Writer, "%s\n", respBody)

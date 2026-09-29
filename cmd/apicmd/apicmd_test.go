@@ -568,3 +568,92 @@ func TestDryRunMatchesRealRequest_API(t *testing.T) {
 		t.Errorf("--dry-run previews %v but the command sends %v", printed, sent)
 	}
 }
+
+// notFound serves every request a 404 with body.
+func notFound(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAPI_StructuredErrorIsOneDocument guards issue #130. On a non-2xx,
+// runAPI wrote "HTTP 404" and the raw body to stderr, and Execute then wrote
+// the JSON error envelope after them — three things on stderr, so
+// `namecom api … -o json 2> err.json; jq . err.json` failed. In JSON and YAML
+// modes the envelope is the only thing on stderr, with the response body
+// inside it.
+//
+// Execute exits the process, so this reproduces its error path directly:
+// runAPI, then out.Error on the same stderr writer.
+func TestAPI_StructuredErrorIsOneDocument(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       any
+	}{
+		{"json body", `{"message":"Not Found","details":"no such domain"}`,
+			map[string]any{"message": "Not Found", "details": "no such domain"}},
+		{"non-json body", "<html>404</html>", "<html>404</html>"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, _ := apiCmd(t, notFound(t, tc.body))
+			out := cmdutil.Out(cmd)
+			var stderr bytes.Buffer
+			out.EWriter = &stderr
+
+			err := runAPI(cmd, []string{"GET", "/core/v1/domains/does-not-exist.com"})
+			if err == nil {
+				t.Fatal("expected an error for HTTP 404")
+			}
+			// Exit-code classification must not change: still an
+			// *api.APIError carrying the 404, so the command exits 4.
+			var apiErr *api.APIError
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+				t.Fatalf("want *api.APIError with status 404, got %T: %v", err, err)
+			}
+			out.Error(err)
+
+			dec := json.NewDecoder(bytes.NewReader(stderr.Bytes()))
+			var env struct {
+				Error struct {
+					Message string `json:"message"`
+					Details any    `json:"details"`
+				} `json:"error"`
+			}
+			if err := dec.Decode(&env); err != nil {
+				t.Fatalf("stderr is not a JSON document: %v\n%s", err, stderr.String())
+			}
+			if dec.More() {
+				t.Fatalf("stderr holds more than one JSON document:\n%s", stderr.String())
+			}
+			if env.Error.Message == "" {
+				t.Errorf("envelope lost its message:\n%s", stderr.String())
+			}
+			if !reflect.DeepEqual(env.Error.Details, tc.want) {
+				t.Errorf("error.details = %#v, want the response body %#v", env.Error.Details, tc.want)
+			}
+		})
+	}
+}
+
+// TestAPI_TableErrorKeepsRawBody pins the other side of #130: in table mode
+// the human-readable "HTTP <status>" line and raw body stay on stderr.
+func TestAPI_TableErrorKeepsRawBody(t *testing.T) {
+	const body = `{"message":"Not Found"}`
+	cmd, _ := apiCmd(t, notFound(t, body))
+	out := cmdutil.Out(cmd)
+	out.Format = output.FormatTable
+	var stderr bytes.Buffer
+	out.EWriter = &stderr
+
+	if err := runAPI(cmd, []string{"GET", "/core/v1/domains/does-not-exist.com"}); err == nil {
+		t.Fatal("expected an error for HTTP 404")
+	}
+	if want := "HTTP 404\n" + body + "\n"; stderr.String() != want {
+		t.Errorf("table-mode stderr = %q, want %q", stderr.String(), want)
+	}
+}

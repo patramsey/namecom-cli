@@ -12,6 +12,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -538,6 +539,12 @@ type hintable interface {
 	UserHint() string
 }
 
+// detailer is implemented by errors that carry structured detail for the
+// JSON/YAML error envelope, such as a raw API response body.
+type detailer interface {
+	ErrorDetails() any
+}
+
 // Error prints a user-facing error to stderr. In JSON output mode the error is
 // emitted as a structured envelope so agents can parse failures.
 func (c *Config) Error(err error) {
@@ -547,7 +554,13 @@ func (c *Config) Error(err error) {
 	// emits "error: <msg>", which looks like YAML but stops parsing as soon as
 	// the message contains ": " — which nearly every wrapped error does.
 	if c.Format == FormatJSON || c.Format == FormatYAML {
-		env := map[string]any{"error": map[string]string{"message": err.Error()}}
+		e := map[string]any{"message": err.Error()}
+		if d := detailer(nil); errors.As(err, &d) {
+			if details := d.ErrorDetails(); details != nil {
+				e["details"] = details
+			}
+		}
+		env := map[string]any{"error": e}
 		if hint != "" {
 			env["hint"] = hint
 		}

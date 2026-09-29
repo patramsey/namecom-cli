@@ -24,6 +24,22 @@ type APIError struct {
 	// specific to say, rather than an empty body, a proxy's page, or a bare
 	// "Server error". See UserHint.
 	explained bool
+	// Body is the raw response body, set only by callers that show it — the
+	// `namecom api` passthrough. It becomes the error envelope's details.
+	Body []byte
+}
+
+// ErrorDetails returns the response body for the structured error envelope:
+// the parsed JSON when the body is JSON, the text otherwise, and nil when no
+// body was kept.
+func (e *APIError) ErrorDetails() any {
+	if len(e.Body) == 0 {
+		return nil
+	}
+	if json.Valid(e.Body) {
+		return json.RawMessage(e.Body)
+	}
+	return string(e.Body)
 }
 
 func (e *APIError) Error() string {
