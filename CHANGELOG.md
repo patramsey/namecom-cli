@@ -86,6 +86,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - Interactive `dns create` sends the MX or SRV priority you enter. The value
   was dropped from the request, and the command then warned that the
   priority was 0.
+- `transfer create --dry-run` and `transfer internal-in --dry-run` no longer
+  ask for confirmation. In a terminal they asked you to approve a transfer
+  that would not be sent; in a script they failed with "pass --yes to confirm
+  in non-interactive mode". `domain register --dry-run` already skipped the
+  prompt.
+- `domain contacts set --dry-run` and `domain set-ns --dry-run` print the body
+  the real request sends. `contacts set` showed the contacts without their
+  `{"contacts": ...}` wrapper, and `set-ns` showed no body at all, followed by
+  the `--ns` value as typed rather than the trimmed list that is sent.
 
 ## [0.4.4] - 2026-09-24
 

@@ -229,14 +229,15 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	// DomainName is the path parameter and is not marshaled, so previewing
+	// this value previews exactly the body sent.
+	body := coreapigo.DomainsSetNameserversBody{DomainName: domain, Nameservers: ns}
 	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain), nil)
-		fmt.Fprintf(out.Writer, "  ns=%s\n", setNSList)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain), body)
 		return nil
 	}
 	stop := out.Spin("Updating nameservers…")
-	_, err = client.SDK().Domains.SetNameservers(cmd.Context(),
-		&coreapigo.DomainsSetNameserversBody{DomainName: domain, Nameservers: ns})
+	_, err = client.SDK().Domains.SetNameservers(cmd.Context(), &body)
 	stop()
 	if err != nil {
 		return err
@@ -371,13 +372,15 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing contacts file: %w", err)
 	}
 
+	// Preview the SDK body, not the file's contents: the request wraps them
+	// as {"contacts": {...}}.
+	body := coreapigo.DomainsSetContactsBody{DomainName: domain, Contacts: &contacts}
 	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setContacts", domain), contacts)
+		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setContacts", domain), body)
 		return nil
 	}
 
-	_, err = client.SDK().Domains.SetContacts(cmd.Context(),
-		&coreapigo.DomainsSetContactsBody{DomainName: domain, Contacts: &contacts})
+	_, err = client.SDK().Domains.SetContacts(cmd.Context(), &body)
 	if err != nil {
 		return err
 	}

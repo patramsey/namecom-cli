@@ -287,13 +287,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
+	// No prompt under --dry-run, as in `domain register`: nothing will be sent,
+	// and in a script Confirm hard-errors without --yes, which made --dry-run
+	// unusable in CI.
+	if !dryRun {
+		ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			out.Warn("aborted")
+			return nil
+		}
 	}
 
 	body := coreapigo.CreateTransferRequest{
@@ -473,13 +478,15 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ok, err := confirm(out, yes, fmt.Sprintf("Transfer %s from another name.com account?", domain))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
+	if !dryRun {
+		ok, err := confirm(out, yes, fmt.Sprintf("Transfer %s from another name.com account?", domain))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			out.Warn("aborted")
+			return nil
+		}
 	}
 
 	body := coreapigo.CreateInternalTransferInRequest{
