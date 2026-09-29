@@ -66,6 +66,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a script that worked around this by passing the next day will now get one
   extra day of orders.
 
+### Documentation
+- `order list` and `order get` help, and the `--since`/`--until` flag help, now
+  note that name.com's order timestamps currently run several hours behind UTC
+  despite the `Z` suffix (about 6h, most likely US Mountain time), and that the
+  server-side date filters use the same clock, so orders placed near midnight
+  UTC can land on the previous day. This is an API issue; the CLI prints the
+  timestamps as the API returns them and does not shift them (#134).
+
 ## [0.4.6] - 2026-09-29
 
 Twelve bug fixes, most found by running every command against the name.com
