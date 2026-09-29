@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -423,6 +424,114 @@ func TestRefund_DeclinedConfirmationDoesNotRefund(t *testing.T) {
 	}
 	if hits != 0 {
 		t.Errorf("a refund was issued without confirmation (%d request(s))", hits)
+	}
+}
+
+// refundWith runs a confirmed refund against a stub returning resp, in the
+// given output format, and returns what reached stdout and stderr.
+func refundWith(t *testing.T, format output.Format, resp string) (stdout, stderr string, err error) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+	t.Cleanup(srv.Close)
+	cmd := cmdForRefund(t, srv, false)
+	out := cmdutil.Out(cmd)
+	out.Format = format
+	err = runRefund(cmd, nil)
+	return out.Writer.(*bytes.Buffer).String(), out.EWriter.(*bytes.Buffer).String(), err
+}
+
+// TestRefund_ReportsPerItemFailures pins #90: the success line was built from
+// len(result.Results), so an item the API refused — outside the grace period,
+// say — was counted as refunded, its message was never shown, and the command
+// exited 0. A refund is money; "it worked" must mean it worked.
+func TestRefund_ReportsPerItemFailures(t *testing.T) {
+	const (
+		ok1    = `{"orderId":42,"orderItemId":7,"orderItemStatus":"refunded","refundAmount":19.99}`
+		ok2    = `{"orderId":42,"orderItemId":8,"orderItemStatus":"refunded","refundAmount":9.99}`
+		failed = `{"orderId":42,"orderItemId":9,"orderItemStatus":"failed","refundAmount":0,"message":"outside the refund grace period"}`
+		cancel = `{"orderId":42,"orderItemId":10,"orderItemStatus":"canceled","refundAmount":0,"message":"refund canceled by registry"}`
+	)
+	tests := []struct {
+		name        string
+		resp        string
+		wantErr     bool
+		wantSuccess string   // "" means no success line at all
+		wantWarn    []string // substrings expected on stderr
+	}{
+		{
+			name:        "all succeed",
+			resp:        `{"totalRefundAmount":29.98,"results":[` + ok1 + `,` + ok2 + `]}`,
+			wantSuccess: "Refunded $29.98 for 2 item(s)",
+		},
+		{
+			name:        "mixed",
+			resp:        `{"totalRefundAmount":19.99,"results":[` + ok1 + `,` + failed + `]}`,
+			wantErr:     true,
+			wantSuccess: "Refunded $19.99 for 1 item(s)",
+			wantWarn:    []string{"item 9", "outside the refund grace period"},
+		},
+		{
+			name:     "all failed",
+			resp:     `{"totalRefundAmount":0,"results":[` + failed + `,` + cancel + `]}`,
+			wantErr:  true,
+			wantWarn: []string{"item 9", "outside the refund grace period", "item 10", "canceled", "refund canceled by registry"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, err := refundWith(t, output.FormatTable, tt.resp)
+			if tt.wantErr != (err != nil) {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			// A refused refund is a runtime failure (exit 1), not a mistake in
+			// how the command was invoked or a credential problem.
+			var usage *cmdutil.UsageError
+			var auth *cmdutil.AuthError
+			if errors.As(err, &usage) || errors.As(err, &auth) {
+				t.Errorf("refund failure classified as %T; want an unclassified runtime error (exit 1)", err)
+			}
+			if tt.wantSuccess == "" {
+				if strings.Contains(stdout, "Refunded") {
+					t.Errorf("reported success when nothing was refunded:\n%s", stdout)
+				}
+			} else if !strings.Contains(stdout, tt.wantSuccess) {
+				t.Errorf("stdout missing %q:\n%s", tt.wantSuccess, stdout)
+			}
+			for _, w := range tt.wantWarn {
+				if !strings.Contains(stderr, w) {
+					t.Errorf("stderr missing %q:\n%s", w, stderr)
+				}
+			}
+			if len(tt.wantWarn) == 0 && stderr != "" {
+				t.Errorf("unexpected stderr on a clean refund:\n%s", stderr)
+			}
+		})
+	}
+}
+
+// TestRefund_JSONEmitsFullResultOnFailure: a script reading -o json needs every
+// item's status, the failed ones included, and a non-zero exit to notice them.
+func TestRefund_JSONEmitsFullResultOnFailure(t *testing.T) {
+	const resp = `{"totalRefundAmount":19.99,"results":[
+		{"orderId":42,"orderItemId":7,"orderItemStatus":"refunded","refundAmount":19.99},
+		{"orderId":42,"orderItemId":9,"orderItemStatus":"failed","refundAmount":0,"message":"outside the refund grace period"}]}`
+	stdout, _, err := refundWith(t, output.FormatJSON, resp)
+	if err == nil {
+		t.Error("expected an error when an item failed")
+	}
+	var got coreapigo.RefundResponse
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+		t.Fatalf("stdout is not a refund result: %v\n%s", jerr, stdout)
+	}
+	if len(got.Results) != 2 {
+		t.Fatalf("JSON carries %d result(s), want 2:\n%s", len(got.Results), stdout)
+	}
+	if r := got.Results[1]; r.OrderItemStatus != coreapigo.RefundItemResultOrderItemStatusFailed ||
+		r.Message == nil || *r.Message != "outside the refund grace period" {
+		t.Errorf("failed item not carried through: %+v", r)
 	}
 }
 
