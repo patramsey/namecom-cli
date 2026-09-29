@@ -163,3 +163,93 @@ func TestDryRunMatchesRealRequest_Vanity(t *testing.T) {
 		})
 	}
 }
+
+// TestVanity_BareLabelQualified covers issue #114: create accepts a bare label
+// (`--hostname ns1`) and the API stores ns1.<domain>, but get, update and
+// delete sent `ns1` through as the path parameter and got "Hostname not
+// found." All four now normalize the hostname the same way, and --dry-run
+// must preview the qualified path, not the one typed.
+func TestVanity_BareLabelQualified(t *testing.T) {
+	// Shape of the sandbox's reply to a bare-label create.
+	const stub = `{"domainName":"example.com","hostname":"ns1.example.com","ips":["203.0.114.53"]}`
+	const want = "/core/v1/domains/example.com/vanity_nameservers/ns1.example.com"
+
+	commands := []struct {
+		name, method string
+		setup        func(*testing.T, *httptest.Server) *cobra.Command
+		run          func(*cobra.Command, []string) error
+		writes       bool
+	}{
+		{"get", "GET", func(t *testing.T, srv *httptest.Server) *cobra.Command { return baseCmd(t, srv) }, runGet, false},
+		{"update", "PUT", func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForUpdate(t, srv)
+			if err := cmd.ParseFlags([]string{"--ips", "203.0.114.53"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}, runUpdate, true},
+		{"delete", "DELETE", func(t *testing.T, srv *httptest.Server) *cobra.Command { return cmdForDelete(t, srv) }, runDelete, true},
+	}
+	spellings := []struct{ name, hostname string }{
+		{"bare label", "ns1"},
+		{"bare label, upper case", "NS1"},
+		{"fqdn", "ns1.example.com"},
+		{"fqdn, trailing dot and mixed case", "NS1.Example.COM."},
+	}
+
+	for _, c := range commands {
+		for _, s := range spellings {
+			t.Run(c.name+"/"+s.name, func(t *testing.T) {
+				args := []string{"example.com", s.hostname}
+				sent := captureRealRequest(t, func(srv *httptest.Server) (*cobra.Command, error) {
+					cmd := withDryRun(t, c.setup(t, srv), false)
+					return cmd, c.run(cmd, args)
+				}, stub)
+				if sent != c.method+" "+want {
+					t.Errorf("sent %q, want %q", sent, c.method+" "+want)
+				}
+				if !c.writes {
+					return
+				}
+				printed := captureDryRunLine(t, func(srv *httptest.Server) (*cobra.Command, error) {
+					cmd := withDryRun(t, c.setup(t, srv), true)
+					return cmd, c.run(cmd, args)
+				}, stub)
+				if printed != c.method+" "+want {
+					t.Errorf("--dry-run previewed %q, want %q", printed, c.method+" "+want)
+				}
+			})
+		}
+	}
+}
+
+// TestVanity_HostnameWrongDomain holds the positional hostname to the same
+// rule as create's --hostname: a name under another domain is rejected before
+// any request, rather than sent and answered with a 404.
+func TestVanity_HostnameWrongDomain(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *httptest.Server) *cobra.Command
+		run   func(*cobra.Command, []string) error
+	}{
+		{"get", baseCmd, runGet},
+		{"update", func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForUpdate(t, srv)
+			updateIPs = "203.0.114.53"
+			return cmd
+		}, runUpdate},
+		{"delete", cmdForDelete, runDelete},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := tc.setup(t, neverCalledServer(t))
+			err := tc.run(cmd, []string{"example.com", "ns1.other.com"})
+			if err == nil {
+				t.Fatal("expected error for hostname outside the target domain, got nil")
+			}
+			if !strings.Contains(err.Error(), "example.com") {
+				t.Errorf("error should name the expected domain, got: %v", err)
+			}
+		})
+	}
+}
