@@ -232,7 +232,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		Method: "POST",
 		Path:   "/core/v1/domains",
 		Body:   body,
-		Prompt: registerPrompt(domainName, body, pricing.PurchasePrice),
+		Prompt: registerPrompt(domainName, body, pricing),
 	}, func(ctx context.Context, body coreapigo.CreateDomainRequest) error {
 		if claim != nil {
 			renderClaimsNotice(out, claim)
@@ -285,9 +285,9 @@ func runRegister(cmd *cobra.Command, args []string) error {
 // is the one body carries, so the user approves the amount actually
 // submitted; quoting GetPricingForDomain unconditionally meant an aftermarket
 // name or a --price override confirmed one amount and submitted another
-// (#83). standard is the standard registration price, quoted only when the
-// body carries none — the API then charges exactly that.
-func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, standard *float64) string {
+// (#83). pricing's registration price is quoted only when the body carries
+// none — the API then charges exactly that.
+func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, pricing *coreapigo.PricingResponse) string {
 	years := 1
 	if body.Years != nil {
 		years = *body.Years
@@ -297,12 +297,34 @@ func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, stand
 	case body.PurchasePrice != nil && body.PurchaseType != nil:
 		// An acquisition price is a flat fee: the API documents that years on
 		// create does not multiply it, so "/yr" or "total for N years" would
-		// both misstate it.
-		price = fmt.Sprintf("$%.2f flat (%s, not per year)", *body.PurchasePrice, *body.PurchaseType)
+		// both misstate it. Nor does it guarantee the term for these purchase
+		// types, so the prompt states none (#132); --years is still sent, so a
+		// non-default one is flagged rather than silently confirmed.
+		note := ""
+		if years != 1 {
+			note = fmt.Sprintf("; --years %d may not apply", years)
+		}
+		return fmt.Sprintf("Register %s at $%.2f flat (%s, not per year%s)?",
+			domainName, *body.PurchasePrice, *body.PurchaseType, note)
+	case body.PurchasePrice != nil && pricing.GetPremium():
+		// A registry premium is charged on this purchase, and the renewal price
+		// is often far lower — shoe.luxe is $1000.00 to register and $24.99 to
+		// renew. "/yr" on the purchase price read as $1000 every year (#132).
+		// Both figures are totals for the requested term (PricingResponse), so
+		// a multi-year term reuses formatTermPrice's "total for N years".
+		price = fmt.Sprintf("$%.2f", *body.PurchasePrice)
+		if years > 1 {
+			price += fmt.Sprintf(" total for %d years", years)
+		}
+		price += " (premium"
+		if pricing.RenewalPrice != nil {
+			price += "; renews at " + formatTermPrice(*pricing.RenewalPrice, years)
+		}
+		price += ")"
 	case body.PurchasePrice != nil:
 		price = formatTermPrice(*body.PurchasePrice, years)
-	case standard != nil:
-		price = formatTermPrice(*standard, years)
+	case pricing.GetPurchasePrice() != nil:
+		price = formatTermPrice(*pricing.PurchasePrice, years)
 	}
 	return fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, years, price)
 }
