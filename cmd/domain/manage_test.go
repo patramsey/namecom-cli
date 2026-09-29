@@ -1959,6 +1959,69 @@ func TestRegister_DryRunPreviewsTheRealBody(t *testing.T) {
 	}
 }
 
+// TestRegister_PromptQuotesThePriceSent guards issue #83: the confirmation
+// prompt quoted GetPricingForDomain's standard registration price, while the
+// body sent the availability check's acquisition price or --price. Answering
+// yes to "$12.99/yr" submitted a $2500 purchase.
+//
+// The two endpoints return different prices here on purpose — with identical
+// prices, as in TestRegister_DryRunPreviewsTheRealBody, a mismatch can't show.
+// Without --yes in a non-interactive test, Confirm's error carries the prompt.
+func TestRegister_PromptQuotesThePriceSent(t *testing.T) {
+	tests := []struct {
+		name  string
+		price string // --price, empty for none
+		want  string
+	}{
+		{"aftermarket check price", "", "$2500.00"},
+		{"--price override", "3000", "$3000.00"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checkPrice, pricingPrice := 2500.00, 12.99
+			var created bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(r.URL.Path, "checkAvailability"):
+					ptype := coreapigo.SearchPurchaseType("aftermarket_b")
+					results := []*coreapigo.SearchResult{{
+						DomainName: "example.com", Purchasable: true,
+						PurchasePrice: &checkPrice, PurchaseType: &ptype,
+					}}
+					_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
+				case strings.Contains(r.URL.Path, "getPricing"):
+					_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &pricingPrice})
+				default:
+					created = true
+					_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForRegister(t, srv)
+			if tt.price != "" {
+				if err := cmd.Flags().Set("price", tt.price); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := runRegister(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatal("expected the non-interactive confirm error")
+			}
+			if created {
+				t.Fatal("registered without confirmation")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("prompt does not quote the price sent (%s):\n%v", tt.want, err)
+			}
+			if strings.Contains(err.Error(), "12.99") {
+				t.Errorf("prompt quotes the standard registration price, which is not sent:\n%v", err)
+			}
+		})
+	}
+}
+
 // TestRegister_ClaimsCheckedForTheActualPurchaseType guards a case where the
 // trademark gate silently does not fire.
 //
