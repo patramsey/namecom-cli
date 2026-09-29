@@ -256,3 +256,42 @@ func failIfWritten(t *testing.T) http.HandlerFunc {
 		_, _ = w.Write([]byte(transferStub))
 	}
 }
+
+// TestDryRunMatchesRealRequest_TransferBody asserts the body --dry-run prints
+// is the body sent, for every transfer write. The two creates redact the auth
+// code and nothing else; the cancels preview no body and send the SDK's {}
+// placeholder.
+func TestDryRunMatchesRealRequest_TransferBody(t *testing.T) {
+	redacted := map[string]string{"authCode": "[redacted]"}
+
+	t.Run("create", func(t *testing.T) {
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForTransferCreate(t, srv)
+			if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", "--price", "42.5", "--privacy"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			t.Cleanup(func() { createAuthCode, createPrice, createPrivacy = "", 0, false })
+			return cmd
+		}
+		drifttest.AssertDryRunBodyMatchesRedacted(t, build, runCreate, []string{"example.com"}, transferStub, redacted)
+	})
+
+	t.Run("internal-in", func(t *testing.T) {
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForInternalIn(t, srv)
+			if err := cmd.ParseFlags([]string{"--auth-code", "ABC123"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}
+		drifttest.AssertDryRunBodyMatchesRedacted(t, build, runInternalIn, []string{"example.com"}, transferStub, redacted)
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, cmdForTransferGet, runCancel, []string{"example.com"}, transferStub)
+	})
+
+	t.Run("cancel-outbound", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, cmdForTransferGet, runCancelOutbound, []string{"example.com"}, transferStub)
+	})
+}

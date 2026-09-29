@@ -68,3 +68,16 @@ func TestDryRunMatchesRealRequest_Contact(t *testing.T) {
 		drifttest.AssertDryRunMatches(t, build, runVerify, []string{"9911"}, `{}`)
 	})
 }
+
+// TestDryRunMatchesRealRequest_ContactBody asserts neither command previews a
+// body. Both send only the SDK's {} placeholder, which the shape test pins.
+func TestDryRunMatchesRealRequest_ContactBody(t *testing.T) {
+	t.Run("resend", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, build, runResend, []string{"9911"},
+			`{"sent":true,"verificationId":9911}`)
+	})
+
+	t.Run("verify", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, build, runVerify, []string{"9911"}, `{}`)
+	})
+}

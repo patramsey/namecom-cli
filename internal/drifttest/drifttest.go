@@ -8,12 +8,13 @@
 //     explicit expectation written by hand, so the test fails if the request
 //     moves for any reason — including a reason that looks harmless.
 //
-//   - **Preview accuracy.** That --dry-run reports the same method and path it
-//     would really send, and that it performs no *write*. Reads are allowed and
-//     expected: `transfer create --dry-run` fetches pricing so it can show what
-//     the transfer would cost, and `domain register --dry-run` checks
-//     availability. The rule --dry-run promises is "print the request instead of
-//     sending it" for writes, so that is what is asserted.
+//   - **Preview accuracy.** That --dry-run reports the same method, path and
+//     body it would really send, and that it performs no *write*. Reads are
+//     allowed and expected: `transfer create --dry-run` fetches pricing so it
+//     can show what the transfer would cost, and `domain register --dry-run`
+//     checks availability and trademark claims. The rule --dry-run promises is
+//     "print the request instead of sending it" for writes, so that is what is
+//     asserted.
 //
 // Only the mutating commands are worth this. A GET that returns the wrong
 // thing is visible; a POST whose body quietly changed is not.
@@ -156,6 +157,15 @@ func AssertDryRunMatches(t *testing.T, build Build, run Run, args []string, stub
 	}
 }
 
+// isQueryPOST reports whether path is one of the API's lookups that are POSTs
+// only so they can take a body. `domain register --dry-run` makes both — the
+// availability check and the trademark-claims check — before it has a body to
+// preview, and neither changes anything.
+func isQueryPOST(path string) bool {
+	return strings.HasSuffix(path, ":checkAvailability") ||
+		strings.HasPrefix(path, "/core/v1/domaininfo/claims/")
+}
+
 // dryRunLine runs the command with --dry-run and extracts the METHOD /path line
 // it printed, plus everything printed after it. A dry run must not write: the
 // test fails if the stub server sees anything but a read.
@@ -166,7 +176,7 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Reads during a dry run are legitimate — see the package comment. Only
 		// a write means the flag was ignored.
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !isQueryPOST(r.URL.Path) {
 			wrote = r.Method + " " + r.URL.Path
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -211,7 +221,26 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 // preview carries no secret and so has no reason to differ from the wire. A
 // preview built by hand from the command's inputs, rather than from the value
 // handed to the SDK, drifts silently whenever the SDK wraps or reshapes it.
+//
+// A command that previews no body may send `{}`: that is the SDK's
+// EmptyObject placeholder for a bodyless endpoint (namedotcom/core-api-go#8),
+// not a body the user chose, and the shape tests pin it separately.
 func AssertDryRunBodyMatches(t *testing.T, build Build, run Run, args []string, stubResponse string) {
+	t.Helper()
+	assertDryRunBody(t, build, run, args, stubResponse, nil)
+}
+
+// AssertDryRunBodyMatchesRedacted is AssertDryRunBodyMatches for a command
+// that redacts secrets from its preview. redacted maps each redacted top-level
+// field to the placeholder the preview shows in its place. The sent body must
+// carry every such field; with the placeholders substituted in, it must then
+// equal the preview exactly, so redaction cannot hide any other difference.
+func AssertDryRunBodyMatchesRedacted(t *testing.T, build Build, run Run, args []string, stubResponse string, redacted map[string]string) {
+	t.Helper()
+	assertDryRunBody(t, build, run, args, stubResponse, redacted)
+}
+
+func assertDryRunBody(t *testing.T, build Build, run Run, args []string, stubResponse string, redacted map[string]string) {
 	t.Helper()
 
 	printed := dryRunBody(t, build, run, args, stubResponse)
@@ -229,9 +258,36 @@ func AssertDryRunBodyMatches(t *testing.T, build Build, run Run, args []string, 
 	if err := run(cmd, args); err != nil {
 		t.Fatalf("live invocation failed: %v", err)
 	}
-	if got, want := canonJSON(printed), canonJSON(sent); got != want {
+	if len(redacted) > 0 {
+		sent = redact(t, sent, redacted)
+	}
+	got, want := canonJSON(printed), canonJSON(sent)
+	if got == "" && want == "{}" {
+		return
+	}
+	if got != want {
 		t.Errorf("--dry-run previews a body the command does not send:\n  printed: %s\n  sent:    %s", got, want)
 	}
+}
+
+// redact substitutes placeholders for the named top-level fields of body.
+func redact(t *testing.T, body string, fields map[string]string) string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("sent body is not a JSON object, so it cannot be redacted: %q", body)
+	}
+	for k, placeholder := range fields {
+		if _, ok := m[k]; !ok {
+			t.Errorf("sent body has no %q field to redact: %s", k, body)
+		}
+		m[k] = placeholder
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("re-marshalling redacted body: %v", err)
+	}
+	return string(b)
 }
 
 // dryRunBody runs the command with --dry-run and returns the JSON document
