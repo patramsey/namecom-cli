@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,6 +217,75 @@ func TestShow_HonorsProfileSelection(t *testing.T) {
 		got := buf.String()
 		if !strings.Contains(got, "prod") || !strings.Contains(got, "api.name.com") {
 			t.Errorf("with no selection the file default should be described, got: %s", got)
+		}
+	})
+}
+
+// TestShow_MatchesResolve covers the cases where config show's own chain
+// disagreed with the credentials API commands use: a lone profile with no
+// `default:` key (every API command worked; config show said "no profile
+// \"default\" configured — run 'namecom auth login'", which overwrites), and
+// the env/flag overrides that change the username and endpoint.
+func TestShow_MatchesResolve(t *testing.T) {
+	writeConfig := func(t *testing.T, contents string) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatalf("writing config: %v", err)
+		}
+		t.Setenv("NAMECOM_CONFIG", path)
+		for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+			t.Setenv(k, "")
+		}
+	}
+	run := func(t *testing.T, ov config.Overrides) map[string]string {
+		t.Helper()
+		var buf bytes.Buffer
+		out := &output.Config{Format: output.FormatJSON, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+		cmd := &cobra.Command{}
+		ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+		ctx = context.WithValue(ctx, cmdutil.KeyOverrides, ov)
+		cmd.SetContext(ctx)
+		if err := runShow(cmd, nil); err != nil {
+			t.Fatalf("runShow: %v", err)
+		}
+		var got map[string]string
+		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			t.Fatalf("parsing output: %v\n%s", err, buf.String())
+		}
+		return got
+	}
+
+	t.Run("lone profile not named default", func(t *testing.T) {
+		writeConfig(t, "profiles:\n  work:\n    username: w\n    token: x\n")
+		got := run(t, config.Overrides{})
+		if got["profile"] != "work" || got["username"] != "w" {
+			t.Errorf("got %v, want profile work / username w", got)
+		}
+	})
+
+	prod := "default: prod\nprofiles:\n  prod:\n    username: alice\n    token: x\n"
+
+	t.Run("--sandbox", func(t *testing.T) {
+		writeConfig(t, prod)
+		if got := run(t, config.Overrides{Sandbox: true, SandboxSet: true}); got["endpoint"] != "api.dev.name.com" {
+			t.Errorf("endpoint = %q with --sandbox, want api.dev.name.com", got["endpoint"])
+		}
+	})
+
+	t.Run("NAMECOM_SANDBOX", func(t *testing.T) {
+		writeConfig(t, prod)
+		t.Setenv("NAMECOM_SANDBOX", "true")
+		if got := run(t, config.Overrides{}); got["endpoint"] != "api.dev.name.com" {
+			t.Errorf("endpoint = %q with NAMECOM_SANDBOX, want api.dev.name.com", got["endpoint"])
+		}
+	})
+
+	t.Run("NAMECOM_USERNAME", func(t *testing.T) {
+		writeConfig(t, prod)
+		t.Setenv("NAMECOM_USERNAME", "envuser")
+		if got := run(t, config.Overrides{}); got["username"] != "envuser" {
+			t.Errorf("username = %q with NAMECOM_USERNAME, want envuser", got["username"])
 		}
 	})
 }

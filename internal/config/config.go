@@ -217,14 +217,9 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 		f = &File{Profiles: map[string]Profile{}}
 	}
 
-	// Select the active profile name.
-	profileName := firstNonEmpty(ov.Profile, os.Getenv("NAMECOM_PROFILE"), f.Default, impliedDefault(f))
+	creds := Identity(f, ov)
+	profileName := creds.Profile
 	prof := f.Profiles[profileName] // zero Profile if absent
-
-	creds := Credentials{Profile: profileName}
-
-	// Username: flag > env > profile.
-	creds.Username = firstNonEmpty(ov.Username, os.Getenv("NAMECOM_USERNAME"), prof.Username)
 
 	// Token: flag > env > profile.token > profile.token_cmd.
 	creds.Token = firstNonEmpty(ov.Token, os.Getenv("NAMECOM_TOKEN"), prof.Token)
@@ -234,16 +229,6 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 			return Credentials{}, fmt.Errorf("profile %q token_cmd: %w", profileName, err)
 		}
 		creds.Token = tok
-	}
-
-	// Sandbox: explicit flag > env > profile.
-	switch {
-	case ov.SandboxSet:
-		creds.Sandbox = ov.Sandbox
-	case os.Getenv("NAMECOM_SANDBOX") != "":
-		creds.Sandbox = truthy(os.Getenv("NAMECOM_SANDBOX"))
-	default:
-		creds.Sandbox = prof.Sandbox
 	}
 
 	if creds.Username == "" || creds.Token == "" {
@@ -263,6 +248,52 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 		return Credentials{}, ErrNoCredentials
 	}
 	return creds, nil
+}
+
+// ActiveProfile returns the name of the profile Resolve selects: flagProfile
+// (--profile), then NAMECOM_PROFILE, then the file's `default:` key, then the
+// implied default. It is "" when nothing selects one.
+//
+// Commands that name "the active profile" without calling Resolve — `auth
+// logout`, `auth status`, `status`, `config show` — must use this rather than a
+// chain of their own. Each used to stop at `default:` and then guess the
+// literal "default", so `NAMECOM_PROFILE=staging namecom auth logout` deleted
+// the production profile, and a lone profile not named "default" was reported
+// as missing by the very commands meant to describe it.
+func ActiveProfile(f *File, flagProfile string) string {
+	if f == nil {
+		f = &File{}
+	}
+	return firstNonEmpty(flagProfile, os.Getenv("NAMECOM_PROFILE"), f.Default, impliedDefault(f))
+}
+
+// Identity resolves everything Resolve does except the token: the profile
+// name, the username, and the sandbox setting, with the same precedence. It
+// never runs token_cmd and never fails, so a command that only describes the
+// credentials reports what an API command would use without unlocking a vault
+// or requiring a token to exist.
+func Identity(f *File, ov Overrides) Credentials {
+	if f == nil {
+		f = &File{}
+	}
+	profileName := ActiveProfile(f, ov.Profile)
+	prof := f.Profiles[profileName] // zero Profile if absent
+
+	creds := Credentials{Profile: profileName}
+
+	// Username: flag > env > profile.
+	creds.Username = firstNonEmpty(ov.Username, os.Getenv("NAMECOM_USERNAME"), prof.Username)
+
+	// Sandbox: explicit flag > env > profile.
+	switch {
+	case ov.SandboxSet:
+		creds.Sandbox = ov.Sandbox
+	case os.Getenv("NAMECOM_SANDBOX") != "":
+		creds.Sandbox = truthy(os.Getenv("NAMECOM_SANDBOX"))
+	default:
+		creds.Sandbox = prof.Sandbox
+	}
+	return creds
 }
 
 // impliedDefault names the profile to use when nothing selected one: no

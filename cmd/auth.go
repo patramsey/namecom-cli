@@ -154,23 +154,8 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		return api.FromSDKError(err)
 	}
 
-	ov := cmdutil.Overrides(cmd)
-	cfgFile := cmdutil.CfgFile(cmd)
-	profileName := cfgFile.Default
-	if profileName == "" {
-		profileName = "default"
-	}
-	if ov.Profile != "" {
-		profileName = ov.Profile
-	}
-
-	username := ""
-	if p, ok := cfgFile.Profiles[profileName]; ok {
-		username = p.Username
-	}
-	if ov.Username != "" {
-		username = ov.Username
-	}
+	// Report the identity the Hello call just used, resolved the same way.
+	id := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
 
 	env := "production"
 	if client.BaseURL() == "https://api.dev.name.com" {
@@ -180,8 +165,8 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	cfgPath, _ := config.ActivePath()
 
 	renderAuthStatus(out, [][]string{
-		{"Profile", profileName},
-		{"Username", username},
+		{"Profile", id.Profile},
+		{"Username", id.Username},
 		{"Environment", env},
 		{"Endpoint", client.BaseURL()},
 		{"Config", cfgPath},
@@ -226,13 +211,14 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Determine active profile: --profile flag > config default > "default".
-	profile := logoutProfile
+	// The profile API commands would use, so logout removes the credential in
+	// use and not, say, prod when NAMECOM_PROFILE names staging.
+	profile := config.ActiveProfile(cfgFile, logoutProfile)
 	if profile == "" {
-		profile = cfgFile.Default
-	}
-	if profile == "" {
-		profile = "default"
+		if len(cfgFile.Profiles) == 0 {
+			return errors.New("no profiles configured")
+		}
+		return fmt.Errorf("%d profiles exist but none is the default — pass --profile to choose one", len(cfgFile.Profiles))
 	}
 
 	if _, ok := cfgFile.Profiles[profile]; !ok {

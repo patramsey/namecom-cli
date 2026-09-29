@@ -209,6 +209,9 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	if err := initOutputContext(cmd); err != nil {
 		return err
 	}
+	// Stored before the skip below: `config show --profile x` never builds a
+	// client, and when only initContext stored these the flag never reached it.
+	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOverrides, flagOverrides(cmd)))
 	if skipClientInit(cmd) {
 		return nil
 	}
@@ -262,6 +265,17 @@ func initOutputContext(cmd *cobra.Command) error {
 // parsed (e.g. a malformed flag), in which case the default config applies.
 var resolvedOut *output.Config
 
+// flagOverrides collects the global credential flags as config.Overrides.
+func flagOverrides(cmd *cobra.Command) config.Overrides {
+	return config.Overrides{
+		Profile:    gf.profile,
+		Username:   gf.username,
+		Token:      gf.token,
+		Sandbox:    gf.sandbox,
+		SandboxSet: cmd.Flags().Changed("sandbox"),
+	}
+}
+
 // initContext builds the API client and config file from the resolved
 // flags/env and stores them on the command's context. Output config is
 // already set by initOutputContext.
@@ -269,14 +283,7 @@ func initContext(cmd *cobra.Command) error {
 	out := cmdutil.Out(cmd)
 
 	// --- Credentials ---
-	sandboxSet := cmd.Flags().Changed("sandbox")
-	ov := config.Overrides{
-		Profile:    gf.profile,
-		Username:   gf.username,
-		Token:      gf.token,
-		Sandbox:    gf.sandbox,
-		SandboxSet: sandboxSet,
-	}
+	ov := flagOverrides(cmd)
 
 	cfgFile, err := config.Load()
 	if err != nil {

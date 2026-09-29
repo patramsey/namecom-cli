@@ -56,6 +56,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
   Only refunded items are counted now; each failed or canceled item is
   printed with the server's reason, and the command exits 1 if any item was
   not refunded. `-o json` still prints the full per-item result.
+- `auth logout`, `auth status`, `status` and `config show` now pick the
+  active profile exactly as API commands do: `--profile`, then
+  `NAMECOM_PROFILE`, then the `default:` key, then a profile named `default`
+  or the only profile. They ignored `NAMECOM_PROFILE`, so
+  `NAMECOM_PROFILE=staging namecom auth logout` removed the **production**
+  profile, and `auth status` authenticated as staging while reporting prod.
+  With a single profile not named `default`, logout and `config show` failed
+  and the status commands reported the wrong profile.
+- `config show --profile <name>` describes that profile. The flag never
+  reached the command, which described the default profile instead.
+  `config show` also reflects `--sandbox`, `NAMECOM_SANDBOX` and
+  `NAMECOM_USERNAME` in the endpoint and username it reports.
 
 ## [0.4.4] - 2026-09-24
 
