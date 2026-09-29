@@ -297,6 +297,9 @@ func TestRunTokenCmd_TimesOut(t *testing.T) {
 	prev := tokenCmdTimeout
 	tokenCmdTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { tokenCmdTimeout = prev })
+	// Take the process-group path whether or not `go test` was started from a
+	// terminal, so the group kill is what is measured here.
+	withControllingTerminal(t, false)
 
 	// A PIPELINE, not a bare command. `sh -c "sleep 30"` lets the shell exec
 	// itself into sleep, so killing the direct child is enough — which is why

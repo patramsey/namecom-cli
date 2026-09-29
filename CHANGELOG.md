@@ -38,6 +38,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `domain list --all` no longer loops forever against a server that keeps
   reporting the same next page without a last page. Each repeat fetched the
   same page again and added its domains to the output a second time.
+- A `token_cmd` that prompts on the terminal — a password manager asking for
+  its passphrase, for example — can now read your answer. It was started in a
+  background process group, so reading the terminal stopped it until the 15s
+  timeout. When the CLI has no terminal, a timeout still kills the helper's
+  whole pipeline; with one, it kills the shell, and the CLI still stops
+  waiting two seconds later.
 
 ## [0.4.4] - 2026-09-24
 
