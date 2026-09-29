@@ -52,6 +52,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   "N of N item(s) were not refunded" error as a partial failure, and `-o json`
   / `-o yaml` emit the refund result on stdout instead of an error envelope on
   stderr. The exit code is still 1.
+- `vanity-ns get`, `update`, and `delete` now accept a bare label (`ns1`) as
+  `vanity-ns create --hostname` does, qualifying it against the domain. They
+  passed it through unchanged and the API answered "Hostname not found." A
+  trailing dot or upper case is also normalized, and a hostname under another
+  domain is rejected before any request. The hostname in `--dry-run` output
+  and in the update/delete success message is now the qualified one.
 
 ## [0.4.5] - 2026-09-28
 

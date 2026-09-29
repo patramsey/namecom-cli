@@ -37,9 +37,10 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:               "get <domain> <hostname>",
-	Short:             "Get a vanity nameserver",
-	Example:           `  namecom vanity-ns get example.com ns1.example.com`,
+	Use:   "get <domain> <hostname>",
+	Short: "Get a vanity nameserver",
+	Example: `  namecom vanity-ns get example.com ns1.example.com
+  namecom vanity-ns get example.com ns1`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -56,18 +57,20 @@ var createCmd = &cobra.Command{
 }
 
 var updateCmd = &cobra.Command{
-	Use:               "update <domain> <hostname>",
-	Short:             "Update vanity nameserver IPs",
-	Example:           `  namecom vanity-ns update example.com ns1.example.com --ips 1.2.3.4,5.6.7.8`,
+	Use:   "update <domain> <hostname>",
+	Short: "Update vanity nameserver IPs",
+	Example: `  namecom vanity-ns update example.com ns1.example.com --ips 1.2.3.4,5.6.7.8
+  namecom vanity-ns update example.com ns1 --ips 1.2.3.4`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:               "delete <domain> <hostname>",
-	Short:             "Delete a vanity nameserver",
-	Example:           `  namecom vanity-ns delete example.com ns1.example.com`,
+	Use:   "delete <domain> <hostname>",
+	Short: "Delete a vanity nameserver",
+	Example: `  namecom vanity-ns delete example.com ns1.example.com
+  namecom vanity-ns delete example.com ns1`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -173,9 +176,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	hostname, err := vanityHostname(args[1], domain)
+	if err != nil {
+		return err
+	}
 	stop := out.Spin("Fetching vanity nameserver…")
 	ns, err := client.SDK().VanityNameservers.GetVanityNameserver(cmd.Context(),
-		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: args[1]})
+		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: hostname})
 	stop()
 	if err != nil {
 		return err
@@ -207,23 +214,39 @@ func runGet(cmd *cobra.Command, args []string) error {
 // help text documents the FQDN spelling everywhere, which is right for three of
 // the four commands, so accept either form here rather than making create the
 // odd one out.
-func vanityLabel(hostname, domain string) (string, error) {
+//
+// name is how the error messages refer to the input: "--hostname" for create,
+// "hostname" for the positional argument of get/update/delete.
+func vanityLabel(name, hostname, domain string) (string, error) {
 	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
 	if h == "" {
-		return "", fmt.Errorf("--hostname is required")
+		return "", fmt.Errorf("%s is required", name)
 	}
 	if !strings.Contains(h, ".") {
 		return h, nil // already a bare label
 	}
 	suffix := "." + domain
 	if !strings.HasSuffix(h, suffix) {
-		return "", fmt.Errorf("--hostname %q must be a subdomain of %s (e.g. ns1.%s)", hostname, domain, domain)
+		return "", fmt.Errorf("%s %q must be a subdomain of %s (e.g. ns1.%s)", name, hostname, domain, domain)
 	}
 	label := strings.TrimSuffix(h, suffix)
 	if label == "" {
-		return "", fmt.Errorf("--hostname %q must include a subdomain (e.g. ns1.%s)", hostname, domain)
+		return "", fmt.Errorf("%s %q must include a subdomain (e.g. ns1.%s)", name, hostname, domain)
 	}
 	return label, nil
+}
+
+// vanityHostname is the FQDN that get/update/delete take as their path
+// parameter. It goes through vanityLabel so that every spelling create accepts
+// — a bare label, a trailing dot, any case — names the same nameserver here.
+// Passing a bare `ns1` through unchanged made the API answer "Hostname not
+// found." for a nameserver create had just made.
+func vanityHostname(hostname, domain string) (string, error) {
+	label, err := vanityLabel("hostname", hostname, domain)
+	if err != nil {
+		return "", err
+	}
+	return label + "." + domain, nil
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -234,7 +257,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	label, err := vanityLabel(createHostname, domain)
+	label, err := vanityLabel("--hostname", createHostname, domain)
 	if err != nil {
 		return err
 	}
@@ -280,7 +303,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	hostname := args[1]
+	hostname, err := vanityHostname(args[1], domain)
+	if err != nil {
+		return err
+	}
 
 	ips := splitIPs(updateIPs)
 	body := coreapigo.UpdateVanityNameserverBody{
@@ -323,7 +349,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	hostname := args[1]
+	hostname, err := vanityHostname(args[1], domain)
+	if err != nil {
+		return err
+	}
 
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
