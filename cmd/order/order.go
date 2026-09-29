@@ -35,9 +35,20 @@ var (
 	listStatus string
 )
 
+// timestampNote is shared by `order list` and `order get`. name.com's order
+// API returns timestamps about 6h behind real UTC (#134), most likely US
+// Mountain local time, while labelling them Z. Domain timestamps are correct.
+// The CLI does not shift them: the offset appears to follow daylight saving
+// and could be fixed upstream at any time.
+const timestampNote = `Note: name.com's order timestamps currently run several hours behind UTC
+despite the "Z" suffix, and the --since/--until filters use the same clock.
+An order placed near midnight UTC may show the previous day's date and fall
+outside a date filter you would expect to include it.`
+
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List orders",
+	Long:  "List orders, newest first.\n\n" + timestampNote,
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
   namecom order list --since 2026-01-01                # orders from this year
@@ -51,6 +62,7 @@ var listCmd = &cobra.Command{
 var getCmd = &cobra.Command{
 	Use:     "get <id>",
 	Short:   "Get an order by ID",
+	Long:    "Get an order by ID.\n\n" + timestampNote,
 	Example: `  namecom order get 12345`,
 	Args:    cmdutil.ExactArgs(1),
 	RunE:    runGet,
@@ -67,8 +79,8 @@ var refundCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full history — can be slow)")
 	listCmd.Flags().StringVar(&listDomain, "domain", "", "filter by domain name (supports * wildcard)")
-	listCmd.Flags().StringVar(&listSince, "since", "", "filter orders created on or after this date (YYYY-MM-DD)")
-	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listSince, "since", "", "filter orders created on or after this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
+	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
 	listCmd.Flags().StringVar(&listStatus, "status", "", "filter by status: success, failed, initialized, started, review")
 
 	refundCmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "order ID (required)")
@@ -89,10 +101,16 @@ func runList(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// The API treats createDateEnd as exclusive — midnight at the start of the
+	// date — so --until, documented as "on or before", sends the next day.
+	// ValidDate accepts only YYYY-MM-DD, so there is no time of day to keep.
+	var until string
 	if listUntil != "" {
 		if err := cmdutil.ValidDate(listUntil, "until"); err != nil {
 			return err
 		}
+		d, _ := time.Parse("2006-01-02", listUntil)
+		until = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
 	// Auto-paginate when any filter is active — results will be small.
@@ -118,8 +136,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if listSince != "" {
 			req.CreateDateStart = &listSince
 		}
-		if listUntil != "" {
-			req.CreateDateEnd = &listUntil
+		if until != "" {
+			req.CreateDateEnd = &until
 		}
 		if listStatus != "" {
 			s := coreapigo.ListOrdersRequestOrderStatus(listStatus)
