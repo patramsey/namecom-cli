@@ -44,6 +44,7 @@ func TestValidDNSHost(t *testing.T) {
 	}
 	bad := []string{
 		"",
+		"  ",
 		"has space",
 		"label..double",
 		".leading-dot",

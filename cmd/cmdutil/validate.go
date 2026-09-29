@@ -39,8 +39,12 @@ func ValidDNSType(t string) error {
 }
 
 // ValidDNSHost checks that host is a valid relative DNS label (@ and wildcards allowed).
+//
+// An empty or whitespace-only host is refused rather than taken as the apex.
+// The API treats "" and "@" as different hosts; for a URL forwarding, "" also
+// replaces every apex A record.
 func ValidDNSHost(host string) error {
-	if host == "" {
+	if strings.TrimSpace(host) == "" {
 		return usagef("--host cannot be empty (use @ for the zone apex)")
 	}
 	if host == "@" || host == "*" {
