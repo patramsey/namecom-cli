@@ -154,8 +154,33 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}
 
+	// Decide the price the body will carry BEFORE prompting, and quote that
+	// figure. Quoting GetPricingForDomain unconditionally meant an aftermarket
+	// name or a --price override confirmed one amount and submitted another.
+	var purchasePrice *float64
+	if registerPrice > 0 {
+		purchasePrice = &registerPrice
+	} else if checkPrice != nil {
+		// Non-registration purchases (aftermarket, expiring, backorder) require a
+		// price, and it's the check result's price that applies — the separate
+		// GetPricingForDomain call quotes standard registration pricing.
+		purchasePrice = checkPrice
+	} else if pricing.Premium && pricing.PurchasePrice != nil {
+		// Premium domains require the confirmed price in the body. Use the price
+		// we already fetched so the user isn't forced to pass --price manually.
+		purchasePrice = pricing.PurchasePrice
+	}
+
 	regPrice := ""
-	if pricing.PurchasePrice != nil {
+	switch {
+	case purchasePrice != nil && checkPurchaseType != nil:
+		// An acquisition price is a flat fee: the API documents that years on
+		// create does not multiply it, so "/yr" or "total for N years" would
+		// both misstate it.
+		regPrice = fmt.Sprintf("$%.2f flat (%s, not per year)", *purchasePrice, *checkPurchaseType)
+	case purchasePrice != nil:
+		regPrice = formatTermPrice(*purchasePrice, registerYears)
+	case pricing.PurchasePrice != nil:
 		regPrice = formatTermPrice(*pricing.PurchasePrice, registerYears)
 	}
 	// Skip the prompt entirely under --dry-run: the request body is assembled
@@ -212,18 +237,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		body.TldRequirements = tldReqs
 	}
 	body.PurchaseType = checkPurchaseType
-	if registerPrice > 0 {
-		body.PurchasePrice = &registerPrice
-	} else if checkPrice != nil {
-		// Non-registration purchases (aftermarket, expiring, backorder) require a
-		// price, and it's the check result's price that applies — the separate
-		// GetPricingForDomain call quotes standard registration pricing.
-		body.PurchasePrice = checkPrice
-	} else if pricing.Premium && pricing.PurchasePrice != nil {
-		// Premium domains require the confirmed price in the body. Use the price
-		// we already fetched so the user isn't forced to pass --price manually.
-		body.PurchasePrice = pricing.PurchasePrice
-	}
+	body.PurchasePrice = purchasePrice
 
 	if dryRun {
 		out.DryRun("POST", "/core/v1/domains", body)

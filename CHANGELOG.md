@@ -23,6 +23,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `email get`, `url get`, `vanity-ns get`, and `dnssec get` check the domain
   argument before starting the spinner. An invalid domain left the spinner
   running while the error was printed.
+- `domain register` now confirms the price it actually sends. For aftermarket,
+  expiring, and backorder names, and whenever `--price` was passed, the prompt
+  quoted the standard registration price while the request carried a
+  different one — `at $12.99/yr?` could submit a $2500 purchase. The prompt
+  now shows the sent price, and an acquisition price reads as a flat fee
+  (`$2500.00 flat (aftermarket_b, not per year)`), since the API does not
+  multiply it by `--years`.
 
 ## [0.4.4] - 2026-09-24
 
