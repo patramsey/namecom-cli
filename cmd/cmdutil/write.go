@@ -3,6 +3,7 @@ package cmdutil
 import (
 	"context"
 
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -97,4 +98,18 @@ func previewOf[B any](w Write[B]) any {
 		return w.Preview(w.Body)
 	}
 	return w.Body
+}
+
+// StubConfirm makes every RunWrite confirmation call answer with the question
+// it would have asked, and returns a function that restores the real prompt.
+// The stub ignores --yes. It is for tests outside this package, which cannot
+// otherwise reach the decline path without a terminal:
+//
+//	defer cmdutil.StubConfirm(func(string) bool { return false })()
+func StubConfirm(answer func(prompt string) bool) func() {
+	prev := confirmFunc
+	confirmFunc = func(_ *output.Config, _ bool, msg string) (bool, error) {
+		return answer(msg), nil
+	}
+	return func() { confirmFunc = prev }
 }

@@ -51,6 +51,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   them as given, so `--item-ids 9,9` refunded item 9, then reported the second
   copy as failed ("already refunded") and exited 1. The `--dry-run` preview
   and the confirmation prompt show the deduplicated list.
+### Changed
+- `domain set-ns` and `domain contacts set` now ask for confirmation, like
+  other destructive writes. **Scripts that run either command must now pass
+  `--yes`**: without it, a non-interactive run exits with an error and changes
+  nothing. The prompt names what is being sent — the nameservers, or the
+  contact roles being replaced — and warns when the registrant is among them,
+  since that can trigger ICANN verification or a transfer lock. `--dry-run`
+  still never prompts.
 
 ## [0.4.6] - 2026-09-29
 
