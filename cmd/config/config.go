@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -204,10 +205,9 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("no profile %q configured — run 'namecom auth login' to set up credentials", profileName)
 	}
 
-	endpoint := "api.name.com"
-	if id.Sandbox {
-		endpoint = "api.dev.name.com"
-	}
+	// The base URL, scheme included, as auth status prints it. A bare host here
+	// put the same value in two forms across the two commands.
+	endpoint := api.DefaultBaseURL(id.Sandbox)
 	tokenDisplay := "••••••••" //nolint:gosec // G101 false positive: a mask shown in place of the token, not a credential
 	if p.TokenCmd != "" {
 		tokenDisplay = out.Dim(fmt.Sprintf("(from token_cmd: %s)", tokenCmdSummary(p.TokenCmd)))

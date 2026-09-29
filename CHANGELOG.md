@@ -41,6 +41,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   marked a profile other than the one in use, and with one profile and no key
   it marked none. The DEFAULT column and the `default` field in JSON and YAML
   keep their names but now mean "active".
+- `config show` prints the endpoint with its scheme
+  (`https://api.dev.name.com`), as `auth status` does. It printed a bare host,
+  so the two commands showed the same value in different forms. The
+  `endpoint` field in `-o json` and `-o yaml` changes accordingly; a script
+  that compares it to a bare host needs updating.
 
 ## [0.4.6] - 2026-09-29
 

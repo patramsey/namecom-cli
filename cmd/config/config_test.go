@@ -268,16 +268,16 @@ func TestShow_MatchesResolve(t *testing.T) {
 
 	t.Run("--sandbox", func(t *testing.T) {
 		writeConfig(t, prod)
-		if got := run(t, config.Overrides{Sandbox: true, SandboxSet: true}); got["endpoint"] != "api.dev.name.com" {
-			t.Errorf("endpoint = %q with --sandbox, want api.dev.name.com", got["endpoint"])
+		if got := run(t, config.Overrides{Sandbox: true, SandboxSet: true}); got["endpoint"] != "https://api.dev.name.com" {
+			t.Errorf("endpoint = %q with --sandbox, want https://api.dev.name.com", got["endpoint"])
 		}
 	})
 
 	t.Run("NAMECOM_SANDBOX", func(t *testing.T) {
 		writeConfig(t, prod)
 		t.Setenv("NAMECOM_SANDBOX", "true")
-		if got := run(t, config.Overrides{}); got["endpoint"] != "api.dev.name.com" {
-			t.Errorf("endpoint = %q with NAMECOM_SANDBOX, want api.dev.name.com", got["endpoint"])
+		if got := run(t, config.Overrides{}); got["endpoint"] != "https://api.dev.name.com" {
+			t.Errorf("endpoint = %q with NAMECOM_SANDBOX, want https://api.dev.name.com", got["endpoint"])
 		}
 	})
 
@@ -303,6 +303,28 @@ func assertDescribesSandy(t *testing.T, got string) {
 	}
 	if strings.Contains(got, "api.name.com\"") {
 		t.Errorf("reported the production endpoint for a sandbox profile: %s", got)
+	}
+}
+
+// TestShow_EndpointIncludesScheme pins #135: config show printed the endpoint
+// as a bare host while auth status printed the base URL, so the same value
+// appeared in two forms. Both now print the URL the client talks to.
+func TestShow_EndpointIncludesScheme(t *testing.T) {
+	for _, tc := range []struct{ profile, want string }{
+		{"prod", "https://api.name.com"},
+		{"sandy", "https://api.dev.name.com"},
+	} {
+		for _, format := range []output.Format{output.FormatJSON, output.FormatYAML, output.FormatTable} {
+			t.Run(tc.profile+"/"+string(format), func(t *testing.T) {
+				cmd, buf := showCmdFor(t, format, tc.profile)
+				if err := runShow(cmd, nil); err != nil {
+					t.Fatalf("runShow: %v", err)
+				}
+				if !strings.Contains(buf.String(), tc.want) {
+					t.Errorf("%s output should show endpoint %s:\n%s", format, tc.want, buf.String())
+				}
+			})
+		}
 	}
 }
 
