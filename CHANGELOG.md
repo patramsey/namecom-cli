@@ -9,20 +9,29 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-28
+
+Nineteen bug fixes from a review of every command. Four of them could cost
+money or credentials: `domain register` could confirm one price and charge
+another, `auth logout` could remove the wrong profile, saving the config could
+leave a cleared plaintext token on disk, and `order refund` reported success
+for items it did not refund. Nothing changes what any command asks you for
+beyond the price in the register prompt.
+
+Several change behaviour a script might depend on, all toward what was
+documented or intended. Check any script that relies on these:
+
+- `order refund` exits **1** when any item is not refunded. It exited 0.
+- `--quiet` on list commands prints **every page**. It stopped after the first
+  page without warning, so quiet output can be longer and make more requests.
+- `auth logout`, `auth status`, `status`, and `config show` honour
+  `NAMECOM_PROFILE` and the implied default profile, so they can now act on or
+  report a different profile than before.
+- `dns import` defaults a missing (or zero) TTL to 300 instead of sending 0.
+- `transfer create --dry-run` and `transfer internal-in --dry-run` no longer
+  prompt, and `domain set-ns --dry-run` no longer prints an `ns=` line.
+
 ### Fixed
-- Saving the config file now removes a `token`, `token_cmd`, `sandbox`, or
-  `icons` value that was cleared, instead of leaving the old one on disk.
-  Answering No to sandbox in `auth login` on a sandbox profile kept
-  `sandbox: true`, so the new production token was sent to the sandbox API and
-  rejected; switching a profile to `token_cmd` kept the plaintext `token`,
-  which still took precedence. Unknown keys and comments are still preserved.
-- `domain contacts get` and `domain requirements` no longer crash when the API
-  leaves out the contacts, TLD info, or requirements object. `contacts get`
-  prints the empty result; `requirements` shows dashes for capabilities it was
-  not given, and `-q` prints nothing.
-- `email get`, `url get`, `vanity-ns get`, and `dnssec get` check the domain
-  argument before starting the spinner. An invalid domain left the spinner
-  running while the error was printed.
 - `domain register` now confirms the price it actually sends. For aftermarket,
   expiring, and backorder names, and whenever `--price` was passed, the prompt
   quoted the standard registration price while the request carried a
@@ -30,32 +39,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   now shows the sent price, and an acquisition price reads as a flat fee
   (`$2500.00 flat (aftermarket_b, not per year)`), since the API does not
   multiply it by `--years`.
-- `--quiet` on `url list`, `email list`, `vanity-ns list`, `transfer list`,
-  `order list`, and `domain list` now prints every page. Without `--all` it
-  stopped after the first page, and the "showing first page" hint it would
-  have printed is suppressed in quiet mode, so a script piping the output got
-  a truncated list with no warning.
-- `domain list --all` no longer loops forever against a server that keeps
-  reporting the same next page without a last page. Each repeat fetched the
-  same page again and added its domains to the output a second time.
-- A `token_cmd` that prompts on the terminal — a password manager asking for
-  its passphrase, for example — can now read your answer. It was started in a
-  background process group, so reading the terminal stopped it until the 15s
-  timeout. When the CLI has no terminal, a timeout still kills the helper's
-  whole pipeline; with one, it kills the shell, and the CLI still stops
-  waiting two seconds later.
-- `url update --title ""` and `--meta ""` clear the field. An empty value was
-  treated as unset, so the old title or meta was sent back and there was no
-  way to remove either from a masked forwarding.
-- `url update --dry-run` shows the forwarding type that will be sent. Its
-  summary line printed the `--type` default of `redirect`, so a masked
-  forwarding looked as if it was about to be converted.
-- `order refund` no longer reports success for items the API refused. It
-  counted every item in the response as refunded, so an item outside the
-  refund grace period printed `✓ Refunded $0.00 for 1 item(s)` and exited 0.
-  Only refunded items are counted now; each failed or canceled item is
-  printed with the server's reason, and the command exits 1 if any item was
-  not refunded. `-o json` still prints the full per-item result.
 - `auth logout`, `auth status`, `status` and `config show` now pick the
   active profile exactly as API commands do: `--profile`, then
   `NAMECOM_PROFILE`, then the `default:` key, then a profile named `default`
@@ -68,10 +51,26 @@ Releases before `0.2.0` predate this file. Their notes are on the
   reached the command, which described the default profile instead.
   `config show` also reflects `--sandbox`, `NAMECOM_SANDBOX` and
   `NAMECOM_USERNAME` in the endpoint and username it reports.
-- A 429 whose `Retry-After` is absurdly large (more than about 292 years)
-  now waits the longest retry backoff, 30 seconds, as any other long
-  `Retry-After` does. The number overflowed, so the CLI retried at once, and
-  the error hint left out how long the API had asked you to wait.
+- Saving the config file now removes a `token`, `token_cmd`, `sandbox`, or
+  `icons` value that was cleared, instead of leaving the old one on disk.
+  Answering No to sandbox in `auth login` on a sandbox profile kept
+  `sandbox: true`, so the new production token was sent to the sandbox API and
+  rejected; switching a profile to `token_cmd` kept the plaintext `token`,
+  which still took precedence. Unknown keys and comments are still preserved.
+- `order refund` no longer reports success for items the API refused. It
+  counted every item in the response as refunded, so an item outside the
+  refund grace period printed `✓ Refunded $0.00 for 1 item(s)` and exited 0.
+  Only refunded items are counted now; each failed or canceled item is
+  printed with the server's reason, and the command exits 1 if any item was
+  not refunded. `-o json` still prints the full per-item result.
+- `--quiet` on `url list`, `email list`, `vanity-ns list`, `transfer list`,
+  `order list`, and `domain list` now prints every page. Without `--all` it
+  stopped after the first page, and the "showing first page" hint it would
+  have printed is suppressed in quiet mode, so a script piping the output got
+  a truncated list with no warning.
+- `domain list --all` no longer loops forever against a server that keeps
+  reporting the same next page without a last page. Each repeat fetched the
+  same page again and added its domains to the output a second time.
 - `dns export old.com | dns import new.com --file -` works for zones with
   apex records. The API writes the apex host as `""`, and import rejected it
   as an empty `--host` before creating anything; it now imports as `@`.
@@ -95,6 +94,29 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the real request sends. `contacts set` showed the contacts without their
   `{"contacts": ...}` wrapper, and `set-ns` showed no body at all, followed by
   the `--ns` value as typed rather than the trimmed list that is sent.
+- `url update --title ""` and `--meta ""` clear the field. An empty value was
+  treated as unset, so the old title or meta was sent back and there was no
+  way to remove either from a masked forwarding.
+- `url update --dry-run` shows the forwarding type that will be sent. Its
+  summary line printed the `--type` default of `redirect`, so a masked
+  forwarding looked as if it was about to be converted.
+- A `token_cmd` that prompts on the terminal — a password manager asking for
+  its passphrase, for example — can now read your answer. It was started in a
+  background process group, so reading the terminal stopped it until the 15s
+  timeout. When the CLI has no terminal, a timeout still kills the helper's
+  whole pipeline; with one, it kills the shell, and the CLI still stops
+  waiting two seconds later.
+- `domain contacts get` and `domain requirements` no longer crash when the API
+  leaves out the contacts, TLD info, or requirements object. `contacts get`
+  prints the empty result; `requirements` shows dashes for capabilities it was
+  not given, and `-q` prints nothing.
+- `email get`, `url get`, `vanity-ns get`, and `dnssec get` check the domain
+  argument before starting the spinner. An invalid domain left the spinner
+  running while the error was printed.
+- A 429 whose `Retry-After` is absurdly large (more than about 292 years)
+  now waits the longest retry backoff, 30 seconds, as any other long
+  `Retry-After` does. The number overflowed, so the CLI retried at once, and
+  the error hint left out how long the API had asked you to wait.
 
 ## [0.4.4] - 2026-09-24
 
@@ -525,7 +547,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/patramsey/namecom-cli/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/patramsey/namecom-cli/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/patramsey/namecom-cli/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/patramsey/namecom-cli/compare/v0.4.1...v0.4.2
