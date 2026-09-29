@@ -288,6 +288,18 @@ func DomainArg(args []string, n int) (string, error) {
 	return d, nil
 }
 
+// OnOffArg parses the on|off positional argument of the domain toggles
+// (lock, autorenew, privacy), case-insensitively.
+func OnOffArg(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "on":
+		return true, nil
+	case "off":
+		return false, nil
+	}
+	return false, usagef("expected 'on' or 'off', got %q", s)
+}
+
 // CanonicalDomain normalizes a domain name for comparison and transmission.
 //
 // It lowercases and trims. It deliberately does NOT convert Unicode labels to

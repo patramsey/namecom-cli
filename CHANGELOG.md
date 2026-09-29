@@ -58,6 +58,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   trailing dot or upper case is also normalized, and a hostname under another
   domain is rejected before any request. The hostname in `--dry-run` output
   and in the update/delete success message is now the qualified one.
+- A positional argument that cannot be parsed now exits **2**, the documented
+  usage code, instead of 1: a non-numeric ID in `dns delete|update`,
+  `url get|update|delete`, `order get` and `contact resend|verify`, and an
+  on/off value other than `on` or `off` in `domain lock|autorenew|privacy`. A
+  script that treated exit 1 from these as a usage mistake needs to check for
+  2. The messages are unchanged.
 
 ## [0.4.5] - 2026-09-28
 
