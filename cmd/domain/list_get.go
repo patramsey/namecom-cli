@@ -82,10 +82,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// The API treats expireDateEnd as exclusive (#150), so "on or before D"
+	// has to be sent as D+1. ValidDate guarantees a YYYY-MM-DD date.
+	var expireEnd string
 	if listExpiringBefore != "" {
 		if err := cmdutil.ValidDate(listExpiringBefore, "expiring-before"); err != nil {
 			return err
 		}
+		d, _ := time.Parse("2006-01-02", listExpiringBefore)
+		expireEnd = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
 	// When a filter is active, auto-paginate — results are small and the user
@@ -117,8 +122,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if listExpiringAfter != "" {
 			p.ExpireDateStart = &listExpiringAfter
 		}
-		if listExpiringBefore != "" {
-			p.ExpireDateEnd = &listExpiringBefore
+		if expireEnd != "" {
+			p.ExpireDateEnd = &expireEnd
 		}
 		return p
 	}

@@ -73,6 +73,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   server-side date filters use the same clock, so orders placed near midnight
   UTC can land on the previous day. This is an API issue; the CLI prints the
   timestamps as the API returns them and does not shift them (#134).
+- `domain list --expiring-before DATE` now includes domains that expire on
+  DATE, as its help says. The API treats the end of the range as exclusive, so
+  a domain expiring on the named day was left out; the CLI now sends the day
+  after. A script that passed the next day to work around this will see one
+  more day of domains.
 
 ## [0.4.6] - 2026-09-29
 
