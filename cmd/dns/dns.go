@@ -750,6 +750,10 @@ func recordRowsNoType(out *output.Config, records []*coreapigo.Record) [][]strin
 	return rows
 }
 
+// runForm runs a huh form. It is replaceable in tests, which drive the form in
+// huh's accessible (line-based) mode, since go test has no terminal.
+var runForm = func(f *huh.Form) error { return f.Run() }
+
 func dnsCreateForm(cmd *cobra.Command) error {
 	typeOptions := []huh.Option[string]{
 		huh.NewOption("A — IPv4 address", "A"),
@@ -800,7 +804,7 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		),
 	)
 
-	if err := form.Run(); err != nil {
+	if err := runForm(form); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return fmt.Errorf("aborted")
 		}
@@ -825,7 +829,7 @@ func dnsCreateForm(cmd *cobra.Command) error {
 					Value(&priorityStr),
 			),
 		)
-		if err := priorityForm.Run(); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+		if err := runForm(priorityForm); err != nil && !errors.Is(err, huh.ErrUserAborted) {
 			return err
 		}
 	}
