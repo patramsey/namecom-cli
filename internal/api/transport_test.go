@@ -265,14 +265,24 @@ func TestParseRetryAfter(t *testing.T) {
 	tests := []struct {
 		input   string
 		wantNil bool
-		wantSec int
+		want    time.Duration
 	}{
-		{"5", false, 5},
+		{"5", false, 5 * time.Second},
 		{"0", false, 0},
 		{"", true, 0},
 		{"Wed, 21 Oct 2015 07:28:00 GMT", true, 0}, // HTTP-date not supported
 		{"not-a-number", true, 0},
-		{"-1", true, 0}, // negative: rejected by secs >= 0 guard
+		{"-1", true, 0}, // negative: not a valid delta-seconds, ignored
+		{"-99999999999999999999", true, 0},
+		// Issue #95: seconds were multiplied into a Duration unchecked, so
+		// anything past ~292 years wrapped — 9223372037s to about -292 years.
+		// A negative wait then won min(…, maxBackoff) and retried at once.
+		// Values that do not fit are clamped to the largest Duration instead.
+		{"9223372036", false, 9223372036 * time.Second}, // largest that fits
+		{"9223372037", false, maxRetryAfter},
+		{"18446744073", false, maxRetryAfter},
+		{"9223372036854775807", false, maxRetryAfter},  // MaxInt64 seconds
+		{"99999999999999999999", false, maxRetryAfter}, // beyond int64 entirely
 	}
 	for _, tt := range tests {
 		d := parseRetryAfter(tt.input)
@@ -282,10 +292,27 @@ func TestParseRetryAfter(t *testing.T) {
 			}
 		} else {
 			if d == nil {
-				t.Errorf("parseRetryAfter(%q) = nil, want %v", tt.input, time.Duration(tt.wantSec)*time.Second)
-			} else if *d != time.Duration(tt.wantSec)*time.Second {
-				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.input, *d, time.Duration(tt.wantSec)*time.Second)
+				t.Errorf("parseRetryAfter(%q) = nil, want %v", tt.input, tt.want)
+			} else if *d != tt.want {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.input, *d, tt.want)
 			}
+		}
+	}
+}
+
+// TestHugeRetryAfterWaitsTheMaximum is the end-to-end shape of issue #95: a
+// Retry-After too large for a Duration must wait the longest allowed backoff,
+// not wrap negative and retry immediately.
+func TestHugeRetryAfterWaitsTheMaximum(t *testing.T) {
+	tr := &retryTransport{}
+	for _, v := range []string{"9223372037", "18446744073", "99999999999999999999"} {
+		ra := parseRetryAfter(v)
+		if ra == nil {
+			t.Errorf("Retry-After %s: parsed as absent, want it clamped", v)
+			continue
+		}
+		if got := tr.backoffDelay(0, ra); got != maxBackoff {
+			t.Errorf("Retry-After %s: backoffDelay = %s, want %s", v, got, maxBackoff)
 		}
 	}
 }

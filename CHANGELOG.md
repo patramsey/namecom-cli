@@ -68,6 +68,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   reached the command, which described the default profile instead.
   `config show` also reflects `--sandbox`, `NAMECOM_SANDBOX` and
   `NAMECOM_USERNAME` in the endpoint and username it reports.
+- A 429 whose `Retry-After` is absurdly large (more than about 292 years)
+  now waits the longest retry backoff, 30 seconds, as any other long
+  `Retry-After` does. The number overflowed, so the CLI retried at once, and
+  the error hint left out how long the API had asked you to wait.
 
 ## [0.4.4] - 2026-09-24
 

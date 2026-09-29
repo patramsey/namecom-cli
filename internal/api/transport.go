@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -242,17 +243,31 @@ func (t *retryTransport) sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// maxRetryAfter is the largest wait a Retry-After header can express here: the
+// most whole seconds a time.Duration holds, about 292 years.
+const maxRetryAfter = math.MaxInt64 / time.Second * time.Second
+
 // parseRetryAfter parses a Retry-After header value (delta-seconds form only,
 // which is what the API emits). Returns nil if absent or unparseable.
 func parseRetryAfter(v string) *time.Duration {
 	if v == "" {
 		return nil
 	}
-	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
-		d := time.Duration(secs) * time.Second
+	secs, err := strconv.ParseInt(v, 10, 64)
+	// Clamp before multiplying. The product wraps negative once secs passes
+	// ~9.2e9, and a negative wait won min(…, maxBackoff) in backoffDelay and
+	// retried at once (#95). A value too large even for int64 is the same
+	// request — wait practically forever — so it is clamped too, not ignored.
+	if (err == nil && secs > int64(maxRetryAfter/time.Second)) ||
+		(errors.Is(err, strconv.ErrRange) && secs > 0) {
+		d := maxRetryAfter
 		return &d
 	}
-	return nil
+	if err != nil || secs < 0 {
+		return nil
+	}
+	d := time.Duration(secs) * time.Second
+	return &d
 }
 
 func (t *retryTransport) logRequest(req *http.Request, attempt int) {
