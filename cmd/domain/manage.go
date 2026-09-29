@@ -182,7 +182,8 @@ var setNSCmd = &cobra.Command{
 	Use:   "set-ns <domain> --ns ns1.example.com,ns2.example.com",
 	Short: "Set nameservers for a domain",
 	Example: `  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com
-  namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers`,
+  namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers
+  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com --yes  # no prompt, for scripts`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runSetNS,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -218,6 +219,7 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain),
 		Body:   body,
+		Prompt: setNSPrompt(body),
 		Spin:   "Updating nameservers…",
 	}, func(ctx context.Context, body coreapigo.DomainsSetNameserversBody) error {
 		_, err := client.SDK().Domains.SetNameservers(ctx, &body)
@@ -229,6 +231,13 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	out.Success(fmt.Sprintf("Nameservers updated for %s", domain))
 	out.Hint("DNS propagation typically takes a few minutes to a few hours")
 	return nil
+}
+
+// setNSPrompt asks before replacing a domain's nameservers, naming the ones
+// being sent: a typo here takes the whole domain offline.
+func setNSPrompt(body coreapigo.DomainsSetNameserversBody) string {
+	return fmt.Sprintf("Set nameservers for %s to %s? The domain stops resolving if these are wrong.",
+		body.DomainName, strings.Join(body.Nameservers, ", "))
 }
 
 // -- contacts --
@@ -253,7 +262,8 @@ var contactsSetCmd = &cobra.Command{
 	Short: "Set contact information for a domain",
 	Example: `  namecom domain contacts get example.com -o json > contacts.json
   # edit contacts.json, then:
-  namecom domain contacts set example.com --from-file contacts.json`,
+  namecom domain contacts set example.com --from-file contacts.json
+  namecom domain contacts set example.com --from-file contacts.json --yes  # no prompt, for scripts`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runContactsSet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -362,6 +372,7 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/domains/%s:setContacts", domain),
 		Body:   body,
+		Prompt: contactsSetPrompt(body),
 	}, func(ctx context.Context, body coreapigo.DomainsSetContactsBody) error {
 		_, err := client.SDK().Domains.SetContacts(ctx, &body)
 		return err
@@ -379,6 +390,47 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	out.Hint("If this changed the registrant, ICANN may require email verification — " +
 		fmt.Sprintf("run 'namecom domain contacts get %s' to check", domain))
 	return nil
+}
+
+// contactsSetPrompt asks before replacing contacts, naming the roles the file
+// sets. A registrant change gets the stronger warning: the SDK documents that
+// it "may" trigger ICANN verification, and that a material registrant change
+// is one cause of an ICANN-mandated transfer lock.
+func contactsSetPrompt(body coreapigo.DomainsSetContactsBody) string {
+	var roles []string
+	registrant := false
+	if c := body.Contacts; c != nil {
+		if c.Registrant != nil {
+			roles = append(roles, "registrant")
+			registrant = true
+		}
+		if c.Admin != nil {
+			roles = append(roles, "admin")
+		}
+		if c.Tech != nil {
+			roles = append(roles, "tech")
+		}
+		if c.Billing != nil {
+			roles = append(roles, "billing")
+		}
+	}
+	if len(roles) == 0 {
+		return fmt.Sprintf("Update contacts for %s? The file sets no contact role.", body.DomainName)
+	}
+	noun := "contact"
+	if len(roles) > 1 {
+		noun = "contacts"
+	}
+	list := roles[0]
+	if n := len(roles); n > 1 {
+		list = strings.Join(roles[:n-1], ", ") + " and " + roles[n-1]
+	}
+	msg := fmt.Sprintf("Replace the %s %s for %s?", list, noun, body.DomainName)
+	if registrant {
+		msg += " A new registrant may need ICANN email verification, and a material" +
+			" registrant change can put a transfer lock on the domain."
+	}
+	return msg
 }
 
 // -- auth-code --

@@ -156,6 +156,7 @@ func TestSetNS_Success(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForSetNS(t, srv)
+	setYes(t, cmd, true)
 	if err := cmd.ParseFlags([]string{"--ns", "ns1.example.com,ns2.example.com"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
@@ -876,6 +877,7 @@ func TestContactsSet_DomainNormalized(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForContactsSet(t, srv, `{}`)
+	setYes(t, cmd, true)
 	if err := runContactsSet(cmd, []string{"EXAMPLE.COM"}); err != nil {
 		t.Fatalf("runContactsSet: %v", err)
 	}
@@ -909,6 +911,153 @@ func TestContactsSet_InvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "parsing") {
 		t.Errorf("expected 'parsing' in error, got: %v", err)
+	}
+}
+
+// ---- confirmation (#136) ----------------------------------------------------
+
+// setYes gives a standalone test command the root --yes flag, set as asked.
+func setYes(t *testing.T, cmd *cobra.Command, yes bool) {
+	t.Helper()
+	var v bool
+	cmd.PersistentFlags().BoolVarP(&v, "yes", "y", false, "")
+	if yes {
+		if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+			t.Fatalf("setting yes flag: %v", err)
+		}
+	}
+}
+
+func TestSetNSPrompt(t *testing.T) {
+	body := coreapigo.DomainsSetNameserversBody{
+		DomainName:  "example.com",
+		Nameservers: []string{"ns1.x.com", "ns2.x.com"},
+	}
+	want := "Set nameservers for example.com to ns1.x.com, ns2.x.com? " +
+		"The domain stops resolving if these are wrong."
+	if got := setNSPrompt(body); got != want {
+		t.Errorf("setNSPrompt:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestContactsSetPrompt(t *testing.T) {
+	const registrantWarning = "ICANN email verification"
+	tests := []struct {
+		name, file, roles string
+		registrant        bool
+	}{
+		{"all four", `{"registrant":{},"admin":{},"tech":{},"billing":{}}`,
+			"registrant, admin, tech and billing", true},
+		{"registrant only", `{"registrant":{}}`, "registrant", true},
+		{"no registrant", `{"admin":{},"billing":{}}`, "admin and billing", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var c coreapigo.ContactsRequest
+			if err := json.Unmarshal([]byte(tc.file), &c); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			got := contactsSetPrompt(coreapigo.DomainsSetContactsBody{DomainName: "example.com", Contacts: &c})
+			if want := "Replace the " + tc.roles + " contact"; !strings.HasPrefix(got, want) {
+				t.Errorf("prompt %q should start %q", got, want)
+			}
+			if !strings.Contains(got, "example.com") {
+				t.Errorf("prompt %q does not name the domain", got)
+			}
+			if has := strings.Contains(got, registrantWarning); has != tc.registrant {
+				t.Errorf("prompt %q: registrant warning present=%v, want %v", got, has, tc.registrant)
+			}
+			if tc.registrant && !strings.Contains(got, "transfer lock") {
+				t.Errorf("registrant prompt %q should mention the transfer lock", got)
+			}
+		})
+	}
+}
+
+// TestSetNSAndContactsSet_Confirm pins #136: both writes now confirm like
+// other destructive ones. A decline exits 0 and sends nothing, --yes sends
+// without asking, and a script without --yes gets an error carrying the
+// question rather than a silent change.
+func TestSetNSAndContactsSet_Confirm(t *testing.T) {
+	const contacts = `{"registrant":{"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com"}}`
+	commands := []struct {
+		name       string
+		build      func(*testing.T, *httptest.Server) *cobra.Command
+		run        func(*cobra.Command, []string) error
+		wantPrompt string
+	}{
+		{"set-ns", func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForSetNS(t, srv)
+			if err := cmd.ParseFlags([]string{"--ns", "ns1.x.com,ns2.x.com"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}, runSetNS, "Set nameservers for example.com to ns1.x.com, ns2.x.com?"},
+		{"contacts set", func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			return cmdForContactsSet(t, srv, contacts)
+		}, runContactsSet, "Replace the registrant contact for example.com?"},
+	}
+	for _, c := range commands {
+		serve := func(t *testing.T) (*httptest.Server, *int) {
+			var hits int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+			return srv, &hits
+		}
+
+		t.Run(c.name+"/decline", func(t *testing.T) {
+			var asked string
+			defer cmdutil.StubConfirm(func(p string) bool { asked = p; return false })()
+			srv, hits := serve(t)
+			cmd := c.build(t, srv)
+			setYes(t, cmd, false)
+			if err := c.run(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("a decline must exit 0, got: %v", err)
+			}
+			if *hits != 0 {
+				t.Errorf("declined, but %d request(s) were sent", *hits)
+			}
+			if !strings.HasPrefix(asked, c.wantPrompt) {
+				t.Errorf("prompt %q should start %q", asked, c.wantPrompt)
+			}
+			if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(stderr, "aborted") {
+				t.Errorf("decline should report aborted, stderr: %q", stderr)
+			}
+		})
+
+		t.Run(c.name+"/yes sends", func(t *testing.T) {
+			defer output.StubInteractive(false)()
+			srv, hits := serve(t)
+			cmd := c.build(t, srv)
+			setYes(t, cmd, true)
+			if err := c.run(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("with --yes: %v", err)
+			}
+			if *hits != 1 {
+				t.Errorf("with --yes, want 1 request, got %d", *hits)
+			}
+		})
+
+		t.Run(c.name+"/non-interactive without yes", func(t *testing.T) {
+			defer output.StubInteractive(false)()
+			srv, hits := serve(t)
+			cmd := c.build(t, srv)
+			setYes(t, cmd, false)
+			err := c.run(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatal("expected an error without --yes in non-interactive mode")
+			}
+			if !strings.Contains(err.Error(), c.wantPrompt) || !strings.Contains(err.Error(), "--yes") {
+				t.Errorf("error should carry the prompt and name --yes, got: %v", err)
+			}
+			if *hits != 0 {
+				t.Errorf("unconfirmed, but %d request(s) were sent", *hits)
+			}
+		})
 	}
 }
 
