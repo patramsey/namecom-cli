@@ -2,6 +2,7 @@
 package dnssec
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -204,34 +205,23 @@ func runCreate(cmd *cobra.Command, args []string) error {
 func runDelete(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
 	digest := args[1]
 
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest), nil)
-		return nil
-	}
-
-	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain))
-	if err != nil {
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "DELETE",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest),
+		Prompt: fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain),
+		Spin:   "Removing DNSSEC key…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		return api.FromSDKError(client.SDK().DnsseCs.DeleteDnssec(ctx,
+			&coreapigo.DeleteDnssecRequest{DomainName: domain, Digest: digest}))
+	})
+	if err != nil || !sent {
 		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
-	stop := out.Spin("Removing DNSSEC key…")
-	err = client.SDK().DnsseCs.DeleteDnssec(cmd.Context(),
-		&coreapigo.DeleteDnssecRequest{DomainName: domain, Digest: digest})
-	stop()
-	if err != nil {
-		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Removed DNSSEC key from %s", domain))
 	out.Hint(fmt.Sprintf("Run 'namecom dnssec list %s' to see remaining keys", domain))

@@ -2,6 +2,7 @@
 package vanity
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -316,34 +317,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 func runDelete(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
 	hostname := args[1]
 
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname), nil)
-		return nil
-	}
-
-	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain))
-	if err != nil {
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "DELETE",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname),
+		Prompt: fmt.Sprintf("Delete vanity nameserver %s from %s?", hostname, domain),
+		Spin:   "Deleting vanity nameserver…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		return api.FromSDKError(client.SDK().VanityNameservers.DeleteVanityNameserver(ctx,
+			&coreapigo.DeleteVanityNameserverRequest{DomainName: domain, Hostname: hostname}))
+	})
+	if err != nil || !sent {
 		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
-	stop := out.Spin("Deleting vanity nameserver…")
-	err = client.SDK().VanityNameservers.DeleteVanityNameserver(cmd.Context(),
-		&coreapigo.DeleteVanityNameserverRequest{DomainName: domain, Hostname: hostname})
-	stop()
-	if err != nil {
-		return api.FromSDKError(err)
 	}
 	out.Success(fmt.Sprintf("Deleted vanity nameserver %s from %s", hostname, domain))
 	out.Hint(fmt.Sprintf("Run 'namecom vanity-ns list %s' to see remaining nameservers", domain))

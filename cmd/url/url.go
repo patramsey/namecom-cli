@@ -2,6 +2,7 @@
 package url
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -228,7 +229,6 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -295,17 +295,23 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		body.Meta = &createMeta
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/url/forwarding", domain), body)
-		fmt.Fprintf(out.Writer, "  host=%s to=%s type=%s\n", createHost, createForwardsTo, createType)
-		return nil
-	}
-
-	stop := out.Spin("Creating URL forwarding…")
-	entry, err := client.SDK().URLForwardings.CreateURLForwarding(cmd.Context(), &body)
-	stop()
+	var entry *coreapigo.URLForwardingResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.URLForwardingInput]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/url/forwarding", domain),
+		Body:   body,
+		Spin:   "Creating URL forwarding…",
+	}, func(ctx context.Context, body coreapigo.URLForwardingInput) error {
+		var err error
+		entry, err = client.SDK().URLForwardings.CreateURLForwarding(ctx, &body)
+		return err
+	})
 	if err != nil {
 		return err
+	}
+	if !sent {
+		fmt.Fprintf(out.Writer, "  host=%s to=%s type=%s\n", body.Host, body.ForwardsTo, body.Type)
+		return nil
 	}
 
 	switch out.Format {
@@ -327,7 +333,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -451,18 +456,24 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		body.Meta = &updateMeta
 	}
 
-	if dryRun {
-		out.DryRun("PATCH", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), body)
-		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", updateForwardsTo, fwdTypeStr)
-		return nil
-	}
-
-	stop := out.Spin("Updating URL forwarding…")
-	entry, err := client.SDK().URLForwardings.UpdateURLForwardingByID(cmd.Context(),
-		&coreapigo.UpdateURLForwardingByIDRequest{DomainName: domain, ID: id, Body: &body})
-	stop()
+	var entry *coreapigo.URLForwardingResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.URLForwardingUpdate]{
+		Method: "PATCH",
+		Path:   fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id),
+		Body:   body,
+		Spin:   "Updating URL forwarding…",
+	}, func(ctx context.Context, body coreapigo.URLForwardingUpdate) error {
+		var err error
+		entry, err = client.SDK().URLForwardings.UpdateURLForwardingByID(ctx,
+			&coreapigo.UpdateURLForwardingByIDRequest{DomainName: domain, ID: id, Body: &body})
+		return err
+	})
 	if err != nil {
 		return err
+	}
+	if !sent {
+		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", *body.ForwardsTo, *body.Type)
+		return nil
 	}
 
 	switch out.Format {
@@ -480,8 +491,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 func runDelete(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -492,25 +501,16 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), nil)
-		return nil
-	}
-
-	ok, err := cmdutil.Confirm(out, yes, fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
-	stop := out.Spin("Deleting URL forwarding…")
-	err = client.SDK().URLForwardings.DeleteURLForwardingByID(cmd.Context(),
-		&coreapigo.DeleteURLForwardingByIDRequest{DomainName: domain, ID: id})
-	stop()
-	if err != nil {
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "DELETE",
+		Path:   fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id),
+		Prompt: fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain),
+		Spin:   "Deleting URL forwarding…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		return client.SDK().URLForwardings.DeleteURLForwardingByID(ctx,
+			&coreapigo.DeleteURLForwardingByIDRequest{DomainName: domain, ID: id})
+	})
+	if err != nil || !sent {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
