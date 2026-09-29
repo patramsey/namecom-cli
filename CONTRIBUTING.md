@@ -30,8 +30,8 @@ make test          # go test -count=1 ./...
 go test -race -count=1 ./...
 ```
 
-All of these must be clean. CI runs `lint`, `go test -race -count=1 ./...`,
-`make verify-generate`, and `govulncheck ./...` on every pull request.
+All of these must be clean. CI runs `go build ./...`, `lint`,
+`go test -race -count=1 ./...`, and `govulncheck ./...` on every pull request.
 
 CI also reports coverage to Codecov, which will comment on your PR with the
 delta. That comment is **informational and never blocks a merge** — a
