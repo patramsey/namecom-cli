@@ -2,6 +2,7 @@
 package dns
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,7 +248,6 @@ func runList(cmd *cobra.Command, args []string) error {
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -295,14 +295,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		body.Priority = &createPriority
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/records", domain), body)
-		return nil
-	}
-
-	record, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
-	if err != nil {
+	var record *coreapigo.Record
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DNSCreateRecordBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/records", domain),
+		Body:   body,
+	}, func(ctx context.Context, body coreapigo.DNSCreateRecordBody) error {
+		var err error
+		record, err = client.SDK().DNS.CreateRecord(ctx, &body)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	switch out.Format {
@@ -320,7 +324,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -409,14 +412,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body.TTL = &updateTTL
 	}
-	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), body)
-		return nil
-	}
-
-	updated, err := client.SDK().DNS.UpdateRecord(cmd.Context(), &body)
-	if err != nil {
+	var updated *coreapigo.Record
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DNSUpdateRecordBody]{
+		Method: "PUT",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id),
+		Body:   body,
+	}, func(ctx context.Context, body coreapigo.DNSUpdateRecordBody) error {
+		var err error
+		updated, err = client.SDK().DNS.UpdateRecord(ctx, &body)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	switch out.Format {
@@ -434,8 +441,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 func runDelete(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -446,28 +451,19 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if dryRun {
-		out.DryRun("DELETE", fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id), nil)
-		return nil
-	}
-
-	ok, err := confirmDelete(out, yes, fmt.Sprintf("Delete DNS record %d from %s?", id, domain))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
-	stop := out.Spin("Deleting record…")
-	err = client.SDK().DNS.DeleteRecord(cmd.Context(), &coreapigo.DeleteRecordRequest{
-		DomainName: domain,
-		ID:         id,
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "DELETE",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id),
+		Prompt: fmt.Sprintf("Delete DNS record %d from %s?", id, domain),
+		Spin:   "Deleting record…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		return api.FromSDKError(client.SDK().DNS.DeleteRecord(ctx, &coreapigo.DeleteRecordRequest{
+			DomainName: domain,
+			ID:         id,
+		}))
 	})
-	stop()
-	if err != nil {
-		return api.FromSDKError(err)
+	if err != nil || !sent {
+		return err
 	}
 	out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
 	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see remaining records", domain))
@@ -835,10 +831,6 @@ func markFormFlags(cmd *cobra.Command, priorityStr string) {
 	if _, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {
 		_ = cmd.Flags().Set("priority", priorityStr)
 	}
-}
-
-func confirmDelete(out *output.Config, yes bool, msg string) (bool, error) {
-	return cmdutil.Confirm(out, yes, msg)
 }
 
 func parseID(s string) (int, error) {
