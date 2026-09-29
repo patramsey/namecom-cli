@@ -44,6 +44,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   timeout. When the CLI has no terminal, a timeout still kills the helper's
   whole pipeline; with one, it kills the shell, and the CLI still stops
   waiting two seconds later.
+- `url update --title ""` and `--meta ""` clear the field. An empty value was
+  treated as unset, so the old title or meta was sent back and there was no
+  way to remove either from a masked forwarding.
+- `url update --dry-run` shows the forwarding type that will be sent. Its
+  summary line printed the `--type` default of `redirect`, so a masked
+  forwarding looked as if it was about to be converted.
 
 ## [0.4.4] - 2026-09-24
 

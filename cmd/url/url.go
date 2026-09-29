@@ -433,7 +433,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// restatement carried.
 	//
 	// Title and Meta are still seeded from the current entry so an unset flag
-	// preserves what is already there.
+	// preserves what is already there. A passed flag replaces it even when
+	// empty, so `--title ""` clears the title: gating on the value instead
+	// resent the old one. The SDK's omitempty on these *string fields drops
+	// only a nil pointer, so a pointer to "" goes out as "title":"".
 	fwdType := coreapigo.URLForwardingUpdateType(fwdTypeStr)
 	body := coreapigo.URLForwardingUpdate{
 		ForwardsTo: &updateForwardsTo,
@@ -441,16 +444,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		Title:      current.Title,
 		Meta:       current.Meta,
 	}
-	if updateTitle != "" {
+	if cmd.Flags().Changed("title") {
 		body.Title = &updateTitle
 	}
-	if updateMeta != "" {
+	if cmd.Flags().Changed("meta") {
 		body.Meta = &updateMeta
 	}
 
 	if dryRun {
 		out.DryRun("PATCH", fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id), body)
-		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", updateForwardsTo, updateType)
+		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", updateForwardsTo, fwdTypeStr)
 		return nil
 	}
 

@@ -864,6 +864,87 @@ func TestURLUpdate_TitleOnlyPreservesType(t *testing.T) {
 	}
 }
 
+// TestURLUpdate_EmptyFlagClearsField guards issue #93: title and meta were
+// replaced only when the flag value was non-empty, so `--title ""` sent the
+// old title back and there was no way to clear either field. An explicitly
+// passed flag must win even when it is empty; an unset one still preserves.
+func TestURLUpdate_EmptyFlagClearsField(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	const getResponse = `{"id":1,"host":"@","forwardsTo":"https://keep.example","type":"masked","title":"Old","meta":"M"}`
+
+	tests := []struct {
+		flag, other, otherWant string
+	}{
+		{flag: "title", other: "meta", otherWant: "M"},
+		{flag: "meta", other: "title", otherWant: "Old"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.flag, func(t *testing.T) {
+			var gotBody map[string]any
+			srv := captureUpdateBody(t, getResponse, &gotBody)
+
+			cmd := cmdForURLUpdate(t, srv)
+			if err := cmd.ParseFlags([]string{"--" + tc.flag, ""}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+				t.Fatalf("runUpdate: %v", err)
+			}
+			if gotBody == nil {
+				t.Fatal("update request was never sent")
+			}
+			// The key must be present and empty. An absent key leaves the field
+			// unchanged on the server, which is no better than resending it.
+			got, ok := gotBody[tc.flag]
+			if !ok || got != "" {
+				t.Errorf(`--%s "" should send an empty %s, got %#v (present=%v)`, tc.flag, tc.flag, got, ok)
+			}
+			if got := gotBody[tc.other]; got != tc.otherWant {
+				t.Errorf("unset --%s should be preserved: expected %q, got %#v", tc.other, tc.otherWant, got)
+			}
+		})
+	}
+}
+
+// TestURLUpdate_DryRunSummaryShowsSentType guards the second half of issue #93:
+// the dry-run summary printed updateType — the --type flag's default of
+// "redirect" — rather than the type in the body. On a masked forwarding the
+// preview showed `"type":"masked"` followed by `type=redirect`, which read as
+// a pending conversion.
+func TestURLUpdate_DryRunSummaryShowsSentType(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	const getResponse = `{"id":1,"host":"@","forwardsTo":"https://keep.example","type":"masked","title":"Old","meta":"M"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("%s must not be sent in dry-run mode", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(getResponse))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := withDryRun(t, cmdForURLUpdate(t, srv), true)
+	if err := cmd.ParseFlags([]string{"--title", "New"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("output writer is not a *bytes.Buffer")
+	}
+	got := buf.String()
+	if !strings.Contains(got, "type=masked") {
+		t.Errorf("dry-run summary should show the type being sent (masked):\n%s", got)
+	}
+	if strings.Contains(got, "type=redirect") {
+		t.Errorf("dry-run summary shows the --type default, not the sent type:\n%s", got)
+	}
+}
+
 // TestURLList_JSONEnvelope covers the JSON and YAML branches of the list
 // output. Function-level coverage read as covered because runList is entered
 // through the table path; the format switch inside it never ran.
