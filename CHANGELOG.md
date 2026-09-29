@@ -26,6 +26,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   non-default `--years` may not apply. The prompt text changed, so a script
   that parses the non-interactive "pass --yes to confirm" error will see the
   new wording. (#132)
+- `dns export` printed `null` for a zone with no records, in both JSON and
+  YAML. It now prints `[]`, like the list commands. `dns import` already
+  treated both as an empty file, so older exports still import as a no-op.
+- `dns create` offered `CAA` in its `--type` help, its "--type is required"
+  message and its interactive type picker, but the API rejects CAA on create.
+  `dns create --type CAA`, and a CAA record in a `dns import` file, are now a
+  usage error (exit 2) saying the API does not accept CAA records, before any
+  request is sent. `dns list --type CAA` is unchanged.
 
 ## [0.4.6] - 2026-09-29
 

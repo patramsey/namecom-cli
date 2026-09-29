@@ -38,6 +38,20 @@ func ValidDNSType(t string) error {
 	return nil
 }
 
+// ValidDNSCreateType is ValidDNSType for a record about to be created. The API
+// rejects CAA on create — it is not in the server's list of allowed types — so
+// refuse it here with a clear message rather than send a request that can only
+// fail. CAA stays in validDNSTypes for the rest of the CLI.
+func ValidDNSCreateType(t string) error {
+	if strings.EqualFold(t, "CAA") {
+		return usagef("name.com's API does not accept CAA records — --type must be one of: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT")
+	}
+	if !validDNSTypes[strings.ToUpper(t)] {
+		return usagef("unknown record type %q — must be one of: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT", t)
+	}
+	return nil
+}
+
 // ValidDNSHost checks that host is a valid relative DNS label (@ and wildcards allowed).
 //
 // An empty or whitespace-only host is refused rather than taken as the apex.

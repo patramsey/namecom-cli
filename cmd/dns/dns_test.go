@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -164,31 +165,77 @@ func TestDNSCreate_SRVBadPort(t *testing.T) {
 	}
 }
 
-func TestDNSCreate_CAABadTag(t *testing.T) {
-	srv := neverCalledServer(t)
-	cmd := cmdForCreate(t, srv)
-	createType, createHost, createAnswer, createTTL, createPriority = "CAA", "@", "0 badtag letsencrypt.org", 300, 0
+// TestDNSCreate_CAAIsRefused guards #128: the API rejects CAA on create (it is
+// not in the server's list of allowed types), so the CLI must refuse it as a
+// usage error instead of sending a request that can only fail.
+func TestDNSCreate_CAAIsRefused(t *testing.T) {
+	for _, typ := range []string{"CAA", "caa"} {
+		t.Run(typ, func(t *testing.T) {
+			srv := neverCalledServer(t)
+			cmd := cmdForCreate(t, srv)
+			createType, createHost, createAnswer, createTTL, createPriority = typ, "@", `0 issue "letsencrypt.org"`, 300, 0
 
-	err := runCreate(cmd, []string{"example.com"})
-	if err == nil {
-		t.Fatal("expected error for invalid CAA tag, got nil")
-	}
-	if !strings.Contains(err.Error(), "tag") {
-		t.Errorf("expected 'tag' in error, got: %v", err)
+			err := runCreate(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatal("expected --type CAA to be refused, got nil")
+			}
+			var ue *cmdutil.UsageError
+			if !errors.As(err, &ue) {
+				t.Errorf("expected a usage error (exit 2), got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "does not accept CAA") {
+				t.Errorf("error should say the API does not accept CAA, got: %v", err)
+			}
+		})
 	}
 }
 
-func TestDNSCreate_CAAFlagsOutOfRange(t *testing.T) {
+// TestDNSCreate_TypeListsOmitCAA pins that CAA is not offered anywhere on the
+// create path: the --type help and the "--type is required" message.
+func TestDNSCreate_TypeListsOmitCAA(t *testing.T) {
+	if usage := createCmd.Flags().Lookup("type").Usage; strings.Contains(usage, "CAA") {
+		t.Errorf("dns create --type help offers CAA: %q", usage)
+	}
 	srv := neverCalledServer(t)
 	cmd := cmdForCreate(t, srv)
-	createType, createHost, createAnswer, createTTL, createPriority = "CAA", "@", "256 issue letsencrypt.org", 300, 0
-
+	createType, createHost, createAnswer, createTTL, createPriority = "", "@", "1.2.3.4", 300, 0
 	err := runCreate(cmd, []string{"example.com"})
 	if err == nil {
-		t.Fatal("expected error for CAA flags > 255, got nil")
+		t.Fatal("expected an error for a missing --type")
 	}
-	if !strings.Contains(err.Error(), "flags") {
-		t.Errorf("expected 'flags' in error, got: %v", err)
+	if strings.Contains(err.Error(), "CAA") {
+		t.Errorf("--type is required message offers CAA: %v", err)
+	}
+}
+
+// TestDNSImport_CAAIsRefused pins that import, which creates records through
+// the same endpoint, refuses CAA before writing anything.
+func TestDNSImport_CAAIsRefused(t *testing.T) {
+	payload := `[
+	  {"type":"A","host":"one","answer":"1.1.1.1","ttl":300},
+	  {"type":"CAA","host":"@","answer":"0 issue \"letsencrypt.org\"","ttl":300}
+	]`
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	srv := neverCalledServer(t)
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	importFile, importDryRun = path, false
+	t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+	err = runImport(cmd, []string{"example.com"})
+	if err == nil || !strings.Contains(err.Error(), "does not accept CAA") {
+		t.Errorf("expected the CAA record to be refused, got: %v", err)
 	}
 }
 
@@ -1098,6 +1145,66 @@ func TestDNSExport_RespectsYAMLFormat(t *testing.T) {
 	}
 	if !strings.Contains(got, "answer:") {
 		t.Errorf("expected YAML mapping syntax, got: %q", got)
+	}
+}
+
+// TestDNSExport_EmptyZoneIsEmptyList guards an empty zone exporting as `null`.
+// fetchAllRecords appends each page to a nil slice, so a zone with no records
+// handed out.JSON / out.YAML a nil slice. #112 fixed this for list commands
+// through the list envelope, which `dns export` does not use.
+func TestDNSExport_EmptyZoneIsEmptyList(t *testing.T) {
+	// The API's empty-list shape, as the sandbox returns it for other lists.
+	const empty = `{"totalCount":0,"from":0,"to":0,"records":[]}`
+	for _, tc := range []struct {
+		name   string
+		format output.Format
+	}{
+		{"json", output.FormatJSON},
+		{"yaml", output.FormatYAML},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, buf := cmdForExport(t, recordsServer(t, empty), tc.format)
+			if err := runExport(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runExport: %v", err)
+			}
+			if got := strings.TrimSpace(buf.String()); got != "[]" {
+				t.Errorf("an empty zone must export as [], got %q", got)
+			}
+		})
+	}
+}
+
+// TestDNSImport_EmptyFileIsNoOp pins that an empty export imports cleanly:
+// `[]` as exported now, and `null` as exported before the fix above.
+func TestDNSImport_EmptyFileIsNoOp(t *testing.T) {
+	for _, payload := range []string{"[]", "null", "null\n"} {
+		t.Run(strings.TrimSpace(payload), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "records.json")
+			if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+			srv := neverCalledServer(t)
+			client, err := api.New(api.Options{BaseURL: srv.URL})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			var stdout bytes.Buffer
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+				Writer: &stdout, EWriter: &bytes.Buffer{}}
+			cmd := &cobra.Command{}
+			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+			cmd.SetContext(ctx)
+			importFile, importDryRun = path, false
+			t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+			if err := runImport(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("importing %q must be a no-op, got: %v", payload, err)
+			}
+			if !strings.Contains(stdout.String(), "Imported 0 record(s)") {
+				t.Errorf("expected a zero-record import, got: %q", stdout.String())
+			}
+		})
 	}
 }
 

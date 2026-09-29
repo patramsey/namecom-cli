@@ -137,7 +137,7 @@ func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages automatically")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
 
-	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT (required)")
+	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT (required)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
@@ -261,9 +261,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if createType == "" {
-		return fmt.Errorf("--type is required (A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT)")
+		return fmt.Errorf("--type is required (A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT)")
 	}
-	if err := cmdutil.ValidDNSType(createType); err != nil {
+	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
 	}
 	if err := cmdutil.ValidDNSHost(createHost); err != nil {
@@ -514,6 +514,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// An empty zone leaves records nil, which marshals as `null`. Export `[]`,
+	// as the list commands do through their envelope.
+	if records == nil {
+		records = []*coreapigo.Record{}
+	}
 	switch out.Format {
 	case output.FormatYAML:
 		return out.YAML(records)
@@ -563,7 +568,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			r.TTL = defaultTTL
 		}
 		rtype, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
-		if err := cmdutil.ValidDNSType(rtype); err != nil {
+		if err := cmdutil.ValidDNSCreateType(rtype); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
 		if err := cmdutil.ValidDNSHost(host); err != nil {
@@ -749,7 +754,6 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		huh.NewOption("NS — name server", "NS"),
 		huh.NewOption("SRV — service locator", "SRV"),
 		huh.NewOption("TXT — text record", "TXT"),
-		huh.NewOption("CAA — cert authority", "CAA"),
 	}
 
 	ttlStr := "300"
