@@ -449,3 +449,70 @@ func TestDomainList_JSONEnvelope(t *testing.T) {
 		})
 	}
 }
+
+// TestDomainList_QuietFetchesEveryPage: unfiltered and without --all, the walk
+// stopped after page 1 and the "Showing first page" hint lives in the table
+// branch that --quiet returns before reaching, so `domain list -q` silently
+// truncated. Quiet mode must page fully, like the other list commands.
+func TestDomainList_QuietFetchesEveryPage(t *testing.T) {
+	srv, requests := domainServer(t, [][]string{
+		{"acme.io"}, // page 1 — NextPage=2
+		{"beta.io"}, // page 2 — no NextPage
+	})
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+	cmdutil.Out(cmd).QuietMode = true
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	if len(requests()) != 2 {
+		t.Errorf("expected 2 requests, got %d: %v", len(requests()), requests())
+	}
+	for _, d := range []string{"acme.io", "beta.io"} {
+		if !strings.Contains(stdout.String(), d) {
+			t.Errorf("--quiet must emit every domain, missing %q; got: %q", d, stdout.String())
+		}
+	}
+}
+
+// TestDomainList_SequentialFallbackStuckNextPageTerminates: the fallback that
+// runs when lastPage is absent looped while nextPage was non-zero, without the
+// cmdutil.NextPage guard every other list walk uses. A server that keeps
+// answering nextPage:2 refetched page 2 forever, appending the same rows each
+// time.
+func TestDomainList_SequentialFallbackStuckNextPageTerminates(t *testing.T) {
+	var mu sync.Mutex
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests++
+		n := requests
+		mu.Unlock()
+		if n > 10 {
+			t.Errorf("walk did not terminate against a non-advancing nextPage")
+			http.Error(w, "loop", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domains":[{"domainName":"stuck.io"}],"nextPage":2}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+	if err := cmd.ParseFlags([]string{"--all"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 2 {
+		t.Errorf("made %d requests, want 2 (page 1 -> 2, then the page stops advancing)", requests)
+	}
+}

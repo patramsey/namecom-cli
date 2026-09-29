@@ -233,9 +233,9 @@ func TestGroupCmd(t *testing.T) {
 // The old condition was `nextPage == nil || *nextPage == 0` alone, which trusts
 // the server to eventually stop saying "there is more". Against one that kept
 // answering nextPage:2, `dns list --all` walked forever at the full client rate
-// limit — confirmed by running it: still going after 20 seconds. domain list
-// escaped only because it bounded on lastPage; the other seven list commands
-// and record-ID completion did not.
+// limit — confirmed by running it: still going after 20 seconds. Every list
+// command had it, including domain list's sequential fallback for responses
+// without lastPage.
 func TestNextPage(t *testing.T) {
 	p := func(v int32) *int32 { return &v }
 

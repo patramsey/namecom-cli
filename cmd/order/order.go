@@ -136,7 +136,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			break
 		}
-		if !autoPage {
+		// --quiet returns before the "showing the newest orders" hint, so
+		// stopping early would truncate silently. Page fully whenever the
+		// caller cannot be told there is more — see cmd/contact/contact.go.
+		if !autoPage && !out.QuietMode {
 			hasMore = true
 			break
 		}
