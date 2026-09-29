@@ -126,11 +126,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	stop := out.Spin("Fetching DNSSEC key…")
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
+	stop := out.Spin("Fetching DNSSEC key…")
 	key, err := client.SDK().DnsseCs.GetDnssec(cmd.Context(),
 		&coreapigo.GetDnssecRequest{DomainName: domain, Digest: args[1]})
 	stop()

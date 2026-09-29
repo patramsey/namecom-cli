@@ -306,7 +306,9 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 		if err := out.JSON(d.Contacts); err != nil {
 			return err
 		}
-		warnUnverifiedContacts(out, *d.Contacts)
+		if d.Contacts != nil {
+			warnUnverifiedContacts(out, *d.Contacts)
+		}
 		return nil
 	}
 }

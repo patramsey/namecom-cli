@@ -165,11 +165,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	stop := out.Spin("Fetching vanity nameserver…")
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
+	stop := out.Spin("Fetching vanity nameserver…")
 	ns, err := client.SDK().VanityNameservers.GetVanityNameserver(cmd.Context(),
 		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: args[1]})
 	stop()
