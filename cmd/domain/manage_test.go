@@ -1992,6 +1992,10 @@ func TestRegister_PromptQuotesThePriceSent(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 				case strings.Contains(r.URL.Path, "getPricing"):
 					_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &pricingPrice})
+				case strings.Contains(r.URL.Path, "claims"):
+					// The claims check runs before the prompt, so the body
+					// is complete when it is confirmed.
+					_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 				default:
 					created = true
 					_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
@@ -2100,6 +2104,44 @@ func TestRegister_MalformedTLDRequirementFailsBeforeAnyPrompt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "key=value") {
 		t.Errorf("error should show the expected form, got: %v", err)
+	}
+}
+
+// TestRegister_UnreadableContactsFileFailsBeforeThePrompt guards the same
+// ordering for --contacts-file.
+//
+// The file was read after the price confirmation, so a typo in its path, or a
+// malformed file, made the user approve a charge before being told the request
+// could not be built. The body is now complete before anything is confirmed.
+func TestRegister_UnreadableContactsFileFailsBeforeThePrompt(t *testing.T) {
+	defer output.StubInteractive(false)()
+	price := 12.99
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			results := []*coreapigo.SearchResult{{DomainName: "example.com", Purchasable: true, PurchasePrice: &price}}
+			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
+		case strings.Contains(r.URL.Path, "getPricing"):
+			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForRegister(t, srv)
+	t.Cleanup(func() { registerContactsFile = "" })
+	if err := cmd.Flags().Set("contacts-file", filepath.Join(t.TempDir(), "missing.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	// No --yes and no TTY: had the prompt come first, this would fail with
+	// "pass --yes to confirm" instead.
+	err := runRegister(cmd, []string{"example.com"})
+	if err == nil || !strings.Contains(err.Error(), "reading contacts file") {
+		t.Fatalf("want the contacts file error before any prompt, got: %v", err)
 	}
 }
 
