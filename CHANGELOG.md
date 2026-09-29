@@ -46,6 +46,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   deleting it removed them all. A whitespace-only `--host` is refused the same
   way on both commands. The `--host` help now notes that a forwarding on a
   subdomain replaces that host's existing A records.
+- `order refund` now shows each item's reason when every item fails. The API
+  answers that case with HTTP 409 rather than 200, and the command printed the
+  raw response body as its error. It now prints the same per-item warnings and
+  "N of N item(s) were not refunded" error as a partial failure, and `-o json`
+  / `-o yaml` emit the refund result on stdout instead of an error envelope on
+  stderr. The exit code is still 1.
 
 ## [0.4.5] - 2026-09-28
 
