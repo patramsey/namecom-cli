@@ -34,6 +34,23 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `dns create --type CAA`, and a CAA record in a `dns import` file, are now a
   usage error (exit 2) saying the API does not accept CAA records, before any
   request is sent. `dns list --type CAA` is unchanged.
+- `config list-profiles` marks the profile API commands would use, resolved
+  the same way as `config show` and `auth status`: `--profile`, then
+  `NAMECOM_PROFILE`, then the `default:` key, then the lone profile. It
+  compared against the `default:` key alone, so with `NAMECOM_PROFILE` set it
+  marked a profile other than the one in use, and with one profile and no key
+  it marked none. The DEFAULT column and the `default` field in JSON and YAML
+  keep their names but now mean "active".
+- `config show` prints the endpoint with its scheme
+  (`https://api.dev.name.com`), as `auth status` does. It printed a bare host,
+  so the two commands showed the same value in different forms. The
+  `endpoint` field in `-o json` and `-o yaml` changes accordingly; a script
+  that compares it to a bare host needs updating.
+- `order refund` drops repeated `--item-ids` before sending, keeping the
+  first-seen order, and warns on stderr naming the IDs it dropped. It sent
+  them as given, so `--item-ids 9,9` refunded item 9, then reported the second
+  copy as failed ("already refunded") and exited 1. The `--dry-run` preview
+  and the confirmation prompt show the deduplicated list.
 
 ## [0.4.6] - 2026-09-29
 

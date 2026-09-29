@@ -97,12 +97,20 @@ type Client struct {
 	editor func(context.Context, *http.Request) error
 }
 
+// DefaultBaseURL is the base URL New uses when Options.BaseURL is empty:
+// the sandbox API if sandbox is set, production otherwise. Commands that
+// describe the endpoint without building a client report it from here, so they
+// print the same form as `auth status`.
+func DefaultBaseURL(sandbox bool) string {
+	if sandbox {
+		return sandboxBaseURL
+	}
+	return prodBaseURL
+}
+
 // New builds a Client from the resolved credentials and options.
 func New(opts Options) (*Client, error) {
-	baseURL := prodBaseURL
-	if opts.Creds.Sandbox {
-		baseURL = sandboxBaseURL
-	}
+	baseURL := DefaultBaseURL(opts.Creds.Sandbox)
 	if opts.BaseURL != "" {
 		baseURL = opts.BaseURL
 	}

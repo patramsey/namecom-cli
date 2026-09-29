@@ -402,6 +402,73 @@ func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 	}
 }
 
+// TestRefund_DedupesItemIDs pins #135: `--item-ids 9,9` sent both copies, the
+// API refunded the first and reported the second failed ("already refunded"),
+// and the command exited 1 for a refund that worked. Duplicates are dropped
+// before the body is built, in order, with a warning on stderr — never on
+// stdout, where it would corrupt -o json — and the dry-run preview shows the
+// deduplicated body because it is the same value.
+func TestRefund_DedupesItemIDs(t *testing.T) {
+	// Captured from the sandbox: one item refunded.
+	const resp = `{"results":[{"orderId":2141951,"orderItemId":11573483,"orderItemStatus":"refunded","refundAmount":17.989999999999998}],"totalRefundAmount":17.989999999999998}`
+
+	for _, dryRun := range []bool{false, true} {
+		t.Run("dry-run="+strconv.FormatBool(dryRun), func(t *testing.T) {
+			var sentBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&sentBody)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(resp))
+			}))
+			t.Cleanup(srv.Close)
+			cmd := cmdForRefund(t, srv, dryRun)
+			refundItemIDs = []int32{9, 7, 9, 9, 7}
+			out := cmdutil.Out(cmd)
+			out.Format = output.FormatJSON
+
+			if err := runRefund(cmd, nil); err != nil {
+				t.Fatalf("runRefund: %v", err)
+			}
+			stdout := out.Writer.(*bytes.Buffer).String()
+			stderr := out.EWriter.(*bytes.Buffer).String()
+
+			if !strings.Contains(stderr, "duplicate") || !strings.Contains(stderr, "9, 7") {
+				t.Errorf("stderr should warn about the dropped duplicates 9 and 7, got: %q", stderr)
+			}
+			if strings.Contains(stdout, "duplicate") {
+				t.Errorf("the warning reached stdout, corrupting -o json:\n%s", stdout)
+			}
+
+			var items []any
+			if dryRun {
+				if sentBody != nil {
+					t.Fatal("--dry-run sent a request")
+				}
+				// The preview is either the METHOD/path line followed by the
+				// body, or — once --dry-run prints a document in JSON mode —
+				// {"dry_run":true,...,"body":{...}}. Accept both.
+				i := strings.Index(stdout, "{")
+				if i < 0 {
+					t.Fatalf("no body in dry-run output: %q", stdout)
+				}
+				var previewed map[string]any
+				if err := json.Unmarshal([]byte(stdout[i:]), &previewed); err != nil {
+					t.Fatalf("parsing dry-run body: %v\n%s", err, stdout)
+				}
+				if body, ok := previewed["body"].(map[string]any); ok && previewed["dry_run"] == true {
+					previewed = body
+				}
+				items, _ = previewed["orderItemIds"].([]any)
+			} else {
+				items, _ = sentBody["orderItemIds"].([]any)
+			}
+			if len(items) != 2 || items[0] != float64(9) || items[1] != float64(7) {
+				t.Errorf("orderItemIds = %#v, want [9 7] (deduplicated, first-seen order)", items)
+			}
+		})
+	}
+}
+
 // TestRefund_DeclinedConfirmationDoesNotRefund pins the other irreversible
 // path: answering "no" must not spend money. Nothing covered the declined
 // branch, so discarding confirmRefund's answer went unnoticed.

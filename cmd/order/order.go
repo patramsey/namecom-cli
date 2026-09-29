@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -234,9 +235,26 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runRefund(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	// Repeated IDs are dropped, keeping first-seen order. Sent as given, the
+	// API refunds the first copy and reports the second "failed" (already
+	// refunded), so a refund that worked exited 1. Done before the body is
+	// built, so the --dry-run preview and the prompt show what is sent.
 	itemIDs := make([]int, 0, len(refundItemIDs))
+	seen := make(map[int]bool, len(refundItemIDs))
+	var dropped []string
 	for _, id := range refundItemIDs {
-		itemIDs = append(itemIDs, int(id))
+		n := int(id)
+		if seen[n] {
+			if !slices.Contains(dropped, strconv.Itoa(n)) {
+				dropped = append(dropped, strconv.Itoa(n))
+			}
+			continue
+		}
+		seen[n] = true
+		itemIDs = append(itemIDs, n)
+	}
+	if len(dropped) > 0 {
+		out.Warn("ignoring duplicate item ID(s): " + strings.Join(dropped, ", "))
 	}
 
 	body := coreapigo.RefundRequest{
