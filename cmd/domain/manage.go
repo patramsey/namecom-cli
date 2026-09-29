@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -493,50 +494,53 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	// Read-modify-write: fetch current state first.
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
-	current, err := client.SDK().Domains.GetDomain(cmd.Context(),
-		&coreapigo.GetDomainRequest{DomainName: domain})
-	if err != nil {
-		return api.FromSDKError(err)
+
+	// Only the flags that were passed are sent. UpdateDomain is a PATCH that
+	// takes "one, or any combination of the parameters" and leaves the rest
+	// alone, and since SDK v1.33.5 each field is a flat *bool with omitempty,
+	// so nil means "not sent" while a pointer to false still serialises.
+	//
+	// This used to read the domain and restate all three fields. That breaks
+	// during the 60-day transfer lock after registration or transfer, when the
+	// API rejects any request containing `locked` — even an unchanged true —
+	// so `--autorenew=false` alone failed with "Domain can not be unlocked
+	// until …" (#116).
+	req := &coreapigo.UpdateDomainRequest{DomainName: domain}
+	for flag, field := range map[string]**bool{
+		"autorenew": &req.AutorenewEnabled,
+		"privacy":   &req.PrivacyEnabled,
+		"lock":      &req.Locked,
+	} {
+		if cmd.Flags().Changed(flag) {
+			v, _ := cmd.Flags().GetBool(flag)
+			*field = &v
+		}
+	}
+	if req.AutorenewEnabled == nil && req.PrivacyEnabled == nil && req.Locked == nil {
+		return cmdutil.NewUsageError(errors.New("nothing to update — pass at least one of --autorenew, --privacy, --lock"))
 	}
 
-	autorenew := current.AutorenewEnabled
-	privacy := current.PrivacyEnabled
-	locked := current.Locked
-	// All three fields are sent on every call: this is a read-modify-write that
-	// restates the current values, so an unset flag preserves what is already
-	// there rather than clearing it.
-	//
-	// Until SDK v1.33.5 that could not be expressed with the typed request.
-	// The spec combines the three with anyOf, meaning "at least one", but Fern
-	// modelled it as an exclusive union whose MarshalJSON returned on the FIRST
-	// non-nil variant — so setting all three silently transmitted only
-	// autorenewEnabled and dropped locked and privacyEnabled, on a command
-	// where "locked" is the transfer lock. The workaround was a raw
-	// map[string]any passed through option.WithBodyProperties.
-	//
-	// v1.33.5 removed the union: the fields are now flat on the request, each
-	// *bool with omitempty, and a non-nil pointer to false still serialises.
-	// The bytes on the wire are unchanged, which TestRequestShape_Domain pins.
-	if cmd.Flags().Changed("autorenew") {
-		autorenew, _ = cmd.Flags().GetBool("autorenew")
-	}
-	if cmd.Flags().Changed("privacy") {
-		privacy, _ = cmd.Flags().GetBool("privacy")
-	}
-	if cmd.Flags().Changed("lock") {
-		locked, _ = cmd.Flags().GetBool("lock")
-	}
+	enablingPrivacy := req.PrivacyEnabled != nil && *req.PrivacyEnabled
+	unlocking := req.Locked != nil && !*req.Locked
 
-	req := &coreapigo.UpdateDomainRequest{
-		DomainName:       domain,
-		AutorenewEnabled: &autorenew,
-		PrivacyEnabled:   &privacy,
-		Locked:           &locked,
+	// The current state decides only whether to prompt and whether to warn, so
+	// it is read only when one of those is in question. Without the read, a
+	// script restating --privacy=true on a domain that already has it would
+	// need --yes for a change that costs nothing.
+	wasPrivate, wasLocked := false, true
+	if enablingPrivacy || unlocking {
+		current, err := client.SDK().Domains.GetDomain(cmd.Context(),
+			&coreapigo.GetDomainRequest{DomainName: domain})
+		if err != nil {
+			return api.FromSDKError(err)
+		}
+		if current != nil {
+			wasPrivate, wasLocked = current.PrivacyEnabled, current.Locked
+		}
 	}
 
 	// Enabling privacy can be billable, and `domain privacy on` confirms before
@@ -544,7 +548,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// too — otherwise there are two routes to the same charge and only one of
 	// them pauses. Only gate on turning it ON: disabling never costs anything.
 	prompt := ""
-	if *req.PrivacyEnabled && !current.PrivacyEnabled {
+	if enablingPrivacy && !wasPrivate {
 		prompt = privacyPrompt(domain)
 	}
 
@@ -558,7 +562,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		// Removing the transfer lock has no cost but a real security
 		// consequence, so warn for the same reason `domain lock off` does —
 		// once confirmed, and never under --dry-run.
-		if !*req.Locked && current.Locked {
+		if unlocking && wasLocked {
 			out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
 		}
 		var err error

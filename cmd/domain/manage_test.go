@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
@@ -472,6 +473,9 @@ func TestDomainUpdate_NormalizesDomain(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForUpdate(t, srv)
+	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
+		t.Fatalf("setting autorenew flag: %v", err)
+	}
 	if err := runUpdate(cmd, []string{"EXAMPLE.COM"}); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
@@ -1213,8 +1217,8 @@ func TestDryRunMatchesRealRequest_Domain(t *testing.T) {
 			run:      runSetNS,
 		},
 		{
-			// update is read-modify-write, so the live run issues GET then PATCH;
-			// captureRealRequest keeps the last request, which is the mutation.
+			// update may GET before it PATCHes (to decide whether to prompt or
+			// warn); the live server keeps the last request, the mutation.
 			name: "update",
 			register: func(c *cobra.Command) {
 				c.Flags().Bool("autorenew", false, "")
@@ -1861,20 +1865,22 @@ func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	}
 }
 
-// TestUpdate_PreservesUnmentionedSettings pins the read-modify-write contract on
-// the one command that can turn three separate protections off by accident.
+// TestUpdate_PreservesUnmentionedSettings guards the one command that can turn
+// three separate protections off by accident.
 //
-// This is a PATCH, but the CLI sends all three booleans every time — it seeds
-// them from the current domain and overrides only the flags the user actually
-// passed. Drop that seeding and every field defaults to false, so
+// UpdateDomain is a PATCH, and the CLI sends only the flags the user passed.
+// Send an unpassed flag at its zero value instead of leaving it out and
 // `domain update --autorenew=true` would ALSO unlock the domain and switch off
 // WHOIS privacy without printing a word about either. Unlocking is what makes
 // an unauthorized transfer possible, and dropping privacy republishes the
 // registrant's name, address, and phone number in public WHOIS.
 //
-// The fixture sets the preserved fields to true on purpose: false is both the
-// zero value and a legitimate state, so a fixture full of false cannot tell
-// "preserved correctly" apart from "dropped to the zero value".
+// Restating the current value instead is not safe either: it is what #116
+// broke on — see TestUpdate_TransferLockedDomainDoesNotSendLocked. So the
+// unpassed fields must be absent, not merely true.
+//
+// The fixture sets them to true on purpose, so a body that restated current
+// state would show up here rather than pass as "false, the zero value".
 func TestUpdate_PreservesUnmentionedSettings(t *testing.T) {
 	defer output.StubInteractive(false)()
 
@@ -1909,23 +1915,137 @@ func TestUpdate_PreservesUnmentionedSettings(t *testing.T) {
 		t.Fatal("the update was never sent")
 	}
 
-	var sent struct {
-		AutorenewEnabled *bool `json:"autorenewEnabled"`
-		PrivacyEnabled   *bool `json:"privacyEnabled"`
-		Locked           *bool `json:"locked"`
-	}
+	var sent map[string]*bool
 	if err := json.Unmarshal(patchBody, &sent); err != nil {
 		t.Fatalf("PATCH body was not JSON: %v (%s)", err, patchBody)
 	}
-	if sent.AutorenewEnabled == nil || !*sent.AutorenewEnabled {
-		t.Errorf("--autorenew=true must reach the wire, got %v", sent.AutorenewEnabled)
+	if v := sent["autorenewEnabled"]; v == nil || !*v {
+		t.Errorf("--autorenew=true must reach the wire, got %s", patchBody)
 	}
-	if sent.Locked == nil || !*sent.Locked {
-		t.Errorf("--lock was not passed: the domain must stay locked, got %v (this unlocks it)", sent.Locked)
+	if _, ok := sent["locked"]; ok {
+		t.Errorf("--lock was not passed, so locked must be absent (false unlocks the domain): %s", patchBody)
 	}
-	if sent.PrivacyEnabled == nil || !*sent.PrivacyEnabled {
-		t.Errorf("--privacy was not passed: privacy must stay on, got %v (this exposes WHOIS data)", sent.PrivacyEnabled)
+	if _, ok := sent["privacyEnabled"]; ok {
+		t.Errorf("--privacy was not passed, so privacyEnabled must be absent (false exposes WHOIS data): %s", patchBody)
 	}
+}
+
+// updateTransferLockedDomain is GET /core/v1/domains/{name} for a domain inside
+// its 60-day transfer lock, cut down from a sandbox capture to the fields
+// `domain update` could read. The contacts are dropped as irrelevant.
+const updateTransferLockedDomain = `{"domainName":"example.com","createDate":"2026-09-29T05:37:38Z",` +
+	`"expireDate":"2027-09-29T05:37:38Z","autorenewEnabled":false,"locked":true,` +
+	`"locks":["clientTransferProhibited"],"transferLockExpiresAt":"2026-11-28T06:37:39Z",` +
+	`"privacyEnabled":false,"nameservers":["ns1vwx.name.com","ns2gtx.name.com"],"renewalPrice":19.99}`
+
+// TestUpdate_TransferLockedDomainDoesNotSendLocked reproduces #116. During the
+// transfer lock the API rejects any UpdateDomain carrying `locked`, even an
+// unchanged true, so `domain update --autorenew=true` failed because the CLI
+// restated the lock it had just read. The stub rejects `locked` the way the
+// sandbox does.
+//
+// It also pins that an update which neither enables privacy nor unlocks makes
+// no GET: nothing about the current state changes what is sent or asked.
+func TestUpdate_TransferLockedDomainDoesNotSendLocked(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if _, ok := body["locked"]; ok {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"message":"Invalid Argument","details":"Domain can not be unlocked until 2026-11-28 06:37:39"}`))
+				return
+			}
+		}
+		_, _ = w.Write([]byte(updateTransferLockedDomain))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := withRootFlags(t, cmdForUpdate(t, srv))
+	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
+		t.Fatalf("setting autorenew flag: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("--autorenew alone must not touch the transfer lock: %v", err)
+	}
+	if len(requests) != 1 || requests[0] != http.MethodPatch {
+		t.Errorf("want a single PATCH, got %v", requests)
+	}
+}
+
+// TestUpdate_ReadsStateOnlyToPromptOrWarn pins why update still GETs the
+// domain in two cases: the privacy prompt and the unlock warning each depend on
+// the current value. Restating --privacy=true on a domain that already has it
+// costs nothing and must not need --yes; unlocking an unlocked domain has no
+// consequence to warn about.
+func TestUpdate_ReadsStateOnlyToPromptOrWarn(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	for _, tc := range []struct {
+		name, flag, current string
+		warn                bool
+	}{
+		{"privacy already on", "privacy=true", `"privacyEnabled":true`, false},
+		{"unlock a locked domain", "lock=false", `"locked":true`, true},
+		{"unlock an unlocked domain", "lock=false", `"locked":false`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"domainName":"example.com",` + tc.current + `}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := withRootFlags(t, cmdForUpdate(t, srv))
+			name, value, _ := strings.Cut(tc.flag, "=")
+			if err := cmd.Flags().Set(name, value); err != nil {
+				t.Fatalf("setting %s: %v", name, err)
+			}
+			// No --yes: a prompt here fails non-interactively.
+			if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runUpdate: %v", err)
+			}
+			if want := []string{http.MethodGet, http.MethodPatch}; strings.Join(requests, " ") != strings.Join(want, " ") {
+				t.Errorf("want %v, got %v", want, requests)
+			}
+			stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
+			if got := strings.Contains(stderr, "Transfer lock removed"); got != tc.warn {
+				t.Errorf("unlock warning shown = %v, want %v; stderr: %q", got, tc.warn, stderr)
+			}
+		})
+	}
+}
+
+// TestUpdate_NoFlagsIsAUsageError:with only changed fields sent, an update
+// with no flags would PATCH `{}`, which the API rejects — it requires at least
+// one field. It used to restate the current values, a write that changed
+// nothing and printed "Updated". Neither is useful, so it is refused before
+// any request.
+func TestUpdate_NoFlagsIsAUsageError(t *testing.T) {
+	cmd := withRootFlags(t, cmdForUpdate(t, neverCalledServer(t)))
+	err := runUpdate(cmd, []string{"example.com"})
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+		t.Fatalf("want a usage error, got %v", err)
+	}
+}
+
+// withRootFlags parents cmd under a root carrying the persistent --dry-run and
+// --yes flags, both unset, as runUpdate reads them.
+func withRootFlags(t *testing.T, cmd *cobra.Command) *cobra.Command {
+	t.Helper()
+	root := &cobra.Command{Use: "namecom"}
+	var dr, yes bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
+	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
+	root.AddCommand(cmd)
+	return cmd
 }
 
 // TestRegister_DryRunPreviewsTheRealBody guards what --dry-run is for.

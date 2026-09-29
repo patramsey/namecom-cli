@@ -69,6 +69,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the domain. Every method other than GET and HEAD now prints the method, path
   with its query string, and body (indented if it is JSON, quoted if not)
   instead of sending it; GET and HEAD still run, as the flag's help says.
+- `domain update` now sends only the settings you pass. It resent all three,
+  including the current transfer lock, and during the 60-day lock after
+  registration or transfer the API rejects any request that mentions the lock —
+  so `domain update --autorenew=false` failed with "Domain can not be unlocked
+  until …". The `--dry-run` body now carries only the passed fields, and
+  `domain update` with no flags is a usage error (exit 2) instead of a request
+  that changed nothing.
 
 ## [0.4.5] - 2026-09-28
 
