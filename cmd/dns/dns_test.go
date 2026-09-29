@@ -1191,6 +1191,67 @@ func TestDNSExport_ZoneMXWithoutPriority(t *testing.T) {
 	}
 }
 
+// TestDNSExport_ZoneQualifiesTargets guards hostname targets written relative
+// to the origin. The API strips the trailing dot on storage, so a CNAME to
+// example.net comes back as "example.net", and a zone file reads that as
+// example.net.<origin>. The records are a real sandbox listing.
+func TestDNSExport_ZoneQualifiesTargets(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("testdata", "sandbox_list_records.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := recordsServer(t, string(body))
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"namecom-smoke-37de95.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"blog.namecom-smoke-37de95.com.\t300\tIN\tCNAME\texample.net.\n",
+		"_sip._tcp.namecom-smoke-37de95.com.\t300\tIN\tSRV\t20 10 5060 sip.example.net.\n",
+		"namecom-smoke-37de95.com.\t300\tIN\tMX\t10 mx6.name.com.\n",
+		"; ANAME not representable in a zone file: api.namecom-smoke-37de95.com.\t300\tIN\tANAME\texample.org.\n",
+		// Not hostnames: left exactly as they were.
+		"www.namecom-smoke-37de95.com.\t300\tIN\tA\t192.0.2.1\n",
+		"namecom-smoke-37de95.com.\t300\tIN\tTXT\t\"v=spf1 a mx ~all\"\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing zone line %q in:\n%s", want, got)
+		}
+	}
+}
+
+// TestDNSExport_ZoneQualifiesTargetsOnce pins the edge cases around the
+// trailing dot: a target that already has one is not given a second, and the
+// root "." (null MX, RFC 7505; "no service" SRV, RFC 2782) stays ".".
+func TestDNSExport_ZoneQualifiesTargetsOnce(t *testing.T) {
+	srv := recordsServer(t, `{"records":[`+
+		`{"id":1,"type":"NS","host":"sub","fqdn":"sub.example.com.","answer":"ns1.example.net","ttl":300},`+
+		`{"id":2,"type":"CNAME","host":"www","fqdn":"www.example.com.","answer":"example.net.","ttl":300},`+
+		`{"id":3,"type":"MX","host":"","fqdn":"example.com.","answer":".","priority":0,"ttl":300},`+
+		`{"id":4,"type":"SRV","host":"_x._tcp","fqdn":"_x._tcp.example.com.","answer":"0 0 .","priority":0,"ttl":300},`+
+		`{"id":5,"type":"AAAA","host":"v6","fqdn":"v6.example.com.","answer":"2001:db8::1","ttl":300}`+
+		`],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	want := "sub.example.com.\t300\tIN\tNS\tns1.example.net.\n" +
+		"www.example.com.\t300\tIN\tCNAME\texample.net.\n" +
+		"example.com.\t300\tIN\tMX\t0 .\n" +
+		"_x._tcp.example.com.\t300\tIN\tSRV\t0 0 0 .\n" +
+		"v6.example.com.\t300\tIN\tAAAA\t2001:db8::1\n"
+	if got := buf.String(); got != want {
+		t.Errorf("zone output:\n got %q\nwant %q", got, want)
+	}
+}
+
 // TestDNSDelete_DryRunWorksNonInteractively guards an ordering bug that made
 // --dry-run unusable in exactly the setting it exists for. confirmDelete ran
 // BEFORE the dryRun branch, and cmdutil.Confirm errors out when stdin is not a

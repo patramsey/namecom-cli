@@ -23,6 +23,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a hand-written `key=value` summary — for `vanity-ns` the raw `--ips` string
   rather than the list actually sent. Anything parsing that summary line needs
   to read the JSON instead.
+- `dns export --zone` writes CNAME, NS, MX, and SRV targets (and the target in
+  an ANAME comment) with a trailing dot. The API strips the dot on storage, so
+  a CNAME to `example.net` was exported as `example.net`, which a zone file
+  reads as relative: `example.net.example.com.`. A target that already ends in
+  `.`, and the root `.` of a null MX or SRV, are left as they are. The zone
+  output changes for any script that parses it; JSON export is unchanged.
 
 ## [0.4.5] - 2026-09-28
 
