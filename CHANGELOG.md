@@ -17,6 +17,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   they send. Both prompts quoted the standard price while the request carried
   the `--price` override — the same mismatch fixed for `domain register` in
   0.4.5.
+- `--dry-run` on `dnssec create`, `email create`, `email update`,
+  `vanity-ns create`, and `vanity-ns update` now prints the JSON body the
+  command would send, like every other write command. It printed no body, only
+  a hand-written `key=value` summary — for `vanity-ns` the raw `--ips` string
+  rather than the list actually sent. Anything parsing that summary line needs
+  to read the JSON instead.
 
 ## [0.4.5] - 2026-09-28
 

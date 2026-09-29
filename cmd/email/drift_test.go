@@ -9,6 +9,8 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/spf13/cobra"
+
+	"github.com/patramsey/namecom-cli/internal/drifttest"
 )
 
 // httpMethods is the set recognized when scanning dry-run output for the
@@ -154,6 +156,9 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 			if printed != sent {
 				t.Errorf("--dry-run reports %q but the command actually sends %q", printed, sent)
 			}
+
+			// The body too: what --dry-run prints must be what is sent.
+			drifttest.AssertDryRunBodyMatches(t, tc.setup, tc.run, tc.args, getResponse)
 		})
 	}
 }

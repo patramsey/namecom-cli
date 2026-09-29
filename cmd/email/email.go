@@ -194,7 +194,6 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -246,17 +245,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		EmailTo:    createEmailTo,
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/email/forwarding", domain), nil)
-		fmt.Fprintf(out.Writer, "  emailBox=%s emailTo=%s\n", mailbox, createEmailTo)
-		return nil
-	}
-
-	stop := out.Spin("Creating email forwarding…")
-	entry, err := client.SDK().EmailForwardings.CreateEmailForwarding(cmd.Context(), &body)
-	stop()
-	if err != nil {
+	var entry *coreapigo.EmailForwarding
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateEmailForwardingRequest]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding", domain),
+		Body:   body,
+		Spin:   "Creating email forwarding…",
+	}, func(ctx context.Context, body coreapigo.CreateEmailForwardingRequest) error {
+		var err error
+		entry, err = client.SDK().EmailForwardings.CreateEmailForwarding(ctx, &body)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	switch out.Format {
@@ -274,7 +275,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -322,17 +322,19 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		EmailTo:    updateEmailTo,
 	}
 
-	if dryRun {
-		out.DryRun("PUT", fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, mailbox), nil)
-		fmt.Fprintf(out.Writer, "  emailTo=%s\n", updateEmailTo)
-		return nil
-	}
-
-	stop := out.Spin("Updating email forwarding…")
-	entry, err := client.SDK().EmailForwardings.UpdateEmailForwarding(cmd.Context(), &body)
-	stop()
-	if err != nil {
+	var entry *coreapigo.EmailForwarding
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.EmailForwardingsUpdateEmailForwardingBody]{
+		Method: "PUT",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, mailbox),
+		Body:   body,
+		Spin:   "Updating email forwarding…",
+	}, func(ctx context.Context, body coreapigo.EmailForwardingsUpdateEmailForwardingBody) error {
+		var err error
+		entry, err = client.SDK().EmailForwardings.UpdateEmailForwarding(ctx, &body)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	switch out.Format {

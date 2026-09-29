@@ -162,7 +162,6 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -176,18 +175,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		KeyTag:     int(createKeyTag),
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s/dnssec", domain), nil)
-		fmt.Fprintf(out.Writer, "  algorithm=%d digest=%s digestType=%d keyTag=%d\n",
-			createAlgorithm, createDigest, createDigestType, createKeyTag)
-		return nil
-	}
-
-	stop := out.Spin("Adding DNSSEC key…")
-	key, err := client.SDK().DnsseCs.CreateDnssec(cmd.Context(), &body)
-	stop()
-	if err != nil {
+	var key *coreapigo.Dnssec
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateDnssecBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec", domain),
+		Body:   body,
+		Spin:   "Adding DNSSEC key…",
+	}, func(ctx context.Context, body coreapigo.CreateDnssecBody) error {
+		var err error
+		key, err = client.SDK().DnsseCs.CreateDnssec(ctx, &body)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	switch out.Format {
