@@ -819,15 +819,22 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		if err := priorityForm.Run(); err != nil && !errors.Is(err, huh.ErrUserAborted) {
 			return err
 		}
-		if n, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {
-			createPriority = n
-		}
 	}
 
-	// Mark flags as changed so the caller uses the form values.
+	markFormFlags(cmd, priorityStr)
+	return nil
+}
+
+// markFormFlags marks the values dnsCreateForm collected as changed flags, so
+// runCreate uses them. runCreate attaches a priority only when
+// Changed("priority"), so a priority stored without marking it was dropped.
+func markFormFlags(cmd *cobra.Command, priorityStr string) {
 	_ = cmd.Flags().Set("type", createType)
 	_ = cmd.Flags().Set("answer", createAnswer)
-	return nil
+	priorityStr = strings.TrimSpace(priorityStr)
+	if _, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {
+		_ = cmd.Flags().Set("priority", priorityStr)
+	}
 }
 
 func confirmDelete(out *output.Config, yes bool, msg string) (bool, error) {

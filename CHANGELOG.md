@@ -83,6 +83,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   255 bytes, such as a 2048-bit DKIM key, are split into several quoted
   strings as RFC 1035 requires, and ANAME records, which have no standard
   zone-file form, are written as comments instead of as records.
+- Interactive `dns create` sends the MX or SRV priority you enter. The value
+  was dropped from the request, and the command then warned that the
+  priority was 0.
 
 ## [0.4.4] - 2026-09-24
 

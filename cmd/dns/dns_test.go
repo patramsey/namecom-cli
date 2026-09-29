@@ -855,6 +855,55 @@ func TestDNSCreate_OmittedPriorityStaysOmitted(t *testing.T) {
 	}
 }
 
+// TestDNSCreateForm_PriorityIsSent guards the interactive form dropping the
+// MX/SRV priority. dnsCreateForm stored the entered value in createPriority but
+// marked only type and answer as changed, and runCreate attaches a priority
+// only when Changed("priority") — so the value was discarded, and the user was
+// warned "priority is 0" right after typing 10. The huh form itself needs a
+// terminal; this drives the step after it, which is where the bug was.
+func TestDNSCreateForm_PriorityIsSent(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCreate(t, srv)
+	ew := &bytes.Buffer{}
+	cmdutil.Out(cmd).EWriter = ew
+	// What the form leaves behind for "MX, priority 10".
+	createType, createHost, createAnswer, createTTL = "MX", "@", "mail.example.com.", 300
+	markFormFlags(cmd, "10")
+
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	if got := gotBody["priority"]; got != float64(10) {
+		t.Errorf("priority entered in the form must be sent: got %#v, body %#v", got, gotBody)
+	}
+	if strings.Contains(ew.String(), "priority is 0") {
+		t.Errorf("warned about priority 0 after the user entered 10; stderr: %q", ew.String())
+	}
+}
+
+// TestDNSCreateForm_NoPriorityStaysUnset pins that a form with no priority
+// (any type other than MX/SRV, or a blank entry) leaves the flag unset.
+func TestDNSCreateForm_NoPriorityStaysUnset(t *testing.T) {
+	cmd := cmdForCreate(t, neverCalledServer(t))
+	createType, createAnswer = "A", "1.2.3.4"
+	markFormFlags(cmd, "")
+	if cmd.Flags().Changed("priority") {
+		t.Error("a blank priority must not mark --priority as set")
+	}
+	if !cmd.Flags().Changed("type") || !cmd.Flags().Changed("answer") {
+		t.Error("type and answer from the form must be marked as set")
+	}
+}
+
 // cmdForUpdateCapturing is cmdForUpdate with the stderr buffer exposed, so
 // tests can assert on warnings rather than only on the request body.
 func cmdForUpdateCapturing(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) {
