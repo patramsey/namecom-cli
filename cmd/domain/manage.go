@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -44,21 +45,25 @@ var lockCmd = &cobra.Command{
 // Note PurchasePrivacy is deliberately not used for `privacy on`: the spec
 // describes it as "a billable action" that purchases and enables, whereas
 // UpdateDomain is the documented successor to the deprecated toggle.
-func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest) error {
+//
+// DomainName is tagged `json:"-"`, so previewing the request previews the body
+// alone. prompt is the confirmation question, or "" for none. sent is false
+// under --dry-run or when the user declines.
+func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, prompt string) (sent bool, err error) {
 	client := cmdutil.APIClient(cmd)
-	_, err := client.SDK().Domains.UpdateDomain(cmd.Context(), req)
-	return api.FromSDKError(err)
-}
-
-// toggleDryRun prints the UpdateDomain request a toggle would send. DomainName
-// is tagged `json:"-"`, so marshalling the request yields the body alone.
-func toggleDryRun(out *output.Config, req *coreapigo.UpdateDomainRequest) {
-	out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", req.DomainName), req)
+	return cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
+		Method: "PATCH",
+		Path:   fmt.Sprintf("/core/v1/domains/%s", req.DomainName),
+		Body:   req,
+		Prompt: prompt,
+	}, func(ctx context.Context, req *coreapigo.UpdateDomainRequest) error {
+		_, err := client.SDK().Domains.UpdateDomain(ctx, req)
+		return api.FromSDKError(err)
+	})
 }
 
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
 		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
@@ -70,11 +75,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, Locked: &enable}
-	if dryRun {
-		toggleDryRun(out, req)
-		return nil
-	}
-	if err := applyDomainToggle(cmd, req); err != nil {
+	if sent, err := applyDomainToggle(cmd, req, ""); err != nil || !sent {
 		return err
 	}
 	if enable {
@@ -106,7 +107,6 @@ var autorenewCmd = &cobra.Command{
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
 		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
@@ -117,11 +117,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, AutorenewEnabled: &enable}
-	if dryRun {
-		toggleDryRun(out, req)
-		return nil
-	}
-	if err := applyDomainToggle(cmd, req); err != nil {
+	if sent, err := applyDomainToggle(cmd, req, ""); err != nil || !sent {
 		return err
 	}
 	if enable {
@@ -153,7 +149,6 @@ var privacyCmd = &cobra.Command{
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	toggle := strings.ToLower(args[0])
 	if toggle != "on" && toggle != "off" {
 		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
@@ -165,23 +160,13 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
-	if dryRun {
-		toggleDryRun(out, req)
-		return nil
-	}
 	// Enabling privacy can incur a charge on accounts without a bundled privacy
 	// plan, so confirm before doing it. Disabling never charges.
+	prompt := ""
 	if enable {
-		ok, err := confirm(out, cmdutil.IsYes(cmd), fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domainName))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			out.Warn("aborted")
-			return nil
-		}
+		prompt = privacyPrompt(domainName)
 	}
-	if err := applyDomainToggle(cmd, req); err != nil {
+	if sent, err := applyDomainToggle(cmd, req, prompt); err != nil || !sent {
 		return err
 	}
 	if enable {
@@ -215,7 +200,6 @@ func init() {
 func runSetNS(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -232,14 +216,16 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	// DomainName is the path parameter and is not marshaled, so previewing
 	// this value previews exactly the body sent.
 	body := coreapigo.DomainsSetNameserversBody{DomainName: domain, Nameservers: ns}
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain), body)
-		return nil
-	}
-	stop := out.Spin("Updating nameservers…")
-	_, err = client.SDK().Domains.SetNameservers(cmd.Context(), &body)
-	stop()
-	if err != nil {
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DomainsSetNameserversBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s:setNameservers", domain),
+		Body:   body,
+		Spin:   "Updating nameservers…",
+	}, func(ctx context.Context, body coreapigo.DomainsSetNameserversBody) error {
+		_, err := client.SDK().Domains.SetNameservers(ctx, &body)
+		return err
+	})
+	if err != nil || !sent {
 		return err
 	}
 	out.Success(fmt.Sprintf("Nameservers updated for %s", domain))
@@ -356,7 +342,6 @@ func warnUnverifiedContacts(out *output.Config, c coreapigo.Contacts) {
 func runContactsSet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
@@ -375,13 +360,15 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	// Preview the SDK body, not the file's contents: the request wraps them
 	// as {"contacts": {...}}.
 	body := coreapigo.DomainsSetContactsBody{DomainName: domain, Contacts: &contacts}
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:setContacts", domain), body)
-		return nil
-	}
-
-	_, err = client.SDK().Domains.SetContacts(cmd.Context(), &body)
-	if err != nil {
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DomainsSetContactsBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s:setContacts", domain),
+		Body:   body,
+	}, func(ctx context.Context, body coreapigo.DomainsSetContactsBody) error {
+		_, err := client.SDK().Domains.SetContacts(ctx, &body)
+		return err
+	})
+	if err != nil || !sent {
 		return err
 	}
 	out.Success(fmt.Sprintf("Contacts updated for %s", domain))
@@ -508,7 +495,6 @@ func init() {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 
 	// Read-modify-write: fetch current state first.
 	domain, err := cmdutil.DomainArg(args, 0)
@@ -556,39 +542,34 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		Locked:           &locked,
 	}
 
-	if dryRun {
-		out.DryRun("PATCH", fmt.Sprintf("/core/v1/domains/%s", domain), req)
-		return nil
-	}
-
 	// Enabling privacy can be billable, and `domain privacy on` confirms before
 	// doing it. This command reaches the identical API call, so it has to ask
 	// too — otherwise there are two routes to the same charge and only one of
 	// them pauses. Only gate on turning it ON: disabling never costs anything.
-	if cmd.Flags().Changed("privacy") {
-		if v, _ := cmd.Flags().GetBool("privacy"); v && !current.PrivacyEnabled {
-			ok, cerr := confirm(out, cmdutil.IsYes(cmd),
-				fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domain))
-			if cerr != nil {
-				return cerr
-			}
-			if !ok {
-				out.Warn("aborted")
-				return nil
-			}
-		}
-	}
-	// Removing the transfer lock has no cost but a real security consequence,
-	// so warn for the same reason `domain lock off` does.
-	if cmd.Flags().Changed("lock") {
-		if v, _ := cmd.Flags().GetBool("lock"); !v && current.Locked {
-			out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
-		}
+	prompt := ""
+	if *req.PrivacyEnabled && !current.PrivacyEnabled {
+		prompt = privacyPrompt(domain)
 	}
 
-	updated, err := client.SDK().Domains.UpdateDomain(cmd.Context(), req)
-	if err != nil {
+	var updated *coreapigo.DomainResponsePayload
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
+		Method: "PATCH",
+		Path:   fmt.Sprintf("/core/v1/domains/%s", domain),
+		Body:   req,
+		Prompt: prompt,
+	}, func(ctx context.Context, req *coreapigo.UpdateDomainRequest) error {
+		// Removing the transfer lock has no cost but a real security
+		// consequence, so warn for the same reason `domain lock off` does —
+		// once confirmed, and never under --dry-run.
+		if !*req.Locked && current.Locked {
+			out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
+		}
+		var err error
+		updated, err = client.SDK().Domains.UpdateDomain(ctx, req)
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 
 	switch out.Format {
@@ -601,6 +582,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm the new settings", domain))
 	}
 	return nil
+}
+
+// privacyPrompt is the confirmation for turning WHOIS privacy on, shared by
+// `domain privacy on` and `domain update --privacy`, which reach the same
+// possibly billable API call.
+func privacyPrompt(domain string) string {
+	return fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domain)
 }
 
 func init() {

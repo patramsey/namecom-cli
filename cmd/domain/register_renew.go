@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,44 +172,6 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		purchasePrice = pricing.PurchasePrice
 	}
 
-	regPrice := ""
-	switch {
-	case purchasePrice != nil && checkPurchaseType != nil:
-		// An acquisition price is a flat fee: the API documents that years on
-		// create does not multiply it, so "/yr" or "total for N years" would
-		// both misstate it.
-		regPrice = fmt.Sprintf("$%.2f flat (%s, not per year)", *purchasePrice, *checkPurchaseType)
-	case purchasePrice != nil:
-		regPrice = formatTermPrice(*purchasePrice, registerYears)
-	case pricing.PurchasePrice != nil:
-		regPrice = formatTermPrice(*pricing.PurchasePrice, registerYears)
-	}
-	// Skip the prompt entirely under --dry-run: the request body is assembled
-	// below, so the dry-run branch can't be hoisted above this point. Asking a
-	// human to confirm an action that will not happen is noise, and in a script
-	// Confirm hard-errors ("pass --yes to confirm in non-interactive mode"),
-	// which made --dry-run unusable in CI.
-	if !dryRun {
-		promptMsg := fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, registerYears, regPrice)
-		ok, err := confirm(out, yes, promptMsg)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			out.Warn("aborted")
-			return nil
-		}
-	}
-
-	// Trademark claims. CreateDomainRequest: "When a domain has trademark
-	// claims (as determined by the Domain Claims Check endpoint), you must
-	// include the claims acknowledgment data in the domain creation request."
-	// Without this the CLI simply could not register a TMCH-matched name.
-	claims, err := resolveClaims(cmd, out, domainName, checkPurchaseType, dryRun)
-	if err != nil {
-		return err
-	}
-
 	// No narrowing conversion any more: the SDK takes years as int.
 	years := registerYears
 	payload := coreapigo.DomainCreatePayload{
@@ -232,23 +195,60 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 		body.Domain.Contacts = &contacts
 	}
-	body.Claims = claims
 	if len(tldReqs) > 0 {
 		body.TldRequirements = tldReqs
 	}
 	body.PurchaseType = checkPurchaseType
 	body.PurchasePrice = purchasePrice
 
-	if dryRun {
-		out.DryRun("POST", "/core/v1/domains", body)
-		return nil
+	// Trademark claims. CreateDomainRequest: "When a domain has trademark
+	// claims (as determined by the Domain Claims Check endpoint), you must
+	// include the claims acknowledgment data in the domain creation request."
+	// Without this the CLI simply could not register a TMCH-matched name.
+	//
+	// The claim is looked up here so the body is complete before it is
+	// previewed or confirmed. Showing the notice and collecting the
+	// acknowledgement stay after the price confirmation, in the send callback
+	// below — they add nothing to the body, which already carries the claim.
+	claim, err := lookupClaims(cmd, domainName, checkPurchaseType)
+	if err != nil {
+		return err
+	}
+	body.Claims = claimsInfo(claim)
+	if dryRun && claim != nil {
+		// Nothing is purchased, so there is nothing to acknowledge — but the
+		// preview still shows the claims block the real request would carry,
+		// which is the whole point of inspecting it first.
+		renderClaimsNotice(out, claim)
+		out.Hint("This domain has a trademark claim; registering it will require --acknowledge-claim")
 	}
 
-	out.Step("Registering " + domainName + "…")
-	// The root --idempotency-key (or an auto-generated one) is applied by the
-	// client request editor; no per-command flag is needed or wanted here.
-	created, err := client.SDK().Domains.CreateDomain(cmd.Context(), &body)
-	if err != nil {
+	// RunWrite skips the prompt entirely under --dry-run. Asking a human to
+	// confirm an action that will not happen is noise, and in a script Confirm
+	// hard-errors ("pass --yes to confirm in non-interactive mode"), which made
+	// --dry-run unusable in CI.
+	var created *coreapigo.CreateDomainResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateDomainRequest]{
+		Method: "POST",
+		Path:   "/core/v1/domains",
+		Body:   body,
+		Prompt: registerPrompt(domainName, body, pricing.PurchasePrice),
+	}, func(ctx context.Context, body coreapigo.CreateDomainRequest) error {
+		if claim != nil {
+			renderClaimsNotice(out, claim)
+			if err := acknowledgeClaim(out, domainName); err != nil {
+				return err
+			}
+		}
+		out.Step("Registering " + domainName + "…")
+		// The root --idempotency-key (or an auto-generated one) is applied by
+		// the client request editor; no per-command flag is needed or wanted
+		// here.
+		var err error
+		created, err = client.SDK().Domains.CreateDomain(ctx, &body)
+		return err
+	})
+	if err != nil || !sent {
 		return err
 	}
 
@@ -279,6 +279,52 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// registerPrompt is the purchase confirmation for body. The price it quotes
+// is the one body carries, so the user approves the amount actually
+// submitted; quoting GetPricingForDomain unconditionally meant an aftermarket
+// name or a --price override confirmed one amount and submitted another
+// (#83). standard is the standard registration price, quoted only when the
+// body carries none — the API then charges exactly that.
+func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, standard *float64) string {
+	years := 1
+	if body.Years != nil {
+		years = *body.Years
+	}
+	price := ""
+	switch {
+	case body.PurchasePrice != nil && body.PurchaseType != nil:
+		// An acquisition price is a flat fee: the API documents that years on
+		// create does not multiply it, so "/yr" or "total for N years" would
+		// both misstate it.
+		price = fmt.Sprintf("$%.2f flat (%s, not per year)", *body.PurchasePrice, *body.PurchaseType)
+	case body.PurchasePrice != nil:
+		price = formatTermPrice(*body.PurchasePrice, years)
+	case standard != nil:
+		price = formatTermPrice(*standard, years)
+	}
+	return fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, years, price)
+}
+
+// renewPrompt is the renewal confirmation for body, quoting the price body
+// carries — --price, or the premium price merged from the quote — and the
+// standard renewal price only when it carries none. Quoting the standard price
+// unconditionally meant `renew --price 1800` asked "at $2500.00/yr?" and then
+// submitted 1800, the renew side of #83.
+func renewPrompt(domainName string, body coreapigo.DomainsRenewDomainBody, standard *float64) string {
+	years := 1
+	if body.Years != nil {
+		years = *body.Years
+	}
+	price := ""
+	switch {
+	case body.PurchasePrice != nil:
+		price = formatTermPrice(*body.PurchasePrice, years)
+	case standard != nil:
+		price = formatTermPrice(*standard, years)
+	}
+	return fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, years, price)
 }
 
 func registerForm() error {
@@ -318,8 +364,6 @@ func registerForm() error {
 func runRenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domainName, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -342,24 +386,6 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}
 
-	renewPriceStr := ""
-	if pricing.RenewalPrice != nil {
-		renewPriceStr = formatTermPrice(*pricing.RenewalPrice, renewYears)
-	}
-	// See runRegister: --dry-run must not prompt, and must not hard-error in a
-	// non-interactive shell for an action it will never perform.
-	if !dryRun {
-		promptMsg := fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, renewYears, renewPriceStr)
-		ok, err := confirm(out, yes, promptMsg)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			out.Warn("aborted")
-			return nil
-		}
-	}
-
 	years := renewYears
 	body := coreapigo.DomainsRenewDomainBody{DomainName: domainName, Years: &years}
 	if renewPrice > 0 {
@@ -371,13 +397,20 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		body.PurchasePrice = pricing.RenewalPrice
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/domains/%s:renew", domainName), body)
-		return nil
-	}
-
-	renewed, err := client.SDK().Domains.RenewDomain(cmd.Context(), &body)
-	if err != nil {
+	// See runRegister: --dry-run must not prompt, and must not hard-error in a
+	// non-interactive shell for an action it will never perform.
+	var renewed *coreapigo.RenewDomainResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DomainsRenewDomainBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/domains/%s:renew", domainName),
+		Body:   body,
+		Prompt: renewPrompt(domainName, body, pricing.RenewalPrice),
+	}, func(ctx context.Context, body coreapigo.DomainsRenewDomainBody) error {
+		var err error
+		renewed, err = client.SDK().Domains.RenewDomain(ctx, &body)
+		return err
+	})
+	if err != nil || !sent {
 		return err
 	}
 
@@ -402,22 +435,31 @@ func runRenew(cmd *cobra.Command, args []string) error {
 }
 
 // resolveClaims checks a domain for trademark claims and, when any exist,
-// obtains the user's acknowledgement before registration can continue.
+// shows the notice and obtains the user's acknowledgement.
 //
 // The claims process is TMCH's: during a gTLD's claims period, registering a
 // name matching a registered trademark requires the registrant to be shown a
 // notice and to acknowledge it. The API mirrors that — the acknowledgement
 // triple (claimId, notBefore, notAfter) must accompany the create request.
 //
-// The acknowledgement is deliberately NOT satisfied by --yes. --yes is a
-// general-purpose "skip prompts" flag that people set globally in wrappers and
-// aliases; letting it accept a legal notice on the user's behalf would mean
-// acknowledging something nobody read. --acknowledge-claim has to be passed
-// explicitly, and it exists only on this command.
-//
 // Returns nil when the domain has no claims, which is the overwhelmingly common
-// case and leaves the request body untouched.
-func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, purchaseType *string, dryRun bool) (*coreapigo.DomainClaimsInfo, error) {
+// case and leaves the request body untouched. runRegister uses the three
+// pieces separately so it can complete the body before confirming.
+func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, purchaseType *string) (*coreapigo.DomainClaimsInfo, error) {
+	claim, err := lookupClaims(cmd, domainName, purchaseType)
+	if err != nil || claim == nil {
+		return nil, err
+	}
+	renderClaimsNotice(out, claim)
+	if err := acknowledgeClaim(out, domainName); err != nil {
+		return nil, err
+	}
+	return claimsInfo(claim), nil
+}
+
+// lookupClaims returns the trademark claim on domainName for the purchase
+// being made, or nil when there is none.
+func lookupClaims(cmd *cobra.Command, domainName string, purchaseType *string) (*coreapigo.DomainClaimsCheckResponse, error) {
 	client := cmdutil.APIClient(cmd)
 
 	// Claims applicability is per-purchase-type: ResellerTldInfo.claimsCheckRequired
@@ -440,43 +482,49 @@ func resolveClaims(cmd *cobra.Command, out *output.Config, domainName string, pu
 	if result.ClaimID == nil || *result.ClaimID == "" {
 		return nil, nil
 	}
+	return result, nil
+}
 
-	renderClaimsNotice(out, result)
-
-	if dryRun {
-		// Nothing is purchased, so there is nothing to acknowledge — but the
-		// preview must still show the claims block that the real request would
-		// carry, which is the whole point of inspecting it first.
-		out.Hint("This domain has a trademark claim; registering it will require --acknowledge-claim")
-		return &coreapigo.DomainClaimsInfo{
-			ClaimID:   result.ClaimID,
-			NotBefore: result.NotBefore,
-			NotAfter:  result.NotAfter,
-		}, nil
+// claimsInfo is the acknowledgement triple the create request carries for
+// claim, or nil when there is no claim.
+func claimsInfo(claim *coreapigo.DomainClaimsCheckResponse) *coreapigo.DomainClaimsInfo {
+	if claim == nil {
+		return nil
 	}
-
-	if !registerAckClaim {
-		if !output.IsInteractive() {
-			return nil, fmt.Errorf(
-				"%s has a trademark claim against it — pass --acknowledge-claim to confirm you have "+
-					"read the notice above and still want to register it (--yes does not cover this)", domainName)
-		}
-		// Interactive: the notice is on screen, so an explicit answer is a
-		// genuine acknowledgement. Pass false for `yes` deliberately.
-		ok, cerr := confirm(out, false, "Acknowledge this trademark claim and continue?")
-		if cerr != nil {
-			return nil, cerr
-		}
-		if !ok {
-			return nil, fmt.Errorf("aborted: trademark claim not acknowledged")
-		}
-	}
-
 	return &coreapigo.DomainClaimsInfo{
-		ClaimID:   result.ClaimID,
-		NotBefore: result.NotBefore,
-		NotAfter:  result.NotAfter,
-	}, nil
+		ClaimID:   claim.ClaimID,
+		NotBefore: claim.NotBefore,
+		NotAfter:  claim.NotAfter,
+	}
+}
+
+// acknowledgeClaim obtains the user's acknowledgement of a claim notice that
+// has just been shown.
+//
+// The acknowledgement is deliberately NOT satisfied by --yes. --yes is a
+// general-purpose "skip prompts" flag that people set globally in wrappers and
+// aliases; letting it accept a legal notice on the user's behalf would mean
+// acknowledging something nobody read. --acknowledge-claim has to be passed
+// explicitly, and it exists only on this command.
+func acknowledgeClaim(out *output.Config, domainName string) error {
+	if registerAckClaim {
+		return nil
+	}
+	if !output.IsInteractive() {
+		return fmt.Errorf(
+			"%s has a trademark claim against it — pass --acknowledge-claim to confirm you have "+
+				"read the notice above and still want to register it (--yes does not cover this)", domainName)
+	}
+	// Interactive: the notice is on screen, so an explicit answer is a
+	// genuine acknowledgement. Pass false for `yes` deliberately.
+	ok, err := confirm(out, false, "Acknowledge this trademark claim and continue?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("aborted: trademark claim not acknowledged")
+	}
+	return nil
 }
 
 // renderClaimsNotice displays the registry's own claim notice plus the matching

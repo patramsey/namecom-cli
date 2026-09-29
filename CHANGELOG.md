@@ -9,6 +9,21 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `domain register` now reads `--contacts-file` before asking you to confirm
+  the purchase. A missing or malformed file was reported only after you had
+  approved the price.
+- `domain renew --price` and `transfer create --price` now confirm the price
+  they send. Both prompts quoted the standard price while the request carried
+  the `--price` override — the same mismatch fixed for `domain register` in
+  0.4.5.
+- `--dry-run` on `dnssec create`, `email create`, `email update`,
+  `vanity-ns create`, and `vanity-ns update` now prints the JSON body the
+  command would send, like every other write command. It printed no body, only
+  a hand-written `key=value` summary — for `vanity-ns` the raw `--ips` string
+  rather than the list actually sent. Anything parsing that summary line needs
+  to read the JSON instead.
+
 ## [0.4.5] - 2026-09-28
 
 Nineteen bug fixes from a review of every command. Four of them could cost

@@ -11,6 +11,7 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/drifttest"
+	"github.com/patramsey/namecom-cli/internal/output"
 )
 
 const transferStub = `{"domainName":"example.com","status":"pending"}`
@@ -144,6 +145,38 @@ func TestDryRunPreviewsPrice(t *testing.T) {
 	}
 }
 
+// TestTransferCreate_PromptQuotesThePriceSent guards the transfer side of
+// #83: with --price, the prompt quoted the standard transfer price while the
+// body carried the override. Without --yes in a non-interactive test,
+// Confirm's error carries the prompt.
+func TestTransferCreate_PromptQuotesThePriceSent(t *testing.T) {
+	defer output.StubInteractive(false)()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.Contains(r.URL.Path, "getPricing") {
+			t.Errorf("transferred without confirmation: %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"transferPrice":12.99}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForTransferCreate(t, srv)
+	if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", "--price", "42.5"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	t.Cleanup(func() { createPrice = 0 })
+	err := runCreate(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected the non-interactive confirm error")
+	}
+	if !strings.Contains(err.Error(), "$42.50") {
+		t.Errorf("prompt does not quote the price sent ($42.50):\n%v", err)
+	}
+	if strings.Contains(err.Error(), "12.99") {
+		t.Errorf("prompt quotes the standard transfer price, which is not sent:\n%v", err)
+	}
+}
+
 // TestRequestShape_TransferCancels pins the two cancel operations, which are
 // POSTs the API accepts with no request body at all.
 //
@@ -222,4 +255,43 @@ func failIfWritten(t *testing.T) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(transferStub))
 	}
+}
+
+// TestDryRunMatchesRealRequest_TransferBody asserts the body --dry-run prints
+// is the body sent, for every transfer write. The two creates redact the auth
+// code and nothing else; the cancels preview no body and send the SDK's {}
+// placeholder.
+func TestDryRunMatchesRealRequest_TransferBody(t *testing.T) {
+	redacted := map[string]string{"authCode": "[redacted]"}
+
+	t.Run("create", func(t *testing.T) {
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForTransferCreate(t, srv)
+			if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", "--price", "42.5", "--privacy"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			t.Cleanup(func() { createAuthCode, createPrice, createPrivacy = "", 0, false })
+			return cmd
+		}
+		drifttest.AssertDryRunBodyMatchesRedacted(t, build, runCreate, []string{"example.com"}, transferStub, redacted)
+	})
+
+	t.Run("internal-in", func(t *testing.T) {
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForInternalIn(t, srv)
+			if err := cmd.ParseFlags([]string{"--auth-code", "ABC123"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}
+		drifttest.AssertDryRunBodyMatchesRedacted(t, build, runInternalIn, []string{"example.com"}, transferStub, redacted)
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, cmdForTransferGet, runCancel, []string{"example.com"}, transferStub)
+	})
+
+	t.Run("cancel-outbound", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, cmdForTransferGet, runCancelOutbound, []string{"example.com"}, transferStub)
+	})
 }

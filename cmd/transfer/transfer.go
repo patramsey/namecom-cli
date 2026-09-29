@@ -2,6 +2,7 @@
 package transfer
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -232,8 +233,6 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -276,29 +275,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// their prompt; transfer asked only "Initiate transfer of X?", so the user
 	// approved a charge they had never seen. A pricing failure must not block
 	// the transfer — fall back to an unpriced prompt.
-	priceMsg := ""
+	var quoted *float64
 	if pricing, perr := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domain}); perr == nil {
-		if pricing.TransferPrice != nil {
-			priceMsg = fmt.Sprintf(" for $%.2f", *pricing.TransferPrice)
-			if createPrivacy {
-				priceMsg += " plus WHOIS privacy"
-			}
-		}
-	}
-
-	// No prompt under --dry-run, as in `domain register`: nothing will be sent,
-	// and in a script Confirm hard-errors without --yes, which made --dry-run
-	// unusable in CI.
-	if !dryRun {
-		ok, err := confirm(out, yes, fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			out.Warn("aborted")
-			return nil
-		}
+		quoted = pricing.TransferPrice
 	}
 
 	body := coreapigo.CreateTransferRequest{
@@ -312,21 +292,23 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		body.PurchasePrice = &createPrice
 	}
 
-	if dryRun {
-		// Preview the real body rather than a nil, but never the auth code: it
-		// is the secret that authorises moving the domain, and --dry-run output
-		// lands in terminal scrollback and CI logs. Everything else is worth
-		// seeing — purchasePrice especially, since this command spends money.
-		preview := body
-		preview.AuthCode = "[redacted]"
-		out.DryRun("POST", "/core/v1/transfers", preview)
-		return nil
-	}
-
-	stop := out.Spin("Initiating transfer…")
-	result, err := client.SDK().Transfers.CreateTransfer(cmd.Context(), &body)
-	stop()
-	if err != nil {
+	// RunWrite skips the prompt under --dry-run: nothing will be sent, and in
+	// a script Confirm hard-errors without --yes, which made --dry-run
+	// unusable in CI.
+	var result *coreapigo.CreateTransferResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateTransferRequest]{
+		Method:  "POST",
+		Path:    "/core/v1/transfers",
+		Body:    body,
+		Preview: redactTransferAuthCode,
+		Prompt:  transferPrompt(domain, body, quoted),
+		Spin:    "Initiating transfer…",
+	}, func(ctx context.Context, body coreapigo.CreateTransferRequest) error {
+		var err error
+		result, err = client.SDK().Transfers.CreateTransfer(ctx, &body)
+		return err
+	})
+	if err != nil || !sent {
 		return err
 	}
 
@@ -439,8 +421,6 @@ func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, d
 func runInternalIn(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
@@ -478,31 +458,30 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if !dryRun {
-		ok, err := confirm(out, yes, fmt.Sprintf("Transfer %s from another name.com account?", domain))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			out.Warn("aborted")
-			return nil
-		}
-	}
-
 	body := coreapigo.CreateInternalTransferInRequest{
 		DomainName: domain,
 		AuthCode:   internalAuthCode,
 	}
 
-	if dryRun {
+	var t *coreapigo.DomainResponsePayload
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateInternalTransferInRequest]{
+		Method: "POST",
+		Path:   "/core/v1/transfers/internal/in",
+		Body:   body,
 		// Same redaction as the external transfer above.
-		preview := body
-		preview.AuthCode = "[redacted]"
-		out.DryRun("POST", "/core/v1/transfers/internal/in", preview)
-		return nil
+		Preview: func(b coreapigo.CreateInternalTransferInRequest) any {
+			b.AuthCode = redactedAuthCode
+			return b
+		},
+		Prompt: fmt.Sprintf("Transfer %s from another name.com account?", domain),
+	}, func(ctx context.Context, body coreapigo.CreateInternalTransferInRequest) error {
+		var err error
+		t, err = client.SDK().Transfers.CreateInternalTransferIn(ctx, &body)
+		return err
+	})
+	if !sent {
+		return err
 	}
-
-	t, err := client.SDK().Transfers.CreateInternalTransferIn(cmd.Context(), &body)
 	if err != nil {
 		err = api.FromSDKError(err)
 		// A 403 here almost always means the account is not on the enterprise
@@ -538,33 +517,25 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 func runCancel(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/%s:cancel", domain), nil)
-		return nil
-	}
-
-	ok, err := confirm(out, yes, fmt.Sprintf("Cancel transfer of %s?", domain))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
-	stop := out.Spin("Cancelling transfer…")
-	_, err = client.SDK().Transfers.CancelTransfer(cmd.Context(),
-		&coreapigo.CancelTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
-	stop()
-	if err != nil {
+	// NoBody: the {} sent is the SDK's EmptyObject placeholder
+	// (namedotcom/core-api-go#8), not a body the user supplies.
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/transfers/%s:cancel", domain),
+		Prompt: fmt.Sprintf("Cancel transfer of %s?", domain),
+		Spin:   "Cancelling transfer…",
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		_, err := client.SDK().Transfers.CancelTransfer(ctx,
+			&coreapigo.CancelTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
 		return api.FromSDKError(err)
+	})
+	if err != nil || !sent {
+		return err
 	}
 	out.Success(fmt.Sprintf("Cancelled transfer of %s", domain))
 	out.Hint("Run 'namecom transfer list' to see remaining active transfers")
@@ -574,30 +545,23 @@ func runCancel(cmd *cobra.Command, args []string) error {
 func runCancelOutbound(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	yes := cmdutil.IsYes(cmd)
-	dryRun := cmdutil.IsDryRun(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
 		return err
 	}
 
-	if dryRun {
-		out.DryRun("POST", fmt.Sprintf("/core/v1/transfers/external/out/%s:cancel", domain), nil)
-		return nil
-	}
-
-	ok, err := confirm(out, yes, fmt.Sprintf("Cancel outbound transfer of %s?", domain))
-	if err != nil {
+	var result *coreapigo.CancelTransferOutResponse
+	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
+		Method: "POST",
+		Path:   fmt.Sprintf("/core/v1/transfers/external/out/%s:cancel", domain),
+		Prompt: fmt.Sprintf("Cancel outbound transfer of %s?", domain),
+	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+		var err error
+		result, err = client.SDK().Transfers.CancelOutboundTransfer(ctx,
+			&coreapigo.CancelOutboundTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
 		return err
-	}
-	if !ok {
-		out.Warn("aborted")
-		return nil
-	}
-
-	result, err := client.SDK().Transfers.CancelOutboundTransfer(cmd.Context(),
-		&coreapigo.CancelOutboundTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
-	if err != nil {
+	})
+	if err != nil || !sent {
 		return err
 	}
 
@@ -663,6 +627,34 @@ func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]strin
 	return rows
 }
 
-func confirm(out *output.Config, yes bool, msg string) (bool, error) {
-	return cmdutil.Confirm(out, yes, msg)
+// transferPrompt is the confirmation for a transfer create. It quotes the
+// price body carries when --price set one, and the standard transfer price
+// otherwise; quoting the standard price unconditionally meant the user
+// approved one amount while the request carried another.
+func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted *float64) string {
+	price := quoted
+	if body.PurchasePrice != nil {
+		price = body.PurchasePrice
+	}
+	priceMsg := ""
+	if price != nil {
+		priceMsg = fmt.Sprintf(" for $%.2f", *price)
+		if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
+			priceMsg += " plus WHOIS privacy"
+		}
+	}
+	return fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg)
+}
+
+// redactedAuthCode replaces the auth code in a --dry-run preview.
+const redactedAuthCode = "[redacted]"
+
+// redactTransferAuthCode is the preview of a transfer create: the real body,
+// but never the auth code. It is the secret that authorises moving the domain,
+// and --dry-run output lands in terminal scrollback and CI logs. Everything
+// else is worth seeing — purchasePrice especially, since this command spends
+// money.
+func redactTransferAuthCode(b coreapigo.CreateTransferRequest) any {
+	b.AuthCode = redactedAuthCode
+	return b
 }

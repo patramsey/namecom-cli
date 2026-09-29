@@ -67,7 +67,7 @@ func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	// actually being made — an aftermarket or landrush acquisition can have
 	// different claims applicability than a plain registration.
 	claimsPT, _ := nonDefaultPurchaseType(r)
-	claims, err := resolveClaims(cmd, out, domainName, claimsPT, false)
+	claims, err := resolveClaims(cmd, out, domainName, claimsPT)
 	if err != nil {
 		return err
 	}

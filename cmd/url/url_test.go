@@ -13,6 +13,7 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/drifttest"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -658,6 +659,9 @@ func TestDryRunMatchesRealRequest_URL(t *testing.T) {
 			if printed != sent {
 				t.Errorf("--dry-run reports %q but the command actually sends %q", printed, sent)
 			}
+
+			// The body too: what --dry-run prints must be what is sent.
+			drifttest.AssertDryRunBodyMatches(t, tc.setup, tc.run, tc.args, getResponse)
 		})
 	}
 }

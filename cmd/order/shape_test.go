@@ -37,3 +37,19 @@ func TestRequestShape_Order(t *testing.T) {
 		Body:   `{"orderId":88,"orderItemIds":[5,6]}`,
 	}, build, runRefund, nil, stub)
 }
+
+// TestDryRunMatchesRealRequest_RefundBody asserts the refund --dry-run prints
+// is the body sent. A refund cannot be undone, so the preview has to be the
+// request itself.
+func TestDryRunMatchesRealRequest_RefundBody(t *testing.T) {
+	const stub = `{"orderId":88,"results":[{"orderItemId":5,"success":true}]}`
+	build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+		cmd := cmdForRefund(t, srv, false)
+		refundOrderID, refundItemIDs = 0, nil // see TestRequestShape_Order
+		if err := cmd.ParseFlags([]string{"--order-id", "88", "--item-ids", "5,6"}); err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
+		return cmd
+	}
+	drifttest.AssertDryRunBodyMatches(t, build, runRefund, nil, stub)
+}
