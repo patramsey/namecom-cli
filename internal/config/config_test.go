@@ -507,6 +507,77 @@ profiles:
 	}
 }
 
+// TestSave_ClearedFieldsAreRemoved is the other half of preservation: a field
+// the struct owns and the caller cleared must leave the file.
+//
+// token, token_cmd, sandbox and icons are omitempty, so clearing one drops it
+// from the encoding, and a merge that only updated the keys it was handed left
+// the old value on disk. Answering No to sandbox in `auth login` kept
+// `sandbox: true`, and switching to token_cmd kept a plaintext token that
+// Resolve still preferred.
+func TestSave_ClearedFieldsAreRemoved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := `# keep me
+default: prod
+icons: nerd
+theme: solarized
+profiles:
+  prod:
+    username: alice
+    token: OLD-PLAINTEXT
+    sandbox: true
+    # Set by ops tooling.
+    region: us-east
+  helper:
+    username: bob
+    token_cmd: op read op://vault/namecom/token
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+
+	f, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f.Icons = ""
+	f.Profiles["prod"] = Profile{Username: "alice", TokenCmd: "pass namecom"}
+	f.Profiles["helper"] = Profile{Username: "bob", Token: "NEW-TOKEN"}
+	if err := Save(f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	out := string(got)
+
+	for _, gone := range []string{"icons:", "OLD-PLAINTEXT", "sandbox:", "op read"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("cleared field %q survived the write:\n%s", gone, out)
+		}
+	}
+	for _, want := range []string{
+		"keep me", "theme: solarized", "region: us-east", "Set by ops tooling",
+		"token_cmd: pass namecom", "token: NEW-TOKEN",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Save dropped %q:\n%s", want, out)
+		}
+	}
+
+	// The reported failure: the stale token must not reload and win in Resolve.
+	f2, err := Load()
+	if err != nil {
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if p := f2.Profiles["prod"]; p.Token != "" || p.Sandbox {
+		t.Errorf("prod profile reloaded as %+v, want token and sandbox cleared", p)
+	}
+}
+
 // TestResolveImpliedDefault covers config files that name no default profile.
 //
 // firstNonEmpty(flag, env, f.Default) resolved to "" when a file carried no

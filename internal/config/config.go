@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -396,6 +397,9 @@ func encodeConfig(path string, f *File) ([]byte, error) {
 		}
 		setMapValue(root, key.Value, val)
 	}
+	// An omitempty field the caller cleared is absent from the encoding, so
+	// the loop above never touches it and the old value would survive.
+	dropCleared(root, newRoot, fileKeys)
 	// Profiles removed from f (e.g. by `auth logout`) must disappear from the
 	// file too, or a "deleted" credential stays on disk.
 	pruneProfiles(root, f.Profiles)
@@ -454,6 +458,44 @@ func mergeProfiles(root, newProfiles *yaml.Node) {
 		}
 		for j := 0; j+1 < len(fields.Content); j += 2 {
 			setMapValue(target, fields.Content[j].Value, fields.Content[j+1])
+		}
+		dropCleared(target, fields, profileKeys)
+	}
+}
+
+// fileKeys and profileKeys are the keys the structs own, read from their yaml
+// tags so a new field cannot be forgotten here.
+var (
+	fileKeys    = yamlKeys(File{})
+	profileKeys = yamlKeys(Profile{})
+)
+
+func yamlKeys(v any) []string {
+	t := reflect.TypeOf(v)
+	keys := make([]string, 0, t.NumField())
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if name != "" && name != "-" {
+			keys = append(keys, name)
+		}
+	}
+	return keys
+}
+
+// dropCleared removes each owned key that the fresh encoding omitted. Without
+// it, switching a profile from token to token_cmd left the plaintext token on
+// disk, where Resolve still preferred it. Keys the struct does not own are
+// never in owned, so they stay.
+func dropCleared(target, encoded *yaml.Node, owned []string) {
+	for _, key := range owned {
+		if mapValue(encoded, key) != nil {
+			continue
+		}
+		for i := 0; i+1 < len(target.Content); i += 2 {
+			if target.Content[i].Value == key {
+				target.Content = append(target.Content[:i], target.Content[i+2:]...)
+				break
+			}
 		}
 	}
 }

@@ -9,6 +9,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- Saving the config file now removes a `token`, `token_cmd`, `sandbox`, or
+  `icons` value that was cleared, instead of leaving the old one on disk.
+  Answering No to sandbox in `auth login` on a sandbox profile kept
+  `sandbox: true`, so the new production token was sent to the sandbox API and
+  rejected; switching a profile to `token_cmd` kept the plaintext `token`,
+  which still took precedence. Unknown keys and comments are still preserved.
+
 ## [0.4.4] - 2026-09-24
 
 A patch release for one bug and a dependency refresh. Nothing changes what any
