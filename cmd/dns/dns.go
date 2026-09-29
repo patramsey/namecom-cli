@@ -583,6 +583,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	created := 0
+	var previews []output.DryRunRequest
 	for _, r := range records {
 		body := coreapigo.DNSCreateRecordBody{
 			DomainName: domain,
@@ -594,8 +595,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 
 		if dryRun {
-			b, _ := json.MarshalIndent(body, "", "  ")
-			fmt.Fprintf(out.Writer, "POST /core/v1/domains/%s/records\n%s\n", domain, b)
+			previews = append(previews, output.DryRunRequest{
+				Method: "POST", Path: fmt.Sprintf("/core/v1/domains/%s/records", domain), Body: body,
+			})
 			continue
 		}
 
@@ -616,10 +618,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 		created++
 	}
 
-	if !dryRun {
-		out.Success(fmt.Sprintf("Imported %d record(s) to %s", created, domain))
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to verify the imported records", domain))
+	if dryRun {
+		// One document for the whole plan in JSON and YAML modes, so a script
+		// parses every request at once rather than a stream of them.
+		out.DryRunAll(previews)
+		return nil
 	}
+	out.Success(fmt.Sprintf("Imported %d record(s) to %s", created, domain))
+	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to verify the imported records", domain))
 	return nil
 }
 

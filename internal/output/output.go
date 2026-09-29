@@ -854,9 +854,58 @@ func (c *Config) StartSpinner(msg string) *Spinner {
 	return s
 }
 
-// DryRun prints a styled mock-request line for --dry-run mode.
+// DryRunRequest is one request a --dry-run would have sent, as the structured
+// output formats print it. Body is omitted when nil.
+type DryRunRequest struct {
+	DryRun bool   `json:"dry_run"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Body   any    `json:"body,omitempty"`
+}
+
+// DryRun prints the request a --dry-run would have sent.
 // Pass a struct or map as body to pretty-print it as indented JSON; pass nil for no body.
+//
+// JSON and YAML modes get a {"dry_run": true, "method", "path", "body"}
+// document rather than the request line: a script that asked for -o json had
+// to parse text to inspect the planned request. That includes the non-TTY
+// JSON default, as it does for Success — the text form in a pipe was the one
+// thing a `| jq` could not read.
 func (c *Config) DryRun(method, path string, body any) {
+	switch c.Format {
+	case FormatJSON:
+		_ = c.JSON(DryRunRequest{DryRun: true, Method: method, Path: path, Body: body})
+		return
+	case FormatYAML:
+		_ = c.YAML(DryRunRequest{DryRun: true, Method: method, Path: path, Body: body})
+		return
+	}
+	c.dryRunText(method, path, body)
+}
+
+// DryRunAll prints several previewed requests: one array in JSON and YAML
+// modes, so the plan parses as a single document, and one request line each
+// in table mode. The DryRun field of each request is set here.
+func (c *Config) DryRunAll(reqs []DryRunRequest) {
+	all := make([]DryRunRequest, len(reqs))
+	for i, r := range reqs {
+		r.DryRun = true
+		all[i] = r
+	}
+	switch c.Format {
+	case FormatJSON:
+		_ = c.JSON(all)
+		return
+	case FormatYAML:
+		_ = c.YAML(all)
+		return
+	}
+	for _, r := range all {
+		c.dryRunText(r.Method, r.Path, r.Body)
+	}
+}
+
+func (c *Config) dryRunText(method, path string, body any) {
 	if c.ColorEnabled() {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("dry-run")
 		m := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(method)
