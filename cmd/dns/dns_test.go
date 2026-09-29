@@ -855,6 +855,55 @@ func TestDNSCreate_OmittedPriorityStaysOmitted(t *testing.T) {
 	}
 }
 
+// TestDNSCreateForm_PriorityIsSent guards the interactive form dropping the
+// MX/SRV priority. dnsCreateForm stored the entered value in createPriority but
+// marked only type and answer as changed, and runCreate attaches a priority
+// only when Changed("priority") — so the value was discarded, and the user was
+// warned "priority is 0" right after typing 10. The huh form itself needs a
+// terminal; this drives the step after it, which is where the bug was.
+func TestDNSCreateForm_PriorityIsSent(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForCreate(t, srv)
+	ew := &bytes.Buffer{}
+	cmdutil.Out(cmd).EWriter = ew
+	// What the form leaves behind for "MX, priority 10".
+	createType, createHost, createAnswer, createTTL = "MX", "@", "mail.example.com.", 300
+	markFormFlags(cmd, "10")
+
+	if err := runCreate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runCreate: %v", err)
+	}
+	if got := gotBody["priority"]; got != float64(10) {
+		t.Errorf("priority entered in the form must be sent: got %#v, body %#v", got, gotBody)
+	}
+	if strings.Contains(ew.String(), "priority is 0") {
+		t.Errorf("warned about priority 0 after the user entered 10; stderr: %q", ew.String())
+	}
+}
+
+// TestDNSCreateForm_NoPriorityStaysUnset pins that a form with no priority
+// (any type other than MX/SRV, or a blank entry) leaves the flag unset.
+func TestDNSCreateForm_NoPriorityStaysUnset(t *testing.T) {
+	cmd := cmdForCreate(t, neverCalledServer(t))
+	createType, createAnswer = "A", "1.2.3.4"
+	markFormFlags(cmd, "")
+	if cmd.Flags().Changed("priority") {
+		t.Error("a blank priority must not mark --priority as set")
+	}
+	if !cmd.Flags().Changed("type") || !cmd.Flags().Changed("answer") {
+		t.Error("type and answer from the form must be marked as set")
+	}
+}
+
 // cmdForUpdateCapturing is cmdForUpdate with the stderr buffer exposed, so
 // tests can assert on warnings rather than only on the request body.
 func cmdForUpdateCapturing(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) {
@@ -1032,6 +1081,90 @@ func TestDNSExport_ZoneQuotesTXT(t *testing.T) {
 	got := strings.TrimSpace(buf.String())
 	if !strings.Contains(got, `"v=spf1 include:_spf.google.com ~all"`) {
 		t.Errorf("TXT rdata must be quoted in zone output, got: %q", got)
+	}
+}
+
+// TestQuoteTXT_SplitsLongValues guards zone output that standard parsers
+// reject. RFC 1035 caps a character-string at 255 bytes, and a 2048-bit DKIM
+// key is about 400; quoteTXT wrote it as a single quoted string. It must be
+// split into several, each at most 255 bytes of the unescaped value, and the
+// split must fall between characters, never inside an escape sequence.
+func TestQuoteTXT_SplitsLongValues(t *testing.T) {
+	// A quote lands at byte 254, so a split that escaped first and cut the
+	// escaped text at 255 would separate its backslash from the quote.
+	value := strings.Repeat("a", 254) + `"` + strings.Repeat("b", 300)
+
+	got := quoteTXT(value)
+
+	var chunks []string
+	for rest := got; rest != ""; {
+		if rest[0] != '"' {
+			t.Fatalf("expected a quoted character-string at %q in %q", rest, got)
+		}
+		end := 1
+		for ; end < len(rest); end++ {
+			if rest[end] == '\\' {
+				end++
+				continue
+			}
+			if rest[end] == '"' {
+				break
+			}
+		}
+		if end >= len(rest) {
+			t.Fatalf("unterminated character-string in %q", got)
+		}
+		inner := rest[1:end]
+		unescaped := strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(inner)
+		if len(unescaped) > 255 {
+			t.Errorf("character-string is %d bytes, max 255", len(unescaped))
+		}
+		chunks = append(chunks, unescaped)
+		rest = strings.TrimPrefix(rest[end+1:], " ")
+	}
+	if len(chunks) != 3 {
+		t.Errorf("expected 3 character-strings for a %d-byte value, got %d: %q", len(value), len(chunks), got)
+	}
+	if joined := strings.Join(chunks, ""); joined != value {
+		t.Errorf("split changed the value:\n got %q\nwant %q", joined, value)
+	}
+}
+
+// TestQuoteTXT_ShortValueIsOneString pins that a value under the limit is
+// still written as exactly one quoted string.
+func TestQuoteTXT_ShortValueIsOneString(t *testing.T) {
+	if got, want := quoteTXT(`say "hi"`), `"say \"hi\""`; got != want {
+		t.Errorf("quoteTXT = %q, want %q", got, want)
+	}
+}
+
+// TestDNSExport_ZoneANAMEIsComment pins that ANAME, a name.com-specific type
+// with no standard RR, is written as a comment. Written as a record, the line
+// made the whole file unparseable by BIND, NSD, and miekg/dns.
+func TestDNSExport_ZoneANAMEIsComment(t *testing.T) {
+	srv := recordsServer(t, `{"records":[`+
+		`{"id":1,"type":"ANAME","host":"","fqdn":"example.com.","answer":"target.example.net.","ttl":300},`+
+		`{"id":2,"type":"A","host":"www","fqdn":"www.example.com.","answer":"1.2.3.4","ttl":300}`+
+		`],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), buf.String())
+	}
+	if !strings.HasPrefix(lines[0], ";") {
+		t.Errorf("ANAME must be written as a comment, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "target.example.net.") {
+		t.Errorf("the ANAME comment should keep the record's target, got: %q", lines[0])
+	}
+	if strings.HasPrefix(lines[1], ";") {
+		t.Errorf("an A record must not be commented out, got: %q", lines[1])
 	}
 }
 
@@ -1339,5 +1472,105 @@ func TestRecordRows_ApexHostShowsAt(t *testing.T) {
 	}
 	if got := recordRowsNoType(out, rec)[0][1]; got != "@" {
 		t.Errorf("grouped view HOST = %q, want %q", got, "@")
+	}
+}
+
+// runImportCapturing runs `dns import` against payload and returns the decoded
+// body of every create request that reached the server.
+func runImportCapturing(t *testing.T, payload string) ([]map[string]any, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		bodies = append(bodies, b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	importFile, importDryRun = path, false
+	t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+	err = runImport(cmd, []string{"example.com"})
+	return bodies, err
+}
+
+// TestDNSImport_ApexFromExport guards the documented `dns export | dns import`
+// round trip. The API returns the apex host as "" — not "@" — and import ran
+// every record through ValidDNSHost, which rejects "". Any zone with an apex
+// record aborted the import. The fixture is shaped the way export writes it;
+// the older import fixtures used "@", which is why they never caught this.
+func TestDNSImport_ApexFromExport(t *testing.T) {
+	payload := `[
+	  {"id":1,"domainName":"old.com","host":"","fqdn":"old.com.","type":"A","answer":"1.2.3.4","ttl":300},
+	  {"id":2,"domainName":"old.com","host":"www","fqdn":"www.old.com.","type":"A","answer":"1.2.3.4","ttl":300}
+	]`
+	bodies, err := runImportCapturing(t, payload)
+	if err != nil {
+		t.Fatalf("importing an exported apex record: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 create requests, got %d", len(bodies))
+	}
+	// Sent as "@", the same spelling `dns create --host` defaults to.
+	if got := bodies[0]["host"]; got != "@" {
+		t.Errorf("apex host: got %#v, want %q", got, "@")
+	}
+	if got := bodies[1]["host"]; got != "www" {
+		t.Errorf("non-apex host: got %#v, want %q", got, "www")
+	}
+}
+
+// TestDNSImport_MissingTTLDefaults pins that a record with no ttl is sent with
+// the same 300 that `dns create --ttl` defaults to. It used to be sent as 0,
+// which the server rejects — after the records before it were already created.
+func TestDNSImport_MissingTTLDefaults(t *testing.T) {
+	bodies, err := runImportCapturing(t, `[{"type":"A","host":"www","answer":"1.2.3.4"}]`)
+	if err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 create request, got %d", len(bodies))
+	}
+	if got := bodies[0]["ttl"]; got != float64(300) {
+		t.Errorf("missing ttl: got %#v, want 300", got)
+	}
+}
+
+// TestDNSImport_ValidatesTTLBeforeWriting is the other half: a TTL that is
+// present but invalid is rejected before any record is written, like every
+// other field in the validate-first loop.
+func TestDNSImport_ValidatesTTLBeforeWriting(t *testing.T) {
+	payload := `[
+	  {"type":"A","host":"one","answer":"1.1.1.1","ttl":300},
+	  {"type":"A","host":"short","answer":"2.2.2.2","ttl":60}
+	]`
+	bodies, err := runImportCapturing(t, payload)
+	if err == nil {
+		t.Fatal("expected an error for a TTL below 300")
+	}
+	if len(bodies) != 0 {
+		t.Errorf("an invalid TTL must be rejected before any record is written, got %d write(s)", len(bodies))
+	}
+	if !strings.Contains(err.Error(), "short") {
+		t.Errorf("error should identify the offending record, got: %v", err)
 	}
 }

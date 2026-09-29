@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/huh"
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -23,6 +24,10 @@ var Cmd = &cobra.Command{
 	Use:   "dns",
 	Short: "Create and manage DNS records (A, CNAME, MX, TXT, and more)",
 }
+
+// defaultTTL is the TTL `dns create` sends when --ttl is not given, and the
+// one `dns import` sends for a record whose ttl is missing.
+const defaultTTL = 300
 
 var (
 	listAll  bool
@@ -134,7 +139,7 @@ func init() {
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT (required)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required)")
-	createCmd.Flags().Int64Var(&createTTL, "ttl", 300, "TTL in seconds (minimum 300)")
+	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
 	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records")
 	_ = createCmd.MarkFlagRequired("type")
 	_ = createCmd.MarkFlagRequired("answer")
@@ -496,6 +501,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 				// spaces (SPF, DKIM) parses as several separate strings and no
 				// longer describes the same record.
 				rdata = quoteTXT(rdata)
+			case "ANAME":
+				// ANAME is name.com's own type, not a standard RR, so a zone
+				// parser rejects the line — and with it the whole file. Keep
+				// the record visible as a comment instead.
+				fmt.Fprintf(out.Writer, "; ANAME not representable in a zone file: %s\t%d\tIN\tANAME\t%s\n",
+					derefStr(r.Fqdn), r.TTL, rdata)
+				continue
 			}
 			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
 				derefStr(r.Fqdn), r.TTL, rtype, rdata)
@@ -539,6 +551,18 @@ func runImport(cmd *cobra.Command, args []string) error {
 	// transactional — so a file whose 4th record was malformed wrote 3 records
 	// and then failed on a server-side 422, leaving the zone half-updated.
 	for i, r := range records {
+		// Normalize before validating, so what is checked is what is sent. The
+		// API returns the apex host as "", which is what `dns export` writes;
+		// send it as "@", the spelling `dns create --host` defaults to. A file
+		// with no ttl decodes as 0, which the server rejects mid-import; give it
+		// the same default `dns create --ttl` has.
+		if derefStr(r.Host) == "" {
+			apex := "@"
+			r.Host = &apex
+		}
+		if r.TTL == 0 {
+			r.TTL = defaultTTL
+		}
 		rtype, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
 		if err := cmdutil.ValidDNSType(rtype); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
@@ -547,6 +571,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
 		if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if err := cmdutil.ValidTTL(r.TTL); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
 	}
@@ -792,15 +819,22 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		if err := priorityForm.Run(); err != nil && !errors.Is(err, huh.ErrUserAborted) {
 			return err
 		}
-		if n, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {
-			createPriority = n
-		}
 	}
 
-	// Mark flags as changed so the caller uses the form values.
+	markFormFlags(cmd, priorityStr)
+	return nil
+}
+
+// markFormFlags marks the values dnsCreateForm collected as changed flags, so
+// runCreate uses them. runCreate attaches a priority only when
+// Changed("priority"), so a priority stored without marking it was dropped.
+func markFormFlags(cmd *cobra.Command, priorityStr string) {
 	_ = cmd.Flags().Set("type", createType)
 	_ = cmd.Flags().Set("answer", createAnswer)
-	return nil
+	priorityStr = strings.TrimSpace(priorityStr)
+	if _, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {
+		_ = cmd.Flags().Set("priority", priorityStr)
+	}
 }
 
 func confirmDelete(out *output.Config, yes bool, msg string) (bool, error) {
@@ -839,15 +873,38 @@ func derefInt64(n *int64) int64 {
 	return *n
 }
 
-// quoteTXT wraps TXT rdata in a quoted character-string, escaping embedded
-// backslashes and quotes, unless it is already quoted.
+// maxCharString is the RFC 1035 limit on one character-string, in bytes.
+const maxCharString = 255
+
+// quoteTXT wraps TXT rdata in quoted character-strings, escaping embedded
+// backslashes and quotes, unless it is already quoted. A value over 255 bytes
+// (a 2048-bit DKIM key, say) is split into several strings, which is how a
+// zone file spells one long TXT value. The split is on bytes of the unescaped
+// value, so it can never fall inside an escape sequence, and it backs off to a
+// UTF-8 boundary so a character is not cut in two.
 func quoteTXT(s string) string {
 	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
 		return s
 	}
-	escaped := strings.ReplaceAll(s, `\`, `\\`)
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-	return `"` + escaped + `"`
+	escape := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	var parts []string
+	for {
+		n := len(s)
+		if n > maxCharString {
+			n = maxCharString
+			for n > 0 && !utf8.RuneStart(s[n]) {
+				n--
+			}
+			if n == 0 { // not UTF-8 at all; split on the byte limit
+				n = maxCharString
+			}
+		}
+		parts = append(parts, `"`+escape.Replace(s[:n])+`"`)
+		s = s[n:]
+		if s == "" {
+			return strings.Join(parts, " ")
+		}
+	}
 }
 
 // readImportData reads the import payload from a path, or from stdin when the
