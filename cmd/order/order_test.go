@@ -139,6 +139,52 @@ func TestOrderList_SinceFilterPassedToAPI(t *testing.T) {
 	}
 }
 
+// The API treats createDateEnd as exclusive — midnight at the start of the
+// date — so `--until D` sent as D left out every order placed on D, and
+// `--since D --until D` returned nothing (#147). --until is documented as
+// "on or before", so the CLI sends the following day.
+func TestOrderList_UntilIsInclusive(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		wantStart string
+		wantEnd   string
+	}{
+		{"until alone sends the next day", []string{"--until", "2026-09-28"}, "", "2026-09-29"},
+		{"same-day range is [D, D+1)", []string{"--since", "2026-09-28", "--until", "2026-09-28"}, "2026-09-28", "2026-09-29"},
+		{"month and year roll over", []string{"--until", "2026-12-31"}, "", "2027-01-01"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, requests := orderServer(t, [][]int{{101}})
+			var stdout, stderr bytes.Buffer
+			cmd := cmdForOrderList(t, srv, &stdout, &stderr)
+			listAll, listDomain, listSince, listUntil, listStatus = false, "", "", "", ""
+			if err := cmd.ParseFlags(tc.args); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+
+			if err := runList(cmd, nil); err != nil {
+				t.Fatalf("runList: %v", err)
+			}
+			if len(*requests) == 0 {
+				t.Fatal("no request sent")
+			}
+			u, err := url.Parse((*requests)[0])
+			if err != nil {
+				t.Fatalf("parse request URL: %v", err)
+			}
+			q := u.Query()
+			if got := q.Get("createDateStart"); got != tc.wantStart {
+				t.Errorf("createDateStart = %q, want %q", got, tc.wantStart)
+			}
+			if got := q.Get("createDateEnd"); got != tc.wantEnd {
+				t.Errorf("createDateEnd = %q, want %q", got, tc.wantEnd)
+			}
+		})
+	}
+}
+
 func TestOrderList_StatusFilterPassedToAPI(t *testing.T) {
 	srv, requests := orderServer(t, [][]int{{101}})
 	var stdout, stderr bytes.Buffer

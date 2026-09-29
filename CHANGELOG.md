@@ -59,6 +59,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   contact roles being replaced — and warns when the registrant is among them,
   since that can trigger ICANN verification or a transfer lock. `--dry-run`
   still never prompts.
+- `order list --until DATE` now includes orders placed on DATE, as its help
+  says. The API treats `createDateEnd` as exclusive — midnight at the start of
+  the day — so the command left that day out, and `--since D --until D`
+  returned nothing. The CLI now sends the following day as `createDateEnd`;
+  a script that worked around this by passing the next day will now get one
+  extra day of orders.
 
 ## [0.4.6] - 2026-09-29
 

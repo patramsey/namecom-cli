@@ -89,10 +89,16 @@ func runList(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// The API treats createDateEnd as exclusive — midnight at the start of the
+	// date — so --until, documented as "on or before", sends the next day.
+	// ValidDate accepts only YYYY-MM-DD, so there is no time of day to keep.
+	var until string
 	if listUntil != "" {
 		if err := cmdutil.ValidDate(listUntil, "until"); err != nil {
 			return err
 		}
+		d, _ := time.Parse("2006-01-02", listUntil)
+		until = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
 	// Auto-paginate when any filter is active — results will be small.
@@ -118,8 +124,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if listSince != "" {
 			req.CreateDateStart = &listSince
 		}
-		if listUntil != "" {
-			req.CreateDateEnd = &listUntil
+		if until != "" {
+			req.CreateDateEnd = &until
 		}
 		if listStatus != "" {
 			s := coreapigo.ListOrdersRequestOrderStatus(listStatus)
