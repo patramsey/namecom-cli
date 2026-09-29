@@ -3,12 +3,14 @@ package apicmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -343,5 +345,184 @@ func TestAPI_ReadsBodyFromStdin(t *testing.T) {
 	}
 	if gotBody != payload {
 		t.Errorf("--data - should stream stdin as the body: got %q, want %q", gotBody, payload)
+	}
+}
+
+// dryRun hangs cmd under a root carrying --dry-run set to on, which is where
+// cmdutil.IsDryRun looks for it.
+func dryRun(cmd *cobra.Command, on bool) {
+	root := &cobra.Command{Use: "namecom"}
+	var dr bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", on, "")
+	cmd.Use = "api"
+	root.AddCommand(cmd)
+}
+
+// stdinWith replaces os.Stdin with a pipe carrying payload for the test.
+func stdinWith(t *testing.T, payload string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	go func() {
+		defer func() { _ = w.Close() }()
+		_, _ = w.WriteString(payload)
+	}()
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig; _ = r.Close() })
+}
+
+// refuseAll is a server that fails the test if any request reaches it.
+func refuseAll(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("--dry-run sent %s %s to the server", r.Method, r.URL.RequestURI())
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAPI_DryRunSendsNothing pins issue #109: `namecom api` never checked
+// --dry-run, so `api POST /core/v1/domains --data … --dry-run` would have
+// registered the domain. A raw passthrough cannot tell which requests change
+// state, so every method but GET and HEAD is previewed instead of sent.
+func TestAPI_DryRunSendsNothing(t *testing.T) {
+	tests := []struct {
+		method, path, data, wantLine, wantBody string
+	}{
+		{"POST", "/core/v1/domains", `{"domain":{"domainName":"example.com"}}`,
+			"POST /core/v1/domains\n", `"domainName": "example.com"`},
+		{"PUT", "/core/v1/domains/example.com/records/7?x=1", `{"host":"www"}`,
+			"PUT /core/v1/domains/example.com/records/7?x=1\n", `"host": "www"`},
+		{"patch", "/core/v1/domains/example.com", `{"locked":true}`,
+			"PATCH /core/v1/domains/example.com\n", `"locked": true`},
+		{"DELETE", "/core/v1/domains/example.com/records/7", "",
+			"DELETE /core/v1/domains/example.com/records/7\n", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.method, func(t *testing.T) {
+			cmd, buf := apiCmd(t, refuseAll(t))
+			dryRun(cmd, true)
+			apiBody = tc.data
+			if err := runAPI(cmd, []string{tc.method, tc.path}); err != nil {
+				t.Fatalf("runAPI: %v", err)
+			}
+			got := buf.String()
+			if !strings.HasPrefix(got, tc.wantLine) {
+				t.Errorf("preview = %q, want it to start with %q", got, tc.wantLine)
+			}
+			if tc.wantBody == "" && got != tc.wantLine {
+				t.Errorf("bodyless preview = %q, want only %q", got, tc.wantLine)
+			}
+			if !strings.Contains(got, tc.wantBody) {
+				t.Errorf("preview = %q, want the body %q", got, tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestAPI_DryRunStillRunsReads pins the GET/HEAD exemption: the flag's help
+// says reads are unaffected, and a read under --dry-run is how a user looks at
+// what a previewed write would act on.
+func TestAPI_DryRunStillRunsReads(t *testing.T) {
+	for _, method := range []string{"GET", "HEAD"} {
+		t.Run(method, func(t *testing.T) {
+			var hits int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd, _ := apiCmd(t, srv)
+			dryRun(cmd, true)
+			if err := runAPI(cmd, []string{method, "/core/v1/domains"}); err != nil {
+				t.Fatalf("runAPI: %v", err)
+			}
+			if hits != 1 {
+				t.Errorf("%s under --dry-run reached the server %d time(s), want 1", method, hits)
+			}
+		})
+	}
+}
+
+// TestAPI_DryRunPreviewsStdinBody covers `--data -` under --dry-run. Stdin can
+// be read only once, so the preview must come from the same read the request
+// would have used.
+func TestAPI_DryRunPreviewsStdinBody(t *testing.T) {
+	stdinWith(t, `{"host":"www","type":"CNAME"}`)
+	cmd, buf := apiCmd(t, refuseAll(t))
+	dryRun(cmd, true)
+	apiBody = "-"
+	if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, `"type": "CNAME"`) {
+		t.Errorf("preview does not show the stdin body, got %q", got)
+	}
+}
+
+// TestAPI_DryRunPreviewsNonJSONBodyRaw: --data is sent verbatim whether or not
+// it is JSON, so a body that is not JSON is previewed as the string it is
+// rather than dropped.
+func TestAPI_DryRunPreviewsNonJSONBodyRaw(t *testing.T) {
+	cmd, buf := apiCmd(t, refuseAll(t))
+	dryRun(cmd, true)
+	apiBody = "host=www"
+	if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, `"host=www"`) {
+		t.Errorf("preview does not show the raw body, got %q", got)
+	}
+}
+
+// TestDryRunMatchesRealRequest_API runs one request with --dry-run and then
+// without, and asserts the preview names the method, path, query and body that
+// are really sent.
+func TestDryRunMatchesRealRequest_API(t *testing.T) {
+	const path = "/core/v1/domains/example.com/records?perPage=2"
+	const data = `{"host":"@","type":"A","answer":"10.0.0.1","ttl":300}`
+
+	cmd, buf := apiCmd(t, refuseAll(t))
+	dryRun(cmd, true)
+	apiBody = data
+	if err := runAPI(cmd, []string{"POST", path}); err != nil {
+		t.Fatalf("runAPI (dry run): %v", err)
+	}
+	printedLine, printedBody, _ := strings.Cut(buf.String(), "\n")
+
+	var sentLine, sentBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentLine = r.Method + " " + r.URL.RequestURI()
+		b, _ := io.ReadAll(r.Body)
+		sentBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	cmd, _ = apiCmd(t, srv)
+	dryRun(cmd, false)
+	apiBody = data
+	if err := runAPI(cmd, []string{"POST", path}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+
+	if printedLine != sentLine {
+		t.Errorf("--dry-run reports %q but the command sends %q", printedLine, sentLine)
+	}
+	var printed, sent any
+	if err := json.Unmarshal([]byte(printedBody), &printed); err != nil {
+		t.Fatalf("previewed body is not JSON: %v\n%s", err, printedBody)
+	}
+	if err := json.Unmarshal([]byte(sentBody), &sent); err != nil {
+		t.Fatalf("sent body is not JSON: %v\n%s", err, sentBody)
+	}
+	if !reflect.DeepEqual(printed, sent) {
+		t.Errorf("--dry-run previews %v but the command sends %v", printed, sent)
 	}
 }

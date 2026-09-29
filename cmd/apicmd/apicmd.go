@@ -2,6 +2,9 @@
 package apicmd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,7 +21,10 @@ import (
 var Cmd = &cobra.Command{
 	Use:   "api <METHOD> <path>",
 	Short: "Make a raw API request",
-	Long:  `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.`,
+	Long: `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.
+
+With --dry-run, any method other than GET or HEAD is printed — method, path,
+and body — instead of sent. GET and HEAD still run.`,
 	Example: `  namecom api GET /core/v1/domains
   namecom api GET /core/v1/domains/example.com
   namecom api POST /core/v1/domains/example.com/records --data '{"host":"@","type":"A","answer":"1.2.3.4","ttl":300}'
@@ -49,59 +55,113 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var bodyReader io.Reader
-	if apiBody == "-" {
-		bodyReader = os.Stdin
-	} else if apiBody != "" {
-		bodyReader = strings.NewReader(apiBody)
+	// Read the body once, up front: stdin cannot be read twice, and --dry-run
+	// must preview the bytes the request would carry. The retry transport
+	// buffers the body for replay anyway, so streaming it saved nothing.
+	var body []byte
+	switch apiBody {
+	case "":
+	case "-":
+		if body, err = io.ReadAll(os.Stdin); err != nil {
+			return fmt.Errorf("reading request body from stdin: %w", err)
+		}
+	default:
+		body = []byte(apiBody)
 	}
 
-	req, err := http.NewRequestWithContext(cmd.Context(), method, u, bodyReader)
-	if err != nil {
-		return fmt.Errorf("building request: %w", err)
-	}
-	if bodyReader != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	headers := make([][2]string, 0, len(apiHeaders))
 	for _, h := range apiHeaders {
 		parts := strings.SplitN(h, ":", 2)
 		if len(parts) != 2 {
 			return fmt.Errorf("invalid header %q: expected 'Name: Value'", h)
 		}
-		req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		headers = append(headers, [2]string{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])})
 	}
 
-	// HTTPClient() supplies rate limiting and retries via its transport, but auth
-	// headers come from the generated client's request editor, which only runs
-	// inside generated endpoint methods. Apply them explicitly — without this
-	// every raw request goes out unauthenticated. Prepare leaves any header set
-	// above (including --header overrides) untouched.
-	if err := client.Prepare(req); err != nil {
-		return fmt.Errorf("preparing request: %w", err)
+	send := func(ctx context.Context, body []byte) error {
+		var bodyReader io.Reader
+		if apiBody != "" {
+			bodyReader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
+		if err != nil {
+			return fmt.Errorf("building request: %w", err)
+		}
+		if bodyReader != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		for _, h := range headers {
+			req.Header.Set(h[0], h[1])
+		}
+
+		// HTTPClient() supplies rate limiting and retries via its transport, but auth
+		// headers come from the generated client's request editor, which only runs
+		// inside generated endpoint methods. Apply them explicitly — without this
+		// every raw request goes out unauthenticated. Prepare leaves any header set
+		// above (including --header overrides) untouched.
+		if err := client.Prepare(req); err != nil {
+			return fmt.Errorf("preparing request: %w", err)
+		}
+		resp, err := client.HTTPClient().Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("reading response: %w", err)
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
+			_, _ = os.Stderr.Write(respBody)
+			fmt.Fprintln(os.Stderr)
+			// Return the normalized error type so root.go's exit-code mapping and
+			// UserHint apply here too. A plain fmt.Errorf collapsed every failure to
+			// exit 1, hiding the documented auth/rate-limit codes from scripts.
+			return api.ErrorFromResponse(resp.StatusCode, respBody)
+		}
+
+		fmt.Fprintf(out.Writer, "%s\n", respBody)
+		return nil
 	}
-	resp, err := client.HTTPClient().Do(req)
+
+	// Reads still run under --dry-run, as the flag's help promises. Every
+	// other method is previewed: a raw passthrough cannot tell whether a POST
+	// changes anything (checkAvailability does not; POST /domains buys a
+	// domain), so it treats them all as writes.
+	if method == http.MethodGet || method == http.MethodHead {
+		return send(cmd.Context(), body)
+	}
+	parsed, err := url.Parse(u)
 	if err != nil {
-		return err
+		return fmt.Errorf("building URL: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("reading response: %w", err)
+	var payload any = cmdutil.NoBody{}
+	if len(body) > 0 {
+		payload = rawBody(body)
 	}
+	_, err = cmdutil.RunWrite(cmd, cmdutil.Write[any]{
+		Method: method, Path: parsed.RequestURI(), Body: payload,
+	}, func(ctx context.Context, b any) error {
+		rb, _ := b.(rawBody) // nil for NoBody
+		return send(ctx, rb)
+	})
+	return err
+}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
-		_, _ = os.Stderr.Write(body)
-		fmt.Fprintln(os.Stderr)
-		// Return the normalized error type so root.go's exit-code mapping and
-		// UserHint apply here too. A plain fmt.Errorf collapsed every failure to
-		// exit 1, hiding the documented auth/rate-limit codes from scripts.
-		return api.ErrorFromResponse(resp.StatusCode, body)
+// rawBody is a --data body as --dry-run prints it: parsed and re-indented when
+// it is JSON, and as a JSON string otherwise, since it is sent verbatim either
+// way.
+type rawBody []byte
+
+// MarshalJSON implements json.Marshaler.
+func (b rawBody) MarshalJSON() ([]byte, error) {
+	if json.Valid(b) {
+		return b, nil
 	}
-
-	fmt.Fprintf(out.Writer, "%s\n", body)
-	return nil
+	return json.Marshal(string(b))
 }
 
 // buildAPIURL joins a user-supplied path onto the API base URL.
