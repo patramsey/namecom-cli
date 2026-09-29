@@ -194,6 +194,14 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	}
 	out := buf.String()
 
+	// JSON mode prints the preview as a document, not a request line.
+	if doc, ok := structuredDryRun(out); ok {
+		if wrote != "" {
+			t.Errorf("--dry-run performed a write: %s; it must only print", wrote)
+		}
+		return doc.Method + " " + doc.Path, string(doc.Body)
+	}
+
 	lines := strings.Split(out, "\n")
 	for i, line := range lines {
 		f := strings.Fields(line)
@@ -212,6 +220,20 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	}
 	t.Fatalf("no dry-run METHOD/path line found in output: %q", out)
 	return "", ""
+}
+
+// structuredDryRun decodes the {"dry_run": true, …} document out.DryRun prints
+// in JSON mode, reporting false when out does not start with one.
+func structuredDryRun(out string) (doc struct {
+	DryRun bool            `json:"dry_run"`
+	Method string          `json:"method"`
+	Path   string          `json:"path"`
+	Body   json.RawMessage `json:"body"`
+}, ok bool) {
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&doc); err != nil {
+		return doc, false
+	}
+	return doc, doc.DryRun
 }
 
 // AssertDryRunBodyMatches asserts that the body --dry-run prints is the body

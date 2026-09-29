@@ -78,6 +78,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a domain expiring on the named day was left out; the CLI now sends the day
   after. A script that passed the next day to work around this will see one
   more day of domains.
+### Changed
+- `--dry-run` prints a JSON or YAML document in those output modes:
+  `{"dry_run": true, "method": "POST", "path": "/core/v1/…", "body": {…}}`,
+  with `body` left out for a request that has none. `dns import --dry-run`
+  prints one array of them, one per record. This applies wherever JSON is the
+  format, including the default when stdout is not a terminal, so **a script
+  that reads the `METHOD /path` line from a piped `--dry-run` must now parse
+  the document, or pass `-o table` to keep the text form.** Table mode is
+  unchanged, except that `dns import --dry-run` now indents each body like
+  every other command's preview.
 
 ## [0.4.6] - 2026-09-29
 

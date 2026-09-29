@@ -394,13 +394,13 @@ func TestAPI_DryRunSendsNothing(t *testing.T) {
 		method, path, data, wantLine, wantBody string
 	}{
 		{"POST", "/core/v1/domains", `{"domain":{"domainName":"example.com"}}`,
-			"POST /core/v1/domains\n", `"domainName": "example.com"`},
+			"POST /core/v1/domains", `{"domain":{"domainName":"example.com"}}`},
 		{"PUT", "/core/v1/domains/example.com/records/7?x=1", `{"host":"www"}`,
-			"PUT /core/v1/domains/example.com/records/7?x=1\n", `"host": "www"`},
+			"PUT /core/v1/domains/example.com/records/7?x=1", `{"host":"www"}`},
 		{"patch", "/core/v1/domains/example.com", `{"locked":true}`,
-			"PATCH /core/v1/domains/example.com\n", `"locked": true`},
+			"PATCH /core/v1/domains/example.com", `{"locked":true}`},
 		{"DELETE", "/core/v1/domains/example.com/records/7", "",
-			"DELETE /core/v1/domains/example.com/records/7\n", ""},
+			"DELETE /core/v1/domains/example.com/records/7", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.method, func(t *testing.T) {
@@ -410,17 +410,58 @@ func TestAPI_DryRunSendsNothing(t *testing.T) {
 			if err := runAPI(cmd, []string{tc.method, tc.path}); err != nil {
 				t.Fatalf("runAPI: %v", err)
 			}
-			got := buf.String()
-			if !strings.HasPrefix(got, tc.wantLine) {
-				t.Errorf("preview = %q, want it to start with %q", got, tc.wantLine)
+			doc := parseDryRun(t, buf)
+			if got := doc.Method + " " + doc.Path; got != tc.wantLine {
+				t.Errorf("preview names %q, want %q", got, tc.wantLine)
 			}
-			if tc.wantBody == "" && got != tc.wantLine {
-				t.Errorf("bodyless preview = %q, want only %q", got, tc.wantLine)
-			}
-			if !strings.Contains(got, tc.wantBody) {
-				t.Errorf("preview = %q, want the body %q", got, tc.wantBody)
+			if got := string(doc.Body); got != tc.wantBody {
+				t.Errorf("preview body = %s, want %s", got, tc.wantBody)
 			}
 		})
+	}
+}
+
+// dryRunDoc is the document --dry-run prints in JSON mode, with the body kept
+// as raw JSON so tests compare it exactly.
+type dryRunDoc struct {
+	DryRun bool            `json:"dry_run"`
+	Method string          `json:"method"`
+	Path   string          `json:"path"`
+	Body   json.RawMessage `json:"body"`
+}
+
+// parseDryRun decodes the --dry-run document, compacting its body.
+func parseDryRun(t *testing.T, buf *bytes.Buffer) dryRunDoc {
+	t.Helper()
+	var doc dryRunDoc
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("--dry-run output is not a JSON document: %v\n%s", err, buf.String())
+	}
+	if !doc.DryRun {
+		t.Errorf(`--dry-run document lacks "dry_run": true: %s`, buf.String())
+	}
+	if len(doc.Body) > 0 {
+		var c bytes.Buffer
+		if err := json.Compact(&c, doc.Body); err != nil {
+			t.Fatalf("compacting body: %v", err)
+		}
+		doc.Body = c.Bytes()
+	}
+	return doc
+}
+
+// TestAPI_DryRunTableKeepsRequestLine: the human preview is unchanged in
+// table mode — the request line, then the indented body.
+func TestAPI_DryRunTableKeepsRequestLine(t *testing.T) {
+	cmd, buf := apiCmd(t, refuseAll(t))
+	cmdutil.Out(cmd).Format = output.FormatTable
+	dryRun(cmd, true)
+	apiBody = `{"locked":true}`
+	if err := runAPI(cmd, []string{"PATCH", "/core/v1/domains/example.com"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	if got, want := buf.String(), "PATCH /core/v1/domains/example.com\n  {\n    \"locked\": true\n  }\n"; got != want {
+		t.Errorf("table preview = %q, want %q", got, want)
 	}
 }
 
@@ -461,8 +502,8 @@ func TestAPI_DryRunPreviewsStdinBody(t *testing.T) {
 	if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
 		t.Fatalf("runAPI: %v", err)
 	}
-	if got := buf.String(); !strings.Contains(got, `"type": "CNAME"`) {
-		t.Errorf("preview does not show the stdin body, got %q", got)
+	if got := string(parseDryRun(t, buf).Body); got != `{"host":"www","type":"CNAME"}` {
+		t.Errorf("preview does not show the stdin body, got %s", got)
 	}
 }
 
@@ -476,8 +517,8 @@ func TestAPI_DryRunPreviewsNonJSONBodyRaw(t *testing.T) {
 	if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
 		t.Fatalf("runAPI: %v", err)
 	}
-	if got := buf.String(); !strings.Contains(got, `"host=www"`) {
-		t.Errorf("preview does not show the raw body, got %q", got)
+	if got := string(parseDryRun(t, buf).Body); got != `"host=www"` {
+		t.Errorf("preview body = %s, want the raw body as a JSON string", got)
 	}
 }
 
@@ -494,7 +535,8 @@ func TestDryRunMatchesRealRequest_API(t *testing.T) {
 	if err := runAPI(cmd, []string{"POST", path}); err != nil {
 		t.Fatalf("runAPI (dry run): %v", err)
 	}
-	printedLine, printedBody, _ := strings.Cut(buf.String(), "\n")
+	doc := parseDryRun(t, buf)
+	printedLine, printedBody := doc.Method+" "+doc.Path, string(doc.Body)
 
 	var sentLine, sentBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

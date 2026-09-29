@@ -750,12 +750,84 @@ func plural(unit string, n int) string {
 // spinFrames are the animation frames for the spinner.
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+// spinnerTTY is the terminal check Spin and StartSpinner make. It is a
+// variable, like IsInteractive, because under go test stderr is never a
+// terminal: every spinner was a no-op there, so nothing could show that a
+// command stops the spinner it starts. See RecordSpinners.
+var spinnerTTY = isStderrTTY
+
+// spinRecorder, when set by RecordSpinners, stands in for the animation.
+var spinRecorder *SpinRecorder
+
+// SpinRecorder records the spinners Spin and StartSpinner start and stop, so a
+// test can assert that a command leaves none running. Obtain one from
+// RecordSpinners.
+type SpinRecorder struct {
+	mu      sync.Mutex
+	started []string
+	running map[int]string
+}
+
+// RecordSpinners makes Spin and StartSpinner behave as they do on a terminal —
+// subject to the same format and --quiet checks — but record each spinner in
+// the returned SpinRecorder instead of drawing it. The returned function
+// restores the previous behaviour. Intended for tests:
+//
+//	rec, restore := output.RecordSpinners()
+//	defer restore()
+func RecordSpinners() (*SpinRecorder, func()) {
+	prevTTY, prevRec := spinnerTTY, spinRecorder
+	r := &SpinRecorder{running: map[int]string{}}
+	spinnerTTY, spinRecorder = func() bool { return true }, r
+	return r, func() { spinnerTTY, spinRecorder = prevTTY, prevRec }
+}
+
+// Started returns the message of every spinner started, in order.
+func (r *SpinRecorder) Started() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.started...)
+}
+
+// Running returns the messages of spinners started and not yet stopped, in
+// the order they were started.
+func (r *SpinRecorder) Running() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var msgs []string
+	for i, m := range r.started {
+		if _, ok := r.running[i]; ok {
+			msgs = append(msgs, m)
+		}
+	}
+	return msgs
+}
+
+// start records a spinner and returns the function that records its stop.
+func (r *SpinRecorder) start(msg string) func() {
+	r.mu.Lock()
+	id := len(r.started)
+	r.started = append(r.started, msg)
+	r.running[id] = msg
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		delete(r.running, id)
+		r.mu.Unlock()
+	}
+}
+
 // Spin starts a spinner on stderr with the given message and returns a stop
 // function. Call the returned function when the operation completes.
 // In non-TTY or non-table mode it's a no-op (no spinner, no output).
 func (c *Config) Spin(msg string) func() {
-	if !isStderrTTY() || c.Format != FormatTable || c.QuietMode {
+	if !spinnerTTY() || c.Format != FormatTable || c.QuietMode {
 		return func() {}
+	}
+	if spinRecorder != nil {
+		var once sync.Once
+		stop := spinRecorder.start(msg)
+		return func() { once.Do(stop) }
 	}
 
 	done := make(chan struct{})
@@ -799,6 +871,7 @@ type Spinner struct {
 	stop   chan struct{}
 	wg     sync.WaitGroup
 	once   sync.Once
+	onStop func() // set when a SpinRecorder is recording this spinner
 }
 
 // Stop halts the spinner and clears the line.
@@ -806,6 +879,9 @@ func (s *Spinner) Stop() {
 	s.once.Do(func() {
 		close(s.stop)
 		s.wg.Wait()
+		if s.onStop != nil {
+			s.onStop()
+		}
 	})
 }
 
@@ -824,7 +900,11 @@ func (c *Config) StartSpinner(msg string) *Spinner {
 		update: make(chan string, 1),
 		stop:   make(chan struct{}),
 	}
-	if !isStderrTTY() || c.Format != FormatTable || c.QuietMode {
+	if !spinnerTTY() || c.Format != FormatTable || c.QuietMode {
+		return s
+	}
+	if spinRecorder != nil {
+		s.onStop = spinRecorder.start(msg)
 		return s
 	}
 	s.wg.Add(1)
@@ -854,9 +934,58 @@ func (c *Config) StartSpinner(msg string) *Spinner {
 	return s
 }
 
-// DryRun prints a styled mock-request line for --dry-run mode.
+// DryRunRequest is one request a --dry-run would have sent, as the structured
+// output formats print it. Body is omitted when nil.
+type DryRunRequest struct {
+	DryRun bool   `json:"dry_run"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Body   any    `json:"body,omitempty"`
+}
+
+// DryRun prints the request a --dry-run would have sent.
 // Pass a struct or map as body to pretty-print it as indented JSON; pass nil for no body.
+//
+// JSON and YAML modes get a {"dry_run": true, "method", "path", "body"}
+// document rather than the request line: a script that asked for -o json had
+// to parse text to inspect the planned request. That includes the non-TTY
+// JSON default, as it does for Success — the text form in a pipe was the one
+// thing a `| jq` could not read.
 func (c *Config) DryRun(method, path string, body any) {
+	switch c.Format {
+	case FormatJSON:
+		_ = c.JSON(DryRunRequest{DryRun: true, Method: method, Path: path, Body: body})
+		return
+	case FormatYAML:
+		_ = c.YAML(DryRunRequest{DryRun: true, Method: method, Path: path, Body: body})
+		return
+	}
+	c.dryRunText(method, path, body)
+}
+
+// DryRunAll prints several previewed requests: one array in JSON and YAML
+// modes, so the plan parses as a single document, and one request line each
+// in table mode. The DryRun field of each request is set here.
+func (c *Config) DryRunAll(reqs []DryRunRequest) {
+	all := make([]DryRunRequest, len(reqs))
+	for i, r := range reqs {
+		r.DryRun = true
+		all[i] = r
+	}
+	switch c.Format {
+	case FormatJSON:
+		_ = c.JSON(all)
+		return
+	case FormatYAML:
+		_ = c.YAML(all)
+		return
+	}
+	for _, r := range all {
+		c.dryRunText(r.Method, r.Path, r.Body)
+	}
+}
+
+func (c *Config) dryRunText(method, path string, body any) {
 	if c.ColorEnabled() {
 		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("dry-run")
 		m := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(method)
