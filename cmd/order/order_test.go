@@ -444,7 +444,9 @@ func TestRefund_DedupesItemIDs(t *testing.T) {
 				if sentBody != nil {
 					t.Fatal("--dry-run sent a request")
 				}
-				// The preview is the METHOD/path line followed by the body.
+				// The preview is either the METHOD/path line followed by the
+				// body, or — once --dry-run prints a document in JSON mode —
+				// {"dry_run":true,...,"body":{...}}. Accept both.
 				i := strings.Index(stdout, "{")
 				if i < 0 {
 					t.Fatalf("no body in dry-run output: %q", stdout)
@@ -452,6 +454,9 @@ func TestRefund_DedupesItemIDs(t *testing.T) {
 				var previewed map[string]any
 				if err := json.Unmarshal([]byte(stdout[i:]), &previewed); err != nil {
 					t.Fatalf("parsing dry-run body: %v\n%s", err, stdout)
+				}
+				if body, ok := previewed["body"].(map[string]any); ok && previewed["dry_run"] == true {
+					previewed = body
 				}
 				items, _ = previewed["orderItemIds"].([]any)
 			} else {
