@@ -1341,3 +1341,103 @@ func TestRecordRows_ApexHostShowsAt(t *testing.T) {
 		t.Errorf("grouped view HOST = %q, want %q", got, "@")
 	}
 }
+
+// runImportCapturing runs `dns import` against payload and returns the decoded
+// body of every create request that reached the server.
+func runImportCapturing(t *testing.T, payload string) ([]map[string]any, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			t.Errorf("decoding create body: %v", err)
+		}
+		bodies = append(bodies, b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := api.New(api.Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+		Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	cmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+	cmd.SetContext(ctx)
+	importFile, importDryRun = path, false
+	t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+	err = runImport(cmd, []string{"example.com"})
+	return bodies, err
+}
+
+// TestDNSImport_ApexFromExport guards the documented `dns export | dns import`
+// round trip. The API returns the apex host as "" — not "@" — and import ran
+// every record through ValidDNSHost, which rejects "". Any zone with an apex
+// record aborted the import. The fixture is shaped the way export writes it;
+// the older import fixtures used "@", which is why they never caught this.
+func TestDNSImport_ApexFromExport(t *testing.T) {
+	payload := `[
+	  {"id":1,"domainName":"old.com","host":"","fqdn":"old.com.","type":"A","answer":"1.2.3.4","ttl":300},
+	  {"id":2,"domainName":"old.com","host":"www","fqdn":"www.old.com.","type":"A","answer":"1.2.3.4","ttl":300}
+	]`
+	bodies, err := runImportCapturing(t, payload)
+	if err != nil {
+		t.Fatalf("importing an exported apex record: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 create requests, got %d", len(bodies))
+	}
+	// Sent as "@", the same spelling `dns create --host` defaults to.
+	if got := bodies[0]["host"]; got != "@" {
+		t.Errorf("apex host: got %#v, want %q", got, "@")
+	}
+	if got := bodies[1]["host"]; got != "www" {
+		t.Errorf("non-apex host: got %#v, want %q", got, "www")
+	}
+}
+
+// TestDNSImport_MissingTTLDefaults pins that a record with no ttl is sent with
+// the same 300 that `dns create --ttl` defaults to. It used to be sent as 0,
+// which the server rejects — after the records before it were already created.
+func TestDNSImport_MissingTTLDefaults(t *testing.T) {
+	bodies, err := runImportCapturing(t, `[{"type":"A","host":"www","answer":"1.2.3.4"}]`)
+	if err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 create request, got %d", len(bodies))
+	}
+	if got := bodies[0]["ttl"]; got != float64(300) {
+		t.Errorf("missing ttl: got %#v, want 300", got)
+	}
+}
+
+// TestDNSImport_ValidatesTTLBeforeWriting is the other half: a TTL that is
+// present but invalid is rejected before any record is written, like every
+// other field in the validate-first loop.
+func TestDNSImport_ValidatesTTLBeforeWriting(t *testing.T) {
+	payload := `[
+	  {"type":"A","host":"one","answer":"1.1.1.1","ttl":300},
+	  {"type":"A","host":"short","answer":"2.2.2.2","ttl":60}
+	]`
+	bodies, err := runImportCapturing(t, payload)
+	if err == nil {
+		t.Fatal("expected an error for a TTL below 300")
+	}
+	if len(bodies) != 0 {
+		t.Errorf("an invalid TTL must be rejected before any record is written, got %d write(s)", len(bodies))
+	}
+	if !strings.Contains(err.Error(), "short") {
+		t.Errorf("error should identify the offending record, got: %v", err)
+	}
+}

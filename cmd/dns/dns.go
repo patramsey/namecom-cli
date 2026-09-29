@@ -24,6 +24,10 @@ var Cmd = &cobra.Command{
 	Short: "Create and manage DNS records (A, CNAME, MX, TXT, and more)",
 }
 
+// defaultTTL is the TTL `dns create` sends when --ttl is not given, and the
+// one `dns import` sends for a record whose ttl is missing.
+const defaultTTL = 300
+
 var (
 	listAll  bool
 	listType string
@@ -134,7 +138,7 @@ func init() {
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT (required)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required)")
-	createCmd.Flags().Int64Var(&createTTL, "ttl", 300, "TTL in seconds (minimum 300)")
+	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
 	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records")
 	_ = createCmd.MarkFlagRequired("type")
 	_ = createCmd.MarkFlagRequired("answer")
@@ -539,6 +543,18 @@ func runImport(cmd *cobra.Command, args []string) error {
 	// transactional — so a file whose 4th record was malformed wrote 3 records
 	// and then failed on a server-side 422, leaving the zone half-updated.
 	for i, r := range records {
+		// Normalize before validating, so what is checked is what is sent. The
+		// API returns the apex host as "", which is what `dns export` writes;
+		// send it as "@", the spelling `dns create --host` defaults to. A file
+		// with no ttl decodes as 0, which the server rejects mid-import; give it
+		// the same default `dns create --ttl` has.
+		if derefStr(r.Host) == "" {
+			apex := "@"
+			r.Host = &apex
+		}
+		if r.TTL == 0 {
+			r.TTL = defaultTTL
+		}
 		rtype, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
 		if err := cmdutil.ValidDNSType(rtype); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
@@ -547,6 +563,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
 		if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if err := cmdutil.ValidTTL(r.TTL); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
 	}
