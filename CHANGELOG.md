@@ -9,43 +9,52 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-09-29
+
+Twelve bug fixes, most found by running every command against the name.com
+sandbox. The most serious: `namecom api --dry-run` sent the request anyway, and
+`url create --host ""` could replace, then later delete, every apex A record.
+Every command that writes now shares one dry-run / confirm / send path, so a
+`--dry-run` preview is the request that would be sent and never prompts.
+
+Several change output a script might depend on, all toward what was documented
+or intended. Check any script that relies on these:
+
+- `-o yaml` uses the same keys as `-o json` (`domainName`, not `domainname`;
+  `domains_total`, not `domainstotal`) and leaves out the same empty fields.
+- Empty lists print `[]` instead of `null` in JSON and YAML.
+- An unparseable ID or on/off argument exits **2** (usage), not 1.
+- `domain update` with no flags is a usage error, and its `--dry-run` body
+  shows only the settings you pass.
+- `--dry-run` on `dnssec create`, `email create`/`update`, and
+  `vanity-ns create`/`update` prints the JSON body instead of a `key=value`
+  summary line.
+- `dns export --zone` writes hostname targets with a trailing dot.
+- `namecom api --dry-run` no longer sends POST, PUT, PATCH, or DELETE requests.
+
 ### Fixed
-- `domain register` now reads `--contacts-file` before asking you to confirm
-  the purchase. A missing or malformed file was reported only after you had
-  approved the price.
+- `namecom api` now honours `--dry-run`. It ignored the flag and sent the
+  request, so `api POST /core/v1/domains --data … --dry-run` would register
+  the domain. Every method other than GET and HEAD now prints the method, path
+  with its query string, and body (indented if it is JSON, quoted if not)
+  instead of sending it; GET and HEAD still run, as the flag's help says.
 - `domain renew --price` and `transfer create --price` now confirm the price
   they send. Both prompts quoted the standard price while the request carried
   the `--price` override — the same mismatch fixed for `domain register` in
   0.4.5.
-- `--dry-run` on `dnssec create`, `email create`, `email update`,
-  `vanity-ns create`, and `vanity-ns update` now prints the JSON body the
-  command would send, like every other write command. It printed no body, only
-  a hand-written `key=value` summary — for `vanity-ns` the raw `--ips` string
-  rather than the list actually sent. Anything parsing that summary line needs
-  to read the JSON instead.
-- `dns export --zone` writes CNAME, NS, MX, and SRV targets (and the target in
-  an ANAME comment) with a trailing dot. The API strips the dot on storage, so
-  a CNAME to `example.net` was exported as `example.net`, which a zone file
-  reads as relative: `example.net.example.com.`. A target that already ends in
-  `.`, and the root `.` of a null MX or SRV, are left as they are. The zone
-  output changes for any script that parses it; JSON export is unchanged.
-- `-o yaml` uses the same keys as `-o json`. It named keys after the
-  lowercased Go fields (`domainname`, `emailto`, `domainstotal`) instead of
-  the JSON names (`domainName`, `emailTo`, `domains_total`), and printed
-  fields JSON leaves out as `null` (`priority: null`, `meta: null`). YAML is
-  now derived from the JSON encoding, so keys, their order, and omissions
-  match on every command. **This changes YAML keys: scripts that parse
-  `-o yaml` output must switch to the JSON names.**
-- An empty list prints `"data": []` in JSON and `data: []` in YAML. `transfer
-  list`, `vanity-ns list`, `email list`, and `dns list` printed `"data": null`,
-  so `jq '.data[]'` failed with "Cannot iterate over null" on an account or
-  zone with nothing in it.
 - `url create --host ""` is now a usage error (exit 2) pointing at `@`, as it
   already was for `dns create`. It sent an empty host, which the API treats
   as distinct from `@`: the forwarding replaced every apex A record, and
   deleting it removed them all. A whitespace-only `--host` is refused the same
   way on both commands. The `--host` help now notes that a forwarding on a
   subdomain replaces that host's existing A records.
+- `domain update` now sends only the settings you pass. It resent all three,
+  including the current transfer lock, and during the 60-day lock after
+  registration or transfer the API rejects any request that mentions the lock —
+  so `domain update --autorenew=false` failed with "Domain can not be unlocked
+  until …". The `--dry-run` body now carries only the passed fields, and
+  `domain update` with no flags is a usage error (exit 2) instead of a request
+  that changed nothing.
 - `order refund` now shows each item's reason when every item fails. The API
   answers that case with HTTP 409 rather than 200, and the command printed the
   raw response body as its error. It now prints the same per-item warnings and
@@ -58,24 +67,38 @@ Releases before `0.2.0` predate this file. Their notes are on the
   trailing dot or upper case is also normalized, and a hostname under another
   domain is rejected before any request. The hostname in `--dry-run` output
   and in the update/delete success message is now the qualified one.
+- `dns export --zone` writes CNAME, NS, MX, and SRV targets (and the target in
+  an ANAME comment) with a trailing dot. The API strips the dot on storage, so
+  a CNAME to `example.net` was exported as `example.net`, which a zone file
+  reads as relative: `example.net.example.com.`. A target that already ends in
+  `.`, and the root `.` of a null MX or SRV, are left as they are. The zone
+  output changes for any script that parses it; JSON export is unchanged.
 - A positional argument that cannot be parsed now exits **2**, the documented
   usage code, instead of 1: a non-numeric ID in `dns delete|update`,
   `url get|update|delete`, `order get` and `contact resend|verify`, and an
   on/off value other than `on` or `off` in `domain lock|autorenew|privacy`. A
   script that treated exit 1 from these as a usage mistake needs to check for
   2. The messages are unchanged.
-- `namecom api` now honours `--dry-run`. It ignored the flag and sent the
-  request, so `api POST /core/v1/domains --data … --dry-run` would register
-  the domain. Every method other than GET and HEAD now prints the method, path
-  with its query string, and body (indented if it is JSON, quoted if not)
-  instead of sending it; GET and HEAD still run, as the flag's help says.
-- `domain update` now sends only the settings you pass. It resent all three,
-  including the current transfer lock, and during the 60-day lock after
-  registration or transfer the API rejects any request that mentions the lock —
-  so `domain update --autorenew=false` failed with "Domain can not be unlocked
-  until …". The `--dry-run` body now carries only the passed fields, and
-  `domain update` with no flags is a usage error (exit 2) instead of a request
-  that changed nothing.
+- `-o yaml` uses the same keys as `-o json`. It named keys after the
+  lowercased Go fields (`domainname`, `emailto`, `domainstotal`) instead of
+  the JSON names (`domainName`, `emailTo`, `domains_total`), and printed
+  fields JSON leaves out as `null` (`priority: null`, `meta: null`). YAML is
+  now derived from the JSON encoding, so keys, their order, and omissions
+  match on every command. **This changes YAML keys: scripts that parse
+  `-o yaml` output must switch to the JSON names.**
+- An empty list prints `"data": []` in JSON and `data: []` in YAML. `transfer
+  list`, `vanity-ns list`, `email list`, and `dns list` printed `"data": null`,
+  so `jq '.data[]'` failed with "Cannot iterate over null" on an account or
+  zone with nothing in it.
+- `--dry-run` on `dnssec create`, `email create`, `email update`,
+  `vanity-ns create`, and `vanity-ns update` now prints the JSON body the
+  command would send, like every other write command. It printed no body, only
+  a hand-written `key=value` summary — for `vanity-ns` the raw `--ips` string
+  rather than the list actually sent. Anything parsing that summary line needs
+  to read the JSON instead.
+- `domain register` now reads `--contacts-file` before asking you to confirm
+  the purchase. A missing or malformed file was reported only after you had
+  approved the price.
 
 ## [0.4.5] - 2026-09-28
 
@@ -615,7 +638,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/patramsey/namecom-cli/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/patramsey/namecom-cli/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/patramsey/namecom-cli/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/patramsey/namecom-cli/compare/v0.4.2...v0.4.3
