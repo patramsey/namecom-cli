@@ -84,6 +84,8 @@ func TestAPIError_UserHint(t *testing.T) {
 		{403, "auth login"},
 		{404, "not found"},
 		{429, "rate limit"},
+		// A bare 5xx — no API message to go on — is most likely transient.
+		// A 5xx that carries one is covered by TestServerErrorHint.
 		{500, "try again"},
 		{503, "try again"},
 		{200, ""},
@@ -239,4 +241,53 @@ func TestParseErrorCapturesRetryAfter(t *testing.T) {
 			t.Errorf("RetryAfter = %s, want zero for the HTTP-date form", e.RetryAfter)
 		}
 	})
+}
+
+// TestServerErrorHint covers issue #131. The sandbox answers 500 for what is
+// really a validation error, and every 5xx used to get "try again shortly" —
+// advice to retry a request that can never succeed. When the body is the API's
+// envelope with something specific to say, the hint must not call the failure
+// transient; with no message (empty body, a gateway's HTML page, or only a
+// generic "Server error") the retry advice stands.
+func TestServerErrorHint(t *testing.T) {
+	// Captured from the sandbox: vanity-ns create with a reserved IP.
+	const reservedIP = `{"message":"Server error","details":"Command Failed - IP Address 192.0.2.53 Is Reserved"}`
+
+	t.Run("a 5xx with an API message does not say try again", func(t *testing.T) {
+		e := parseError(makeResp(500, reservedIP))
+		if !strings.Contains(e.Error(), "IP Address 192.0.2.53 Is Reserved") {
+			t.Errorf("Error() = %q, want the server's explanation in it", e.Error())
+		}
+		hint := e.UserHint()
+		if strings.Contains(hint, "try again") {
+			t.Errorf("hint = %q, must not suggest the failure is transient", hint)
+		}
+		if !strings.Contains(hint, "request itself may be invalid") {
+			t.Errorf("hint = %q, want it to point at the request", hint)
+		}
+	})
+
+	t.Run("a specific message without details counts", func(t *testing.T) {
+		e := ErrorFromResponse(500, []byte(`{"message":"IP Address Is Reserved"}`))
+		if hint := e.UserHint(); strings.Contains(hint, "try again") {
+			t.Errorf("hint = %q, must not suggest the failure is transient", hint)
+		}
+	})
+
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"empty body":                      {500, ""},
+		"gateway HTML page":               {502, "<html><body><h1>502 Bad Gateway</h1></body></html>"},
+		"plain-text body":                 {503, "upstream connect error"},
+		"envelope with a generic message": {500, `{"message":"Server error"}`},
+		"envelope with the status text":   {503, `{"message":"Service Unavailable","details":null}`},
+	} {
+		t.Run(name+" keeps try again", func(t *testing.T) {
+			if hint := ErrorFromResponse(tc.status, []byte(tc.body)).UserHint(); !strings.Contains(hint, "try again") {
+				t.Errorf("hint = %q, want the transient wording", hint)
+			}
+		})
+	}
 }

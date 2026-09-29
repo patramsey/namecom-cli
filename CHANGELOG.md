@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- A 5xx whose body explains the failure no longer gets the hint "try again
+  shortly". The API answers 500 for some validation errors — `vanity-ns
+  create` with a reserved IP, for one — so the hint now reads "name.com
+  returned a server error; if it persists, the request itself may be invalid".
+  An empty or non-JSON 5xx body, or a bare "Server error", keeps the old
+  wording. The error message and exit code are unchanged; only the `hint`
+  text (and the `hint` field of the JSON/YAML error envelope) differs.
+
 ## [0.4.6] - 2026-09-29
 
 Twelve bug fixes, most found by running every command against the name.com
