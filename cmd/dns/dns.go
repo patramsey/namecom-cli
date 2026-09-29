@@ -839,7 +839,7 @@ func markFormFlags(cmd *cobra.Command, priorityStr string) {
 func parseID(s string) (int, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("invalid record ID %q: must be a number", s)
+		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid record ID %q: must be a number", s))
 	}
 	// The SDK reports and accepts record IDs as int; ParseInt still bounds at
 	// 32 bits so an ID that could not have come from this API is rejected here

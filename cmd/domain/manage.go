@@ -64,11 +64,10 @@ func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, p
 
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	toggle := strings.ToLower(args[0])
-	if toggle != "on" && toggle != "off" {
-		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	enable, err := cmdutil.OnOffArg(args[0])
+	if err != nil {
+		return err
 	}
-	enable := toggle == "on"
 	domainName, err := cmdutil.DomainArg(args, 1)
 	if err != nil {
 		return err
@@ -107,11 +106,10 @@ var autorenewCmd = &cobra.Command{
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	toggle := strings.ToLower(args[0])
-	if toggle != "on" && toggle != "off" {
-		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	enable, err := cmdutil.OnOffArg(args[0])
+	if err != nil {
+		return err
 	}
-	enable := toggle == "on"
 	domainName, err := cmdutil.DomainArg(args, 1)
 	if err != nil {
 		return err
@@ -149,11 +147,10 @@ var privacyCmd = &cobra.Command{
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	toggle := strings.ToLower(args[0])
-	if toggle != "on" && toggle != "off" {
-		return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+	enable, err := cmdutil.OnOffArg(args[0])
+	if err != nil {
+		return err
 	}
-	enable := toggle == "on"
 	domainName, err := cmdutil.DomainArg(args, 1)
 	if err != nil {
 		return err

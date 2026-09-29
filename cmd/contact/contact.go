@@ -299,8 +299,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 func parseVerificationID(s string) (int, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("invalid verification ID %q: must be a number "+
-			"(run 'namecom contact unverified' to list them)", s)
+		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid verification ID %q: must be a number "+
+			"(run 'namecom contact unverified' to list them)", s))
 	}
 	return int(n), nil
 }

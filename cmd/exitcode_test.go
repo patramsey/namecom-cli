@@ -220,3 +220,54 @@ func TestNormalizeError_Message(t *testing.T) {
 		})
 	}
 }
+
+// TestExitCode_InvalidPositionalArg guards issue #115: a positional argument
+// the command cannot parse — a non-numeric ID, an on/off toggle that is
+// neither — is an invocation mistake and must exit 2 like a bad flag does.
+// Each case used to return a bare error and exit 1, which a script cannot
+// tell apart from an API failure.
+//
+// The commands run through the real root, so the argument is parsed exactly
+// where it is in production. The stub fails the test if any of them gets as
+// far as a request: every case must be rejected before touching the API.
+func TestExitCode_InvalidPositionalArg(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s: a bad argument must fail before any API call", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	withConfig(t, loneProfile)
+
+	tests := [][]string{
+		{"dns", "delete", "example.com", "abc"},
+		{"dns", "update", "example.com", "abc", "--answer", "1.2.3.4"},
+		{"url", "get", "example.com", "abc"},
+		{"url", "update", "example.com", "abc", "--to", "https://example.org"},
+		{"url", "delete", "example.com", "abc"},
+		{"order", "get", "abc"},
+		{"contact", "resend", "abc"},
+		{"contact", "verify", "abc"},
+		{"domain", "lock", "maybe", "example.com"},
+		{"domain", "autorenew", "maybe", "example.com"},
+		{"domain", "privacy", "maybe", "example.com"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+			prev := gf
+			t.Cleanup(func() { gf = prev; rootCmd.SetArgs(nil) })
+			rootCmd.SetArgs(append([]string{"--base-url", srv.URL, "--yes", "-o", "json"}, args...))
+			err := cmdutil.ClassifyCobraUsage(rootCmd.ExecuteContext(context.Background()))
+			if err == nil {
+				t.Fatalf("namecom %s succeeded; want a usage error", strings.Join(args, " "))
+			}
+			// A usage error about something else — a mistyped flag in this
+			// table — would exit 2 too, and pass for the wrong reason.
+			if msg := err.Error(); !strings.Contains(msg, `"abc"`) && !strings.Contains(msg, `"maybe"`) {
+				t.Fatalf("namecom %s failed for another reason: %v", strings.Join(args, " "), err)
+			}
+			if got := exitCode(err); got != 2 {
+				t.Errorf("namecom %s exited %d (%v); want 2", strings.Join(args, " "), got, err)
+			}
+		})
+	}
+}

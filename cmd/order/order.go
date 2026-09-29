@@ -417,7 +417,7 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 func parseID(s string) (int32, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("invalid order ID %q: must be a number", s)
+		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid order ID %q: must be a number", s))
 	}
 	return int32(n), nil
 }
