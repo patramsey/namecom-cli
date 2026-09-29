@@ -431,8 +431,15 @@ func TestRefund_DeclinedConfirmationDoesNotRefund(t *testing.T) {
 // given output format, and returns what reached stdout and stderr.
 func refundWith(t *testing.T, format output.Format, resp string) (stdout, stderr string, err error) {
 	t.Helper()
+	return refundWithStatus(t, format, http.StatusOK, resp)
+}
+
+// refundWithStatus is refundWith for a stub answering with the given status.
+func refundWithStatus(t *testing.T, format output.Format, status int, resp string) (stdout, stderr string, err error) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
 		_, _ = w.Write([]byte(resp))
 	}))
 	t.Cleanup(srv.Close)
@@ -532,6 +539,73 @@ func TestRefund_JSONEmitsFullResultOnFailure(t *testing.T) {
 	if r := got.Results[1]; r.OrderItemStatus != coreapigo.RefundItemResultOrderItemStatusFailed ||
 		r.Message == nil || *r.Message != "outside the refund grace period" {
 		t.Errorf("failed item not carried through: %+v", r)
+	}
+}
+
+// refundAllFailed409 is the sandbox's answer when every item in a refund is
+// refused: HTTP 409 carrying the same per-item body as a 200.
+const refundAllFailed409 = `{"results":[{"orderId":2141951,"orderItemId":11573483,"orderItemStatus":"failed","refundAmount":0,"message":"Order item 11573483 has status 'refunded' and cannot be refunded."}],"totalRefundAmount":0}`
+
+// TestRefund_AllFailed409RendersPerItemResults pins #113: when every item
+// fails the API answers 409, not 200, and the command printed the raw body as
+// its error instead of the per-item reasons the partial-failure path shows.
+func TestRefund_AllFailed409RendersPerItemResults(t *testing.T) {
+	stdout, stderr, err := refundWithStatus(t, output.FormatTable, http.StatusConflict, refundAllFailed409)
+	if err == nil {
+		t.Fatal("expected an error when every item failed")
+	}
+	if got, want := err.Error(), "1 of 1 item(s) were not refunded"; got != want {
+		t.Errorf("err = %q, want %q", got, want)
+	}
+	if _, ok := errors.AsType[*api.APIError](err); ok {
+		t.Errorf("per-item failure surfaced as an API error: %v", err)
+	}
+	const warn = "item 11573483: refund failed — Order item 11573483 has status 'refunded' and cannot be refunded."
+	if !strings.Contains(stderr, warn) {
+		t.Errorf("stderr missing %q:\n%s", warn, stderr)
+	}
+	if strings.Contains(stdout, "Refunded") {
+		t.Errorf("reported success when nothing was refunded:\n%s", stdout)
+	}
+}
+
+// TestRefund_AllFailed409JSONEmitsFullResult: -o json on a 409 carries the
+// same result object a 200 would, not an error envelope around the raw body.
+func TestRefund_AllFailed409JSONEmitsFullResult(t *testing.T) {
+	stdout, _, err := refundWithStatus(t, output.FormatJSON, http.StatusConflict, refundAllFailed409)
+	if err == nil {
+		t.Error("expected an error when every item failed")
+	}
+	var got coreapigo.RefundResponse
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+		t.Fatalf("stdout is not a refund result: %v\n%s", jerr, stdout)
+	}
+	if len(got.Results) != 1 || got.Results[0].OrderItemID != 11573483 ||
+		got.Results[0].OrderItemStatus != coreapigo.RefundItemResultOrderItemStatusFailed {
+		t.Errorf("409 result not carried through: %s", stdout)
+	}
+}
+
+// TestRefund_409WithoutResultsIsAPIError: a 409 that is not a refund result —
+// an idempotency-key conflict, say — must stay an ordinary API error.
+func TestRefund_409WithoutResultsIsAPIError(t *testing.T) {
+	for name, body := range map[string]string{
+		"envelope":      `{"message":"Conflict","details":"idempotency key reused with a different body"}`,
+		"empty results": `{"results":[],"totalRefundAmount":0}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stdout, _, err := refundWithStatus(t, output.FormatTable, http.StatusConflict, body)
+			apiErr, ok := errors.AsType[*api.APIError](err)
+			if !ok {
+				t.Fatalf("err = %T %v, want *api.APIError", err, err)
+			}
+			if apiErr.StatusCode != http.StatusConflict {
+				t.Errorf("StatusCode = %d, want 409", apiErr.StatusCode)
+			}
+			if stdout != "" {
+				t.Errorf("unexpected stdout on an API error:\n%s", stdout)
+			}
+		})
 	}
 }
 

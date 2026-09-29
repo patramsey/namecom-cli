@@ -3,6 +3,8 @@ package order
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -259,6 +261,10 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	}, func(ctx context.Context, body coreapigo.RefundRequest) error {
 		var err error
 		result, err = client.SDK().Refunds.ProcessRefund(ctx, &body)
+		if r := conflictRefundResult(err); r != nil {
+			result = r
+			return nil
+		}
 		return api.FromSDKError(err)
 	})
 	if err != nil || !sent {
@@ -318,6 +324,27 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%d of %d item(s) were not refunded", failed, len(result.Results))
 	}
 	return nil
+}
+
+// conflictRefundResult recovers the refund result from a 409. When every item
+// fails the API answers 409 rather than 200, with the same per-item body, and
+// treating that as a plain API error printed the raw JSON instead of each
+// item's reason. A 409 without results — an idempotency-key conflict, say —
+// returns nil and stays an ordinary API error.
+func conflictRefundResult(err error) *coreapigo.RefundResponse {
+	conflict, ok := errors.AsType[*coreapigo.ConflictError](err)
+	if !ok || conflict.Body == nil {
+		return nil
+	}
+	raw, err := json.Marshal(conflict.Body)
+	if err != nil {
+		return nil
+	}
+	var r coreapigo.RefundResponse
+	if err := json.Unmarshal(raw, &r); err != nil || len(r.Results) == 0 {
+		return nil
+	}
+	return &r
 }
 
 // formatAmount renders a monetary value in the order's currency. Orders can be
