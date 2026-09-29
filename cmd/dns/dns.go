@@ -514,6 +514,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// An empty zone leaves records nil, which marshals as `null`. Export `[]`,
+	// as the list commands do through their envelope.
+	if records == nil {
+		records = []*coreapigo.Record{}
+	}
 	switch out.Format {
 	case output.FormatYAML:
 		return out.YAML(records)

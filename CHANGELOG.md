@@ -26,6 +26,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   non-default `--years` may not apply. The prompt text changed, so a script
   that parses the non-interactive "pass --yes to confirm" error will see the
   new wording. (#132)
+- `dns export` printed `null` for a zone with no records, in both JSON and
+  YAML. It now prints `[]`, like the list commands. `dns import` already
+  treated both as an empty file, so older exports still import as a no-op.
 
 ## [0.4.6] - 2026-09-29
 

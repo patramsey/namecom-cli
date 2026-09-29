@@ -1101,6 +1101,66 @@ func TestDNSExport_RespectsYAMLFormat(t *testing.T) {
 	}
 }
 
+// TestDNSExport_EmptyZoneIsEmptyList guards an empty zone exporting as `null`.
+// fetchAllRecords appends each page to a nil slice, so a zone with no records
+// handed out.JSON / out.YAML a nil slice. #112 fixed this for list commands
+// through the list envelope, which `dns export` does not use.
+func TestDNSExport_EmptyZoneIsEmptyList(t *testing.T) {
+	// The API's empty-list shape, as the sandbox returns it for other lists.
+	const empty = `{"totalCount":0,"from":0,"to":0,"records":[]}`
+	for _, tc := range []struct {
+		name   string
+		format output.Format
+	}{
+		{"json", output.FormatJSON},
+		{"yaml", output.FormatYAML},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, buf := cmdForExport(t, recordsServer(t, empty), tc.format)
+			if err := runExport(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runExport: %v", err)
+			}
+			if got := strings.TrimSpace(buf.String()); got != "[]" {
+				t.Errorf("an empty zone must export as [], got %q", got)
+			}
+		})
+	}
+}
+
+// TestDNSImport_EmptyFileIsNoOp pins that an empty export imports cleanly:
+// `[]` as exported now, and `null` as exported before the fix above.
+func TestDNSImport_EmptyFileIsNoOp(t *testing.T) {
+	for _, payload := range []string{"[]", "null", "null\n"} {
+		t.Run(strings.TrimSpace(payload), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "records.json")
+			if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+			srv := neverCalledServer(t)
+			client, err := api.New(api.Options{BaseURL: srv.URL})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			var stdout bytes.Buffer
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+				Writer: &stdout, EWriter: &bytes.Buffer{}}
+			cmd := &cobra.Command{}
+			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+			cmd.SetContext(ctx)
+			importFile, importDryRun = path, false
+			t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+			if err := runImport(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("importing %q must be a no-op, got: %v", payload, err)
+			}
+			if !strings.Contains(stdout.String(), "Imported 0 record(s)") {
+				t.Errorf("expected a zero-record import, got: %q", stdout.String())
+			}
+		})
+	}
+}
+
 // TestDNSExport_ZoneQuotesTXT pins that TXT rdata is quoted in zone output.
 // Unquoted, an SPF/DKIM value with spaces parses as several separate
 // character-strings, so the exported zone does not describe the same record.
