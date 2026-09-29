@@ -487,7 +487,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 			rtype := derefStr(r.Type)
 			rdata := derefStr(r.Answer)
 			switch rtype {
+			case "CNAME", "NS":
+				rdata = qualify(rdata)
 			case "MX", "SRV":
+				rdata = qualifyTarget(rdata)
 				// MX and SRV require priority prepended to rdata. Emit 0 when the
 				// record has none — omitting it yields a line with the wrong field
 				// count, which zone parsers reject.
@@ -502,7 +505,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 				// parser rejects the line — and with it the whole file. Keep
 				// the record visible as a comment instead.
 				fmt.Fprintf(out.Writer, "; ANAME not representable in a zone file: %s\t%d\tIN\tANAME\t%s\n",
-					derefStr(r.Fqdn), r.TTL, rdata)
+					derefStr(r.Fqdn), r.TTL, qualify(rdata))
 				continue
 			}
 			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
@@ -863,6 +866,25 @@ func derefInt64(n *int64) int64 {
 		return 0
 	}
 	return *n
+}
+
+// qualify appends the trailing dot that makes a hostname absolute in a zone
+// file. The API strips it on storage, so a CNAME to example.net comes back as
+// "example.net" — which a zone parser reads as example.net.<origin>. A name
+// that already ends in "." (including the root, ".") is left alone.
+func qualify(name string) string {
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+	return name + "."
+}
+
+// qualifyTarget qualifies the hostname in MX or SRV rdata, which is its last
+// field: the answer is "target" for MX and "weight port target" for SRV (the
+// priority is carried separately). The numeric fields are left untouched.
+func qualifyTarget(rdata string) string {
+	i := strings.LastIndexByte(rdata, ' ')
+	return rdata[:i+1] + qualify(rdata[i+1:])
 }
 
 // maxCharString is the RFC 1035 limit on one character-string, in bytes.
