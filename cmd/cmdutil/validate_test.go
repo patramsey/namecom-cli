@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,27 @@ func TestValidDNSType(t *testing.T) {
 		if err := ValidDNSType(s); err == nil {
 			t.Errorf("ValidDNSType(%q) expected error, got nil", s)
 		}
+	}
+}
+
+// TestValidDNSCreateType pins that CAA, which the API rejects on create, is a
+// usage error naming the reason, while every other known type is accepted.
+func TestValidDNSCreateType(t *testing.T) {
+	for _, s := range []string{"A", "AAAA", "ANAME", "CNAME", "MX", "NS", "SRV", "TXT", "a"} {
+		if err := ValidDNSCreateType(s); err != nil {
+			t.Errorf("ValidDNSCreateType(%q) unexpected error: %v", s, err)
+		}
+	}
+	for _, s := range []string{"CAA", "caa"} {
+		err := ValidDNSCreateType(s)
+		var ue *UsageError
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "does not accept CAA") {
+			t.Errorf("ValidDNSCreateType(%q) = %v, want a usage error saying CAA is not accepted", s, err)
+		}
+	}
+	err := ValidDNSCreateType("BOGUS")
+	if err == nil || strings.Contains(err.Error(), "CAA") {
+		t.Errorf("ValidDNSCreateType(\"BOGUS\") = %v, want an error that does not offer CAA", err)
 	}
 }
 
