@@ -32,6 +32,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `auth status` with rejected credentials names the profile, username,
+  endpoint and config file it checked, instead of printing only
+  `Unauthorized`. The exit code is unchanged (3); the error `message` in
+  JSON/YAML output gains the same details.
 - `dns import` no longer defines its own `--dry-run`, which hid the global
   flag from its help. `--dry-run` works as before, before or after
   `dns import`.

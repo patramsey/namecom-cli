@@ -183,12 +183,17 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	// API's credential check, not part of a resource group.
 	_, err := client.SDK().Hello(cmd.Context())
 	stop()
-	if err != nil {
-		return api.FromSDKError(err)
-	}
 
 	// Report the identity the Hello call just used, resolved the same way.
 	id := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
+	if err != nil {
+		// The error hints send users here to see which credentials are in
+		// use, so a rejection says which ones were rejected rather than only
+		// "Unauthorized" (#187). Wrapped, so the exit code is unchanged.
+		cfgPath, _ := config.ActivePath()
+		return fmt.Errorf("%w (profile %q, username %q, endpoint %s, config %s)",
+			api.FromSDKError(err), id.Profile, id.Username, client.BaseURL(), cfgPath)
+	}
 
 	env := "production"
 	if client.BaseURL() == "https://api.dev.name.com" {
