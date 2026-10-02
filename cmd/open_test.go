@@ -1,8 +1,16 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/patramsey/namecom-cli/internal/output"
 )
 
 // openTarget's result is handed to `open`/`xdg-open`/`rundll32` as an argv
@@ -104,4 +112,148 @@ func TestOpenTargetNeverYieldsAFlag(t *testing.T) {
 			t.Errorf("openTarget(%q) = %q, contains whitespace that could split the argument", in, got)
 		}
 	}
+}
+
+// stubStart replaces startCommand for the test, recording every argv it is
+// handed, prefixed with "wait" when it would run in the foreground, and
+// answering with fail(name). No test in this package may reach the
+// real exec.Command: it would open a browser on the developer's machine.
+func stubStart(t *testing.T, fail func(name string) error) *[][]string {
+	t.Helper()
+	var calls [][]string
+	prev := startCommand
+	startCommand = func(wait bool, name string, args ...string) error {
+		call := append([]string{name}, args...)
+		if wait {
+			call = append([]string{"wait"}, call...)
+		}
+		calls = append(calls, call)
+		return fail(name)
+	}
+	t.Cleanup(func() { startCommand = prev })
+	return &calls
+}
+
+func openOut(format output.Format) (*output.Config, *bytes.Buffer, *bytes.Buffer) {
+	var stdout, stderr bytes.Buffer
+	return &output.Config{Format: format, Color: output.ColorNever, Writer: &stdout, EWriter: &stderr}, &stdout, &stderr
+}
+
+// TestOpenBrowser_HonoursBROWSER guards issue #184: $BROWSER is the standard
+// way to name a browser where there is no desktop opener, and it was ignored.
+// It is a list of commands separated like PATH; %s marks where the URL goes,
+// and without one the URL is appended.
+func TestOpenBrowser_HonoursBROWSER(t *testing.T) {
+	const target = "https://www.name.com/account/domain/"
+	sep := string(os.PathListSeparator)
+
+	t.Run("first command that starts wins", func(t *testing.T) {
+		t.Setenv("BROWSER", "missing-browser"+sep+"w3m -o x")
+		calls := stubStart(t, func(name string) error {
+			if name == "missing-browser" {
+				return exec.ErrNotFound
+			}
+			return nil
+		})
+		if err := openBrowser(target); err != nil {
+			t.Fatalf("openBrowser: %v", err)
+		}
+		want := [][]string{{"wait", "missing-browser", target}, {"wait", "w3m", "-o", "x", target}}
+		if !reflect.DeepEqual(*calls, want) {
+			t.Errorf("calls = %q, want %q", *calls, want)
+		}
+	})
+
+	t.Run("%s places the URL", func(t *testing.T) {
+		t.Setenv("BROWSER", "lynx --url=%s --flag")
+		calls := stubStart(t, func(string) error { return nil })
+		if err := openBrowser(target); err != nil {
+			t.Fatalf("openBrowser: %v", err)
+		}
+		want := [][]string{{"wait", "lynx", "--url=" + target, "--flag"}}
+		if !reflect.DeepEqual(*calls, want) {
+			t.Errorf("calls = %q, want %q", *calls, want)
+		}
+	})
+
+	t.Run("falls back to the platform opener", func(t *testing.T) {
+		t.Setenv("BROWSER", "missing-browser")
+		calls := stubStart(t, func(name string) error {
+			if name == "missing-browser" {
+				return exec.ErrNotFound
+			}
+			return nil
+		})
+		if err := openBrowser(target); err != nil {
+			t.Fatalf("openBrowser: %v", err)
+		}
+		if len(*calls) != 2 {
+			t.Fatalf("calls = %q, want $BROWSER then the platform opener", *calls)
+		}
+		// The desktop opener hands off and returns; waiting on it is wrong.
+		if (*calls)[1][0] == "wait" {
+			t.Errorf("platform opener %q run in the foreground", (*calls)[1])
+		}
+	})
+
+	t.Run("error when nothing starts", func(t *testing.T) {
+		t.Setenv("BROWSER", "")
+		stubStart(t, func(string) error { return exec.ErrNotFound })
+		if err := openBrowser(target); err == nil {
+			t.Error("openBrowser succeeded with no opener available")
+		}
+	})
+}
+
+// TestRenderOpen guards issue #184: with no opener (headless Linux, SSH,
+// containers) `namecom open` failed with a raw exec error and exit 1, and in
+// JSON mode the URL appeared nowhere. The URL is the useful result either way.
+func TestRenderOpen(t *testing.T) {
+	const target = "https://www.name.com/account/domain/"
+	notFound := fmt.Errorf("exec: %q: %w", "xdg-open", exec.ErrNotFound)
+
+	t.Run("json always carries the URL", func(t *testing.T) {
+		for _, launchErr := range []error{nil, notFound} {
+			out, stdout, stderr := openOut(output.FormatJSON)
+			if err := renderOpen(out, target, launchErr); err != nil {
+				t.Fatalf("renderOpen(%v): %v", launchErr, err)
+			}
+			var got struct {
+				URL    string `json:"url"`
+				Opened bool   `json:"opened"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+			}
+			if got.URL != target || got.Opened != (launchErr == nil) {
+				t.Errorf("launchErr=%v: got %+v", launchErr, got)
+			}
+			if stderr.Len() != 0 {
+				t.Errorf("launchErr=%v: stderr not empty in JSON mode: %q", launchErr, stderr)
+			}
+		}
+	})
+
+	t.Run("table prints the URL to open by hand", func(t *testing.T) {
+		out, stdout, stderr := openOut(output.FormatTable)
+		if err := renderOpen(out, target, notFound); err != nil {
+			t.Fatalf("renderOpen: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Open this URL in your browser: "+target) {
+			t.Errorf("stdout = %q, want the URL and how to use it", stdout)
+		}
+		if !strings.Contains(stderr.String(), "xdg-open") {
+			t.Errorf("stderr = %q, want the reason no browser opened", stderr)
+		}
+	})
+
+	t.Run("table when opened", func(t *testing.T) {
+		out, stdout, _ := openOut(output.FormatTable)
+		if err := renderOpen(out, target, nil); err != nil {
+			t.Fatalf("renderOpen: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "Opening "+target) {
+			t.Errorf("stdout = %q", stdout)
+		}
+	})
 }
