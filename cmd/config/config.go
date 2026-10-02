@@ -77,7 +77,7 @@ func redactProfiles(cfgFile *config.File, names []string, active string) []profi
 		views = append(views, profileView{
 			Name:         name,
 			Username:     p.Username,
-			Endpoint:     endpointFor(p.Sandbox),
+			Endpoint:     api.DefaultBaseURL(p.Sandbox),
 			Default:      name == active,
 			HasToken:     p.Token != "",
 			UsesTokenCmd: p.TokenCmd != "",
@@ -100,13 +100,6 @@ func tokenCmdSummary(cmd string) string {
 		return fields[0]
 	}
 	return fields[0] + " …"
-}
-
-func endpointFor(sandbox bool) string {
-	if sandbox {
-		return "api.dev.name.com"
-	}
-	return "api.name.com"
 }
 
 func runListProfiles(cmd *cobra.Command, _ []string) error {
@@ -148,10 +141,8 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 		rows := make([][]string, 0, len(names))
 		for _, name := range names {
 			p := cfgFile.Profiles[name]
-			endpoint := "api.name.com"
-			if p.Sandbox {
-				endpoint = "api.dev.name.com"
-			}
+			// The URL, as config show and auth status print it (#135, #187).
+			endpoint := api.DefaultBaseURL(p.Sandbox)
 			def := ""
 			if name == active {
 				def = out.BoolBadge(true)
