@@ -154,6 +154,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   encoded, for example a `--price` of `Inf`. It used to print nothing in JSON
   and YAML modes, or a request line with an empty body in table mode, and exit
   0.
+- `-o yaml` now reads back exactly as `-o json` does for every string. A
+  string starting with a line break lost it, a multi-line string starting with
+  a tab produced YAML that could not be parsed, and a key named `<<` became a
+  merge key. Strings containing a line break, tab or other control character,
+  or with leading or trailing whitespace, are now written double-quoted with
+  escapes (`"a\nb"`) rather than as `|` block scalars; a YAML parser reads the
+  same value either way.
 
 ## [0.4.7] - 2026-09-29
 

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
@@ -247,6 +248,27 @@ func yamlNode(v any) (*yaml.Node, error) {
 	return jsonToNode(dec)
 }
 
+// yamlString returns s as a string node, for a value or a key.
+//
+// The explicit !!str tag makes the encoder quote a string that would otherwise
+// read back as another type ("123", "true", "null"). That is not enough for
+// every string: left to choose a style, yaml.v3 writes some in a form that
+// reads back differently or not at all. A leading line break is lost by the
+// block scalar it picks ("\n" came back as ""), a tab before a line break
+// produces YAML it cannot parse, and a plain "<<" key is a merge key. Rather
+// than track each case, any string with a control character, a Unicode line
+// separator, a byte order mark or surrounding whitespace is double-quoted,
+// where everything is escaped and nothing is folded or trimmed.
+func yamlString(s string) *yaml.Node {
+	n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s}
+	if s == "<<" || strings.TrimSpace(s) != s || strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\ufeff'
+	}) {
+		n.Style = yaml.DoubleQuotedStyle
+	}
+	return n
+}
+
 // jsonToNode consumes one JSON value from dec and returns it as a node.
 func jsonToNode(dec *json.Decoder) (*yaml.Node, error) {
 	tok, err := dec.Token()
@@ -265,7 +287,7 @@ func jsonToNode(dec *json.Decoder) (*yaml.Node, error) {
 				if err != nil {
 					return nil, err
 				}
-				n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key.(string)})
+				n.Content = append(n.Content, yamlString(key.(string)))
 			}
 			child, err := jsonToNode(dec)
 			if err != nil {
@@ -278,9 +300,7 @@ func jsonToNode(dec *json.Decoder) (*yaml.Node, error) {
 		}
 		return n, nil
 	case string:
-		// The explicit !!str tag makes the encoder quote a string that would
-		// otherwise read back as another type ("123", "true", "null").
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: t}, nil
+		return yamlString(t), nil
 	case json.Number:
 		tag := "!!int"
 		if strings.ContainsAny(t.String(), ".eE") {
