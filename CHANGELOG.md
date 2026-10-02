@@ -14,6 +14,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
   that line followed the dry-run document, so the output was not valid JSON and
   `| jq` failed. The preview body already shows the host, target and type.
+- A 403 from `transfer internal-in` no longer says to run `namecom auth
+  login`. The error says the account needs enterprise reseller approval, and
+  the hint now says the credentials are fine. It still exits 3. The same hint
+  change applies to `contact verify`, which also printed the "check your
+  credentials" line. The `hint` field in the JSON/YAML error envelope changes
+  for both.
 
 ## [0.4.7] - 2026-09-29
 

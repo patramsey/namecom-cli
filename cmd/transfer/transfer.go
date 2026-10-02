@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -483,17 +482,11 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err != nil {
-		err = api.FromSDKError(err)
 		// A 403 here almost always means the account is not on the enterprise
-		// allowlist rather than that the credentials are wrong. Say so, instead
-		// of letting the generic "check your credentials" hint send the user off
-		// to re-enter a token that was fine.
-		var apiErr *api.APIError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("internal transfer-in requires an approved enterprise reseller account "+
-				"— contact name.com support to request access (original error: %w)", err)
-		}
-		return err
+		// allowlist rather than that the credentials are wrong. AsRestricted
+		// says so and replaces the "check your credentials" hint, which a
+		// plain %w wrap kept (#161).
+		return cmdutil.AsRestricted(api.FromSDKError(err), "internal transfer-in", "approved enterprise reseller")
 	}
 
 	switch out.Format {
