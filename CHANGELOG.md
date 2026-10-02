@@ -161,6 +161,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   or with leading or trailing whitespace, are now written double-quoted with
   escapes (`"a\nb"`) rather than as `|` block scalars; a YAML parser reads the
   same value either way.
+- `domain update --lock=false` reports the transfer lock removed only after
+  the API accepts the change. During the 60-day transfer lock it printed the
+  warning and then the API's refusal.
 
 ## [0.4.7] - 2026-09-29
 

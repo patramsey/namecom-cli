@@ -2172,6 +2172,36 @@ func TestUpdate_ReadsStateOnlyToPromptOrWarn(t *testing.T) {
 	}
 }
 
+// TestUpdate_UnlockWarningOnlyAfterSuccess pins #167: during the 60-day
+// transfer lock the API refuses --lock=false, and the warning that the lock
+// was removed used to print before that refusal, claiming a change that never
+// happened.
+func TestUpdate_UnlockWarningOnlyAfterSuccess(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"Invalid Argument","details":"Domain can not be unlocked until 2026-11-28 06:37:39"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"domainName":"example.com","locked":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := withRootFlags(t, cmdForUpdate(t, srv))
+	if err := cmd.Flags().Set("lock", "false"); err != nil {
+		t.Fatalf("setting lock: %v", err)
+	}
+	if err := runUpdate(cmd, []string{"example.com"}); err == nil {
+		t.Fatal("want the API's refusal as an error")
+	}
+	if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); strings.Contains(stderr, "lock removed") {
+		t.Errorf("a refused unlock must not report the lock removed; stderr: %q", stderr)
+	}
+}
+
 // TestUpdate_NoFlagsIsAUsageError:with only changed fields sent, an update
 // with no flags would PATCH `{}`, which the API rejects — it requires at least
 // one field. It used to restate the current values, a write that changed

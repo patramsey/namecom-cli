@@ -611,18 +611,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		Body:   req,
 		Prompt: prompt,
 	}, func(ctx context.Context, req *coreapigo.UpdateDomainRequest) error {
-		// Removing the transfer lock has no cost but a real security
-		// consequence, so warn for the same reason `domain lock off` does —
-		// once confirmed, and never under --dry-run.
-		if unlocking && wasLocked {
-			out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
-		}
 		var err error
 		updated, err = client.SDK().Domains.UpdateDomain(ctx, req)
 		return api.FromSDKError(err)
 	})
 	if err != nil || !sent {
 		return err
+	}
+	// Removing the transfer lock has no cost but a real security consequence,
+	// so warn for the same reason `domain lock off` does. Only after the API
+	// accepted it: during the 60-day transfer lock it refuses (#167).
+	if unlocking && wasLocked {
+		out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
 	}
 
 	switch out.Format {
