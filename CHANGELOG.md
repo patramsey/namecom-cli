@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `url create --dry-run` and `url update --dry-run` no longer print a
+  `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
+  that line followed the dry-run document, so the output was not valid JSON and
+  `| jq` failed. The preview body already shows the host, target and type.
+
 ## [0.4.7] - 2026-09-29
 
 Eleven bug fixes and two changes in how write commands behave. Most came from

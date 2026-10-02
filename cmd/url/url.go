@@ -318,7 +318,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !sent {
-		fmt.Fprintf(out.Writer, "  host=%s to=%s type=%s\n", body.Host, body.ForwardsTo, body.Type)
 		return nil
 	}
 
@@ -480,7 +479,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !sent {
-		fmt.Fprintf(out.Writer, "  to=%s type=%s\n", *body.ForwardsTo, *body.Type)
 		return nil
 	}
 
