@@ -57,18 +57,9 @@ type globalFlags struct {
 
 var gf globalFlags
 
-// rootCmd is the top-level `namecom` command. It configures the API client and
-// output renderer and stashes them on the context for every subcommand.
-var rootCmd = &cobra.Command{
-	// "[command]" in Use so the rendered usage line reads
-	// "namecom [command] [flags]". The custom help template builds it from
-	// UseLine(), which only appends "[flags]" — so root help read as though the
-	// tool took no subcommand at all. cmd.Name() still resolves to "namecom".
-	Use:   "namecom [command]",
-	Short: "CLI for the name.com Core API",
-	Long: `namecom — CLI for the name.com Core API
-
-Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.
+// rootLongBody is the root help below its title line, which Execute rebuilds
+// with the resolved version. The exit codes are the table exitCode implements.
+const rootLongBody = `Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.
 
 Quick start:
   namecom auth login              # configure credentials
@@ -76,7 +67,26 @@ Quick start:
   namecom dns list example.com    # manage DNS records
   namecom domain register foo.com # register a new domain
 
-Run 'namecom <command> --help' for details on any command.`,
+Exit codes:
+  0  success
+  1  API or other runtime error
+  2  usage error: a bad command, flag, argument or value
+  3  authentication: credentials missing, failing or rejected, or access denied
+  4  not found
+  5  rate limited
+
+Run 'namecom <command> --help' for details on any command.`
+
+// rootCmd is the top-level `namecom` command. It configures the API client and
+// output renderer and stashes them on the context for every subcommand.
+var rootCmd = &cobra.Command{
+	// "[command]" in Use so the rendered usage line reads
+	// "namecom [command] [flags]". The custom help template builds it from
+	// UseLine(), which only appends "[flags]" — so root help read as though the
+	// tool took no subcommand at all. cmd.Name() still resolves to "namecom".
+	Use:               "namecom [command]",
+	Short:             "CLI for the name.com Core API",
+	Long:              "namecom — CLI for the name.com Core API\n\n" + rootLongBody,
 	SilenceUsage:      true,
 	SilenceErrors:     true,
 	Version:           Version,
@@ -89,14 +99,7 @@ func Execute() {
 	// metadata for go install builds, "dev" for local builds.
 	Version = resolveVersion()
 	rootCmd.Version = Version
-	rootCmd.Long = "namecom " + Version + " — CLI for the name.com Core API\n\n" +
-		"Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.\n\n" +
-		"Quick start:\n" +
-		"  namecom auth login              # configure credentials\n" +
-		"  namecom domain list             # list your domains\n" +
-		"  namecom dns list example.com    # manage DNS records\n" +
-		"  namecom domain register foo.com # register a new domain\n\n" +
-		"Run 'namecom <command> --help' for details on any command."
+	rootCmd.Long = "namecom " + Version + " — CLI for the name.com Core API\n\n" + rootLongBody
 
 	// Start version check in background before the command runs, so there's
 	// a chance the network round-trip completes by the time we're done.

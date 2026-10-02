@@ -277,3 +277,21 @@ func TestHelpLayout(t *testing.T) {
 		}
 	})
 }
+
+// The exit codes were cited as a "documented table" in exitCode, but no help
+// text showed them. Root help now lists each code exitCode can return.
+func TestRootHelp_ListsExitCodes(t *testing.T) {
+	for _, want := range []string{
+		"Exit codes:",
+		"0  success",
+		"1  API or other runtime error",
+		"2  usage error",
+		"3  authentication",
+		"4  not found",
+		"5  rate limited",
+	} {
+		if !strings.Contains(rootCmd.Long, want) {
+			t.Errorf("root help does not contain %q:\n%s", want, rootCmd.Long)
+		}
+	}
+}
