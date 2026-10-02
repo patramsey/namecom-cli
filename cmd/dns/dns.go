@@ -49,9 +49,8 @@ var (
 	updateTTL      int64
 	updatePriority int64
 
-	exportZone   bool
-	importFile   string
-	importDryRun bool
+	exportZone bool
+	importFile string
 )
 
 var listCmd = &cobra.Command{
@@ -157,7 +156,6 @@ func init() {
 	exportCmd.Flags().BoolVar(&exportZone, "zone", false, "output RFC 1035 zone-file format instead of JSON")
 
 	importCmd.Flags().StringVar(&importFile, "file", "", "JSON file to import (required)")
-	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "show what would be created without calling the API")
 	_ = importCmd.MarkFlagRequired("file")
 
 	cmdutil.GroupCmd(Cmd)
@@ -567,7 +565,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	dryRun := importDryRun || cmdutil.IsDryRun(cmd)
+	// The global --dry-run only. A local flag of the same name used to shadow
+	// it, which hid the global one from this command's help (#187); a
+	// persistent flag is accepted after the subcommand as well as before.
+	dryRun := cmdutil.IsDryRun(cmd)
 
 	data, err := readImportData(importFile)
 	if err != nil {

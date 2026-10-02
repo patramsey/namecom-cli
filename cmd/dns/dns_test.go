@@ -224,8 +224,8 @@ func TestDNSWrites_PriorityOutOfRange(t *testing.T) {
 	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, &output.Config{
 		Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}})
 	icmd.SetContext(context.WithValue(ctx, cmdutil.KeyClient, client))
-	importFile, importDryRun = path, false
-	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	importFile = path
+	t.Cleanup(func() { importFile = "" })
 	if err := runImport(icmd, []string{"example.com"}); !errors.As(err, &ue) {
 		t.Errorf("import with priority -8 = %v, want a usage error", err)
 	}
@@ -296,8 +296,8 @@ func TestDNSImport_CAAIsRefused(t *testing.T) {
 	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
-	importFile, importDryRun = path, false
-	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	importFile = path
+	t.Cleanup(func() { importFile = "" })
 
 	err = runImport(cmd, []string{"example.com"})
 	if err == nil || !strings.Contains(err.Error(), "does not accept CAA") {
@@ -1308,8 +1308,9 @@ func TestDNSImport_MalformedFileIsUsageError(t *testing.T) {
 			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 			cmd.SetContext(ctx)
-			importFile, importDryRun = path, true
-			t.Cleanup(func() { importFile = ""; importDryRun = false })
+			cmd.PersistentFlags().Bool("dry-run", true, "")
+			importFile = path
+			t.Cleanup(func() { importFile = "" })
 
 			err = runImport(cmd, []string{"example.com"})
 			var ue *cmdutil.UsageError
@@ -1413,8 +1414,8 @@ func TestDNSImport_EmptyFileIsNoOp(t *testing.T) {
 			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 			cmd.SetContext(ctx)
-			importFile, importDryRun = path, false
-			t.Cleanup(func() { importFile = ""; importDryRun = false })
+			importFile = path
+			t.Cleanup(func() { importFile = "" })
 
 			if err := runImport(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("importing %q must be a no-op, got: %v", payload, err)
@@ -1773,8 +1774,7 @@ func TestDNSImport_PartialFailureReportsProgress(t *testing.T) {
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
 	importFile = path
-	importDryRun = false
-	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	t.Cleanup(func() { importFile = "" })
 
 	err = runImport(cmd, []string{"example.com"})
 	if err == nil {
@@ -1884,8 +1884,8 @@ func TestDNSImport_ValidatesBeforeWriting(t *testing.T) {
 	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
-	importFile, importDryRun = path, false
-	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	importFile = path
+	t.Cleanup(func() { importFile = "" })
 
 	err = runImport(cmd, []string{"example.com"})
 	if err == nil {
@@ -1992,8 +1992,8 @@ func runImportCapturing(t *testing.T, payload string) ([]map[string]any, error) 
 	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
-	importFile, importDryRun = path, false
-	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	importFile = path
+	t.Cleanup(func() { importFile = "" })
 
 	err = runImport(cmd, []string{"example.com"})
 	return bodies, err

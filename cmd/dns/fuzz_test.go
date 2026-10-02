@@ -257,8 +257,9 @@ func FuzzExportImportRoundTrip(f *testing.F) {
 		ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 		ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 		icmd.SetContext(ctx)
-		importFile, importDryRun = path, true
-		defer func() { importFile, importDryRun = "", false }()
+		icmd.PersistentFlags().Bool("dry-run", true, "")
+		importFile = path
+		defer func() { importFile = "" }()
 		if err := runImport(icmd, []string{"example.com"}); err != nil {
 			t.Fatalf("import rejected its own export of %+v: %v\nexport: %s", rec, err, exported)
 		}
