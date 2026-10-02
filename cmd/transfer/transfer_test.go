@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
@@ -1089,5 +1090,85 @@ func TestTransferList_QuietFetchesEveryPage(t *testing.T) {
 		if !strings.Contains(got, d) {
 			t.Errorf("--quiet must emit every transfer, missing %q; got: %q", d, got)
 		}
+	}
+}
+
+// TestTransferInternalIn_ForbiddenIsRestricted guards issue #161. A 403 here
+// means the account is not on the enterprise allowlist, not that the token is
+// wrong. The old message wrapped the API error with %w, so the error still
+// carried the 403's "run 'namecom auth login'" hint, sending the user to
+// re-enter a token that was fine.
+func TestTransferInternalIn_ForbiddenIsRestricted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Permission Denied"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForInternalIn(t, srv)
+	if err := cmd.ParseFlags([]string{"--auth-code", "validcode123"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runInternalIn(cmd, []string{"example.com"})
+	if err == nil {
+		t.Fatal("expected an error for a 403")
+	}
+	var restricted *cmdutil.RestrictedError
+	if !errors.As(err, &restricted) {
+		t.Fatalf("a 403 should be a restricted-access error, got %T: %v", err, err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "enterprise reseller") || !strings.Contains(msg, "support") {
+		t.Errorf("error should name the approval and how to get it, got: %s", msg)
+	}
+
+	var stderr bytes.Buffer
+	(&output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: io.Discard, EWriter: &stderr}).Error(err)
+	if strings.Contains(stderr.String(), "auth login") {
+		t.Errorf("a restricted-access error must not suggest 'auth login':\n%s", stderr.String())
+	}
+}
+
+// TestTransfer_MissingAuthCodeIsUsageError guards issue #165. Without a TTY
+// there is no prompt to fall back on, so a missing --auth-code is an
+// invocation mistake and exits 2, like the too-short code right after it. It
+// was a plain fmt.Errorf and exited 1.
+func TestTransfer_MissingAuthCodeIsUsageError(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	srv := neverCalledServer(t)
+	createAuthCode, createPrivacy, createPrice = "", false, 0
+
+	for name, run := range map[string]func() error{
+		"create":      func() error { return runCreate(cmdForTransferCreate(t, srv), []string{"example.com"}) },
+		"internal-in": func() error { return runInternalIn(cmdForInternalIn(t, srv), []string{"example.com"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			var usage *cmdutil.UsageError
+			if !errors.As(err, &usage) {
+				t.Errorf("missing --auth-code should be a usage error (exit 2), got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestTransferCreate_RejectsNonPositivePrice guards issue #168 for transfer
+// create: --price Inf, NaN or a negative value is a usage error before any
+// request. NaN and negatives were silently dropped from the body, and Inf was
+// quoted as "$+Inf" and then failed to marshal.
+func TestTransferCreate_RejectsNonPositivePrice(t *testing.T) {
+	for _, price := range []string{"Inf", "-Inf", "NaN", "-5", "0"} {
+		t.Run(price, func(t *testing.T) {
+			cmd := cmdForTransferCreate(t, neverCalledServer(t))
+			t.Cleanup(func() { createAuthCode, createPrice = "", 0 })
+			if err := cmd.ParseFlags([]string{"--auth-code", "validcode123", "--price", price}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			err := runCreate(cmd, []string{"example.com"})
+			var usage *cmdutil.UsageError
+			if !errors.As(err, &usage) {
+				t.Errorf("want a usage error, got %T: %v", err, err)
+			}
+		})
 	}
 }

@@ -14,6 +14,20 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
   that line followed the dry-run document, so the output was not valid JSON and
   `| jq` failed. The preview body already shows the host, target and type.
+- A 403 from `transfer internal-in` no longer says to run `namecom auth
+  login`. The error says the account needs enterprise reseller approval, and
+  the hint now says the credentials are fine. It still exits 3. The same hint
+  change applies to `contact verify`, which also printed the "check your
+  credentials" line. The `hint` field in the JSON/YAML error envelope changes
+  for both.
+- `transfer create` and `transfer internal-in` without `--auth-code`, when not
+  run in a terminal, now exit **2** (usage error) instead of 1, matching a
+  too-short `--auth-code`.
+- `--price` on `domain register`, `domain renew` and `transfer create` must be
+  a positive number. `Inf`, `NaN`, zero and negative values now exit **2**
+  before anything is sent. Before, `NaN`, zero and negatives were silently
+  ignored, and `Inf` was quoted in the prompt as `$+Inf`, gave an empty
+  `--dry-run` preview, and failed when sent.
 
 ## [0.4.7] - 2026-09-29
 

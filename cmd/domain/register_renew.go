@@ -92,6 +92,11 @@ func runRegister(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if cmd.Flags().Changed("price") {
+		if err := cmdutil.ValidPrice(registerPrice); err != nil {
+			return err
+		}
+	}
 
 	// Parse --tld-requirement up front. It touches nothing but argv, and running
 	// it late meant a typo surfaced only AFTER the user had confirmed a purchase
@@ -393,6 +398,11 @@ func runRenew(cmd *cobra.Command, args []string) error {
 
 	if cmd.Flags().Changed("years") {
 		if err := cmdutil.ValidYears(renewYears); err != nil {
+			return err
+		}
+	}
+	if cmd.Flags().Changed("price") {
+		if err := cmdutil.ValidPrice(renewPrice); err != nil {
 			return err
 		}
 	}

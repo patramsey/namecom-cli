@@ -118,7 +118,7 @@ func Execute() {
 		}
 		cfg.Error(err)
 		code := exitCode(err)
-		if code == 3 {
+		if showAuthHint(err) {
 			cfg.Hint("Run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure")
 		}
 		os.Exit(code)
@@ -433,6 +433,17 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 1
+}
+
+// showAuthHint reports whether Execute should follow err with the "check your
+// credentials" line. Every exit 3 gets it except a RestrictedError: that 403
+// means the account is not enrolled in a gated program, and the credentials
+// are fine (#161).
+func showAuthHint(err error) bool {
+	if _, ok := errors.AsType[*cmdutil.RestrictedError](err); ok {
+		return false
+	}
+	return exitCode(err) == 3
 }
 
 // validateBaseURL checks a --base-url value before it is used, so a typo fails

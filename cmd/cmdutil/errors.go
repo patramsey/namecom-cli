@@ -76,6 +76,12 @@ func (e *RestrictedError) Error() string {
 
 func (e *RestrictedError) Unwrap() error { return e.Err }
 
+// UserHint replaces the 403's own "run 'namecom auth login'" hint, which the
+// error display would otherwise find by unwrapping to the *api.APIError.
+func (e *RestrictedError) UserHint() string {
+	return "your credentials are fine — this account is not enrolled as an " + e.Program
+}
+
 // AsRestricted converts a 403 into a RestrictedError explaining the gate.
 // Any other error is returned unchanged, so genuine auth failures still read as
 // auth failures.

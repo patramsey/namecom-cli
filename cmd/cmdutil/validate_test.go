@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
@@ -239,6 +240,25 @@ func TestValidYears(t *testing.T) {
 	for _, n := range []int{0, -1, 11, 100} {
 		if err := ValidYears(n); err == nil {
 			t.Errorf("ValidYears(%d) expected error, got nil", n)
+		}
+	}
+}
+
+// TestValidPrice guards issue #168. --price parses with strconv, so Inf, NaN
+// and negative values all reach the command. The callers only checked
+// price > 0: NaN and negatives were silently dropped, and Inf was quoted in
+// the prompt as "$+Inf" and then failed to marshal.
+func TestValidPrice(t *testing.T) {
+	for _, p := range []float64{0.01, 12.99, 25000} {
+		if err := ValidPrice(p); err != nil {
+			t.Errorf("ValidPrice(%v) unexpected error: %v", p, err)
+		}
+	}
+	for _, p := range []float64{0, -1, -0.01, math.Inf(1), math.Inf(-1), math.NaN()} {
+		err := ValidPrice(p)
+		var usage *UsageError
+		if !errors.As(err, &usage) {
+			t.Errorf("ValidPrice(%v) = %v, want a usage error", p, err)
 		}
 	}
 }
