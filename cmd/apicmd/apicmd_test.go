@@ -246,8 +246,10 @@ func TestAPI_CredentialNotForwardedOnCrossHostRedirect(t *testing.T) {
 	t.Cleanup(attacker.Close)
 
 	// httptest binds 127.0.0.1; Go compares redirect hosts by NAME (ports are
-	// ignored), so two httptest servers look like the same domain and the header
-	// is legitimately copied. Point the redirect at "localhost" instead — same
+	// ignored), so two httptest servers look like the same domain and net/http
+	// copies the header; headerTransport removes it then, which
+	// TestCredentialNotForwardedToOtherPort in internal/api covers. This test
+	// is about net/http's own stripping, so point the redirect at "localhost" — same
 	// machine, genuinely different hostname — to exercise the cross-domain path.
 	attackerHost := strings.Replace(attacker.URL, "127.0.0.1", "localhost", 1)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

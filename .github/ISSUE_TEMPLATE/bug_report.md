@@ -23,9 +23,11 @@ DNS/email/URL/vanity create-update-delete, transfer, refund):
 namecom ... --dry-run
 ```
 
-**`--debug` output**, if you can share it. It redacts the API token, but
-read it before pasting — it contains request and response bodies, which
-may include your domains and contact details.
+**`--debug` output**, if you can share it. It never prints the API token,
+and it shows transfer auth codes and password- or token-like fields as
+`[redacted]`. Read it before pasting anyway — it contains request and
+response bodies, which include your domains and contact details, and the
+redaction matches field names, so it cannot know about every secret.
 
 ```
 namecom ... --debug

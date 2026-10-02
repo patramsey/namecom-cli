@@ -56,6 +56,23 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `Created A record (id 0)` and exit 0 when nothing was created. Reads still
   follow redirects. This applies to `namecom api` as well.
 
+### Security
+- Your credentials are sent only to the API's exact origin: the same scheme,
+  host and port as the endpoint in use. A redirect from the API to another
+  port on the same host, or from `https` to plain `http`, used to carry the
+  `Authorization` header along, because only the hostname was compared. It is
+  now removed, including one passed with `namecom api --header`.
+- `--debug` and `--debug-file` no longer write domain transfer auth codes.
+  The request bodies of `transfer create` and `transfer internal-in`, and the
+  response of `domain auth-code`, logged the code in full; it now appears as
+  `[redacted]`, as in the `--dry-run` preview. Password- and token-like fields
+  are redacted the same way, at any depth in a request or response body. A
+  log that pasted an auth code into a bug report or a CI log before this
+  release still has it; if one may have been shared, treat that code as
+  exposed.
+  Bodies with something redacted are logged re-encoded, so their key order
+  and spacing can differ from what was sent.
+
 ## [0.4.7] - 2026-09-29
 
 Eleven bug fixes and two changes in how write commands behave. Most came from
