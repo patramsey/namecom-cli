@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // usagef builds a UsageError. Every failure in this file is an invocation
@@ -186,6 +189,12 @@ func ValidTTL(ttl int64) error {
 }
 
 // ValidDomainName does a basic sanity check on a domain name argument.
+//
+// Beyond the shape checks, every ASCII character must be one a hostname can
+// hold. A domain argument is interpolated into a URL path, so a '?', '#' or '/'
+// would change what that path means rather than name a domain — `transfer
+// eligibility 'a?x=1.com'` reached the server. Non-ASCII input must be valid
+// IDNA, since CanonicalDomain can only send it as punycode.
 func ValidDomainName(domain string) error {
 	if strings.Contains(domain, " ") {
 		return usagef("domain name %q must not contain spaces", domain)
@@ -196,7 +205,34 @@ func ValidDomainName(domain string) error {
 	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
 		return usagef("domain name %q must not start or end with a dot", domain)
 	}
+	for i := 0; i < len(domain); i++ {
+		if c := domain[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
+			return usagef("domain name %q must not contain %q", domain, domain[i:i+1])
+		}
+	}
+	if !isASCII(domain) {
+		if _, err := idna.Lookup.ToASCII(domain); err != nil {
+			return usagef("domain name %q is not a valid internationalized domain name: %v", domain, err)
+		}
+	}
 	return nil
+}
+
+// isHostnameByte reports whether c may appear in a domain name: letters,
+// digits, hyphen, dot, and underscore (which DNS allows outside hostnames and
+// some registries accept).
+func isHostnameByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+		c == '-' || c == '.' || c == '_'
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidNameserver checks that ns is a plausible fully-qualified nameserver hostname.
@@ -327,17 +363,25 @@ func OnOffArg(s string) (bool, error) {
 
 // CanonicalDomain normalizes a domain name for comparison and transmission.
 //
-// It lowercases and trims. It deliberately does NOT convert Unicode labels to
-// punycode: the API "normalizes punycode server-side, so either ASCII or UTF-8
-// is accepted" on input, and encoding locally would mean depending on
-// golang.org/x/net/idna for one edge case.
+// It trims, lowercases, and converts Unicode labels to punycode (IDNA lookup
+// rules), so bücher.com becomes xn--bcher-kva.com. The API does normalize UTF-8
+// in a request body, but most commands put the domain in the URL path, and
+// there name.com's edge answers a percent-encoded Unicode name with an HTML 403
+// instead of reaching the API. Converting here gives every command — and its
+// --dry-run preview — the same ASCII form, which is also the form the API
+// replies with.
 //
-// Responses do come back in canonical punycode, so anything matching a reply
-// against a request must cope with the spellings differing — see argMatcher in
-// cmd/domain/search_check.go, which resolves that by elimination rather than by
-// re-encoding.
+// A name that is not valid IDNA is returned lowercased but otherwise as typed;
+// ValidDomainName rejects it with the reason.
 func CanonicalDomain(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+	d := strings.ToLower(strings.TrimSpace(s))
+	if isASCII(d) {
+		return d
+	}
+	if a, err := idna.Lookup.ToASCII(d); err == nil {
+		return a
+	}
+	return d
 }
 
 // ValidAuthCode checks that a transfer auth code is plausibly non-trivial.
