@@ -137,6 +137,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   ordinary error and exits **1**; a DNS failure gets the "could not reach the
   API" hint. This hit every command when offline, and `domain requirements` for
   `eu`, `jp` and `nyc` in the sandbox.
+- On a credential failure (exit **3**), the `→ Run 'namecom auth status'…` line
+  is no longer written to stdout, where `> out.txt` captured it, after the hint
+  the error had already printed. Each error now carries one hint, on stderr
+  with the error: `hint:` in table mode and the envelope's `hint` key in JSON
+  and YAML. A missing or failing credential now gets that hint in the envelope
+  too.
 
 ## [0.4.7] - 2026-09-29
 

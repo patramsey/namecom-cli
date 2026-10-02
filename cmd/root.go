@@ -111,17 +111,11 @@ func Execute() {
 	})
 
 	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
-		err = normalizeError(err)
 		cfg := resolvedOut
 		if cfg == nil {
 			cfg = output.DefaultConfig()
 		}
-		cfg.Error(err)
-		code := exitCode(err)
-		if showAuthHint(err) {
-			cfg.Hint("Run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure")
-		}
-		os.Exit(code)
+		os.Exit(reportError(cfg, err))
 	}
 
 	// Show update notification if the goroutine finished in time.
@@ -433,6 +427,18 @@ func skipClientInit(cmd *cobra.Command) bool {
 	return false
 }
 
+// reportError renders err through cfg and returns the exit code for it.
+//
+// Hints travel with the error, on stderr. An exit-3 hint used to be printed
+// separately with cfg.Hint, which writes to stdout — so it landed in
+// `namecom … > out.txt` — and repeated the hint the error already carried.
+// cmdutil.AuthError now carries its own.
+func reportError(cfg *output.Config, err error) int {
+	err = normalizeError(err)
+	cfg.Error(err)
+	return exitCode(err)
+}
+
 // exitCode maps an error to a CLI exit code following the documented table:
 //
 //	0 success, 1 API/runtime, 2 usage, 3 auth, 4 not-found, 5 rate-limited
@@ -463,17 +469,6 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 1
-}
-
-// showAuthHint reports whether Execute should follow err with the "check your
-// credentials" line. Every exit 3 gets it except a RestrictedError: that 403
-// means the account is not enrolled in a gated program, and the credentials
-// are fine (#161).
-func showAuthHint(err error) bool {
-	if _, ok := errors.AsType[*cmdutil.RestrictedError](err); ok {
-		return false
-	}
-	return exitCode(err) == 3
 }
 
 // validateBaseURL checks a --base-url value before it is used, so a typo fails
