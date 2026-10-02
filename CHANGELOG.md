@@ -23,6 +23,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `transfer create` and `transfer internal-in` without `--auth-code`, when not
   run in a terminal, now exit **2** (usage error) instead of 1, matching a
   too-short `--auth-code`.
+- `--price` on `domain register`, `domain renew` and `transfer create` must be
+  a positive number. `Inf`, `NaN`, zero and negative values now exit **2**
+  before anything is sent. Before, `NaN`, zero and negatives were silently
+  ignored, and `Inf` was quoted in the prompt as `$+Inf`, gave an empty
+  `--dry-run` preview, and failed when sent.
 
 ## [0.4.7] - 2026-09-29
 

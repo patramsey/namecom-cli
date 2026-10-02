@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -239,6 +240,16 @@ func ValidSortDir(dir string) error {
 func ValidYears(n int) error {
 	if n < 1 || n > 10 {
 		return usagef("--years must be between 1 and 10 (got %d)", n)
+	}
+	return nil
+}
+
+// ValidPrice checks a --price value. The flag parses with strconv, which
+// accepts Inf and NaN: NaN and negatives used to be dropped silently, and Inf
+// was quoted in the prompt and then failed to marshal on send (#168).
+func ValidPrice(p float64) error {
+	if math.IsNaN(p) || math.IsInf(p, 0) || p <= 0 {
+		return usagef("--price must be a positive amount in USD (got %v)", p)
 	}
 	return nil
 }

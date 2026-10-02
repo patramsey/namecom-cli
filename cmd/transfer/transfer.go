@@ -237,6 +237,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if cmd.Flags().Changed("price") {
+		if err := cmdutil.ValidPrice(createPrice); err != nil {
+			return err
+		}
+	}
+
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
 		if !output.IsInteractive() {

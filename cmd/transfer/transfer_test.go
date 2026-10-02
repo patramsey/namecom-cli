@@ -1151,3 +1151,24 @@ func TestTransfer_MissingAuthCodeIsUsageError(t *testing.T) {
 		})
 	}
 }
+
+// TestTransferCreate_RejectsNonPositivePrice guards issue #168 for transfer
+// create: --price Inf, NaN or a negative value is a usage error before any
+// request. NaN and negatives were silently dropped from the body, and Inf was
+// quoted as "$+Inf" and then failed to marshal.
+func TestTransferCreate_RejectsNonPositivePrice(t *testing.T) {
+	for _, price := range []string{"Inf", "-Inf", "NaN", "-5", "0"} {
+		t.Run(price, func(t *testing.T) {
+			cmd := cmdForTransferCreate(t, neverCalledServer(t))
+			t.Cleanup(func() { createAuthCode, createPrice = "", 0 })
+			if err := cmd.ParseFlags([]string{"--auth-code", "validcode123", "--price", price}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			err := runCreate(cmd, []string{"example.com"})
+			var usage *cmdutil.UsageError
+			if !errors.As(err, &usage) {
+				t.Errorf("want a usage error, got %T: %v", err, err)
+			}
+		})
+	}
+}
