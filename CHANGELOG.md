@@ -32,6 +32,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- Shell completion for `domain claims` no longer offers the domains already
+  in your account; claims are checked on names you are about to register.
 - Shell completion offers values for `-o`/`--output`, `--color` and
   `--profile` (profile names from the config file, read without running
   `token_cmd`), profile names for `config use`, and HTTP methods for

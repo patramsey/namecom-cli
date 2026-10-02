@@ -226,10 +226,17 @@ func TestComplete_FlagValuesAndProfiles(t *testing.T) {
 	}
 	// Commands whose arguments are new names or a raw path offer no files:
 	// no candidates, and a directive that turns the shell's file fallback off.
+	// Nor do they list the account's domains, so no request is expected.
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
 	for _, args := range [][]string{
 		{"domain", "register", ""}, {"domain", "check", ""}, {"domain", "search", ""},
-		{"transfer", "create", ""}, {"api", "GET", ""}, {"config", "use", ""},
+		{"domain", "claims", ""}, {"transfer", "create", ""}, {"api", "GET", ""},
+		{"config", "use", "prod", ""},
 	} {
+		args = append([]string{"--base-url", srv.URL}, args...)
 		if d := completeDirective(t, args...); d&cobra.ShellCompDirectiveNoFileComp == 0 {
 			t.Errorf("complete %q directive = %d, want NoFileComp set", args, d)
 		}
