@@ -104,7 +104,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		}
 		// Fresh variable per page — see cmd/dns/dns.go for why reusing one
 		// decode target both corrupts earlier pages and never terminates.
-		contacts = append(contacts, result.UnverifiedContacts...)
+		contacts = append(contacts, cmdutil.NonNil(result.UnverifiedContacts)...)
 		lastResult = result
 		next, ok := cmdutil.NextPage(page, result.NextPage, &result.LastPage)
 		if !ok {

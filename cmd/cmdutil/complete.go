@@ -77,7 +77,7 @@ func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]st
 		return nil, cobra.ShellCompDirectiveError
 	}
 	names := make([]string, 0, len(result.Domains))
-	for _, d := range result.Domains {
+	for _, d := range NonNil(result.Domains) {
 		names = append(names, d.DomainName)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
@@ -102,7 +102,7 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveError
 		}
-		for _, r := range result.Records {
+		for _, r := range NonNil(result.Records) {
 			if r.ID == nil {
 				continue
 			}

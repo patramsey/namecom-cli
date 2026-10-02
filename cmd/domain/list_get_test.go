@@ -349,6 +349,50 @@ func TestDomainGet_Success(t *testing.T) {
 	}
 }
 
+// TestDomainList_NullDomainIsSkipped pins #157's list half: a null element in
+// `domains` crashed the table and --quiet loops. It is skipped, not shown as
+// an empty row or counted.
+func TestDomainList_NullDomainIsSkipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"domains":[null,{"domainName":"acme.io"}],"totalCount":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, quiet := range []bool{false, true} {
+		var stdout, stderr bytes.Buffer
+		cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+		cmdutil.Out(cmd).QuietMode = quiet
+		listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+
+		if err := runList(cmd, nil); err != nil {
+			t.Fatalf("quiet=%v: runList: %v", quiet, err)
+		}
+		got := stdout.String()
+		if quiet {
+			if got != "acme.io\n" {
+				t.Errorf("--quiet output = %q, want only the one domain", got)
+			}
+		} else if !strings.Contains(got, "acme.io") || !strings.Contains(got, "(1 domain)") {
+			t.Errorf("table should show the one domain and count only it:\n%s", got)
+		}
+	}
+}
+
+// TestDomainGet_NullBodyIsAnError pins #157: a 200 whose body is `null` made
+// the SDK return a nil domain with a nil error, which get then rendered.
+func TestDomainGet_NullBodyIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("null"))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForDomainGet(t, srv)
+	err := runGet(cmd, []string{"example.com"})
+	if err == nil || !strings.Contains(err.Error(), "unexpected response from the API") {
+		t.Fatalf("runGet = %v, want an unexpected-response error", err)
+	}
+}
+
 func TestDomainGet_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

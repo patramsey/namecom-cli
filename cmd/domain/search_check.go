@@ -172,7 +172,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return renderSearchResults(out, result.Results)
+	return renderSearchResults(out, cmdutil.NonNil(result.Results))
 }
 
 func runCheck(cmd *cobra.Command, args []string) error {
@@ -216,7 +216,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		results := make([]*coreapigo.SearchResult, len(args))
 		matcher := newArgMatcher(args)
 		if result != nil {
-			for _, r := range result.Results {
+			for _, r := range cmdutil.NonNil(result.Results) {
 				if idx, ok := matcher.match(r.DomainName); ok {
 					results[idx] = r
 				}
@@ -236,6 +236,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	zoneResult.Results = cmdutil.NonNil(zoneResult.Results)
 
 	// Preserve input order in the final result slice.
 	finalResults := make([]*coreapigo.SearchResult, len(args))
@@ -322,7 +323,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("checking availability: %w", api.FromSDKError(err))
 		}
 		if checkResult.Results != nil {
-			for _, r := range checkResult.Results {
+			for _, r := range cmdutil.NonNil(checkResult.Results) {
 				if idx, ok := matcher.match(r.DomainName); ok {
 					finalResults[idx] = r
 				}

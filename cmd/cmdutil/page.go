@@ -40,3 +40,26 @@ func Int32Count(n int) int32 {
 	}
 	return int32(n)
 }
+
+// NonNil returns s without its nil elements, leaving s itself unchanged.
+//
+// The SDK decodes a JSON null inside a response list as a nil pointer, and
+// every row builder and --quiet loop dereferenced each element unchecked, so
+// one null crashed the command (#157). Apply it where a list is taken from a
+// response, so nothing downstream has to check. A nil element carries nothing
+// to show, so it is dropped rather than printed as an empty row.
+func NonNil[T any](s []*T) []*T {
+	for i, v := range s {
+		if v != nil {
+			continue
+		}
+		out := append(make([]*T, 0, len(s)-1), s[:i]...)
+		for _, v := range s[i+1:] {
+			if v != nil {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	return s
+}

@@ -156,7 +156,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 			if err != nil {
 				return api.FromSDKError(err)
 			}
-			expiringDomains = append(expiringDomains, result.Domains...)
+			expiringDomains = append(expiringDomains, cmdutil.NonNil(result.Domains)...)
 			next, ok := cmdutil.NextPage(p, result.NextPage, result.LastPage)
 			if !ok {
 				return nil
@@ -188,7 +188,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 				// than as zero.
 				return nil
 			}
-			transfers = append(transfers, tResult.Transfers...)
+			transfers = append(transfers, cmdutil.NonNil(tResult.Transfers)...)
 			cur := 0
 			if tPage != nil {
 				cur = *tPage

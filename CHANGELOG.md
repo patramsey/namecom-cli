@@ -10,6 +10,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- A successful response whose body is JSON `null`, or a list in a response
+  that contains a `null` element, no longer crashes the command. A `null` body
+  now fails with "unexpected response from the API" and exits 1; before, about
+  40 commands panicked, `status` among them. A `null` list element is skipped:
+  it gets no table row, no `--quiet` line, and no entry in JSON or YAML output.
+  name.com does not send these itself, but a proxy or captive portal can.
 - `url create --dry-run` and `url update --dry-run` no longer print a
   `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
   that line followed the dry-run document, so the output was not valid JSON and

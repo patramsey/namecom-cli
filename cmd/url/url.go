@@ -122,7 +122,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			spin.Stop()
 			return api.FromSDKError(err)
 		}
-		all = append(all, result.URLForwarding...)
+		all = append(all, cmdutil.NonNil(result.URLForwarding)...)
 		lastResult = result
 		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
 		if !ok {
