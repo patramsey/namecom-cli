@@ -187,6 +187,45 @@ func TestResend_ThrottledIsNotAnExitZero(t *testing.T) {
 	}
 }
 
+// TestResend_MissingSentIsUnexpected pins #212: Sent is a plain bool, so a
+// reply without it decoded as false and was reported as "throttled until
+// 0001-01-01". The SDK marks the field required, with no default, so its
+// absence is an unexpected response, and a throttled reply without
+// nextEligibleAt never prints the zero time.
+func TestResend_MissingSentIsUnexpected(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		unexpected bool
+	}{
+		{"no sent", `{"verificationId":9911}`, true},
+		{"null sent", `{"sent":null,"verificationId":9911}`, true},
+		{"throttled without nextEligibleAt", `{"sent":false,"verificationId":9911}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+
+			for _, format := range []output.Format{output.FormatTable, output.FormatJSON} {
+				cmd, stdout, _ := contactCmd(t, srv, format)
+				err := runResend(cmd, []string{"9911"})
+				if err == nil {
+					t.Fatalf("%s: runResend succeeded; want an error", format)
+				}
+				if strings.Contains(err.Error()+stdout.String(), "0001-01-01") {
+					t.Errorf("%s: output prints the zero time: %v\n%s", format, err, stdout)
+				}
+				_, isUnexpected := errors.AsType[*api.UnexpectedResponseError](err)
+				if isUnexpected != tc.unexpected {
+					t.Errorf("%s: err = %v; unexpected-response = %v, want %v", format, err, isUnexpected, tc.unexpected)
+				}
+			}
+		})
+	}
+}
+
 // TestResend_SentIsSuccess is the counterweight: an actual send must still
 // succeed, or the xargs pipeline fails on every record.
 func TestResend_SentIsSuccess(t *testing.T) {

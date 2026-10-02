@@ -12,6 +12,7 @@ package contact
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -224,24 +225,38 @@ func runResend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Sent is a plain bool, so a reply without it decoded as false and was
+	// reported as throttled "until 0001-01-01" (#212). The SDK marks the field
+	// required and gives it no default, so its absence is not an answer
+	// either way.
+	if !hasSent(result) {
+		return &api.UnexpectedResponseError{Reason: "the response did not say whether the email was sent"}
+	}
+
 	// The API reports throttling as HTTP 200 with sent=false. Returning nil for
 	// that made a throttled record indistinguishable from a resent one — same
 	// exit code, and nothing on stdout under --quiet. The command's own example
 	// pipes `contact unverified -q` into xargs, so "I resent them all" has to be
 	// true or a domain silently misses its verification deadline.
 	if !result.Sent {
-		if (out.Format == output.FormatJSON || out.Format == output.FormatYAML) && !out.QuietMode {
+		if (out.Format == output.FormatJSON || out.Format == output.FormatYAML) && !out.QuietMode &&
+			!result.NextEligibleAt.IsZero() {
 			// Still emit the payload so a script can read nextEligibleAt, then
-			// fail so it cannot mistake this for a send.
+			// fail so it cannot mistake this for a send. Without one it would
+			// read 0001-01-01, so it is left out.
 			if out.Format == output.FormatJSON {
 				_ = out.JSON(result)
 			} else {
 				_ = out.YAML(result)
 			}
 		}
-		return fmt.Errorf("verification email not sent for record %d — throttled until %s "+
+		until := ""
+		if !result.NextEligibleAt.IsZero() {
+			until = " until " + result.NextEligibleAt.Format(time.RFC3339)
+		}
+		return fmt.Errorf("verification email not sent for record %d — throttled%s "+
 			"(the API allows one resend per record every 15 minutes)",
-			result.VerificationID, result.NextEligibleAt.Format(time.RFC3339))
+			id, until)
 	}
 
 	if out.Quiet() {
@@ -307,4 +322,14 @@ func parseVerificationID(s string) (int, error) {
 			"(run 'namecom contact unverified' to list them)", s))
 	}
 	return int(n), nil
+}
+
+// hasSent reports whether the resend reply carried a non-null "sent". The SDK
+// keeps the raw body, which String returns, but no record of which fields were
+// present.
+func hasSent(r *coreapigo.ContactVerificationResendResponse) bool {
+	var probe struct {
+		Sent *bool `json:"sent"`
+	}
+	return json.Unmarshal([]byte(r.String()), &probe) == nil && probe.Sent != nil
 }
