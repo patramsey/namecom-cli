@@ -128,6 +128,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   UTF-16 files Windows PowerShell 5.1 writes for
   `namecom dns export X > records.json`. They failed with "invalid character".
   A file that is not valid JSON now exits **2** instead of 1.
+- `dns export --zone` writes a newline, tab or other control character in a
+  TXT value as an RFC 1035 decimal escape (`\010`). It was written raw, which
+  left the quotes unbalanced, so BIND and other parsers refused to load the
+  whole zone.
 
 ## [0.4.7] - 2026-09-29
 

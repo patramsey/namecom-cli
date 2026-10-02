@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1384,6 +1386,71 @@ func TestQuoteTXT_SplitsLongValues(t *testing.T) {
 func TestQuoteTXT_ShortValueIsOneString(t *testing.T) {
 	if got, want := quoteTXT(`say "hi"`), `"say \"hi\""`; got != want {
 		t.Errorf("quoteTXT = %q, want %q", got, want)
+	}
+}
+
+// txtControlCases are TXT answers holding characters that cannot appear raw in
+// a zone-file string, and how quoteTXT must write them (#188).
+var txtControlCases = []struct{ name, in, want string }{
+	{"newline", "a\nb", `"a\010b"`},
+	{"tab and CR", "a\tb\r", `"a\009b\013"`},
+	{"DEL", "a\x7fb", `"a\127b"`},
+	{"already quoted", "\"\n\"", `"\010"`},
+	{"already quoted, escaped newline", "\"a\\\nb\"", `"a\010b"`},
+	{"already quoted, escaped backslash", "\"a\\\\\nb\"", `"a\\\010b"`},
+}
+
+// TestQuoteTXT_EscapesControlCharacters guards #188: quoteTXT escaped only
+// backslash and quote, so a newline in a TXT value was written raw inside the
+// quoted string and the whole zone failed to load ("unbalanced quotes"). Such
+// characters must become RFC 1035 \DDD decimal escapes, which keep the value.
+func TestQuoteTXT_EscapesControlCharacters(t *testing.T) {
+	for _, tc := range txtControlCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quoteTXT(tc.in); got != tc.want {
+				t.Errorf("quoteTXT(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDNSExport_ZoneControlCharactersLoad checks the same values end to end
+// with BIND's named-checkzone: the exported zone must load, and its TXT
+// records must hold the original bytes.
+func TestDNSExport_ZoneControlCharactersLoad(t *testing.T) {
+	checkzone, err := exec.LookPath("named-checkzone")
+	if err != nil {
+		t.Skip("named-checkzone not installed")
+	}
+	var recs []string
+	for i, tc := range txtControlCases {
+		answer, _ := json.Marshal(tc.in)
+		recs = append(recs, fmt.Sprintf(`{"id":%d,"type":"TXT","host":"t%d","fqdn":"t%d.example.com.","answer":%s,"ttl":300}`, i, i, i, answer))
+	}
+	srv := recordsServer(t, `{"records":[`+strings.Join(recs, ",")+`],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+
+	zone := "$ORIGIN example.com.\n" +
+		"@\t300\tIN\tSOA\tns1.example.com. hostmaster.example.com. 1 3600 600 86400 300\n" +
+		"@\t300\tIN\tNS\tns1.example.com.\n" +
+		"ns1\t300\tIN\tA\t192.0.2.1\n" + buf.String()
+	path := filepath.Join(t.TempDir(), "example.com.zone")
+	if err := os.WriteFile(path, []byte(zone), 0o600); err != nil {
+		t.Fatalf("writing zone: %v", err)
+	}
+	dump, err := exec.Command(checkzone, "-q", "-D", "-o", "-", "example.com", path).CombinedOutput() //nolint:gosec
+	if err != nil {
+		t.Fatalf("named-checkzone rejected the zone: %v\n%s\nzone:\n%s", err, dump, zone)
+	}
+	for _, tc := range txtControlCases {
+		if !strings.Contains(string(dump), tc.want) {
+			t.Errorf("%s: loaded zone lacks %s:\n%s", tc.name, tc.want, dump)
+		}
 	}
 }
 
