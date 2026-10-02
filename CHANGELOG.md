@@ -32,6 +32,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the middle of a multi-byte character when it is shortened for the error
   message, and invalid UTF-8 in such a body is replaced. The message, including
   the one in the JSON error envelope, is now always valid UTF-8.
+- API errors from every command are now reported the way `namecom api`
+  reports them. A 500 whose body explains the failure (such as `Invalid IP`)
+  no longer suggests trying again shortly; an HTML error page from a proxy is
+  shortened to one line instead of becoming the whole error message; and a 401
+  mentions that the sandbox uses a separate API token. The error `message` in
+  JSON output changes for non-JSON error bodies: it no longer starts with the
+  status code (`502: <html>…`), and an empty body reads as the status text
+  (`Service Unavailable`) rather than the bare code.
 
 ## [0.4.7] - 2026-09-29
 

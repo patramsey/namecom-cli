@@ -1,9 +1,7 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 
 	sdkcore "github.com/namedotcom/core-api-go/core"
@@ -31,51 +29,24 @@ func FromSDKError(err error) error {
 		return err
 	}
 
-	out := &APIError{StatusCode: apiErr.StatusCode}
+	// The SDK keeps the response body as the error it wraps, verbatim; the
+	// typed errors (*InternalServerError and the rest) embed the same value.
+	// Hand it to ErrorFromResponse so SDK calls are normalized exactly as the
+	// `namecom api` passthrough is. This used to parse the envelope out of the
+	// error string on its own, and so missed what was added there later: the
+	// explained-5xx hint (#131), the summary of an HTML proxy page, and the
+	// sandbox note on a 401 (#159).
+	var body []byte
+	if inner := apiErr.Unwrap(); inner != nil {
+		body = []byte(inner.Error())
+	}
+	out := ErrorFromResponse(apiErr.StatusCode, body)
 	if apiErr.Header != nil {
 		if ra := parseRetryAfter(apiErr.Header.Get("Retry-After")); ra != nil {
 			out.RetryAfter = *ra
 		}
 	}
-
-	// The SDK folds the response body into the error's message rather than
-	// exposing it. The API's envelope is {"message":…,"details":…}, so try to
-	// recover those two fields; fall back to the raw text when it is not that
-	// shape, which is what a proxy or gateway error looks like.
-	msg := apiErr.Error()
-	if envelope := extractEnvelope(msg); envelope != nil {
-		out.Message, out.Details = envelope.Message, envelope.Details
-	} else {
-		out.Message = strings.TrimSpace(msg)
-	}
-	if out.Message == "" {
-		out.Message = http.StatusText(apiErr.StatusCode)
-	}
 	return out
-}
-
-// errEnvelope is the API's error shape.
-type errEnvelope struct {
-	Message string `json:"message"`
-	Details string `json:"details"`
-}
-
-// extractEnvelope pulls the {"message":…} object out of an SDK error string.
-// The SDK prefixes the body with its own text, so the JSON is located rather
-// than parsed from the start.
-func extractEnvelope(s string) *errEnvelope {
-	i := strings.Index(s, "{")
-	if i < 0 {
-		return nil
-	}
-	var e errEnvelope
-	if err := json.Unmarshal([]byte(s[i:]), &e); err != nil {
-		return nil
-	}
-	if e.Message == "" {
-		return nil
-	}
-	return &e
 }
 
 // NormalizeError converts a Core SDK error anywhere in err's chain into an

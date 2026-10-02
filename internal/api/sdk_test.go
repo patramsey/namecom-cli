@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,6 +119,56 @@ func TestFromSDKError(t *testing.T) {
 		}
 		if got.Message == "" {
 			t.Error("Message is empty; a proxy error must still say something")
+		}
+	})
+
+	// #159: FromSDKError must normalize exactly as ErrorFromResponse does, or
+	// every command except `namecom api` loses the fixes made there.
+	t.Run("an explained 500 is not called transient", func(t *testing.T) {
+		src := sdkcore.NewAPIError(http.StatusInternalServerError, nil,
+			errAPI(`{"message":"Invalid IP","details":"reserved"}`))
+		got := FromSDKError(src).(*APIError)
+		if strings.Contains(got.UserHint(), "try again shortly") {
+			t.Errorf("hint = %q; the API said why it failed, so retrying will not help", got.UserHint())
+		}
+	})
+
+	t.Run("a non-JSON body is summarized", func(t *testing.T) {
+		page := "<html>\n<body>" + strings.Repeat("<p>502 Bad Gateway</p>\n", 200) + "</body></html>"
+		src := sdkcore.NewAPIError(http.StatusBadGateway, nil, errAPI(page))
+		got := FromSDKError(src).(*APIError)
+		if len(got.Message) > maxFallbackMessage+80 {
+			t.Errorf("message is %d bytes; a proxy page must be summarized, not quoted whole", len(got.Message))
+		}
+		if strings.Contains(got.Message, "\n") {
+			t.Errorf("message spans lines: %q", got.Message)
+		}
+	})
+
+	t.Run("a 401 carries the sandbox note", func(t *testing.T) {
+		src := sdkcore.NewAPIError(http.StatusUnauthorized, nil, errAPI(`{"message":"Unauthorized"}`))
+		got := FromSDKError(src).(*APIError)
+		if !strings.Contains(got.Error(), "sandbox uses a separate API token") {
+			t.Errorf("error = %q, want the sandbox token note", got.Error())
+		}
+	})
+
+	t.Run("a typed SDK error is converted the same way", func(t *testing.T) {
+		src := &coreapigo.InternalServerError{APIError: sdkcore.NewAPIError(http.StatusInternalServerError, nil,
+			errAPI(`{"message":"Invalid IP","details":"reserved"}`))}
+		got, ok := FromSDKError(src).(*APIError)
+		if !ok {
+			t.Fatalf("FromSDKError returned %T, want *APIError", FromSDKError(src))
+		}
+		if got.Message != "Invalid IP" || got.Details != "reserved" || !got.explained {
+			t.Errorf("got %+v, want the envelope decoded and marked explained", got)
+		}
+	})
+
+	t.Run("a body-less error falls back to the status text", func(t *testing.T) {
+		src := sdkcore.NewAPIError(http.StatusServiceUnavailable, nil, nil)
+		if got := FromSDKError(src).(*APIError).Message; got != http.StatusText(http.StatusServiceUnavailable) {
+			t.Errorf("Message = %q, want the status text", got)
 		}
 	})
 
