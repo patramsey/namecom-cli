@@ -62,9 +62,9 @@ func TestExitCode(t *testing.T) {
 // new shell until credentials existed.
 //
 // __complete is deliberately NOT in this list: dynamic completion (e.g. domain
-// names) genuinely wants the API client. It degrades on its own — CompleteDomains
-// returns no suggestions when the client is absent — so it is handled by
-// tolerating a credential failure rather than skipping init outright.
+// names) genuinely wants the API client. persistentPreRunE gives it a factory
+// that builds the client only when a completion function asks, and
+// CompleteDomains returns no suggestions when that fails.
 func TestSkipClientInit_CoversCredentialFreeCommands(t *testing.T) {
 	for _, name := range []string{"auth", "config", "open", "version", "completion", "help"} {
 		t.Run(name, func(t *testing.T) {

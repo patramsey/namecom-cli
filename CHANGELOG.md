@@ -90,6 +90,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `auth login --sandbox` saves the profile with `sandbox: true` and no longer
   asks the sandbox question. The flag was ignored, so the profile was saved for
   production unless you also answered Yes at the prompt.
+- Shell completion now honors `--profile`, `--token`, `--base-url`,
+  `--sandbox` and `--timeout` typed on the command line. They were ignored, so
+  `namecom --profile prod dns list <TAB>` offered the default profile's
+  domains.
+- Shell completion no longer runs a profile's `token_cmd` on every TAB.
+  Credentials are resolved only when a completion needs the API (domain names,
+  record IDs), so completing subcommand and flag names no longer invokes a
+  password-manager helper.
 
 ## [0.4.7] - 2026-09-29
 

@@ -104,9 +104,9 @@ func TestCompleteRecordIDs(t *testing.T) {
 	})
 
 	t.Run("no client on the context degrades quietly", func(t *testing.T) {
-		// Completion runs before credentials necessarily exist: root.go lets
-		// initContext fail silently for __complete rather than break the shell,
-		// which leaves a context with no client on it. Offering nothing is the
+		// Completion runs before credentials necessarily exist: root.go's
+		// client factory fails quietly for __complete rather than break the
+		// shell, which leaves no client to use. Offering nothing is the
 		// correct answer; erroring would surface in the middle of a tab.
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())

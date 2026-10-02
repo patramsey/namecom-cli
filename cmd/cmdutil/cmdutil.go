@@ -20,6 +20,9 @@ const (
 	KeyClient
 	KeyConfig
 	KeyOverrides
+	// KeyClientFactory holds a ClientFactory. Shell completion stores one in
+	// place of a client; see ClientFactory.
+	KeyClientFactory
 )
 
 // Out retrieves the output.Config from the command context.
