@@ -72,6 +72,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   exposed.
   Bodies with something redacted are logged re-encoded, so their key order
   and spacing can differ from what was sent.
+- `auth login --sandbox` saves the profile with `sandbox: true` and no longer
+  asks the sandbox question. The flag was ignored, so the profile was saved for
+  production unless you also answered Yes at the prompt.
 
 ## [0.4.7] - 2026-09-29
 
