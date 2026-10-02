@@ -144,6 +144,35 @@ func TestCompleteDomains(t *testing.T) {
 		}
 	})
 
+	// Issue #179: one page holds 250 domains, and toComplete was ignored, so
+	// on a larger account nothing past the first page could be completed.
+	// The typed text now goes to the API as a domainName filter.
+	t.Run("filters server-side on what was typed", func(t *testing.T) {
+		tests := []struct{ typed, want string }{
+			{"", ""}, // nothing typed: no filter, the first page
+			{"acme", "*acme*"},
+			{"*.io", "*.io"}, // an explicit wildcard passes through
+		}
+		for _, tc := range tests {
+			var gotFilter string
+			var hasFilter bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotFilter = r.URL.Query().Get("domainName")
+				hasFilter = r.URL.Query().Has("domainName")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"domains":[{"domainName":"acme-later.com"}]}`))
+			}))
+			got, _ := CompleteDomains(cmdWithClient(t, srv), nil, tc.typed)
+			srv.Close()
+			if gotFilter != tc.want || hasFilter != (tc.want != "") {
+				t.Errorf("typed %q: domainName filter = %q (sent: %v), want %q", tc.typed, gotFilter, hasFilter, tc.want)
+			}
+			if len(got) != 1 || got[0] != "acme-later.com" {
+				t.Errorf("typed %q: CompleteDomains = %v, want the server's matches", tc.typed, got)
+			}
+		}
+	})
+
 	t.Run("suggests nothing once an argument is present", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			t.Error("completion made a request when the argument was already supplied")

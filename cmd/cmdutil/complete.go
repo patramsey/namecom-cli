@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -44,9 +45,11 @@ func completionClient(cmd *cobra.Command) *api.Client {
 }
 
 // CompleteDomains is a cobra ValidArgsFunction that returns domain names for
-// shell tab completion. It fetches one maximally-sized page (250); cobra
-// handles client-side prefix filtering from there.
-func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+// shell tab completion. It fetches one maximally-sized page (250), filtered
+// server-side by what has been typed so far — without the filter, a domain
+// past the first page of a large account could never be completed. The shell
+// narrows the matches to the prefix from there.
+func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -58,8 +61,18 @@ func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cob
 	defer cancel()
 	p := 1
 	perPage := 250
-	result, err := client.SDK().Domains.ListDomains(ctx,
-		&coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage})
+	req := &coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage}
+	if toComplete != "" {
+		// The same wrapping as `domain list --filter`: the API takes a
+		// wildcard only when it starts with '*', and one the user typed
+		// passes through.
+		f := toComplete
+		if !strings.Contains(f, "*") {
+			f = "*" + f + "*"
+		}
+		req.DomainName = &f
+	}
+	result, err := client.SDK().Domains.ListDomains(ctx, req)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}

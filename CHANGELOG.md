@@ -101,6 +101,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - Shell completion gives up after 2 seconds (or `--timeout`, if shorter) and
   does not retry. An API that accepted connections but never answered froze
   the shell for the full 30-second timeout on every TAB.
+- Domain-name completion now finds any domain on the account. It fetched only
+  the first 250 domains and ignored what had been typed; the typed text is now
+  sent to the API as a filter, the same one `domain list --filter` uses.
 
 ## [0.4.7] - 2026-09-29
 
