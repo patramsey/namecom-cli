@@ -28,6 +28,33 @@ Releases before `0.2.0` predate this file. Their notes are on the
   before anything is sent. Before, `NaN`, zero and negatives were silently
   ignored, and `Inf` was quoted in the prompt as `$+Inf`, gave an empty
   `--dry-run` preview, and failed when sent.
+- A long non-JSON error body (a proxy's error page, say) is no longer cut in
+  the middle of a multi-byte character when it is shortened for the error
+  message, and invalid UTF-8 in such a body is replaced. The message, including
+  the one in the JSON error envelope, is now always valid UTF-8.
+- API errors from every command are now reported the way `namecom api`
+  reports them. A 500 whose body explains the failure (such as `Invalid IP`)
+  no longer suggests trying again shortly; an HTML error page from a proxy is
+  shortened to one line instead of becoming the whole error message; and a 401
+  mentions that the sandbox uses a separate API token. The error `message` in
+  JSON output changes for non-JSON error bodies: it no longer starts with the
+  status code (`502: <html>…`), and an empty body reads as the status text
+  (`Service Unavailable`) rather than the bare code.
+- A successful response whose body is empty, not JSON, or JSON of the wrong
+  shape now fails with `unexpected response from the API: …` and a hint that
+  a change may still have been made, instead of a Go decoder message naming
+  internal types (`json: cannot unmarshal array into Go value of type …`,
+  `expected a **api.DomainResponsePayload response …`). It still exits 1.
+- A final 429 or 5xx is reported at once instead of after an extra wait. The
+  API library slept before returning these even with its retries turned off:
+  up to 60 seconds on a 429's `Retry-After`, and a second or two on a 5xx. A
+  429 whose `Retry-After` outlasted `--timeout` could also come back as a
+  `request canceled` error with exit 1; it now exits 5 as documented.
+- A write (POST, PUT, PATCH, DELETE) answered with a redirect now fails,
+  naming the redirect, instead of following it. A redirected POST used to be
+  resent as a GET without its body, so `dns create` could report
+  `Created A record (id 0)` and exit 0 when nothing was created. Reads still
+  follow redirects. This applies to `namecom api` as well.
 
 ## [0.4.7] - 2026-09-29
 

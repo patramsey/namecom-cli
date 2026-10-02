@@ -7,6 +7,8 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -151,7 +153,8 @@ func New(opts Options) (*Client, error) {
 	// comment: the idempotency key must be stamped once, before the retry loop
 	// replays the request.
 	httpClient := &http.Client{
-		Timeout: timeout,
+		Timeout:       timeout,
+		CheckRedirect: refuseWriteRedirect,
 		Transport: &headerTransport{
 			authHeader: authHeader,
 			userAgent:  ua,
@@ -182,6 +185,32 @@ func New(opts Options) (*Client, error) {
 		httpClient: httpClient,
 		editor:     editor,
 	}, nil
+}
+
+// refuseWriteRedirect is the client's CheckRedirect: reads follow redirects as
+// usual, writes do not follow them at all.
+//
+// net/http answers a 301, 302 or 303 on a POST by sending a GET, without the
+// body, to the new location. The write is silently dropped, and whatever the
+// GET returns is decoded as its result: a stub that redirected `dns create`
+// got "Created A record (id 0)" and exit 0 for a record that did not exist
+// (#185). A 307 or 308 would resend the write to a host and path nobody chose.
+// Neither is something a CLI should do on the server's say-so, so the request
+// fails instead, naming the redirect.
+func refuseWriteRedirect(req *http.Request, via []*http.Request) error {
+	if orig := via[0]; orig.Method != http.MethodGet && orig.Method != http.MethodHead {
+		status := 0
+		if req.Response != nil {
+			status = req.Response.StatusCode
+		}
+		return fmt.Errorf("the API answered with a %d redirect to %s; not following it for a %s, "+
+			"because the redirected request would not be the one that was sent", status, req.URL.Redacted(), orig.Method)
+	}
+	// net/http's default policy, which setting CheckRedirect replaces.
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
 }
 
 // Prepare applies the standard headers — auth, User-Agent, Accept, and the
