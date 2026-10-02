@@ -1,0 +1,6 @@
+go test fuzz v1
+byte('\x0f')
+string("0")
+string("\n")
+int64(337)
+int64(122)
