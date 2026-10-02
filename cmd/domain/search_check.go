@@ -45,19 +45,7 @@ func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	client := cmdutil.APIClient(cmd)
 
 	domainName := r.DomainName
-	years := 1
-	body := coreapigo.CreateDomainRequest{
-		Domain: &coreapigo.DomainCreatePayload{
-			DomainName:       &domainName,
-			AutorenewEnabled: new(bool),
-			PrivacyEnabled:   new(bool),
-		},
-		Years: &years,
-	}
-	if r.PurchasePrice != nil {
-		body.PurchasePrice = r.PurchasePrice
-	}
-	body.PurchaseType, _ = nonDefaultPurchaseType(r)
+	body := checkRegisterBody(r)
 
 	// Same trademark gate as `domain register`. This path offers to buy a domain
 	// too, so skipping the check here would let `domain check <name>` acquire a
@@ -90,6 +78,61 @@ func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", registered))
 	out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", registered))
 	return nil
+}
+
+// checkRegisterBody is the request inlineRegister sends for r, before any
+// trademark claim is added. checkRegisterPrompt quotes from the same body, so
+// the offer states the price actually submitted.
+func checkRegisterBody(r *coreapigo.SearchResult) coreapigo.CreateDomainRequest {
+	domainName := r.DomainName
+	years := 1
+	body := coreapigo.CreateDomainRequest{
+		Domain: &coreapigo.DomainCreatePayload{
+			DomainName:       &domainName,
+			AutorenewEnabled: new(bool),
+			PrivacyEnabled:   new(bool),
+		},
+		Years: &years,
+	}
+	if r.PurchasePrice != nil {
+		body.PurchasePrice = r.PurchasePrice
+	}
+	body.PurchaseType, _ = nonDefaultPurchaseType(r)
+	return body
+}
+
+// checkRegisterPrompt is `domain check`'s register offer, worded by
+// registerPrompt so it describes the purchase kind the way `domain register`
+// does: a flat fee for an aftermarket, expiring or backorder name, and a
+// premium price with its renewal price (#171). The search result stands in
+// for the pricing lookup `domain register` makes.
+func checkRegisterPrompt(r *coreapigo.SearchResult) string {
+	if r.PurchasePrice == nil {
+		return fmt.Sprintf("Register %s?", r.DomainName)
+	}
+	return registerPrompt(r.DomainName, checkRegisterBody(r), &coreapigo.PricingResponse{
+		Premium:       derefBool(r.Premium),
+		PurchasePrice: r.PurchasePrice,
+		RenewalPrice:  r.RenewalPrice,
+	})
+}
+
+// searchPriceLabel is the PRICE cell for a purchasable result, in the same
+// terms as checkRegisterPrompt. Only an ordinary registration is a yearly
+// price; an acquisition is a one-off fee, and a premium name usually renews
+// far below its purchase price.
+func searchPriceLabel(r *coreapigo.SearchResult) string {
+	price := *r.PurchasePrice
+	if pt, _ := nonDefaultPurchaseType(r); pt != nil {
+		return fmt.Sprintf("$%.2f flat (%s)", price, *pt)
+	}
+	if derefBool(r.Premium) {
+		if r.RenewalPrice != nil {
+			return fmt.Sprintf("$%.2f (renews $%.2f/yr)", price, *r.RenewalPrice)
+		}
+		return fmt.Sprintf("$%.2f", price)
+	}
+	return fmt.Sprintf("$%.2f/yr", price)
 }
 
 var searchCmd = &cobra.Command{
@@ -352,12 +395,8 @@ func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []*corea
 		return nil
 	}
 	r := results[0]
-	price := ""
-	if r.PurchasePrice != nil {
-		price = fmt.Sprintf(" for $%.2f/yr", *r.PurchasePrice)
-	}
 	// Deliberately passing false, not cmdutil.IsYes(cmd) — see the doc comment.
-	ok, err := confirm(out, false, fmt.Sprintf("Register %s%s?", r.DomainName, price))
+	ok, err := confirm(out, false, checkRegisterPrompt(r))
 	if err != nil {
 		return err
 	}
@@ -395,7 +434,7 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 		for _, r := range results {
 			price := out.Dim("—")
 			if r.Purchasable && r.PurchasePrice != nil {
-				price = fmt.Sprintf("$%.2f/yr", *r.PurchasePrice)
+				price = searchPriceLabel(r)
 			}
 			// SearchResult.Premium is a *bool, and the SDK documents it as
 			// "only returned for purchasable domains" with omitempty on the

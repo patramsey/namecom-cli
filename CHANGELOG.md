@@ -169,6 +169,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   It gets a row and a warning. On every path, a `domain check` with any domain
   left unanswered now exits **1** after printing its results; it used to exit
   0, so scripts checking the exit code will see this.
+- `domain check`'s offer to register and the `domain check` / `domain search`
+  PRICE column describe the purchase the way `domain register` does. An
+  aftermarket, expiring or backorder price reads as a flat fee
+  (`$8625.00 flat (aftermarket_b)`) rather than `/yr`, and a premium price
+  shows its renewal price. JSON output is unchanged.
 
 ## [0.4.7] - 2026-09-29
 

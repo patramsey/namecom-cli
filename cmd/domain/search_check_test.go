@@ -1062,3 +1062,66 @@ func TestCheck_RegistryPathAccountsForEveryArgument(t *testing.T) {
 		t.Error("an unanswered domain must not be reported purchasable")
 	}
 }
+
+// TestCheck_PriceWordingFollowsPurchaseKind pins #171. #142 fixed "/yr" in
+// `domain register`'s prompt, but `domain check`'s register offer and the
+// check/search PRICE column still quoted every price per year: an aftermarket
+// name read "$8625.00/yr" when it is a one-off fee, and a premium name hid
+// that it renews far cheaper.
+func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
+	aftermarket := coreapigo.SearchPurchaseType("aftermarket_b")
+	registration := coreapigo.SearchPurchaseTypeRegistration
+	yes := true
+
+	for _, tc := range []struct {
+		name           string
+		result         coreapigo.SearchResult
+		wantCell       string
+		wantPrompt     string
+		notWantInPrice string
+	}{
+		{
+			name: "aftermarket is a flat fee",
+			result: coreapigo.SearchResult{DomainName: "example.org", Purchasable: true,
+				PurchasePrice: new(8625.0), RenewalPrice: new(21.99), PurchaseType: &aftermarket},
+			wantCell:       "$8625.00 flat (aftermarket_b)",
+			wantPrompt:     "Register example.org at $8625.00 flat (aftermarket_b, not per year)?",
+			notWantInPrice: "/yr",
+		},
+		{
+			name: "premium shows its renewal price",
+			result: coreapigo.SearchResult{DomainName: "shoe.luxe", Purchasable: true,
+				PurchasePrice: new(1000.0), RenewalPrice: new(24.99), Premium: &yes, PurchaseType: &registration},
+			wantCell:       "$1000.00 (renews $24.99/yr)",
+			wantPrompt:     "Register shoe.luxe for 1 year(s) at $1000.00 (premium; renews at $24.99/yr)?",
+			notWantInPrice: "$1000.00/yr",
+		},
+		{
+			name: "ordinary registration stays per year",
+			result: coreapigo.SearchResult{DomainName: "free.com", Purchasable: true,
+				PurchasePrice: new(12.99), RenewalPrice: new(12.99)},
+			wantCell:   "$12.99/yr",
+			wantPrompt: "Register free.com for 1 year(s) at $12.99/yr?",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.result
+			if got := checkRegisterPrompt(&r); got != tc.wantPrompt {
+				t.Errorf("register offer = %q, want %q", got, tc.wantPrompt)
+			}
+
+			var buf bytes.Buffer
+			out := outWithFormat(output.FormatTable, &buf)
+			out.Wide = true
+			if err := renderSearchResults(out, []*coreapigo.SearchResult{&r}); err != nil {
+				t.Fatalf("renderSearchResults: %v", err)
+			}
+			if !strings.Contains(buf.String(), tc.wantCell) {
+				t.Errorf("PRICE cell %q missing:\n%s", tc.wantCell, buf.String())
+			}
+			if tc.notWantInPrice != "" && strings.Contains(buf.String(), tc.notWantInPrice) {
+				t.Errorf("table must not say %q:\n%s", tc.notWantInPrice, buf.String())
+			}
+		})
+	}
+}
