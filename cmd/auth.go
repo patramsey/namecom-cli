@@ -25,6 +25,7 @@ var authLoginCmd = &cobra.Command{
 	Example: `  namecom auth login
   namecom auth login --profile staging
   namecom auth login --profile sandbox --sandbox`,
+	Args: cobra.NoArgs,
 	RunE: runAuthLogin,
 }
 
@@ -33,6 +34,7 @@ var authStatusCmd = &cobra.Command{
 	Short: "Verify credentials by calling the API hello endpoint",
 	Example: `  namecom auth status
   namecom auth status --profile staging`,
+	Args: cobra.NoArgs,
 	RunE: runAuthStatus,
 }
 
@@ -41,6 +43,7 @@ var authLogoutCmd = &cobra.Command{
 	Short: "Remove credentials for the active profile",
 	Example: `  namecom auth logout
   namecom auth logout --profile staging`,
+	Args: cobra.NoArgs,
 	RunE: runAuthLogout,
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,6 +65,21 @@ func TestSearch_Empty(t *testing.T) {
 	cmd := baseCmd(t, srv)
 	if err := runSearch(cmd, []string{"zzznomatch"}); err != nil {
 		t.Fatalf("runSearch: %v", err)
+	}
+}
+
+// TestSearch_EmptyTermIsUsageError pins #187: `domain search ""` printed an
+// empty table and exited 0, which reads as "nothing matched".
+func TestSearch_EmptyTermIsUsageError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	for _, term := range []string{"", "  "} {
+		err := runSearch(baseCmd(t, srv), []string{term})
+		if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+			t.Errorf("search %q = %v, want a usage error", term, err)
+		}
 	}
 }
 

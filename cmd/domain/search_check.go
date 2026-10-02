@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -164,6 +165,11 @@ func init() {
 func runSearch(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	// An empty term printed an empty table and exited 0 (#187), which a
+	// script cannot tell from "nothing matched".
+	if strings.TrimSpace(args[0]) == "" {
+		return cmdutil.NewUsageError(errors.New("search term must not be empty"))
+	}
 
 	stop := out.Spin("Searching domains…")
 	result, err := client.SDK().Domains.Search(cmd.Context(),
