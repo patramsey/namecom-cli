@@ -1,29 +1,78 @@
 package cmdutil
 
 import (
+	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
+// CompletionTimeout bounds the API work behind one TAB. The shell is frozen
+// until completion returns, so a slow or unreachable API should cost the user
+// a moment, not the full --timeout; root.go also disables retries for the
+// completion client.
+const CompletionTimeout = 2 * time.Second
+
+// ClientFactory builds the API client on demand. root.go stores one on the
+// context of cobra's __complete command instead of a client, for two reasons.
+// __complete disables flag parsing, so when persistentPreRunE runs the global
+// flags (--profile, --token, --base-url, ...) are still unparsed; by the time
+// a completion function runs, cobra has parsed them. And most completions are
+// static — subcommand and flag names — so resolving credentials up front ran
+// a token_cmd helper on every TAB for nothing.
+type ClientFactory func(cmd *cobra.Command) (*api.Client, error)
+
+// completionClient returns the client a completion function should use: one
+// already on the context, else one built by the stored ClientFactory. Nil
+// means there is none to be had — no credentials, an unknown profile — and
+// the caller offers no candidates rather than an error mid-TAB.
+func completionClient(cmd *cobra.Command) *api.Client {
+	ctx := cmd.Context()
+	if client, ok := ctx.Value(KeyClient).(*api.Client); ok && client != nil {
+		return client
+	}
+	if build, ok := ctx.Value(KeyClientFactory).(ClientFactory); ok && build != nil {
+		if client, err := build(cmd); err == nil {
+			return client
+		}
+	}
+	return nil
+}
+
 // CompleteDomains is a cobra ValidArgsFunction that returns domain names for
-// shell tab completion. It fetches one maximally-sized page (250); cobra
-// handles client-side prefix filtering from there.
-func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+// shell tab completion. It fetches one maximally-sized page (250), filtered
+// server-side by what has been typed so far — without the filter, a domain
+// past the first page of a large account could never be completed. The shell
+// narrows the matches to the prefix from there.
+func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	client, ok := cmd.Context().Value(KeyClient).(*api.Client)
-	if !ok || client == nil {
+	client := completionClient(cmd)
+	if client == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), CompletionTimeout)
+	defer cancel()
 	p := 1
 	perPage := 250
-	result, err := client.SDK().Domains.ListDomains(cmd.Context(),
-		&coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage})
+	req := &coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage}
+	if toComplete != "" {
+		// The same wrapping as `domain list --filter`: the API takes a
+		// wildcard only when it starts with '*', and one the user typed
+		// passes through.
+		f := toComplete
+		if !strings.Contains(f, "*") {
+			f = "*" + f + "*"
+		}
+		req.DomainName = &f
+	}
+	result, err := client.SDK().Domains.ListDomains(ctx, req)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
@@ -38,14 +87,17 @@ func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cob
 // type+host description so zsh/fish can display context alongside the ID.
 // Used as the second-arg completion for dns update and dns delete.
 func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.ShellCompDirective) {
-	client, ok := cmd.Context().Value(KeyClient).(*api.Client)
-	if !ok || client == nil {
+	client := completionClient(cmd)
+	if client == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	// One deadline for the whole walk, not one per page.
+	ctx, cancel := context.WithTimeout(cmd.Context(), CompletionTimeout)
+	defer cancel()
 	var completions []string
 	page := 1
 	for {
-		result, err := client.SDK().DNS.ListRecords(cmd.Context(),
+		result, err := client.SDK().DNS.ListRecords(ctx,
 			&coreapigo.ListRecordsRequest{DomainName: domain, Page: &page})
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveError

@@ -215,15 +215,32 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	if skipClientInit(cmd) {
 		return nil
 	}
-	err := initContext(cmd)
-	// Dynamic completion wants the API client (to suggest domain names) but must
-	// never fail the shell when credentials are absent. The completion functions
-	// already return no suggestions when the client is missing, so swallow the
-	// error and let TAB stay quiet instead of printing a credential error.
-	if err != nil && cmd.Name() == cobra.ShellCompRequestCmd {
+	// Shell completion builds its client lazily, only when a completion
+	// function calls the API. Here the global flags are not parsed yet —
+	// __complete disables flag parsing — and building now would also run
+	// token_cmd on every TAB, static completions included. See
+	// cmdutil.ClientFactory.
+	if isCompletionRequest(cmd) {
+		cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyClientFactory, cmdutil.ClientFactory(completionClient)))
 		return nil
 	}
-	return err
+	return initContext(cmd)
+}
+
+// isCompletionRequest reports whether cmd is cobra's hidden __complete
+// command (or its no-descriptions variant), which the shell runs on TAB.
+func isCompletionRequest(cmd *cobra.Command) bool {
+	return cmd.Name() == cobra.ShellCompRequestCmd || cmd.Name() == cobra.ShellCompNoDescRequestCmd
+}
+
+// completionClient is the cmdutil.ClientFactory for shell completion. cmd is
+// the command being completed, whose flags cobra has parsed by now, so the
+// globals reflect what was typed on the line.
+func completionClient(cmd *cobra.Command) (*api.Client, error) {
+	if err := initClient(cmd, true); err != nil {
+		return nil, err
+	}
+	return cmdutil.APIClient(cmd), nil
 }
 
 // initOutputContext applies --output, --color, --quiet, --no-header, and --wide to the
@@ -279,7 +296,11 @@ func flagOverrides(cmd *cobra.Command) config.Overrides {
 // initContext builds the API client and config file from the resolved
 // flags/env and stores them on the command's context. Output config is
 // already set by initOutputContext.
-func initContext(cmd *cobra.Command) error {
+func initContext(cmd *cobra.Command) error { return initClient(cmd, false) }
+
+// initClient is initContext, with forCompletion set when the client answers a
+// shell TAB rather than a command.
+func initClient(cmd *cobra.Command, forCompletion bool) error {
 	out := cmdutil.Out(cmd)
 
 	// --- Credentials ---
@@ -341,12 +362,21 @@ func initContext(cmd *cobra.Command) error {
 		UserAgent: "namecom-cli/" + Version,
 		Timeout:   gf.timeout,
 	}
+	// A TAB freezes the shell until it returns: one short attempt, and no
+	// candidates if the API cannot answer in time. A shorter --timeout wins.
+	if forCompletion {
+		if apiOpts.Timeout <= 0 || apiOpts.Timeout > cmdutil.CompletionTimeout {
+			apiOpts.Timeout = cmdutil.CompletionTimeout
+		}
+		apiOpts.MaxRetries = -1
+	}
 	if gf.baseURL != "" {
 		if err := validateBaseURL(gf.baseURL); err != nil {
 			return cmdutil.NewUsageError(err)
 		}
 		apiOpts.BaseURL = gf.baseURL
-		if warn := baseURLWarning(gf.baseURL); warn != "" {
+		// Not during completion: anything printed there lands mid-prompt.
+		if warn := baseURLWarning(gf.baseURL); warn != "" && !forCompletion {
 			out.Warn(warn)
 		}
 	}
