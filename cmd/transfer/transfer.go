@@ -645,8 +645,9 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 	return fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg)
 }
 
-// redactedAuthCode replaces the auth code in a --dry-run preview.
-const redactedAuthCode = "[redacted]"
+// redactedAuthCode replaces the auth code in a --dry-run preview. It is the
+// placeholder the --debug log uses too, so a secret looks the same in both.
+const redactedAuthCode = api.Redacted
 
 // redactTransferAuthCode is the preview of a transfer create: the real body,
 // but never the auth code. It is the secret that authorises moving the domain,

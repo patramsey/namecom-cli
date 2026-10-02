@@ -278,13 +278,18 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int) {
 	if attempt > 0 {
 		prefix = fmt.Sprintf("→ (retry %d)", attempt)
 	}
-	// Authorization is intentionally never logged.
+	// Authorization is intentionally never logged, and secrets in the body
+	// are redacted — see RedactBody.
 	fmt.Fprintf(t.logw, "%s %s %s\n", prefix, req.Method, req.URL.String())
 	if req.Body != nil && req.GetBody != nil {
 		body, err := req.GetBody()
 		if err == nil {
-			data, _ := io.ReadAll(io.LimitReader(body, 4096))
+			// Redact the whole body, then cap it, so it is redacted as
+			// parsed JSON rather than by the fallback for a cut-short body.
+			data, _ := io.ReadAll(body)
 			_ = body.Close()
+			data = RedactBody(data)
+			data = data[:min(len(data), 4096)]
 			if len(data) > 0 {
 				fmt.Fprintf(t.logw, "  body: %s\n", data)
 			}
@@ -303,7 +308,7 @@ func (t *retryTransport) logResponse(resp *http.Response, _ int) {
 	resp.Body = io.NopCloser(bytes.NewReader(data))
 	if len(data) > 0 {
 		const logLimit = 4096
-		logged := data
+		logged := RedactBody(data)
 		if len(logged) > logLimit {
 			fmt.Fprintf(t.logw, "  body: %s… (%d bytes total)\n", logged[:logLimit], len(data))
 		} else {
