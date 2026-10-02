@@ -115,6 +115,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and nothing is sent. Output that echoes the domain, such as dry-run paths,
   shows the punycode form. This adds `golang.org/x/net` (for its `idna`
   package) as a dependency.
+- `domain set-ns` rejects a nameserver containing whitespace, such as
+  `--ns "ns1.example .com,ns2.example.com"`, as a usage error (exit 2) before
+  sending anything. It was sent, so the mistake came back as an API error
+  instead. Spaces around the commas are still trimmed as before.
 
 ## [0.4.7] - 2026-09-29
 

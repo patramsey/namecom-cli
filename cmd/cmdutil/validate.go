@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
@@ -239,6 +240,9 @@ func isASCII(s string) bool {
 func ValidNameserver(ns string, idx int) error {
 	if ns == "" {
 		return usagef("nameserver %d is empty", idx+1)
+	}
+	if strings.IndexFunc(ns, unicode.IsSpace) >= 0 {
+		return usagef("nameserver %q must not contain spaces", ns)
 	}
 	if !strings.Contains(ns, ".") {
 		return usagef("nameserver %q must be a fully-qualified hostname (e.g. ns1.example.com)", ns)

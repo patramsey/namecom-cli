@@ -223,6 +223,12 @@ func TestValidNameserver(t *testing.T) {
 		"has..double.dot",
 		".leading.example.com",  // leading dot
 		"trailing.example.com.", // trailing dot
+		// Whitespace (#191): ValidDomainName refused these, ValidNameserver
+		// let them through to the API.
+		"ns1.example .com",
+		"ns1.example\t.com",
+		" ns1.example.com",
+		"ns1 .example.com",
 	}
 	for _, s := range bad {
 		if err := ValidNameserver(s, 0); err == nil {
