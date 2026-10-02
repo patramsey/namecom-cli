@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +26,8 @@ import (
 )
 
 // parseCharStrings reads zone-file TXT rdata as a sequence of RFC 1035
-// quoted character-strings separated by single spaces, undoing \X escapes.
+// quoted character-strings separated by single spaces, undoing \X and \DDD
+// escapes (quoteTXT writes control characters as \DDD since #188).
 // It is deliberately strict: it accepts exactly the shape quoteTXT promises.
 func parseCharStrings(s string) ([]string, error) {
 	var out []string
@@ -42,6 +44,18 @@ func parseCharStrings(s string) ([]string, error) {
 			if c == '\\' {
 				if i+1 >= len(s) {
 					return nil, errors.New("dangling backslash")
+				}
+				if d := s[i+1]; d >= '0' && d <= '9' {
+					if i+4 > len(s) {
+						return nil, errors.New("short \\DDD escape")
+					}
+					n, err := strconv.ParseUint(s[i+1:i+4], 10, 8)
+					if err != nil {
+						return nil, fmt.Errorf("bad \\DDD escape %q", s[i:i+4])
+					}
+					b.WriteByte(byte(n))
+					i += 4
+					continue
 				}
 				b.WriteByte(s[i+1])
 				i += 2
@@ -89,10 +103,10 @@ func FuzzQuoteTXT(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		got := quoteTXT(s)
 		if alreadyQuoted(s) {
-			// Passed through verbatim by design; see the tests below for
-			// what that lets through.
-			if got != s {
-				t.Fatalf("already-quoted input changed: %q -> %q", s, got)
+			// Passed through by design, with only control characters
+			// escaped; see the tests below for what that lets through.
+			if got != escapeControls(s) {
+				t.Fatalf("already-quoted input changed beyond escaping controls: %q -> %q", s, got)
 			}
 			return
 		}
@@ -398,12 +412,6 @@ func skipKnownZoneBug(rec *coreapigo.Record) bool {
 		// verbatim, so an unbalanced `"a"b"` or a quoted value over 255 bytes
 		// is emitted as-is and the zone does not load.
 		if alreadyQuoted(a) && !unskip("quoted") {
-			return true
-		}
-		// KNOWN BUG (fuzz): quoteTXT does not escape a newline, so a TXT
-		// value containing one ends the zone line inside the quotes.
-		// Minimal input: TXT "\n".
-		if strings.ContainsAny(a, "\n") && !unskip("newline") {
 			return true
 		}
 	}

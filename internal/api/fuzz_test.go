@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -73,25 +72,10 @@ func FuzzErrorFromResponse(f *testing.F) {
 		if strings.ContainsAny(e.Message, "\n\r\t") {
 			t.Fatalf("message is not one line: %q", e.Message)
 		}
-		if utf8.Valid(body) && !utf8.ValidString(e.Message) && !knownSummarizeSplit(body) {
+		if utf8.Valid(body) && !utf8.ValidString(e.Message) {
 			t.Fatalf("valid UTF-8 body produced invalid UTF-8 message %q", e.Message)
 		}
 	})
-}
-
-// knownSummarizeSplit reports whether body hits a known bug, so the fuzzer
-// keeps looking past it.
-//
-// KNOWN BUG (fuzz): summarizeBody truncates the collapsed body at byte 400
-// (msg[:maxFallbackMessage]) without backing off to a rune boundary, so a
-// multi-byte character straddling byte 400 is cut in half and the message is
-// not valid UTF-8. Minimal input: 399 ASCII bytes followed by "é".
-func knownSummarizeSplit(body []byte) bool {
-	if os.Getenv("FUZZ_UNSKIP") != "" {
-		return false
-	}
-	msg := strings.Join(strings.Fields(string(body)), " ")
-	return len(msg) > maxFallbackMessage && !utf8.RuneStart(msg[maxFallbackMessage])
 }
 
 // isEnvelope mirrors ErrorFromResponse's choice of the envelope path.
