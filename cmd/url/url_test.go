@@ -999,11 +999,68 @@ func TestURLUpdate_DryRunSummaryShowsSentType(t *testing.T) {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
 	got := buf.String()
-	if !strings.Contains(got, "type=masked") {
-		t.Errorf("dry-run summary should show the type being sent (masked):\n%s", got)
+	// The preview body is the only place the type appears; the hand-written
+	// summary line that used to follow it is gone (#154).
+	if !strings.Contains(got, `"type": "masked"`) {
+		t.Errorf("dry-run preview should show the type being sent (masked):\n%s", got)
 	}
-	if strings.Contains(got, "type=redirect") {
-		t.Errorf("dry-run summary shows the --type default, not the sent type:\n%s", got)
+	if strings.Contains(got, "redirect") {
+		t.Errorf("dry-run output shows the --type default, not the sent type:\n%s", got)
+	}
+}
+
+// TestURLWrite_DryRunJSONIsOneDocument pins #154: in JSON mode, url create and
+// url update printed a "host=… to=… type=…" line after the dry-run document,
+// so stdout was not valid JSON and `| jq` failed.
+func TestURLWrite_DryRunJSONIsOneDocument(t *testing.T) {
+	defer output.StubInteractive(false)()
+	const getResponse = `{"id":1,"host":"www","forwardsTo":"https://keep.example","type":"redirect"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("%s must not be sent in dry-run mode", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(getResponse))
+	}))
+	t.Cleanup(srv.Close)
+
+	cases := []struct {
+		name  string
+		build func() *cobra.Command
+		flags []string
+		run   func(*cobra.Command) error
+	}{
+		{"create", func() *cobra.Command { return cmdForURLCreate(t, srv) },
+			[]string{"--host", "www", "--to", "https://example.net"},
+			func(c *cobra.Command) error { return runCreate(c, []string{"example.com"}) }},
+		{"update", func() *cobra.Command { return cmdForURLUpdate(t, srv) },
+			[]string{"--to", "https://example.org"},
+			func(c *cobra.Command) error { return runUpdate(c, []string{"example.com", "1"}) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := withDryRun(t, tc.build(), true)
+			out := cmdutil.Out(cmd)
+			out.Format = output.FormatJSON
+			if err := cmd.ParseFlags(tc.flags); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			if err := tc.run(cmd); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			stdout := out.Writer.(*bytes.Buffer).Bytes()
+			dec := json.NewDecoder(bytes.NewReader(stdout))
+			var doc map[string]any
+			if err := dec.Decode(&doc); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+			}
+			if doc["dry_run"] != true {
+				t.Errorf("expected a dry-run document, got %v", doc)
+			}
+			if rest, _ := io.ReadAll(dec.Buffered()); len(bytes.TrimSpace(rest)) > 0 {
+				t.Errorf("trailing output after the JSON document: %q", rest)
+			}
+		})
 	}
 }
 
