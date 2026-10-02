@@ -64,9 +64,14 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		// Echoing the TLD back tells the caller nothing they did not already
 		// type. The useful scriptable answer is which fields the registry
 		// requires, one per line, so `--tld-requirement` can be built from it.
+		// A notice is text to read, with nothing to submit, so it is not a
+		// --tld-requirement key (#172); the table shows it instead.
 		var names []string
 		if result.Requirements != nil {
-			for name := range result.Requirements.Fields {
+			for name, f := range result.Requirements.Fields {
+				if f != nil && f.Type == coreapigo.RequirementFieldTypeNotice {
+					continue
+				}
 				names = append(names, name)
 			}
 			sort.Strings(names)
@@ -96,6 +101,12 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 			{"Transfer lock", badge(info.SupportsTransferLock)},
 			{"Premium domains", badge(info.SupportsPremium)},
 		})
+		// Notices are the one part of the requirements that is flat text, and
+		// the SDK says they must be shown before registration — .ca's warns
+		// that an order not meeting the rules will fail (#172).
+		for _, notice := range requirementNotices(result.Requirements) {
+			fmt.Fprintln(out.Writer, "Note: "+notice)
+		}
 		// The requirements themselves are nested and conditional; a table would
 		// misrepresent them, so point at the structured view rather than
 		// flattening it into something misleading.
@@ -103,6 +114,26 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		out.Hint("Pass them at registration with 'domain register --tld-requirement key=value' (repeatable)")
 	}
 	return nil
+}
+
+// requirementNotices returns the text of req's top-level notice fields, in
+// field-name order so the output is stable.
+func requirementNotices(req *coreapigo.Requirement) []string {
+	if req == nil {
+		return nil
+	}
+	var names []string
+	for name, f := range req.Fields {
+		if f != nil && f.Type == coreapigo.RequirementFieldTypeNotice && f.Description != nil && *f.Description != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	notices := make([]string, 0, len(names))
+	for _, name := range names {
+		notices = append(notices, *req.Fields[name].Description)
+	}
+	return notices
 }
 
 func joinYears(years []int) string {

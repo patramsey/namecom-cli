@@ -174,6 +174,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   aftermarket, expiring or backorder price reads as a flat fee
   (`$8625.00 flat (aftermarket_b)`) rather than `/yr`, and a premium price
   shows its renewal price. JSON output is unchanged.
+- `domain requirements -q` lists only fields you can pass to
+  `--tld-requirement`. It used to include notice entries such as .ca's
+  `description`, which take no value, so scripts building flags from it will
+  see one name fewer. The table now prints those notices under the
+  capabilities instead of hiding them.
 
 ## [0.4.7] - 2026-09-29
 
