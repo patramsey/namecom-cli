@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -352,7 +353,9 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Check that an explicitly requested profile actually exists.
+	// Check that an explicitly requested profile actually exists. A missing
+	// one leaves no usable credentials, so it is an auth error (exit 3), like
+	// every other way of having none (#210).
 	profileReq := gf.profile
 	if profileReq == "" {
 		profileReq = os.Getenv("NAMECOM_PROFILE")
@@ -364,12 +367,13 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 			for k := range cfgFile.Profiles {
 				names = append(names, k)
 			}
+			sort.Strings(names)
 			if len(names) > 0 {
-				return fmt.Errorf("profile %q not found in %s\n\nAvailable profiles: %s\nRun 'namecom auth login --profile %s' to create it",
-					profileReq, cfgPath, strings.Join(names, ", "), profileReq)
+				return cmdutil.NewAuthError(fmt.Errorf("profile %q not found in %s\n\nAvailable profiles: %s\nRun 'namecom auth login --profile %s' to create it",
+					profileReq, cfgPath, strings.Join(names, ", "), profileReq))
 			}
-			return fmt.Errorf("profile %q not found in %s (no profiles configured)\nRun 'namecom auth login --profile %s' to create it",
-				profileReq, cfgPath, profileReq)
+			return cmdutil.NewAuthError(fmt.Errorf("profile %q not found in %s (no profiles configured)\nRun 'namecom auth login --profile %s' to create it",
+				profileReq, cfgPath, profileReq))
 		}
 	}
 

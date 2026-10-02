@@ -14,6 +14,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   flags placed after `--help` at the top level print the root help and exit 0.
   They used to fail with `unknown command "json"` and exit 2; the same flags
   already worked before `--help` and on subcommands.
+- **Script-visible:** a `--profile` or `NAMECOM_PROFILE` naming a profile that
+  does not exist now exits 3, the authentication code, instead of 1. The error
+  lists the profiles that do exist, in sorted order.
 - `url update --help` no longer shows `(default "redirect")` for `--type`.
   Leaving `--type` out has always kept the forwarding's current type; the help
   now says so. Root help lists the exit codes, and the `dns delete` example
