@@ -133,7 +133,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			spin.Stop()
 			return err
 		}
-		transfers = append(transfers, result.Transfers...)
+		transfers = append(transfers, cmdutil.NonNil(result.Transfers)...)
 		lastResult = result
 		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
 		if !ok {

@@ -148,7 +148,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			spin.Stop()
 			return api.FromSDKError(err)
 		}
-		orders = append(orders, result.Orders...)
+		orders = append(orders, cmdutil.NonNil(result.Orders)...)
 		lastResult = result
 		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
 		if !ok {
@@ -222,6 +222,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	o.OrderItems = cmdutil.NonNil(o.OrderItems)
 
 	switch out.Format {
 	case output.FormatJSON:

@@ -71,10 +71,48 @@ type finalResponseClient struct {
 
 func (c finalResponseClient) Do(req *http.Request) (*http.Response, error) {
 	resp, err := c.hc.Do(req) //nolint:gosec // G704: the SDK's own request to the configured base URL, passed through
-	if err != nil || !sdkRetrierSleepsOn(resp.StatusCode) {
+	if err != nil {
 		return resp, err
 	}
-	return nil, decodeSDKError(resp)
+	if sdkRetrierSleepsOn(resp.StatusCode) {
+		return nil, decodeSDKError(resp)
+	}
+	return rejectNullBody(resp)
+}
+
+// nullPeek bounds how far rejectNullBody reads into a 2xx body. A JSON null
+// with any plausible whitespace around it fits; a longer body is passed on
+// with what was read put back in front of it.
+const nullPeek = 64
+
+// rejectNullBody turns a 2xx response whose body is the JSON literal null into
+// an *UnexpectedResponseError.
+//
+// The SDK decodes null into its *Response pointer without complaint, so the
+// call returns a nil response with a nil error, and every command that read a
+// field from it panicked — status inside an errgroup goroutine, past Execute's
+// error handling (#157). Catching it here covers every SDK call at once. An
+// empty body is left alone: the SDK reports that itself, and #158 normalizes
+// its error.
+func rejectNullBody(resp *http.Response) (*http.Response, error) {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || resp.Body == nil ||
+		resp.Header.Get("Content-Encoding") != "" {
+		return resp, nil
+	}
+	head, err := io.ReadAll(io.LimitReader(resp.Body, nullPeek+1))
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	if len(head) <= nullPeek && string(bytes.TrimSpace(head)) == "null" {
+		_ = resp.Body.Close()
+		return nil, &UnexpectedResponseError{Reason: "the body was JSON null"}
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
+	return resp, nil
 }
 
 // sdkRetrierSleepsOn mirrors the SDK retrier's shouldRetry.

@@ -31,6 +31,10 @@ func TestUnusableSuccessBody(t *testing.T) {
 		{"truncated JSON", http.StatusOK, `{"domainName":"example.com"`},
 		{"204 with no body", http.StatusNoContent, ``},
 		{"200 with no body", http.StatusOK, ``},
+		// #157: the SDK decodes null into a nil response with a nil error.
+		{"JSON null", http.StatusOK, `null`},
+		{"JSON null with whitespace", http.StatusOK, " \n\tnull\r\n "},
+		{"JSON null on a 201", http.StatusCreated, `null`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +77,28 @@ func TestUnusableSuccessBody(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestNullCheckPassesOtherBodiesThrough: the null check reads ahead into every
+// 2xx body, so what it read must reach the decoder intact — on both sides of
+// its read-ahead limit — and a null that is only part of the body is data.
+func TestNullCheckPassesOtherBodiesThrough(t *testing.T) {
+	long := `{"domainName":"example.com","nameservers":["` + strings.Repeat("n", 80) + `.example.net"]}`
+	for _, body := range []string{`{"domainName":"example.com"}`, long, `{"domainName":"example.com","locked":null}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		c, err := New(Options{BaseURL: srv.URL})
+		if err != nil {
+			t.Fatalf("api.New: %v", err)
+		}
+		got, err := c.SDK().Domains.GetDomain(context.Background(),
+			&coreapigo.GetDomainRequest{DomainName: "example.com"})
+		srv.Close()
+		if err != nil || got == nil || got.DomainName != "example.com" {
+			t.Errorf("body %q: got %+v, %v; want it decoded unchanged", body, got, err)
+		}
 	}
 }
 

@@ -398,6 +398,52 @@ func TestDNSList_ShowsRecords(t *testing.T) {
 	}
 }
 
+// TestDNSList_NullBodyIsAnError pins #157: a 200 whose body is `null` made the
+// SDK return a nil response with a nil error, and the page loop dereferenced it.
+func TestDNSList_NullBodyIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("null\n"))
+	}))
+	t.Cleanup(srv.Close)
+	var stdout bytes.Buffer
+	cmd := cmdForList(t, srv, &stdout)
+	listAll, listType = false, ""
+
+	err := runList(cmd, []string{"example.com"})
+	if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+		t.Fatalf("runList = %v, want an *api.UnexpectedResponseError", err)
+	}
+}
+
+// TestDNSList_NullRecordIsSkipped pins #157's list half: a null element in
+// `records` crashed the table and --quiet loops. It is skipped, not shown as
+// an empty row or counted.
+func TestDNSList_NullRecordIsSkipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"records":[null,{"id":7,"host":"www","type":"A","answer":"192.0.2.1"},null]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, quiet := range []bool{false, true} {
+		var stdout bytes.Buffer
+		cmd := cmdForList(t, srv, &stdout)
+		cmdutil.Out(cmd).QuietMode = quiet
+		listAll, listType = false, ""
+
+		if err := runList(cmd, []string{"example.com"}); err != nil {
+			t.Fatalf("quiet=%v: runList: %v", quiet, err)
+		}
+		got := stdout.String()
+		if quiet {
+			if got != "7\n" {
+				t.Errorf("--quiet output = %q, want only the one record's ID", got)
+			}
+		} else if !strings.Contains(got, "192.0.2.1") || !strings.Contains(got, "(1 record)") {
+			t.Errorf("table should show the one record and count only it:\n%s", got)
+		}
+	}
+}
+
 func TestDNSList_BadDomainArg(t *testing.T) {
 	srv := neverCalledServer(t)
 	var stdout bytes.Buffer

@@ -138,7 +138,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		spin.Stop()
 		return api.FromSDKError(err)
 	}
-	domains = append(domains, lastResult.Domains...)
+	domains = append(domains, cmdutil.NonNil(lastResult.Domains)...)
 
 	if lastResult.NextPage != nil && *lastResult.NextPage != 0 {
 		if !autoPage {
@@ -166,7 +166,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 					if err != nil {
 						return api.FromSDKError(err)
 					}
-					pages[idx] = r.Domains
+					pages[idx] = cmdutil.NonNil(r.Domains)
 					mu.Lock()
 					lastResult = r
 					mu.Unlock()
@@ -197,7 +197,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 					spin.Stop()
 					return api.FromSDKError(err)
 				}
-				domains = append(domains, r.Domains...)
+				domains = append(domains, cmdutil.NonNil(r.Domains)...)
 				page, ok = cmdutil.NextPage(page, r.NextPage, r.LastPage)
 			}
 		}

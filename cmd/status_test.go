@@ -247,3 +247,52 @@ func TestStatus_RendersExpiredAsExpired(t *testing.T) {
 		t.Errorf("status shows a negative day count instead of saying the domain expired:\n%s", got)
 	}
 }
+
+// TestStatus_NullBodyIsAnError pins #157: a 200 whose body is `null` made the
+// SDK return a nil response with a nil error, and status dereferenced it inside
+// an errgroup goroutine — a panic that bypassed Execute and took the process
+// down. It must be an ordinary error that exits 1.
+func TestStatus_NullBodyIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("null"))
+	}))
+	t.Cleanup(srv.Close)
+	cmd, _ := statusCmdFor(t, srv)
+
+	err := runStatus(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "unexpected response from the API") {
+		t.Fatalf("runStatus = %v, want an unexpected-response error", err)
+	}
+	if got := exitCode(err); got != 1 {
+		t.Errorf("exit code = %d, want 1", got)
+	}
+}
+
+// TestStatus_NullListElementsAreSkipped: a null element in the expiring-domain
+// or transfer list crashed classifyExpiry and the pending-transfer count
+// (#157). Each is skipped.
+func TestStatus_NullListElementsAreSkipped(t *testing.T) {
+	soon := time.Now().AddDate(0, 0, 10).UTC().Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "balance"):
+			_, _ = w.Write([]byte(`{"balance":1}`))
+		case strings.Contains(r.URL.Path, "transfers"):
+			_, _ = w.Write([]byte(`{"transfers":[null,{"domainName":"moving.com","status":"pending"}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"domains":[null,{"domainName":"soon.com","expireDate":"` + soon + `"}],"totalCount":1}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	cmd, buf := statusCmdFor(t, srv)
+
+	if err := runStatus(cmd, nil); err != nil {
+		t.Fatalf("runStatus: %v", err)
+	}
+	for _, want := range []string{"soon.com", "moving.com", "1 transfer pending"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("status output missing %q:\n%s", want, buf.String())
+		}
+	}
+}

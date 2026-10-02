@@ -63,6 +63,26 @@ func TestInt32Count(t *testing.T) {
 	}
 }
 
+// TestNonNil pins #157's list half: a null element in a response list reached
+// row builders and --quiet loops as a nil pointer, and each dereferenced it.
+func TestNonNil(t *testing.T) {
+	a, b := 1, 2
+	if got := NonNil([]*int{nil, &a, nil, &b, nil}); len(got) != 2 || got[0] != &a || got[1] != &b {
+		t.Errorf("NonNil kept %v, want only the two non-nil elements, in order", got)
+	}
+	if got := NonNil([]*int{nil}); len(got) != 0 {
+		t.Errorf("NonNil([nil]) = %v, want empty", got)
+	}
+	in := []*int{nil, &a}
+	NonNil(in)
+	if in[0] != nil || in[1] != &a {
+		t.Errorf("NonNil modified its input: %v", in)
+	}
+	if got := NonNil[int](nil); got != nil {
+		t.Errorf("NonNil(nil) = %v, want nil", got)
+	}
+}
+
 func intPtr(n int) *int       { return &n }
 func int32Ptr(n int32) *int32 { return &n }
 

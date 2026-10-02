@@ -91,6 +91,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return api.FromSDKError(err)
 	}
+	result.Dnssec = cmdutil.NonNil(result.Dnssec)
 
 	if out.QuietMode {
 		digests := make([]string, 0, len(result.Dnssec))

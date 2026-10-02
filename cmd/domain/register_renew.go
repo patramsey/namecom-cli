@@ -125,6 +125,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("checking availability: %w", err)
 		}
+		checkResult.Results = cmdutil.NonNil(checkResult.Results)
 		if len(checkResult.Results) == 0 {
 			return fmt.Errorf("%s is not available for registration", domainName)
 		}
@@ -575,7 +576,7 @@ func renderClaimsNotice(out *output.Config, r *coreapigo.DomainClaimsCheckRespon
 			"This domain matches a registered trademark. Proceeding with registration",
 			"acknowledges that you have received notice of this claim.")
 	}
-	for _, c := range r.Claims {
+	for _, c := range cmdutil.NonNil(r.Claims) {
 		desc := c.Trademark
 		// Holder is a spec-required field and the most useful item in a
 		// trademark notice — whose mark this is.

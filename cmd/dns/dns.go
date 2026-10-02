@@ -653,7 +653,7 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []*co
 		if err2 != nil {
 			return nil, false, nil, api.FromSDKError(err2)
 		}
-		records = append(records, result.Records...)
+		records = append(records, cmdutil.NonNil(result.Records)...)
 		lastNextPage = result.NextPage
 
 		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
