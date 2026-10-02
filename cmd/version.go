@@ -18,14 +18,17 @@ var versionCmd = &cobra.Command{
 	RunE:  runVersion,
 }
 
+// buildInfo is what `namecom version` reports. CommitTime is the time of the
+// commit the binary was built from (vcs.time), not when it was built; it was
+// labelled "built" until #187. No build timestamp is recorded.
 type buildInfo struct {
-	Version string `json:"version"         yaml:"version"`
-	Commit  string `json:"commit,omitempty" yaml:"commit,omitempty"`
-	Dirty   bool   `json:"dirty"            yaml:"dirty"`
-	Built   string `json:"built,omitempty"  yaml:"built,omitempty"`
-	Go      string `json:"go"               yaml:"go"`
-	OS      string `json:"os"               yaml:"os"`
-	Arch    string `json:"arch"             yaml:"arch"`
+	Version    string `json:"version"              yaml:"version"`
+	Commit     string `json:"commit,omitempty"     yaml:"commit,omitempty"`
+	Dirty      bool   `json:"dirty"                yaml:"dirty"`
+	CommitTime string `json:"commitTime,omitempty" yaml:"commitTime,omitempty"`
+	Go         string `json:"go"                   yaml:"go"`
+	OS         string `json:"os"                   yaml:"os"`
+	Arch       string `json:"arch"                 yaml:"arch"`
 }
 
 func runVersion(cmd *cobra.Command, _ []string) error {
@@ -53,15 +56,15 @@ func renderVersion(out *output.Config, info buildInfo) error {
 		if info.Dirty {
 			suffix = " (dirty)"
 		}
-		built := info.Built
-		if built == "" {
-			built = "unknown"
+		committed := info.CommitTime
+		if committed == "" {
+			committed = "unknown"
 		}
 		fmt.Fprintf(out.Writer, "namecom %s\n", info.Version)
-		fmt.Fprintf(out.Writer, "  commit: %s%s\n", commit, suffix)
-		fmt.Fprintf(out.Writer, "  built:  %s\n", built)
-		fmt.Fprintf(out.Writer, "  go:     %s\n", info.Go)
-		fmt.Fprintf(out.Writer, "  os:     %s/%s\n", info.OS, info.Arch)
+		fmt.Fprintf(out.Writer, "  commit:    %s%s\n", commit, suffix)
+		fmt.Fprintf(out.Writer, "  committed: %s\n", committed)
+		fmt.Fprintf(out.Writer, "  go:        %s\n", info.Go)
+		fmt.Fprintf(out.Writer, "  os:        %s/%s\n", info.OS, info.Arch)
 	}
 	return nil
 }
@@ -82,7 +85,7 @@ func gatherBuildInfo() buildInfo {
 		case "vcs.revision":
 			info.Commit = s.Value
 		case "vcs.time":
-			info.Built = s.Value
+			info.CommitTime = s.Value
 		case "vcs.modified":
 			info.Dirty = s.Value == "true"
 		}
@@ -91,8 +94,11 @@ func gatherBuildInfo() buildInfo {
 }
 
 // resolveVersion returns Version when set by ldflags (release builds), and
-// falls back to the module version embedded by go install (e.g. "0.1.7").
-// "(devel)" means a local go build/run without ldflags — leave it as "dev".
+// falls back to the module version the toolchain embeds: the tag for
+// `go install …@v0.1.7`, and since Go 1.24 a pseudo-version derived from git
+// for a plain `go build` in a checkout (e.g. 0.1.8-0.20260901120000-abcdef123456,
+// with +dirty for uncommitted changes). "(devel)" now appears only without VCS
+// information, such as `go run` or a source tarball; that stays "dev".
 func resolveVersion() string {
 	if Version != "dev" {
 		return Version

@@ -32,6 +32,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `namecom version` labels the timestamp it shows `committed`, since it is
+  the time of the commit the binary was built from, not the build time. In
+  JSON and YAML output the field is renamed from `built` to `commitTime`.
 - `email update`, `email delete` and `dnssec delete` with `--dry-run` show
   the mailbox or digest escaped in the path, as it is sent. A `/` or `?` in
   it used to be shown as-is.
