@@ -87,6 +87,19 @@ func TestValidDNSHost(t *testing.T) {
 	}
 }
 
+func TestPositiveID(t *testing.T) {
+	for s, want := range map[string]int32{"1": 1, "9911": 9911, "2147483647": math.MaxInt32, "007": 7} {
+		if got, ok := PositiveID(s); !ok || got != want {
+			t.Errorf("PositiveID(%q) = %d, %v, want %d, true", s, got, ok, want)
+		}
+	}
+	for _, s := range []string{"", "0", "-5", "+5", " 5", "5 ", "abc", "2147483648", "1e3", "0x10"} {
+		if got, ok := PositiveID(s); ok {
+			t.Errorf("PositiveID(%q) = %d, true, want rejected", s, got)
+		}
+	}
+}
+
 func TestValidPriority(t *testing.T) {
 	for _, p := range []int64{0, 10, 65535} {
 		if err := ValidPriority(p); err != nil {

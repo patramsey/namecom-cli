@@ -32,6 +32,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- Record, URL forwarding, order and contact verification IDs must be positive
+  whole numbers. `0`, negative numbers and `+5` now exit **2** before anything
+  is sent; they used to reach the API (`contact resend -5`). An ID too large
+  to be one is reported as "must be a positive whole number" rather than
+  "must be a number".
 - `vanity-ns` commands refuse a hostname with an empty label
   (`ns1..example.com`), a space, a character no hostname has, or a label over
   63 characters, and exit **2** before anything is sent.

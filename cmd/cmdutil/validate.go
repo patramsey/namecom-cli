@@ -451,6 +451,21 @@ func ValidEmailLocalPart(s, argName string) error {
 	return nil
 }
 
+// PositiveID parses a resource ID argument: a plain decimal number from 1 to
+// the int32 maximum, the range every ID this API issues falls in. ParseInt
+// alone let `0`, `-5` and `+5` through to the request (#187). Callers wrap
+// ok == false in a usage error that names the kind of ID.
+func PositiveID(s string) (int32, bool) {
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s, 10, 32)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return int32(n), true
+}
+
 // DomainArg validates and normalizes (lowercases) a domain name positional argument.
 func DomainArg(args []string, n int) (string, error) {
 	d := CanonicalDomain(args[n])
