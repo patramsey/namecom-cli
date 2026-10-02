@@ -167,13 +167,20 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := renderSearchResults(out, result.Results); err != nil {
-			return err
+		// Key the replies to the arguments as the ZoneCheck path does, so a
+		// name the registry left out (an unknown TLD, say) still gets a row and
+		// fails the command instead of vanishing (#170).
+		results := make([]*coreapigo.SearchResult, len(args))
+		matcher := newArgMatcher(args)
+		if result != nil {
+			for _, r := range result.Results {
+				if idx, ok := matcher.match(r.DomainName); ok {
+					results[idx] = r
+				}
+			}
 		}
-		if result.Results == nil {
-			return nil
-		}
-		return maybeOfferRegister(cmd, out, result.Results)
+		return finishCheck(cmd, out, args, matcher, results,
+			"the registry returned no result for %s — check the name and its TLD")
 	}
 
 	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
@@ -280,30 +287,46 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Safety net: any argument no reply resolved to would otherwise render as a
-	// zero-valued row — blank name, Purchasable false — which reads as "taken".
-	// Reporting an available domain as unavailable is the expensive direction to
-	// be wrong in, and it is the exact bug this whole path was fixed for. Name
-	// the domain the user asked about and leave it explicitly unpurchasable
-	// rather than silently asserting it is gone.
+	return finishCheck(cmd, out, args, matcher, finalResults,
+		"could not determine availability for %[1]s — run "+
+			"'namecom domain check --authoritative %[1]s' to query the registry directly")
+}
+
+// finishCheck renders one row per argument and fails the command when any
+// argument got no answer.
+//
+// Safety net: any argument no reply resolved to would otherwise render as a
+// zero-valued row — blank name, Purchasable false — which reads as "taken".
+// Reporting an available domain as unavailable is the expensive direction to
+// be wrong in, and it is the exact bug the ZoneCheck path was fixed for. Name
+// the domain the user asked about and leave it explicitly unpurchasable
+// rather than silently asserting it is gone. warning is a format taking the
+// domain name.
+func finishCheck(cmd *cobra.Command, out *output.Config, args []string, matcher *argMatcher,
+	results []*coreapigo.SearchResult, warning string) error {
+	var unknown []string
 	for _, i := range matcher.unclaimed() {
 		// nil, not just zero-valued: the SDK returns []*SearchResult, so a slot
 		// no reply filled is a nil pointer rather than an empty struct. Reading
 		// through it panics, which would take out the very safety net this loop
 		// is.
-		if finalResults[i] == nil || finalResults[i].DomainName == "" {
+		if results[i] == nil || results[i].DomainName == "" {
 			sld, tld, _ := strings.Cut(args[i], ".")
-			finalResults[i] = &coreapigo.SearchResult{DomainName: args[i], Sld: sld, Tld: tld}
-			out.Warn(fmt.Sprintf("could not determine availability for %s — run "+
-				"'namecom domain check --authoritative %s' to query the registry directly", args[i], args[i]))
+			results[i] = &coreapigo.SearchResult{DomainName: args[i], Sld: sld, Tld: tld}
+			out.Warn(fmt.Sprintf(warning, args[i]))
+			unknown = append(unknown, args[i])
 		}
 	}
 
-	if err := renderSearchResults(out, finalResults); err != nil {
+	if err := renderSearchResults(out, results); err != nil {
 		return err
 	}
-
-	return maybeOfferRegister(cmd, out, finalResults)
+	// A row that answers nothing is not a successful check: exit non-zero so a
+	// script does not read the placeholder as "taken".
+	if len(unknown) > 0 {
+		return fmt.Errorf("availability unknown for %s", strings.Join(unknown, ", "))
+	}
+	return maybeOfferRegister(cmd, out, results)
 }
 
 // maybeOfferRegister offers to register a domain that `check` just found

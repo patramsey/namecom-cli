@@ -914,8 +914,10 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd, buf := cmdForCheckJSON(t, srv)
-	if err := runCheck(cmd, []string{"café.com", "résumé.com"}); err != nil {
-		t.Fatalf("runCheck: %v", err)
+	// The rows are still printed, but an unanswered domain fails the command
+	// (#170) so a script cannot mistake the placeholder for an answer.
+	if err := runCheck(cmd, []string{"café.com", "résumé.com"}); err == nil {
+		t.Fatal("want an error for domains whose availability is unknown")
 	}
 
 	var got []*coreapigo.SearchResult
@@ -1023,4 +1025,40 @@ func lastCell(row string) string {
 		return ""
 	}
 	return cells[len(cells)-1]
+}
+
+// TestCheck_RegistryPathAccountsForEveryArgument pins #170. The sandbox and
+// --authoritative path rendered CheckAvailability's results as-is, so a name
+// the API left out (foo.zzzz: no such TLD) vanished from the output and the
+// command exited 0. Every argument must come back as a row, and an argument
+// with no answer must fail the command, on both paths.
+func TestCheck_RegistryPathAccountsForEveryArgument(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/core/v1/domains:checkAvailability" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"results":[{"domainName":"example.com","purchasable":true,"purchasePrice":12.99}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := cmd.ParseFlags([]string{"--authoritative"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runCheck(cmd, []string{"example.com", "foo.zzzz"})
+	if err == nil || !strings.Contains(err.Error(), "foo.zzzz") {
+		t.Errorf("want an error naming foo.zzzz, got %v", err)
+	}
+
+	var got []*coreapigo.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 2 || got[0].DomainName != "example.com" || got[1].DomainName != "foo.zzzz" {
+		t.Fatalf("want a row per argument in order, got %s", buf.String())
+	}
+	if got[1].Purchasable {
+		t.Error("an unanswered domain must not be reported purchasable")
+	}
 }

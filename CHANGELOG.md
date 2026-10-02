@@ -164,6 +164,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `domain update --lock=false` reports the transfer lock removed only after
   the API accepts the change. During the 60-day transfer lock it printed the
   warning and then the API's refusal.
+- `domain check` in sandbox mode or with `--authoritative` no longer drops a
+  domain the registry returned no result for, such as one with an unknown TLD.
+  It gets a row and a warning. On every path, a `domain check` with any domain
+  left unanswered now exits **1** after printing its results; it used to exit
+  0, so scripts checking the exit code will see this.
 
 ## [0.4.7] - 2026-09-29
 
