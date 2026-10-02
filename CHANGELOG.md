@@ -121,6 +121,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   instead. Spaces around the commas are still trimmed as before. Characters
   no hostname contains (`*`, `@`, `:`) and invalid internationalized names
   are refused the same way, matching the rules for domain arguments.
+- `dns update --type CAA` exits **2** with a usage error, as `dns create` and
+  `dns import` already did. It used to pass validation, so `--dry-run` showed a
+  request the API rejects, and a real run failed with exit 1.
 
 ## [0.4.7] - 2026-09-29
 

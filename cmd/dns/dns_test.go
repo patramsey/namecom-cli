@@ -741,6 +741,41 @@ func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
 	}
 }
 
+// TestDNSUpdate_CAAIsRefused guards #169: create and import refuse CAA as a
+// usage error because the API rejects it, but update still accepted it, so
+// --dry-run previewed a PUT that could only fail.
+func TestDNSUpdate_CAAIsRefused(t *testing.T) {
+	recType, recHost, recAnswer, recID := "A", "@", "1.2.3.4", 123
+	record := coreapigo.Record{ID: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Error("PUT should not be sent for --type CAA")
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--type", "CAA", "--answer", `0 issue "letsencrypt.org"`}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	err := runUpdate(cmd, []string{"example.com", "123"})
+	if err == nil {
+		t.Fatal("expected --type CAA to be refused, got nil")
+	}
+	var ue *cmdutil.UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("expected a usage error (exit 2), got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "does not accept CAA") {
+		t.Errorf("error should say the API does not accept CAA, got: %v", err)
+	}
+}
+
 func TestDNSUpdate_SuccessPath(t *testing.T) {
 	recType := "A"
 	recHost := "www"

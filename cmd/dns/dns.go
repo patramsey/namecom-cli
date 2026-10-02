@@ -369,7 +369,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmd.Flags().Changed("type") {
-		if err := cmdutil.ValidDNSType(updateType); err != nil {
+		// The update endpoint rejects CAA just as create does.
+		if err := cmdutil.ValidDNSCreateType(updateType); err != nil {
 			return err
 		}
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
