@@ -168,6 +168,25 @@ func TestDNSCreate_SRVBadPort(t *testing.T) {
 	}
 }
 
+// TestDNSCreate_MissingIDIsUnexpectedResponse pins #187 (suggested on #185):
+// a redirected POST answered as a GET printed "Created A record (id 0)" and
+// exited 0 having created nothing. A 2xx with no ID is an unexpected response.
+func TestDNSCreate_MissingIDIsUnexpectedResponse(t *testing.T) {
+	for _, resp := range []string{`{"type":"A","host":"www","answer":"1.2.3.4","ttl":300}`, `{"id":0}`, `{"records":[]}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(resp))
+		}))
+		t.Cleanup(srv.Close)
+		cmd := cmdForCreate(t, srv)
+		createType, createHost, createAnswer, createTTL, createPriority = "A", "www", "1.2.3.4", 300, 0
+		err := runCreate(cmd, []string{"example.com"})
+		if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+			t.Errorf("response %s: runCreate = %v, want *api.UnexpectedResponseError", resp, err)
+		}
+	}
+}
+
 // TestDNSWrites_PriorityOutOfRange pins #187: --priority had no range check,
 // so -8 was sent and the exported zone then failed to load. Create, update and
 // import all refuse it as a usage error before any request.

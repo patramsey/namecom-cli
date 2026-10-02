@@ -312,6 +312,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}, func(ctx context.Context, body coreapigo.URLForwardingInput) error {
 		var err error
 		entry, err = client.SDK().URLForwardings.CreateURLForwarding(ctx, &body)
+		if err == nil && (entry == nil || entry.ID == nil || *entry.ID <= 0) {
+			// Every other url command addresses a forwarding by this ID, so a
+			// 2xx without one is not a success to report as "id 0" (#187).
+			return &api.UnexpectedResponseError{Reason: "the response did not include the new forwarding's ID"}
+		}
 		return err
 	})
 	if err != nil {
@@ -336,11 +341,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(entry)
 	default:
-		id := 0
-		if entry.ID != nil {
-			id = *entry.ID
-		}
-		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", id, createHost, createForwardsTo))
+		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, createHost, createForwardsTo))
 		out.Hint(fmt.Sprintf("Run 'namecom url list %s' to see all forwardings", domain))
 	}
 	return nil

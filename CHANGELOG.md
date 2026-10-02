@@ -32,6 +32,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `dns create` and `url create` report a successful response that does not
+  include the new record's or forwarding's ID as an unexpected response (exit
+  **1**, with a hint to check before retrying), instead of printing `(id 0)`
+  and exiting 0. In JSON and YAML mode the error replaces the printed object.
 - Record, URL forwarding, order and contact verification IDs must be positive
   whole numbers. `0`, negative numbers and `+5` now exit **2** before anything
   is sent; they used to reach the API (`contact resend -5`). An ID too large

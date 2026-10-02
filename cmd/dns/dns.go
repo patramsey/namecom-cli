@@ -311,6 +311,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}, func(ctx context.Context, body coreapigo.DNSCreateRecordBody) error {
 		var err error
 		record, err = client.SDK().DNS.CreateRecord(ctx, &body)
+		if err == nil && (record == nil || derefInt(record.ID) <= 0) {
+			// A 2xx without the new record's ID is not a record we can name:
+			// a redirected POST answered as a GET printed "Created A record
+			// (id 0)" and exited 0 having created nothing (#185, #187).
+			return &api.UnexpectedResponseError{Reason: "the response did not include the new record's ID"}
+		}
 		return api.FromSDKError(err)
 	})
 	if err != nil || !sent {
