@@ -283,6 +283,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if cmd.Flags().Changed("priority") {
+		if err := cmdutil.ValidPriority(createPriority); err != nil {
+			return err
+		}
+	}
 
 	body := coreapigo.DNSCreateRecordBody{
 		DomainName: domain,
@@ -344,6 +349,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	id, err := parseID(args[1])
 	if err != nil {
 		return err
+	}
+	if cmd.Flags().Changed("priority") {
+		if err := cmdutil.ValidPriority(updatePriority); err != nil {
+			return err
+		}
 	}
 
 	// Read-modify-write: fetch existing record so unset flags don't blank fields.
@@ -597,6 +607,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 		if err := cmdutil.ValidTTL(r.TTL); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if r.Priority != nil {
+			if err := cmdutil.ValidPriority(*r.Priority); err != nil {
+				return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+			}
 		}
 	}
 

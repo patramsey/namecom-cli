@@ -168,6 +168,50 @@ func TestDNSCreate_SRVBadPort(t *testing.T) {
 	}
 }
 
+// TestDNSWrites_PriorityOutOfRange pins #187: --priority had no range check,
+// so -8 was sent and the exported zone then failed to load. Create, update and
+// import all refuse it as a usage error before any request.
+func TestDNSWrites_PriorityOutOfRange(t *testing.T) {
+	var ue *cmdutil.UsageError
+	t.Cleanup(func() { createPriority = 0 })
+
+	cmd := cmdForCreate(t, neverCalledServer(t))
+	createType, createHost, createAnswer, createTTL = "MX", "@", "mail.example.com.", 300
+	if err := cmd.Flags().Set("priority", "-8"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCreate(cmd, []string{"example.com"}); !errors.As(err, &ue) {
+		t.Errorf("create --priority -8 = %v, want a usage error", err)
+	}
+
+	cmd = cmdForUpdate(t, neverCalledServer(t))
+	if err := cmd.Flags().Set("priority", "65536"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runUpdate(cmd, []string{"example.com", "1"}); !errors.As(err, &ue) {
+		t.Errorf("update --priority 65536 = %v, want a usage error", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "records.json")
+	payload := `[{"type":"MX","host":"@","answer":"mail.example.com.","ttl":300,"priority":-8}]`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := api.New(api.Options{BaseURL: neverCalledServer(t).URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	icmd := &cobra.Command{}
+	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, &output.Config{
+		Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}})
+	icmd.SetContext(context.WithValue(ctx, cmdutil.KeyClient, client))
+	importFile, importDryRun = path, false
+	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	if err := runImport(icmd, []string{"example.com"}); !errors.As(err, &ue) {
+		t.Errorf("import with priority -8 = %v, want a usage error", err)
+	}
+}
+
 // TestDNSCreate_CAAIsRefused guards #128: the API rejects CAA on create (it is
 // not in the server's list of allowed types), so the CLI must refuse it as a
 // usage error instead of sending a request that can only fail.

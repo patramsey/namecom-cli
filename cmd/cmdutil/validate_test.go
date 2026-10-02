@@ -76,10 +76,28 @@ func TestValidDNSHost(t *testing.T) {
 		"ends-with-hyphen-",
 		string(make([]byte, 64)) + ".com", // label > 63 chars
 		string(make([]byte, 250)) + ".example.com", // total > 253 chars
+		// #187: any byte but space and tab used to pass. `dns export --zone`
+		// writes the owner name as-is, so `0"` broke the zone file.
+		`0"`, "a;b", "a(b", "a)b", "a\rb", "a\nb", "a@b", "a/b", "a*b", "www.*",
 	}
 	for _, s := range bad {
 		if err := ValidDNSHost(s); err == nil {
 			t.Errorf("ValidDNSHost(%q) expected error, got nil", s)
+		}
+	}
+}
+
+func TestValidPriority(t *testing.T) {
+	for _, p := range []int64{0, 10, 65535} {
+		if err := ValidPriority(p); err != nil {
+			t.Errorf("ValidPriority(%d) = %v, want nil", p, err)
+		}
+	}
+	// #187: -8 was sent, and the exported zone then failed to load.
+	for _, p := range []int64{-8, -1, 65536, math.MaxInt64} {
+		var ue *UsageError
+		if err := ValidPriority(p); !errors.As(err, &ue) {
+			t.Errorf("ValidPriority(%d) = %v, want a usage error", p, err)
 		}
 	}
 }
@@ -105,6 +123,24 @@ func TestValidDNSAnswer(t *testing.T) {
 		{"SRV", "@", "onlyone", true},
 		{"SRV", "@", "notint 443 target.com.", true},
 		{"SRV", "@", "10 notint target.com.", true},
+		// #187: hostname targets with empty labels or stray bytes, SRV fields
+		// split on CR, and out-of-range SRV numbers all used to pass.
+		{"CNAME", "www", ".00", true},
+		{"CNAME", "www", "a..example.com", true},
+		{"CNAME", "www", "a\"b.example.com", true},
+		{"ANAME", "@", "a..example.com", true},
+		{"NS", "sub", "ns1..example.com", true},
+		{"NS", "sub", "ns1.example.com.", false},
+		{"MX", "@", "mail\rexample.com", true},
+		{"MX", "@", "mail\n.example.com", true},
+		{"MX", "@", "mail..example.com", true},
+		{"MX", "@", ".", false}, // null MX (RFC 7505)
+		{"SRV", "@", "0\r0 0 target.example.com.", true},
+		{"SRV", "@", "10 443 a..example.com", true},
+		{"SRV", "@", "-1 443 target.example.com.", true},
+		{"SRV", "@", "+1 443 target.example.com.", true},
+		{"SRV", "@", "1 65536 target.example.com.", true},
+		{"SRV", "@", "65535 65535 target.example.com.", false},
 		{"CAA", "@", "0 issue letsencrypt.org", false},
 		{"CAA", "@", "0 issuewild letsencrypt.org", false},
 		{"CAA", "@", "0 iodef mailto:admin@example.com", false},

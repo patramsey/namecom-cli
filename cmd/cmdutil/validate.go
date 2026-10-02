@@ -73,6 +73,15 @@ func ValidDNSHost(host string) error {
 	if strings.ContainsAny(check, " \t") {
 		return usagef("--host %q must not contain spaces", host)
 	}
+	// Only hostname characters (#187). `dns export --zone` writes the host as
+	// the owner name unescaped, so a `"`, `;` or `(` the API stored broke the
+	// zone file. A wildcard is only meaningful as the whole leftmost label,
+	// which is trimmed above. Non-ASCII is left to the server.
+	for i := 0; i < len(check); i++ {
+		if c := check[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
+			return usagef("--host %q must not contain %q", host, check[i:i+1])
+		}
+	}
 	if len(check) > 253 {
 		return usagef("--host %q exceeds maximum DNS name length (253 chars)", host)
 	}
@@ -110,21 +119,35 @@ func ValidDNSAnswer(recordType, host, answer string) error {
 		if host == "@" || host == "" {
 			return usagef("CNAME record cannot be set at the zone apex (@) — use ANAME for apex aliasing")
 		}
+		return validTarget("CNAME", answer)
+	case "ANAME", "NS":
+		return validTarget(strings.ToUpper(recordType), answer)
 	case "MX":
-		if strings.ContainsAny(answer, " \t") {
+		if strings.IndexFunc(answer, unicode.IsSpace) >= 0 {
 			return usagef("MX record --answer must be a hostname (got %q) — set priority with --priority", answer)
 		}
+		if answer == "." {
+			return nil // a null MX (RFC 7505): the domain accepts no mail
+		}
+		return validTarget("MX", answer)
 	case "SRV":
+		// strings.Fields also splits on CR, LF and tab, so "0\r0 0 x" passed
+		// as three fields and broke the exported zone (#187). Only spaces may
+		// separate them.
+		if strings.IndexFunc(answer, func(r rune) bool { return r != ' ' && unicode.IsSpace(r) }) >= 0 {
+			return usagef("SRV record --answer fields must be separated by spaces, got %q", answer)
+		}
 		parts := strings.Fields(answer)
 		if len(parts) != 3 {
 			return usagef("SRV record --answer must be \"weight port target\" (e.g. \"0 443 target.example.com.\"), got %q", answer)
 		}
-		if _, err := strconv.Atoi(parts[0]); err != nil {
-			return usagef("SRV record weight (first field) must be an integer, got %q", parts[0])
+		if !isUint16(parts[0]) {
+			return usagef("SRV record weight (first field) must be an integer 0-65535, got %q", parts[0])
 		}
-		if _, err := strconv.Atoi(parts[1]); err != nil {
-			return usagef("SRV record port (second field) must be an integer, got %q", parts[1])
+		if !isUint16(parts[1]) {
+			return usagef("SRV record port (second field) must be an integer 0-65535, got %q", parts[1])
 		}
+		return validTarget("SRV", parts[2])
 	case "CAA":
 		parts := strings.Fields(answer)
 		if len(parts) < 3 {
@@ -138,6 +161,50 @@ func ValidDNSAnswer(recordType, host, answer string) error {
 		if !validTags[parts[1]] {
 			return usagef("CAA record tag (second field) must be one of: issue, issuewild, iodef — got %q", parts[1])
 		}
+	}
+	return nil
+}
+
+// validTarget checks the hostname a CNAME, ANAME, MX, NS or SRV record points
+// at. A target was only checked for spaces, so `.00` or a name with a `"` in it
+// was sent, and `dns export --zone` then wrote a line that does not load. One
+// trailing dot (an absolute name) is allowed; non-ASCII is left to the server.
+func validTarget(rtype, name string) error {
+	check := strings.TrimSuffix(name, ".")
+	if check == "" {
+		return usagef("%s record --answer must be a hostname, got %q", rtype, name)
+	}
+	for i := 0; i < len(check); i++ {
+		if c := check[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
+			return usagef("%s record target %q must not contain %q", rtype, name, check[i:i+1])
+		}
+	}
+	if len(check) > 253 {
+		return usagef("%s record target %q exceeds maximum DNS name length (253 chars)", rtype, name)
+	}
+	for label := range strings.SplitSeq(check, ".") {
+		if label == "" {
+			return usagef("%s record target %q has an empty label (double dot or leading dot)", rtype, name)
+		}
+		if len(label) > 63 {
+			return usagef("%s record target %q label %q exceeds 63 characters", rtype, name, label)
+		}
+	}
+	return nil
+}
+
+// isUint16 reports whether s is a plain decimal 0-65535: no sign, no spaces.
+func isUint16(s string) bool {
+	_, err := strconv.ParseUint(s, 10, 16)
+	return err == nil
+}
+
+// ValidPriority checks an MX or SRV priority. Both are 16-bit fields, but the
+// flag is an int64 and any value was sent; a negative one was stored, and the
+// exported zone then failed to load (#187).
+func ValidPriority(p int64) error {
+	if p < 0 || p > 65535 {
+		return usagef("--priority must be between 0 and 65535 (got %d)", p)
 	}
 	return nil
 }
@@ -268,10 +335,13 @@ func ValidNameserver(ns string, idx int) error {
 			return usagef("nameserver %q must not contain %q", ns, ns[i:i+1])
 		}
 	}
+	ascii := ns
 	if !isASCII(ns) {
-		if _, err := idna.Lookup.ToASCII(ns); err != nil {
+		a, err := idna.Lookup.ToASCII(ns)
+		if err != nil {
 			return usagef("nameserver %q is not a valid internationalized hostname: %v", ns, err)
 		}
+		ascii = a
 	}
 	if !strings.Contains(ns, ".") {
 		return usagef("nameserver %q must be a fully-qualified hostname (e.g. ns1.example.com)", ns)
@@ -279,10 +349,12 @@ func ValidNameserver(ns string, idx int) error {
 	if strings.HasPrefix(ns, ".") || strings.HasSuffix(ns, ".") {
 		return usagef("nameserver %q must not start or end with a dot", ns)
 	}
-	if len(ns) > 253 {
+	// The label rules apply to the form that is sent: IDNA mapping can empty
+	// a label (a lone soft hyphen) or change its length.
+	if len(ascii) > 253 {
 		return usagef("nameserver %q exceeds the maximum DNS name length (253 characters)", ns)
 	}
-	for label := range strings.SplitSeq(ns, ".") {
+	for label := range strings.SplitSeq(ascii, ".") {
 		if label == "" {
 			return usagef("nameserver %q has an empty label", ns)
 		}

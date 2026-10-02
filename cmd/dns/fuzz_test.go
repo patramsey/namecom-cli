@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -171,6 +170,9 @@ func fuzzRecord(typeIdx uint8, host, answer string, ttl, prio int64) (*coreapigo
 		Type: &rtype, Host: &apiHost, Answer: &answer, Fqdn: &fqdn, TTL: ttl,
 	}
 	if rtype == "MX" || rtype == "SRV" {
+		if cmdutil.ValidPriority(prio) != nil {
+			return nil, false
+		}
 		r.Priority = &prio
 	}
 	return r, true
@@ -312,15 +314,10 @@ func FuzzExportZoneChecks(f *testing.F) {
 		if !ok || *rec.Type == "ANAME" {
 			return // ANAME is exported as a comment
 		}
-		// Owner names and hostname targets are written unescaped. ValidDNSHost
-		// accepts any byte but space/tab (`"`, `;`, `(` included), which the
-		// server presumably refuses, so keep names to the hostname alphabet
-		// and fuzz the free-text rdata instead.
-		// Priority is not range-checked client side (any int64 is sent);
-		// only 0-65535 is a priority the server could have stored.
-		if rec.Priority != nil && (*rec.Priority < 0 || *rec.Priority > 65535) {
-			return
-		}
+		// Owner names and hostname targets are written unescaped. The
+		// validators hold ASCII to the hostname alphabet but leave non-ASCII
+		// to the server, so keep names to that alphabet here and fuzz the
+		// free-text rdata instead.
 		if *rec.Host != "" && !plainName(*rec.Host) {
 			return
 		}
@@ -339,10 +336,7 @@ func FuzzExportZoneChecks(f *testing.F) {
 				return
 			}
 		case "SRV":
-			// ValidDNSAnswer splits SRV with strings.Fields, so it accepts
-			// "0\r0 x"; keep to single-space-separated fields here.
-			f := strings.Fields(*rec.Answer)
-			if strings.Join(f, " ") != *rec.Answer || !plainName(f[2]) || !uint16Field(f[0]) || !uint16Field(f[1]) {
+			if !plainName(strings.Fields(*rec.Answer)[2]) {
 				return
 			}
 		}
@@ -391,12 +385,6 @@ func hostnameAlphabet(s string) bool {
 // optionally absolute.
 func plainName(s string) bool {
 	return hostnameAlphabet(s) && cmdutil.ValidDNSHost(strings.TrimSuffix(s, ".")) == nil
-}
-
-func uint16Field(s string) bool {
-	n, err := strconv.ParseUint(s, 10, 16)
-	_ = n
-	return err == nil
 }
 
 // skipKnownZoneBug skips records whose zone export is known to be broken, so

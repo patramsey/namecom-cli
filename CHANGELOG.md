@@ -32,6 +32,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `dns create`, `dns update` and `dns import` check more of a record before
+  sending it, and exit **2** on: a host with characters no DNS name has (`"`,
+  `;`, `(`, `@`, or `*` other than a leading `*.`); a CNAME, ANAME, MX, NS or
+  SRV target with an empty label (`a..example.com`) or such characters; MX
+  and SRV answers containing a carriage return or newline; SRV weight or port
+  outside 0–65535; and `--priority` outside 0–65535. The API stored some of
+  these, and `dns export --zone` then wrote a zone that does not load.
 - Domain and nameserver arguments with an empty label (`bad..com`), a label
   over 63 characters, or more than 253 characters in all now exit **2**
   before anything is sent. `transfer eligibility bad..com` used to answer for
