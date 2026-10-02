@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -73,5 +74,31 @@ func TestReportError_RestrictedHasNoAuthAdvice(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestErrorOutput_ArgCountHonoursOutputFlag pins issue #164. Cobra checks the
+// argument count before PersistentPreRunE, so resolvedOut was still nil and
+// `namecom domain get a b -o table` printed the JSON envelope in a pipe
+// regardless of -o.
+func TestErrorOutput_ArgCountHonoursOutputFlag(t *testing.T) {
+	for _, f := range []output.Format{output.FormatTable, output.FormatJSON, output.FormatYAML} {
+		t.Run(string(f), func(t *testing.T) {
+			prevGF, prevOut := gf, resolvedOut
+			t.Cleanup(func() { gf, resolvedOut = prevGF, prevOut; rootCmd.SetArgs(nil) })
+			resolvedOut = nil
+
+			rootCmd.SetArgs([]string{"domain", "get", "a", "b", "-o", string(f)})
+			err := cmdutil.ClassifyCobraUsage(rootCmd.ExecuteContext(context.Background()))
+			if err == nil || !strings.Contains(err.Error(), "too many arguments") {
+				t.Fatalf("want an argument-count error, got %v", err)
+			}
+			if resolvedOut != nil {
+				t.Fatal("PersistentPreRunE ran; the test no longer exercises the early-failure path")
+			}
+			if got := errorOutput().Format; got != f {
+				t.Errorf("error rendered as %q, want %q from -o", got, f)
+			}
+		})
 	}
 }

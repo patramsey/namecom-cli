@@ -143,6 +143,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   with the error: `hint:` in table mode and the envelope's `hint` key in JSON
   and YAML. A missing or failing credential now gets that hint in the envelope
   too.
+- Argument-count errors (`namecom domain get a b`) now honour `-o`, `--color`
+  and the other output flags. They were rendered in the default format for the
+  terminal, so `-o table` in a pipe still printed the JSON envelope, and
+  `-o yaml` printed JSON.
 
 ## [0.4.7] - 2026-09-29
 
