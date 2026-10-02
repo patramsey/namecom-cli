@@ -17,9 +17,13 @@ being replaced by a link.
 | [`core-api-go-updatedomain-union.md`](core-api-go-updatedomain-union.md) | `namedotcom/core-api-go` v1.33.3 | [#6](https://github.com/namedotcom/core-api-go/issues/6) — **fixed in v1.33.5**, closed |
 | [`core-api-go-idempotency-key-asterisk.md`](core-api-go-idempotency-key-asterisk.md) | `namedotcom/core-api-go` v1.33.3 | [#5](https://github.com/namedotcom/core-api-go/issues/5) — **fixed in v1.33.5**, closed |
 
-Neither is worked around in this repository. What a mitigation would look like,
-and what each was measured to cost, is recorded in
-[`core-api-go-mitigations.md`](core-api-go-mitigations.md).
+The first two, #3 and #4, were never worked around in this repository. What a
+mitigation would have looked like, and what each was measured to cost, is
+recorded in [`core-api-go-mitigations.md`](core-api-go-mitigations.md).
+
+Later issues — [#9] through [#13] — were filed straight to the tracker, with
+the reproduction in the issue rather than a report here. One of them is worked
+around: see [#12] below.
 
 ## Status
 
@@ -28,7 +32,7 @@ vendored spec, the Python preprocessor, and the generated client were removed in
 #62. See #40 for how it went.
 
 **Five of the six reports here are fixed upstream, and all six are now filed.**
-One stands, and it is the only one still worked around in this repository:
+One stands, and it is still worked around in this repository:
 
 | report | status | what this repo does |
 |---|---|---|
@@ -48,6 +52,14 @@ three fields the map did. And `TestRequestShape_URL/create` failed loudly on a
 bug the bump introduced: v1.33.5 dropped the `CreateURLForwardingRequest`
 wrapper that carried `DomainName`, so the path silently became
 `/core/v1/domains//url/forwarding` until the field was set on the input itself.
+
+One workaround has no report here. [#12], against v1.34.0: with retries
+disabled, the SDK's retrier still sleeps on a 429, 408 or 5xx before returning
+it — honouring `Retry-After` up to 60 seconds — so a final rate-limit answer
+could hang past `--timeout` and surface as exit 1 instead of 5. The SDK is given
+an HTTP client (`finalResponseClient` in `internal/api/sdk.go`) that decodes
+those statuses into the SDK's own error types itself, so the retrier never
+sees one to sleep on. It goes when the upstream fix ships.
 
 ### On reporting to this tracker
 
@@ -84,7 +96,13 @@ The practical consequence is that a fix arrives without notice, so the way to
 learn about one is to watch releases and read the diff, not to wait on the
 issue. Dependabot found v1.33.4 here before anyone thought to look.
 
+The within-a-week record held for the first five only. [#8], filed 2026-09-05,
+is still open, and v1.33.6 and v1.34.0 shipped without a fix for it.
+
 [#5]: https://github.com/namedotcom/core-api-go/issues/5
 [#7]: https://github.com/namedotcom/core-api-go/issues/7
 [#6]: https://github.com/namedotcom/core-api-go/issues/6
 [#8]: https://github.com/namedotcom/core-api-go/issues/8
+[#9]: https://github.com/namedotcom/core-api-go/issues/9
+[#12]: https://github.com/namedotcom/core-api-go/issues/12
+[#13]: https://github.com/namedotcom/core-api-go/issues/13
