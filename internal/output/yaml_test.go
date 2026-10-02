@@ -49,7 +49,7 @@ func TestWriteYAML_RoundTripsLikeJSON(t *testing.T) {
 			t.Errorf("YAML for %s does not parse: %v\n%s", j, err, buf.String())
 			return
 		}
-		if !reflect.DeepEqual(normalizeYAML(got), want) {
+		if !reflect.DeepEqual(yamlAsJSON(got), want) {
 			t.Errorf("YAML for %s reads back as %#v, want %#v\n%s", j, got, want, buf.String())
 		}
 	}
@@ -61,20 +61,20 @@ func TestWriteYAML_RoundTripsLikeJSON(t *testing.T) {
 	}
 }
 
-// normalizeYAML turns what yaml.Unmarshal decodes into what json.Unmarshal
+// yamlAsJSON turns what yaml.Unmarshal decodes into what json.Unmarshal
 // would: map[string]any and float64 numbers.
-func normalizeYAML(v any) any {
+func yamlAsJSON(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		m := make(map[string]any, len(t))
 		for k, e := range t {
-			m[k] = normalizeYAML(e)
+			m[k] = yamlAsJSON(e)
 		}
 		return m
 	case []any:
 		s := make([]any, len(t))
 		for i, e := range t {
-			s[i] = normalizeYAML(e)
+			s[i] = yamlAsJSON(e)
 		}
 		return s
 	case int:

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -48,12 +47,6 @@ func decodeJSONStrict(dec *json.Decoder) (any, error) {
 				return nil, err
 			}
 			ks := k.(string)
-			// KNOWN BUG (fuzz): jsonToNode tags keys !!str but yaml.v3 still emits
-			// a "<<" key plain, and a plain "<<" is the YAML merge key: {"<<":{"a":1}}
-			// reads back as {"a":1}.
-			if ks == "<<" && os.Getenv("FUZZ_UNSKIP") == "" {
-				return nil, errSkip
-			}
 			if _, dup := obj[ks]; dup {
 				return nil, errSkip
 			}
@@ -81,24 +74,6 @@ func decodeJSONStrict(dec *json.Decoder) (any, error) {
 		}
 		return f, nil
 	case string:
-		// KNOWN BUG (fuzz): yaml.v3 writes a string that starts with a
-		// newline as a literal block that drops that newline: "\n" encodes as
-		// `|4+` and reads back as "", "\n0" as `|4-` + "0" and reads back as
-		// "0". So {"answer":"\n"} prints `answer: |4+` under -o yaml and
-		// means {"answer":""}. The encoder is yaml.v3's; writeYAML hands it
-		// the string unchanged.
-		// U+0085, U+2028 and U+2029 are YAML line breaks too and go the same
-		// way: " \n" with a leading U+2029 reads back as "\n".
-		if startsWithBreak(t) && os.Getenv("FUZZ_UNSKIP") == "" {
-			return nil, errSkip
-		}
-		// KNOWN BUG (fuzz): a multi-line string whose first character is a
-		// tab is written as a literal block yaml.v3 then cannot read:
-		// "\ta\nb" -> "|-\n    \ta\n    b" -> "found a tab character where an
-		// indentation space is expected". -o yaml output that does not parse.
-		if strings.HasPrefix(t, "\t") && strings.Contains(t, "\n") && os.Getenv("FUZZ_UNSKIP") == "" {
-			return nil, errSkip
-		}
 		return t, nil
 	default:
 		return t, nil
@@ -142,15 +117,6 @@ func normalizeYAML(v any) (any, error) {
 	default:
 		return t, nil
 	}
-}
-
-func startsWithBreak(s string) bool {
-	for _, p := range []string{"\n", "\u0085", " ", " "} {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // FuzzYAMLMatchesJSON checks the property output.YAML is built on: the YAML
