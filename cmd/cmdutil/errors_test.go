@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/spf13/cobra"
 )
 
 // IsNotFound is what turns a bare 404 into "domain not found — run 'namecom
@@ -114,6 +115,32 @@ func TestClassifyCobraUsage(t *testing.T) {
 			t.Errorf("ClassifyCobraUsage(%q) did not classify as a usage error", msg)
 		}
 	}
+
+	// Issue #165: `namecom open a.com b.com` exited 1, because "accepts at most
+	// 1 arg(s)" from cobra.MaximumNArgs was not recognized. The messages come
+	// from cobra's own validators here, so a reworded one fails this test.
+	t.Run("cobra positional-arg validators", func(t *testing.T) {
+		cmd := &cobra.Command{Use: "x"}
+		validators := map[string]struct {
+			check cobra.PositionalArgs
+			args  []string
+		}{
+			"MaximumNArgs": {cobra.MaximumNArgs(1), []string{"a", "b"}},
+			"MinimumNArgs": {cobra.MinimumNArgs(2), []string{"a"}},
+			"ExactArgs":    {cobra.ExactArgs(1), []string{"a", "b"}},
+			"RangeArgs":    {cobra.RangeArgs(1, 2), nil},
+			"NoArgs":       {cobra.NoArgs, []string{"a"}},
+		}
+		for name, v := range validators {
+			err := v.check(cmd, v.args)
+			if err == nil {
+				t.Fatalf("%s accepted %q", name, v.args)
+			}
+			if got := ClassifyCobraUsage(err); !usage(got) {
+				t.Errorf("%s: ClassifyCobraUsage(%q) did not classify as a usage error", name, err)
+			}
+		}
+	})
 
 	t.Run("leaves other errors alone", func(t *testing.T) {
 		runtime := errors.New("connection refused")

@@ -334,3 +334,28 @@ func TestExitCode_ExtraArgsAreUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestExitCode_OpenTooManyArgs guards issue #165: "accepts at most 1 arg(s)"
+// from cobra.MaximumNArgs was not classified, so `namecom open a.com b.com`
+// exited 1 like a runtime failure. The launcher is stubbed in case the
+// argument check ever stops firing: no test may open a real browser.
+func TestExitCode_OpenTooManyArgs(t *testing.T) {
+	withConfig(t, loneProfile)
+	stubStart(t, func(name string) error {
+		t.Errorf("launched %q: extra arguments must fail before opening anything", name)
+		return nil
+	})
+	prev := gf
+	t.Cleanup(func() { gf = prev; rootCmd.SetArgs(nil) })
+	rootCmd.SetArgs([]string{"-o", "json", "open", "a.com", "b.com"})
+	err := cmdutil.ClassifyCobraUsage(rootCmd.ExecuteContext(context.Background()))
+	if err == nil {
+		t.Fatal("namecom open a.com b.com succeeded; want a usage error")
+	}
+	if !strings.Contains(err.Error(), "at most 1 arg") {
+		t.Fatalf("failed for another reason: %v", err)
+	}
+	if got := exitCode(err); got != 2 {
+		t.Errorf("exited %d (%v); want 2", got, err)
+	}
+}

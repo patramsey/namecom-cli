@@ -265,6 +265,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `description`, which take no value, so scripts building flags from it will
   see one name fewer. The table now prints those notices under the
   capabilities instead of hiding them.
+- `namecom open` honours `$BROWSER`, and no longer fails where nothing can
+  open a browser (headless Linux, SSH sessions, containers). It prints
+  `Open this URL in your browser: <url>` and exits 0 instead of exiting 1 with
+  an `exec: "xdg-open"` error. In JSON or YAML mode it now always prints
+  `{"url": …, "opened": true|false}`; it used to print nothing.
+- `namecom open` with more than one argument exits **2** (usage error) instead
+  of 1. Any other command that rejects the wrong number of positional
+  arguments through cobra's own checks now exits 2 as well.
 
 ## [0.4.7] - 2026-09-29
 
