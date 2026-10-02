@@ -270,6 +270,7 @@ func buildOutputConfig() (*output.Config, error) {
 		}
 		out.Color = cm
 	}
+	out.ApplyColorProfile()
 	out.QuietMode = gf.quiet
 	out.NoHeader = gf.noHeader
 	out.Wide = gf.wide

@@ -147,6 +147,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and the other output flags. They were rendered in the default format for the
   terminal, so `-o table` in a pipe still printed the JSON envelope, and
   `-o yaml` printed JSON.
+- `--color always` now colours output that is piped or redirected, as
+  `CLICOLOR_FORCE=1` already did; it used to print plain text whenever stdout
+  was not a terminal. `--color never` likewise guarantees no escape codes.
 
 ## [0.4.7] - 2026-09-29
 

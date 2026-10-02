@@ -24,6 +24,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/muesli/termenv"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -122,6 +123,28 @@ func (c *Config) ColorEnabled() bool {
 		return true
 	}
 	return isStdoutTTY()
+}
+
+// ApplyColorProfile makes lipgloss's renderer agree with an explicit --color.
+//
+// ColorEnabled decides whether this package styles a string, but lipgloss
+// makes its own terminal check when it renders one: with stdout piped it
+// detects no colour support and drops every escape, so `--color always | cat`
+// printed plain text. always therefore forces a colour profile when none was
+// detected, and never forces plain text. auto leaves lipgloss's detection,
+// which already honours NO_COLOR and CLICOLOR_FORCE, alone.
+//
+// The renderer is process-global, so this is called once, from the root
+// command, when the flags are applied.
+func (c *Config) ApplyColorProfile() {
+	switch c.Color {
+	case ColorAlways:
+		if lipgloss.ColorProfile() == termenv.Ascii {
+			lipgloss.SetColorProfile(termenv.ANSI256)
+		}
+	case ColorNever:
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
 }
 
 // Adaptive color tokens — Dark values are vivid for dark terminals; Light
