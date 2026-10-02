@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"reflect"
 	"strings"
@@ -594,16 +595,21 @@ func errorHint(err error) string {
 		}
 	}
 	// Unwrap to find a hintable cause (e.g. fmt.Errorf("fetching: %w", apiErr)).
-	type unwrapper interface{ Unwrap() error }
-	for u, ok := err.(unwrapper); ok; u, ok = err.(unwrapper) {
-		err = u.Unwrap()
-		if h, ok2 := err.(hintable); ok2 {
+	// The loop stops at a nil cause: *net.DNSError and *json.UnmarshalTypeError
+	// both have an Unwrap that returns nil, and assigning that to err crashed
+	// the err.Error() below on every DNS failure and undecodable response.
+	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
+		if h, ok := cause.(hintable); ok {
 			if hint := h.UserHint(); hint != "" {
 				return hint
 			}
 		}
 	}
-	// Network-level failures.
+	// Network-level failures. Any DNS failure counts, not only "no such host":
+	// a resolver that times out or misbehaves is still the network.
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
+		return "could not reach the API — check your network connection"
+	}
 	msg := err.Error()
 	if strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "connection refused") ||

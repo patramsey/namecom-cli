@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +44,9 @@ func TestExitCode(t *testing.T) {
 		{"api 403", &api.APIError{StatusCode: 403}, 3},
 		{"api 404", &api.APIError{StatusCode: 404}, 4},
 		{"api 429", &api.APIError{StatusCode: 429}, 5},
+		// #156: a DNS failure is a runtime error, not the usage code its
+		// panic used to exit with.
+		{"dns failure", fmt.Errorf("getting domain: %w", &net.DNSError{Err: "no such host", Name: "x.invalid", IsNotFound: true}), 1},
 	}
 
 	for _, tc := range tests {

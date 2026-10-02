@@ -132,6 +132,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   TXT value as an RFC 1035 decimal escape (`\010`). It was written raw, which
   left the quotes unbalanced, so BIND and other parsers refused to load the
   whole zone.
+- A DNS lookup failure, or a response the API client could not decode, no
+  longer crashes `namecom` with a Go panic and exit **2**. It is reported as an
+  ordinary error and exits **1**; a DNS failure gets the "could not reach the
+  API" hint. This hit every command when offline, and `domain requirements` for
+  `eu`, `jp` and `nyc` in the sandbox.
 
 ## [0.4.7] - 2026-09-29
 
