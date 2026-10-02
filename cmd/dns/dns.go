@@ -81,7 +81,7 @@ var updateCmd = &cobra.Command{
 	Short: "Update a DNS record (read-modify-write: only supplied flags are changed)",
 	Example: `  namecom dns update example.com 12345 --answer 1.2.3.4
   namecom dns update example.com 12345 --ttl 3600
-  namecom dns update example.com 12345 --host www --answer example.com.`,
+  namecom dns update example.com 67890 --host www --answer example.com.   # a CNAME record`,
 	Args: cmdutil.ExactArgs(2),
 	RunE: runUpdate,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -99,7 +99,7 @@ var deleteCmd = &cobra.Command{
 	Use:   "delete <domain> <id>",
 	Short: "Delete a DNS record",
 	Example: `  namecom dns delete example.com 12345
-  namecom dns list example.com -q | xargs -I{} namecom dns delete example.com {}`,
+  namecom dns list example.com --type TXT -q | xargs -I{} namecom dns delete example.com {} --yes   # every TXT record`,
 	Args: cmdutil.ExactArgs(2),
 	RunE: runDelete,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

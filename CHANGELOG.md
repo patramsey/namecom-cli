@@ -10,6 +10,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- `url update --help` no longer shows `(default "redirect")` for `--type`.
+  Leaving `--type` out has always kept the forwarding's current type; the help
+  now says so. Root help lists the exit codes, and the `dns delete` example
+  that piped into `dns delete` without `--yes`, which failed every time, now
+  passes it.
 - A successful response whose body is JSON `null`, or a list in a response
   that contains a `null` element, no longer crashes the command. A `null` body
   now fails with "unexpected response from the API" and exits 1; before, about

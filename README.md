@@ -26,18 +26,24 @@ representative account rather than a real one:
 
 ```
 $ namecom status
+Profile  default  https://api.name.com
+47 domains  3 expiring within 30 days  1 transfer pending  2 unlocked
+Balance  $125.40
 
-  Profile   default → https://api.name.com
-  ────────────────────────────────────────────
-  47 domains   3 expiring soon   1 transfer pending
+Expiring soon
+  acme.io                        2026-10-18  (16 days)
+  staging.dev                    2026-10-25  (23 days)
+  oldsite.net                    2026-10-30  (28 days)
 
-  Expiring soon
-    acme.io          2026-07-01   (in 16 days)
-    staging.dev      2026-07-18   (in 33 days)
-    oldsite.net      2026-08-02   (in 48 days)
+Transfers in progress
+  newco.com
 
-→ Run 'namecom domain renew acme.io' to renew now
+→ Run 'namecom domain renew <domain>' to renew expiring domains
+→ Run 'namecom domain list' to see all domains
 ```
+
+`namecom status -q` prints just the expired and soon-expiring domains, one per
+line, ready for `xargs`.
 
 ## Contents
 
@@ -50,6 +56,7 @@ $ namecom status
 - [Configuration](#configuration)
 - [Shell completion](#shell-completion)
 - [Global flags](#global-flags)
+- [Exit codes](#exit-codes)
 - [Development](#development)
 - [Contributing](#contributing)
 - [Changelog](CHANGELOG.md)
@@ -145,18 +152,22 @@ namecom open mycoolstartup.com
 
 | Group | Commands |
 |---|---|
-| `domain` | `list` `get` `search` `check` `register` `renew` `lock` `autorenew` `privacy` `set-ns` `contacts` `auth-code` `pricing` `update` |
+| `domain` | `list` `get` `search` `check` `register` `renew` `lock` `autorenew` `privacy` `set-ns` `contacts` `auth-code` `pricing` `update` `claims` `requirements` |
 | `dns` | `list` `create` `update` `delete` `export` `import` |
 | `dnssec` | `list` `get` `create` `delete` |
 | `transfer` | `list` `get` `create` `cancel` `eligibility` `internal-in` `cancel-outbound` |
 | `email` | `list` `get` `create` `update` `delete` |
 | `url` | `list` `get` `create` `update` `delete` |
 | `vanity-ns` | `list` `get` `create` `update` `delete` |
+| `contact` | `unverified` `resend` `verify` — ICANN contact verification |
 | `auth` | `login` `logout` `status` |
+| `status` | account overview: domain counts, expiring domains, pending transfers, balance |
 | `order` | `list` `get` `refund` |
 | `config` | `list-profiles` `use` `show` |
 | `api` | raw HTTP passthrough with auth applied |
-| `open` | open name.com in a browser |
+| `open` | open name.com in a browser (honors `$BROWSER`; prints the URL when no browser can be opened) |
+| `version` | version and build information |
+| `completion` | shell completion scripts: `bash` `zsh` `fish` `powershell` |
 
 ```
 namecom --help
@@ -213,26 +224,50 @@ namecom domain set-ns acme.io --ns ns1.acme.io,ns2.acme.io
 
 **Scripting and automation:**
 ```bash
-# List all domains expiring within 60 days
-namecom domain list --output json | jq -r '.data[] | select(.expireDate != null and .expireDate < "2026-08-01") | .domainName'
+# List every domain expiring within 60 days (GNU date; on macOS: date -v+60d +%F)
+namecom domain list --all --expiring-before "$(date -d '+60 days' +%F)" -q
 
 # Bulk-create an A record across all domains
-namecom domain list -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4
+namecom domain list --all -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4
 
 # Dry-run first, then apply
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --dry-run
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --yes
+
+# Capture the new record's ID
+ID=$(namecom dns create acme.io --type A --host api --answer 1.2.3.4 -q)
+namecom dns delete acme.io "$ID" --yes
 ```
+
+Commands that change something ask first when run in a terminal. In a script
+or a pipe there is no one to ask, so they stop with *"pass --yes to confirm in
+non-interactive mode"* until you pass `--yes`.
 
 ## Output formats
 
-Every command supports `--output table` (default), `--output json`, and `--output yaml`:
+Every command supports `--output table`, `--output json`, and `--output yaml`.
+The default is `table` in a terminal and `json` when output is piped or
+redirected:
 
 ```bash
 namecom domain list                     # rich table with colors and expiry urgency
 namecom domain list --output json       # machine-readable JSON
 namecom domain list --quiet             # one domain per line, for scripting
 ```
+
+`-q`/`--quiet` follows one rule whatever `--output` says: lists print one ID
+or name per line, create commands print the new resource's ID, other writes
+print nothing, and other reads print the one value a script most likely wants
+(`version` the version, `auth status` the username, `domain pricing` the
+price). Errors still go to stderr.
+
+Tables drop their rightmost columns to fit a narrow terminal and say which
+they hid; `--wide` keeps them all.
+
+`--dry-run` prints the request a write would send, and sends nothing. In JSON
+mode — including the default when piped — that is a JSON document with
+`dry_run`, `method`, `path` and `body` keys; `-o table` prints
+`METHOD /path` and the body instead.
 
 ## Configuration
 
@@ -258,7 +293,10 @@ namecom config use work                 # make it the default
 namecom auth login --profile sandbox --sandbox
 namecom domain register test.com --profile sandbox
 ```
-Omit `--profile` to use your default (production) profile.
+`--sandbox` at login saves the profile as a sandbox one, so every command run
+with it targets `api.dev.name.com`. The sandbox has its own API token,
+separate from your production one. Omit `--profile` to use your default
+(production) profile.
 
 **Environment variables** (useful in CI):
 ```bash
@@ -278,10 +316,11 @@ profiles:
     token_cmd: "op read op://vault/namecom/token"  # 1Password example
 ```
 
-The command runs through `sh -c` on macOS and Linux, and through `cmd.exe` on
-Windows. For `sh` syntax on Windows, say so in the command — for example
-`token_cmd: sh -c "op read op://vault/namecom/token | tr -d '\r'"` — with `sh`
-on your `PATH` (Git for Windows ships one).
+The command must print the token on a single line. It runs through `sh -c` on
+macOS and Linux, and through `cmd.exe` on Windows. To use `sh` syntax on
+Windows, call `sh` yourself — for example
+`token_cmd: sh -c "op read op://vault/namecom/token | tr -d '\r'"` — with an
+`sh` on your `PATH` (Git for Windows ships one).
 
 ## Shell completion
 
@@ -289,6 +328,7 @@ on your `PATH` (Git for Windows ships one).
 namecom completion bash  > /etc/bash_completion.d/namecom
 namecom completion zsh   > "${fpath[1]}/_namecom"
 namecom completion fish  > ~/.config/fish/completions/namecom.fish
+namecom completion powershell | Out-String | Invoke-Expression   # current PowerShell session
 ```
 
 ## Global flags
@@ -296,19 +336,36 @@ namecom completion fish  > ~/.config/fish/completions/namecom.fish
 | Flag | Default | Description |
 |---|---|---|
 | `-o, --output` | `table` in TTY, `json` otherwise | Output format: `table`, `json`, `yaml` |
-| `-q, --quiet` | | One result per line — for piping and scripting |
-| `-y, --yes` | | Skip all confirmation prompts |
-| `--dry-run` | | Print the API request without sending it |
+| `-q, --quiet` | | Script output: lists print one ID or name per line, creates the new ID, other writes nothing — see [Output formats](#output-formats) |
+| `-y, --yes` | | Skip all confirmation prompts; required for writes when not in a terminal |
+| `--dry-run` | | Print the request a write would send, without sending it — a JSON document in JSON mode. Reads are unaffected |
 | `--profile` | | Use a named credential profile |
 | `--sandbox` | | Target the sandbox API (`api.dev.name.com`) |
+| `--base-url` | | Send requests to another API base URL, such as a local stub or a proxy. Your credentials go wherever it points; a warning says so when it is not name.com |
 | `--color` | `auto` | Colorize output: `auto`, `always`, `never` |
-| `--timeout` | `30s` | Per-request timeout |
-| `--debug` | | Log HTTP requests/responses to stderr (token redacted) |
+| `--wide` | | Keep every table column, even when the table is wider than the terminal |
+| `--timeout` | `30s` | Total time budget for one API call, retries included |
+| `--debug` | | Log HTTP requests/responses to stderr (token and auth codes redacted) |
 | `--debug-file` | | Log HTTP requests/responses to a file (appends; useful as an audit log) |
 | `--no-header` | | Omit the header row from table output |
-| `--idempotency-key` | auto-generated | Idempotency key for write operations — auto-generated per invocation; override to make cross-invocation retries safe |
+| `--idempotency-key` | a fresh key per write | Pin every write in this invocation to one key, so re-running the same command after a failure can be recognized as a retry by endpoints that honor idempotency keys |
 | `--username` | | API username (overrides config and `NAMECOM_USERNAME`) |
 | `--token` | | API token (overrides config and `NAMECOM_TOKEN`) |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | API or other runtime error |
+| `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value |
+| `3` | Authentication: credentials missing, failing or rejected, or access denied (HTTP 401/403) |
+| `4` | Not found (HTTP 404) |
+| `5` | Rate limited (HTTP 429), after the CLI's own retries |
+
+With `--output json` or `yaml` — including the JSON default when piped — an
+error is written to stderr as one document, an `error` object with a
+`message` and, where there is one, a `hint`.
 
 ## Development
 
@@ -323,7 +380,7 @@ The API client is [`github.com/namedotcom/core-api-go`](https://github.com/named
 ## Contributing
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-setup, the checks CI runs, and what to know before touching the API
+setup, the checks CI runs, and what to know before touching the
 API client or a command that writes. Participation is governed by the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 

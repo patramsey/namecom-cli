@@ -36,13 +36,14 @@ of concern include (but aren't limited to):
   (`--debug` / `--debug-file`), a shell history entry, the process
   environment of an unrelated child process, or a config file written with
   overly permissive modes.
-- **`token_cmd` handling** — the credential-helper shell exec in
-  `~/.config/namecom/config.yaml`. Anything that lets an untrusted config,
+- **`token_cmd` handling** — the credential-helper shell exec in the config
+  file (`namecom auth status` prints its path). Anything that lets an untrusted config,
   profile name, or API response influence what gets executed.
 - **Unintended mutations** — a path where a command sends a different
   request than its `--dry-run` preview showed, a confirmation prompt is
-  bypassed without `--yes`, or a non-idempotent `POST` is retried without an
-  idempotency key (that would double-charge a registration or renewal).
+  bypassed without `--yes`, or a `POST` is retried after a 5xx or a network
+  error (that would double-charge a registration or renewal). The CLI never
+  retries one, with or without an idempotency key.
 - **Sandbox/production confusion** — anything that causes `--sandbox` to hit
   production, or a production profile to be used when a sandbox one was
   selected.
