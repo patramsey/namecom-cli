@@ -270,6 +270,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `Open this URL in your browser: <url>` and exits 0 instead of exiting 1 with
   an `exec: "xdg-open"` error. In JSON or YAML mode it now always prints
   `{"url": …, "opened": true|false}`; it used to print nothing.
+- `namecom open` with more than one argument exits **2** (usage error) instead
+  of 1. Any other command that rejects the wrong number of positional
+  arguments through cobra's own checks now exits 2 as well.
 
 ## [0.4.7] - 2026-09-29
 

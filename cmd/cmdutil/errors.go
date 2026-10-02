@@ -118,6 +118,12 @@ var cobraUsagePrefixes = []string{
 	"unknown shorthand flag: ",
 	"invalid argument ",
 	"flag needs an argument",
+	// Positional-arg validators: MaximumNArgs, ExactArgs and RangeArgs say
+	// "arg(s), received", MinimumNArgs "arg(s), only received". NoArgs reports
+	// "unknown command", above. cmdutil.ExactArgs/MinimumNArgs classify
+	// themselves; these catch cobra's own, as on `namecom open`.
+	" arg(s), received ",
+	" arg(s), only received ",
 }
 
 // ClassifyCobraUsage wraps cobra's own invocation errors as UsageError so they
