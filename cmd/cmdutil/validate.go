@@ -244,6 +244,19 @@ func ValidNameserver(ns string, idx int) error {
 	if strings.IndexFunc(ns, unicode.IsSpace) >= 0 {
 		return usagef("nameserver %q must not contain spaces", ns)
 	}
+	// A nameserver is a hostname, so it is held to the same characters as a
+	// domain argument: no "*", "@", ":" (an IPv6 address is not a nameserver
+	// name), and a non-ASCII name must be valid IDNA.
+	for i := 0; i < len(ns); i++ {
+		if c := ns[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
+			return usagef("nameserver %q must not contain %q", ns, ns[i:i+1])
+		}
+	}
+	if !isASCII(ns) {
+		if _, err := idna.Lookup.ToASCII(ns); err != nil {
+			return usagef("nameserver %q is not a valid internationalized hostname: %v", ns, err)
+		}
+	}
 	if !strings.Contains(ns, ".") {
 		return usagef("nameserver %q must be a fully-qualified hostname (e.g. ns1.example.com)", ns)
 	}

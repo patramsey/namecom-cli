@@ -229,6 +229,11 @@ func TestValidNameserver(t *testing.T) {
 		"ns1.example\t.com",
 		" ns1.example.com",
 		"ns1 .example.com",
+		// Characters no hostname has; the domain-argument rules refuse them too.
+		"*.www",
+		"::ffff:1.2.3.4",
+		"user@example.com",
+		"ns1.exa?mple.com",
 	}
 	for _, s := range bad {
 		if err := ValidNameserver(s, 0); err == nil {

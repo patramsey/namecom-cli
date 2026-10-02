@@ -118,7 +118,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `domain set-ns` rejects a nameserver containing whitespace, such as
   `--ns "ns1.example .com,ns2.example.com"`, as a usage error (exit 2) before
   sending anything. It was sent, so the mistake came back as an API error
-  instead. Spaces around the commas are still trimmed as before.
+  instead. Spaces around the commas are still trimmed as before. Characters
+  no hostname contains (`*`, `@`, `:`) and invalid internationalized names
+  are refused the same way, matching the rules for domain arguments.
 
 ## [0.4.7] - 2026-09-29
 
