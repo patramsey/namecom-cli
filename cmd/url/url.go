@@ -94,7 +94,10 @@ func init() {
 	createCmd.Flags().StringVar(&createMeta, "meta", "", "meta tags (masked only)")
 
 	updateCmd.Flags().StringVar(&updateForwardsTo, "to", "", "new destination URL")
-	updateCmd.Flags().StringVar(&updateType, "type", "redirect", "forwarding type: redirect, 302, masked")
+	// No default: an unset --type keeps the forwarding's current type, and a
+	// default of "redirect" in --help read as though a masked forwarding would
+	// be reset to a redirect.
+	updateCmd.Flags().StringVar(&updateType, "type", "", "forwarding type: redirect, 302, masked (default: keep the current type)")
 	updateCmd.Flags().StringVar(&updateTitle, "title", "", "page title (masked only)")
 	updateCmd.Flags().StringVar(&updateMeta, "meta", "", "meta tags (masked only)")
 

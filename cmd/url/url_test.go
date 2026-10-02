@@ -1182,3 +1182,19 @@ func TestURLList_QuietFetchesEveryPage(t *testing.T) {
 		}
 	}
 }
+
+// An unset --type keeps the forwarding's current type, so --help must not
+// advertise a default. It used to show (default "redirect"), which read as
+// though `url update --to …` would turn a masked forwarding into a redirect.
+func TestURLUpdate_TypeFlagShowsNoDefault(t *testing.T) {
+	f := updateCmd.Flags().Lookup("type")
+	if f == nil {
+		t.Fatal("url update has no --type flag")
+	}
+	if f.DefValue != "" {
+		t.Errorf("--type default = %q, want none (an unset --type keeps the current type)", f.DefValue)
+	}
+	if !strings.Contains(f.Usage, "keep the current type") {
+		t.Errorf("--type help does not say an unset --type keeps the current type: %q", f.Usage)
+	}
+}
