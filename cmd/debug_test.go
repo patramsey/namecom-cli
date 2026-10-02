@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/output"
 )
 
@@ -131,5 +133,16 @@ func TestDebugFile_ExistingFileMadePrivate(t *testing.T) {
 	}
 	if mode := fi.Mode().Perm(); mode != 0o600 {
 		t.Errorf("--debug-file mode = %o, want 600", mode)
+	}
+}
+
+// TestTimeout_NegativeIsUsageError pins #187: a negative --timeout silently
+// meant no timeout at all (http.Client treats any value <= 0 as none).
+func TestTimeout_NegativeIsUsageError(t *testing.T) {
+	withConfig(t, loneProfile)
+	err := executeRoot(t, "--base-url", "http://127.0.0.1:1", "--timeout", "-1s", "domain", "list")
+	var ue *cmdutil.UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("--timeout -1s = %v, want a usage error", err)
 	}
 }

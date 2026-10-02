@@ -32,6 +32,7 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- A negative `--timeout` now exits **2**. It used to mean no timeout at all.
 - `--debug-file` naming a file that already exists now makes it readable only
   by you (mode 0600), as a new file already was. An existing file used to keep
   its mode, often 0644.

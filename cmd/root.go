@@ -199,6 +199,12 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	if err := initOutputContext(cmd); err != nil {
 		return err
 	}
+	// http.Client reads any timeout <= 0 as "none", so `--timeout -1s` used
+	// to remove the budget it looks like it tightens (#187). Zero keeps the
+	// API client's default.
+	if gf.timeout < 0 {
+		return cmdutil.NewUsageError(fmt.Errorf("--timeout must not be negative (got %s)", gf.timeout))
+	}
 	// Stored before the skip below: `config show --profile x` never builds a
 	// client, and when only initContext stored these the flag never reached it.
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOverrides, flagOverrides(cmd)))
