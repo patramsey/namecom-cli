@@ -3,7 +3,6 @@ package cmdutil
 import (
 	"errors"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,7 +88,7 @@ func FuzzValidators(f *testing.F) {
 
 		if err := ValidNameserver(s, 0); err != nil {
 			checkUsage(t, "ValidNameserver", err)
-		} else if ValidDomainName(s) != nil && !knownNameserverSpace(s) {
+		} else if ValidDomainName(s) != nil {
 			// A nameserver is a hostname; anything accepted as one is a name.
 			t.Fatalf("ValidNameserver accepted %q, which ValidDomainName refuses", s)
 		}
@@ -119,15 +118,6 @@ func FuzzValidators(f *testing.F) {
 			checkUsage(t, "ValidYears", ValidYears(int(n)))
 		}
 	})
-}
-
-// knownNameserverSpace matches a known bug so the fuzzer can look past it.
-//
-// KNOWN BUG (fuzz): ValidNameserver does not reject whitespace, so
-// `domain set-ns example.com "ns1.example .com"` passes client-side validation
-// (ValidDomainName refuses the same string). Minimal input: "0 .0".
-func knownNameserverSpace(s string) bool {
-	return strings.Contains(s, " ") && os.Getenv("FUZZ_UNSKIP") == ""
 }
 
 // FuzzNextPage checks NextPage never reports a page at or before the current

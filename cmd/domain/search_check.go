@@ -415,9 +415,9 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 //
 // The API normalizes names server-side and replies "in its canonical (ASCII /
 // punycode) form", so a reply is not always spelled the way the user typed it.
-// Arguments are lowercased before we get here, which covers case; what remains
-// is punycode. Encoding it locally would mean depending on
-// golang.org/x/net/idna, so an unrecognized reply is instead resolved by
+// Arguments are lowercased and punycode-encoded (cmdutil.CanonicalDomain)
+// before we get here, so an exact match is the normal case. Should the API's
+// canonical form still differ, an unrecognized reply is resolved by
 // elimination — but only under conditions that make the pairing safe:
 //
 //   - exactly one argument may be outstanding, so the pairing is unambiguous;

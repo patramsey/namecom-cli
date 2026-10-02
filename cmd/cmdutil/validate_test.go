@@ -223,6 +223,17 @@ func TestValidNameserver(t *testing.T) {
 		"has..double.dot",
 		".leading.example.com",  // leading dot
 		"trailing.example.com.", // trailing dot
+		// Whitespace (#191): ValidDomainName refused these, ValidNameserver
+		// let them through to the API.
+		"ns1.example .com",
+		"ns1.example\t.com",
+		" ns1.example.com",
+		"ns1 .example.com",
+		// Characters no hostname has; the domain-argument rules refuse them too.
+		"*.www",
+		"::ffff:1.2.3.4",
+		"user@example.com",
+		"ns1.exa?mple.com",
 	}
 	for _, s := range bad {
 		if err := ValidNameserver(s, 0); err == nil {
@@ -354,6 +365,8 @@ func TestDomainArg_Normalization(t *testing.T) {
 		{"nodot", "", true},
 		{"has space.com", "", true},
 		{".leading.com", "", true},
+		{"Bücher.COM", "xn--bcher-kva.com", false},
+		{"under_score.com", "under_score.com", false},
 	}
 	for _, tt := range tests {
 		got, err := DomainArg([]string{tt.input}, 0)
@@ -372,27 +385,56 @@ func TestDomainArg_Normalization(t *testing.T) {
 }
 
 // TestCanonicalDomain pins the normalization every command's domain argument
-// goes through: lowercase and trim, nothing more.
+// goes through: trim, lowercase, and encode Unicode labels as punycode.
 //
-// It deliberately does NOT punycode-encode. The API accepts UTF-8 on input and
-// normalizes server-side, so encoding locally would buy nothing on the request
-// path — it would only help match the canonical form the API replies with, and
-// that is handled by argMatcher in cmd/domain rather than by taking on
-// golang.org/x/net/idna (~9MB of module) for one edge case.
+// The encoding is what issue #160 was about. The API normalizes UTF-8 in a
+// request body, but a domain argument usually lands in the URL path, and there
+// name.com's edge answers a percent-encoded Unicode name with an HTML 403.
 func TestCanonicalDomain(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"example.com", "example.com"},
 		{"EXAMPLE.COM", "example.com"},
 		{"  example.com  ", "example.com"},
-		// Unicode is lowercased but left as UTF-8 — the API accepts it.
-		{"CAFÉ.COM", "café.com"},
+		// Unicode is lowercased and encoded to its ASCII form.
+		{"CAFÉ.COM", "xn--caf-dma.com"},
+		{"bücher.com", "xn--bcher-kva.com"},
 		// Already-punycode input is untouched, never double-encoded.
 		{"xn--caf-dma.com", "xn--caf-dma.com"},
 		{"XN--CAF-DMA.COM", "xn--caf-dma.com"},
+		// Not valid IDNA: left as typed (lowercased) for ValidDomainName to
+		// reject, rather than encoded into something the user never asked for.
+		{"bücher-.com", "bücher-.com"},
 	}
 	for _, tc := range tests {
 		if got := CanonicalDomain(tc.in); got != tc.want {
 			t.Errorf("CanonicalDomain(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestDomainArg_RejectsBadNames pins the other half of #160: a name that cannot
+// be a domain is a usage error (exit 2) before anything is sent. A '?', '#' or
+// '/' changes what the request path means — `transfer eligibility 'a?x=1.com'`
+// reached the server — and invalid IDNA has no ASCII form to send at all.
+func TestDomainArg_RejectsBadNames(t *testing.T) {
+	for _, in := range []string{
+		"a?x=1.com",
+		"a#b.com",
+		"a/b.com",
+		"../x.com",
+		"a%2fb.com",
+		"bücher-.com",  // hyphen at the end of a label
+		"a\u200db.com", // zero-width joiner outside its permitted context
+		"\u05d0a.com",  // bidi rule: RTL label containing an LTR letter
+	} {
+		_, err := DomainArg([]string{in}, 0)
+		if err == nil {
+			t.Errorf("DomainArg(%q) = nil error, want a usage error", in)
+			continue
+		}
+		var ue *UsageError
+		if !errors.As(err, &ue) {
+			t.Errorf("DomainArg(%q) error %v is %T, want *UsageError (exit 2)", in, err, err)
 		}
 	}
 }

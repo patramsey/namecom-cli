@@ -104,6 +104,23 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - Domain-name completion now finds any domain on the account. It fetched only
   the first 250 domains and ignored what had been typed; the typed text is now
   sent to the API as a filter, the same one `domain list --filter` uses.
+- Internationalized domain names work as arguments. `domain get bücher.com`,
+  `dns list bücher.com` and every other command that puts the domain in the
+  URL path sent it percent-encoded, which name.com's edge answered with an
+  HTML 403 — printed in full, exit 3, with advice to run `auth login`. The CLI
+  now converts Unicode names to punycode (`xn--bcher-kva.com`) before sending,
+  and `--dry-run` previews that form. A name that is not valid IDNA, or that
+  contains a character no domain can hold — `?`, `#`, `/`, `%` and the like,
+  as in `transfer eligibility 'a?x=1.com'` — is now a usage error (exit 2)
+  and nothing is sent. Output that echoes the domain, such as dry-run paths,
+  shows the punycode form. This adds `golang.org/x/net` (for its `idna`
+  package) as a dependency.
+- `domain set-ns` rejects a nameserver containing whitespace, such as
+  `--ns "ns1.example .com,ns2.example.com"`, as a usage error (exit 2) before
+  sending anything. It was sent, so the mistake came back as an API error
+  instead. Spaces around the commas are still trimmed as before. Characters
+  no hostname contains (`*`, `@`, `:`) and invalid internationalized names
+  are refused the same way, matching the rules for domain arguments.
 
 ## [0.4.7] - 2026-09-29
 
