@@ -131,3 +131,24 @@ func TestSetProcessGroup_OnlyWithoutTerminal(t *testing.T) {
 		}
 	})
 }
+
+// TestRunTokenCmd_RejectsMultiLineOutput pins #187: a helper that printed more
+// than the token — `pass show` prints the whole entry, a vault CLI may add a
+// banner — had all of it sent as the token. The error must not echo the
+// output, which holds the secret.
+func TestRunTokenCmd_RejectsMultiLineOutput(t *testing.T) {
+	for _, cmdline := range []string{`printf 's3cret\nuser: me\n'`, `printf 'banner\r\ns3cret'`} {
+		tok, err := runTokenCmd(cmdline)
+		if err == nil {
+			t.Errorf("runTokenCmd(%s) = %q, want an error", cmdline, tok)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("error echoes the helper's output: %v", err)
+		}
+	}
+	// Surrounding whitespace, a trailing newline included, is still trimmed.
+	if tok, err := runTokenCmd(`printf '\n s3cret \r\n'`); err != nil || tok != "s3cret" {
+		t.Errorf("runTokenCmd(padded) = %q, %v; want s3cret", tok, err)
+	}
+}

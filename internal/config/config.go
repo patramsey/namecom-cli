@@ -368,6 +368,13 @@ func runTokenCmd(cmdline string) (string, error) {
 	if tok == "" {
 		return "", errors.New("produced empty output")
 	}
+	// A helper that prints more than the token (`pass show` prints the whole
+	// entry) had all of it sent as the token (#187). Say so without echoing
+	// the output, which holds the secret.
+	if strings.ContainsAny(tok, "\r\n") {
+		lines := strings.FieldsFunc(tok, func(r rune) bool { return r == '\r' || r == '\n' })
+		return "", fmt.Errorf("printed %d lines; it must print only the token (e.g. `pass show name | head -n1`)", len(lines))
+	}
 	return tok, nil
 }
 
