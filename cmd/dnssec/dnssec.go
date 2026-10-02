@@ -4,6 +4,7 @@ package dnssec
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -222,9 +223,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	digest := args[1]
 
+	// Escaped as the SDK escapes it, so --dry-run shows the path sent (#187).
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
-		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, digest),
+		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, url.PathEscape(digest)),
 		Prompt: fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain),
 		Spin:   "Removing DNSSEC key…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {

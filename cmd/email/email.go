@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -342,10 +343,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		EmailTo:    updateEmailTo,
 	}
 
+	// The mailbox is escaped as the SDK escapes it, so --dry-run shows the
+	// path that is sent (#187); a "/" in it used to preview unescaped.
 	var entry *coreapigo.EmailForwarding
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.EmailForwardingsUpdateEmailForwardingBody]{
 		Method: "PUT",
-		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, mailbox),
+		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, url.PathEscape(mailbox)),
 		Body:   body,
 		Spin:   "Updating email forwarding…",
 	}, func(ctx context.Context, body coreapigo.EmailForwardingsUpdateEmailForwardingBody) error {
@@ -378,9 +381,10 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	mailbox := args[1]
 
+	// Escaped as the SDK escapes it, so --dry-run shows the path sent (#187).
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
-		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, mailbox),
+		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, url.PathEscape(mailbox)),
 		Prompt: fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain),
 		Spin:   "Deleting email forwarding…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {

@@ -32,6 +32,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `email update`, `email delete` and `dnssec delete` with `--dry-run` show
+  the mailbox or digest escaped in the path, as it is sent. A `/` or `?` in
+  it used to be shown as-is.
 - `status`, `version`, `auth login`, `auth status` and `auth logout` refuse
   extra arguments (exit **2**) instead of ignoring them, and `domain search`
   with an empty term exits **2** instead of printing an empty table.

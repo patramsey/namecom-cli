@@ -79,7 +79,9 @@ func captureRealRequest(t *testing.T, run func(*httptest.Server) (*cobra.Command
 	t.Helper()
 	var last string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		last = r.Method + " " + r.URL.Path
+		// EscapedPath, not Path: Path is decoded, so a preview that left a
+		// "/" in a mailbox unescaped compared equal to the %2F sent (#187).
+		last = r.Method + " " + r.URL.EscapedPath()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(getResponse))
 	}))
@@ -137,6 +139,25 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 			name:  "delete",
 			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command { return cmdForEmailDelete(t, srv) },
 			args:  []string{"example.com", "hello"},
+			run:   runDelete,
+		},
+		// A mailbox with characters the path must escape (#187).
+		{
+			name: "update escaped",
+			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForEmailUpdate(t, srv)
+				if err := cmd.ParseFlags([]string{"--to", "new@elsewhere.com"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
+			},
+			args: []string{"example.com", "a/b?c"},
+			run:  runUpdate,
+		},
+		{
+			name:  "delete escaped",
+			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command { return cmdForEmailDelete(t, srv) },
+			args:  []string{"example.com", "a/b?c"},
 			run:   runDelete,
 		},
 	}
