@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func makeResp(status int, body string) *http.Response {
@@ -175,6 +176,28 @@ func TestSummarizeBody(t *testing.T) {
 		want := http.StatusText(http.StatusServiceUnavailable)
 		if got := ErrorFromResponse(http.StatusServiceUnavailable, nil).Message; got != want {
 			t.Errorf("message = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("truncation does not split a multi-byte character", func(t *testing.T) {
+		// 399 ASCII bytes then "é" (two bytes) puts the cut between them (#189).
+		body := strings.Repeat("a", maxFallbackMessage-1) + "é and more"
+		e := ErrorFromResponse(503, []byte(body))
+		if !utf8.ValidString(e.Message) {
+			t.Fatalf("message is not valid UTF-8: %q", e.Message)
+		}
+		if !strings.Contains(e.Message, "truncated") {
+			t.Errorf("truncation is not disclosed: %q", e.Message)
+		}
+	})
+
+	t.Run("invalid UTF-8 in the body is replaced", func(t *testing.T) {
+		e := ErrorFromResponse(502, []byte("bad \xff\xfe gateway"))
+		if !utf8.ValidString(e.Message) {
+			t.Fatalf("message is not valid UTF-8: %q", e.Message)
+		}
+		if !strings.Contains(e.Message, "gateway") {
+			t.Errorf("message lost the readable text: %q", e.Message)
 		}
 	})
 

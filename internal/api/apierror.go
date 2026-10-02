@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // APIError is a normalized name.com API error. The API returns a consistent
@@ -134,14 +135,22 @@ const maxFallbackMessage = 400
 // 502 from nginx rendered as a single 20 KB line of markup, in the terminal and
 // inside the JSON error envelope alike. Collapse the whitespace, keep the
 // front of it, and say how much was dropped.
+//
+// The message ends up in the terminal and in a JSON envelope, so it must be
+// valid UTF-8: invalid bytes in the body are replaced, and the cut is moved
+// back to a rune boundary rather than splitting a multi-byte character (#189).
 func summarizeBody(body []byte, statusCode int) string {
-	msg := strings.Join(strings.Fields(string(body)), " ")
+	msg := strings.Join(strings.Fields(strings.ToValidUTF8(string(body), "\uFFFD")), " ")
 	if msg == "" {
 		return http.StatusText(statusCode)
 	}
 	if len(msg) > maxFallbackMessage {
+		cut := maxFallbackMessage
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
 		return fmt.Sprintf("%s… (%d bytes of non-JSON body truncated)",
-			strings.TrimSpace(msg[:maxFallbackMessage]), len(body))
+			strings.TrimSpace(msg[:cut]), len(body))
 	}
 	return msg
 }

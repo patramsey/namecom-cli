@@ -28,6 +28,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   before anything is sent. Before, `NaN`, zero and negatives were silently
   ignored, and `Inf` was quoted in the prompt as `$+Inf`, gave an empty
   `--dry-run` preview, and failed when sent.
+- A long non-JSON error body (a proxy's error page, say) is no longer cut in
+  the middle of a multi-byte character when it is shortened for the error
+  message, and invalid UTF-8 in such a body is replaced. The message, including
+  the one in the JSON error envelope, is now always valid UTF-8.
 
 ## [0.4.7] - 2026-09-29
 
