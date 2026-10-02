@@ -50,6 +50,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   up to 60 seconds on a 429's `Retry-After`, and a second or two on a 5xx. A
   429 whose `Retry-After` outlasted `--timeout` could also come back as a
   `request canceled` error with exit 1; it now exits 5 as documented.
+- A write (POST, PUT, PATCH, DELETE) answered with a redirect now fails,
+  naming the redirect, instead of following it. A redirected POST used to be
+  resent as a GET without its body, so `dns create` could report
+  `Created A record (id 0)` and exit 0 when nothing was created. Reads still
+  follow redirects. This applies to `namecom api` as well.
 
 ## [0.4.7] - 2026-09-29
 
