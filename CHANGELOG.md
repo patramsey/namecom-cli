@@ -32,6 +32,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- Domain and nameserver arguments with an empty label (`bad..com`), a label
+  over 63 characters, or more than 253 characters in all now exit **2**
+  before anything is sent. `transfer eligibility bad..com` used to answer for
+  `bad.com`.
 - `url create --dry-run` and `url update --dry-run` no longer print a
   `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
   that line followed the dry-run document, so the output was not valid JSON and

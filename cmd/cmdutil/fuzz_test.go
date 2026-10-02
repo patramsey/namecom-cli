@@ -73,7 +73,8 @@ func FuzzValidators(f *testing.F) {
 
 		if err := ValidDomainName(s); err != nil {
 			checkUsage(t, "ValidDomainName", err)
-		} else if !strings.Contains(s, ".") || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".") {
+		} else if !strings.Contains(s, ".") || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".") ||
+			strings.Contains(s, "..") {
 			t.Fatalf("ValidDomainName accepted %q", s)
 		}
 		// DomainArg is ValidDomainName after CanonicalDomain; canonicalizing

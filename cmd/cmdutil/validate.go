@@ -211,9 +211,25 @@ func ValidDomainName(domain string) error {
 			return usagef("domain name %q must not contain %q", domain, domain[i:i+1])
 		}
 	}
+	ascii := domain
 	if !isASCII(domain) {
-		if _, err := idna.Lookup.ToASCII(domain); err != nil {
+		a, err := idna.Lookup.ToASCII(domain)
+		if err != nil {
 			return usagef("domain name %q is not a valid internationalized domain name: %v", domain, err)
+		}
+		ascii = a
+	}
+	// Lengths are DNS limits, so they apply to the form that is sent. An empty
+	// label used to reach the API, which read `bad..com` as bad.com (#187).
+	if len(ascii) > 253 {
+		return usagef("domain name %q exceeds the maximum DNS name length (253 characters)", domain)
+	}
+	for label := range strings.SplitSeq(ascii, ".") {
+		if label == "" {
+			return usagef("domain name %q has an empty label (double dot)", domain)
+		}
+		if len(label) > 63 {
+			return usagef("domain name %q label %q exceeds 63 characters", domain, label)
 		}
 	}
 	return nil
@@ -263,9 +279,15 @@ func ValidNameserver(ns string, idx int) error {
 	if strings.HasPrefix(ns, ".") || strings.HasSuffix(ns, ".") {
 		return usagef("nameserver %q must not start or end with a dot", ns)
 	}
+	if len(ns) > 253 {
+		return usagef("nameserver %q exceeds the maximum DNS name length (253 characters)", ns)
+	}
 	for label := range strings.SplitSeq(ns, ".") {
 		if label == "" {
 			return usagef("nameserver %q has an empty label", ns)
+		}
+		if len(label) > 63 {
+			return usagef("nameserver %q label %q exceeds 63 characters", ns, label)
 		}
 		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
 			return usagef("nameserver %q label %q must not start or end with a hyphen", ns, label)

@@ -194,13 +194,19 @@ func TestValidTTL(t *testing.T) {
 }
 
 func TestValidDomainName(t *testing.T) {
-	ok := []string{"example.com", "sub.example.co.uk", "a.b"}
+	ok := []string{"example.com", "sub.example.co.uk", "a.b", strings.Repeat("a", 63) + ".com"}
 	for _, s := range ok {
 		if err := ValidDomainName(s); err != nil {
 			t.Errorf("ValidDomainName(%q) unexpected error: %v", s, err)
 		}
 	}
-	bad := []string{"", "nodot", "has space.com", ".leading.com", "trailing.com.", "no dot"}
+	bad := []string{"", "nodot", "has space.com", ".leading.com", "trailing.com.", "no dot",
+		// #187: an empty label reached the API, and `transfer eligibility
+		// bad..com` answered for bad.com. So did labels over 63 bytes.
+		"bad..com",
+		strings.Repeat("a", 64) + ".com",
+		strings.Repeat("a.", 127) + "com", // 257 bytes in all
+	}
 	for _, s := range bad {
 		if err := ValidDomainName(s); err == nil {
 			t.Errorf("ValidDomainName(%q) expected error, got nil", s)
@@ -234,6 +240,9 @@ func TestValidNameserver(t *testing.T) {
 		"::ffff:1.2.3.4",
 		"user@example.com",
 		"ns1.exa?mple.com",
+		// DNS length limits (#187), the same ones domain arguments now get.
+		strings.Repeat("a", 64) + ".example.com",
+		strings.Repeat("a.", 127) + "com",
 	}
 	for _, s := range bad {
 		if err := ValidNameserver(s, 0); err == nil {
