@@ -277,19 +277,27 @@ func renderStatus(out *output.Config, s statusSummary) {
 	)
 
 	// Domain summary line.
-	total := out.Dim(strconv.Itoa(s.DomainsTotal) + " domains")
+	total := out.Dim(countOf(s.DomainsTotal, "domain"))
 	expPart := ""
 	if s.Expired > 0 {
 		expPart = "  " + out.Red(strconv.Itoa(s.Expired)+" expired")
 	}
+	// Both counts when both are non-zero: showing only the 7-day one hid
+	// the rest of the month (#211). ExpiringSoon excludes the critical ones,
+	// hence "more".
 	if s.ExpiringCritical > 0 {
 		expPart += "  " + out.Red(strconv.Itoa(s.ExpiringCritical)+" expiring within 7 days")
-	} else if s.ExpiringSoon > 0 {
-		expPart += "  " + out.Amber(strconv.Itoa(s.ExpiringSoon)+" expiring within 30 days")
+	}
+	if s.ExpiringSoon > 0 {
+		soon := " expiring within 30 days"
+		if s.ExpiringCritical > 0 {
+			soon = " more within 30 days"
+		}
+		expPart += "  " + out.Amber(strconv.Itoa(s.ExpiringSoon)+soon)
 	}
 	transferPart := ""
 	if s.PendingTransfers != nil && *s.PendingTransfers > 0 {
-		transferPart = "  " + out.Amber(strconv.Itoa(*s.PendingTransfers)+" transfer pending")
+		transferPart = "  " + out.Amber(countOf(*s.PendingTransfers, "transfer")+" pending")
 	}
 	unlockedPart := ""
 	if s.Unlocked > 0 {
@@ -351,6 +359,14 @@ func renderStatus(out *output.Config, s statusSummary) {
 }
 
 func ptrInt(n int) *int { return &n }
+
+// countOf phrases n of noun, pluralised: "1 domain", "2 domains".
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
+}
 
 // expiredAgo phrases an elapsed day count for an expired domain.
 func expiredAgo(days int) string {

@@ -224,3 +224,36 @@ func TestAuthStatus_RejectionNamesTheCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestUnknownProfile_IsAnAuthError pins #210: an unknown profile, named by
+// --profile or NAMECOM_PROFILE, exited 1 like an API failure. It means there
+// are no usable credentials, so it exits 3 and names the profiles that exist.
+func TestUnknownProfile_IsAnAuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	for _, tc := range []struct {
+		name string
+		env  string
+		args []string
+	}{
+		{"flag", "", []string{"--profile", "nope"}},
+		{"env", "nope", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withConfig(t, twoProfiles)
+			t.Setenv("NAMECOM_PROFILE", tc.env)
+			args := append([]string{"--base-url", srv.URL}, tc.args...)
+			err := executeRoot(t, append(args, "domain", "list")...)
+			if got := exitCode(cmdutil.ClassifyCobraUsage(err)); got != 3 {
+				t.Errorf("exit %d (%v), want 3", got, err)
+			}
+			// Sorted, so the list reads the same on every run.
+			if err == nil || !strings.Contains(err.Error(), `profile "nope" not found`) ||
+				!strings.Contains(err.Error(), "prod, staging") {
+				t.Errorf("error %v should name the missing profile and list prod, staging", err)
+			}
+		})
+	}
+}

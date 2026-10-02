@@ -359,7 +359,7 @@ namecom completion powershell | Out-String | Invoke-Expression   # current Power
 | `0` | Success |
 | `1` | API or other runtime error |
 | `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value |
-| `3` | Authentication: credentials missing, failing or rejected, or access denied (HTTP 401/403) |
+| `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |
 | `5` | Rate limited (HTTP 429), after the CLI's own retries |
 

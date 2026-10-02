@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -201,6 +202,13 @@ func init() {
 		cobra.FixedCompletions([]string{"auto", "always", "never"}, cobra.ShellCompDirectiveNoFileComp))
 	_ = rootCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
 
+	// Cobra adds -h/--help and --version only after it has picked the command
+	// to run, but picking it skips flag values by asking whether each flag
+	// takes one. An unknown --help was assumed to, so `namecom --help -o json`
+	// swallowed -o and ran "json" as a subcommand (#209). Define them up front.
+	rootCmd.InitDefaultHelpFlag()
+	rootCmd.InitDefaultVersionFlag()
+
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
 	rootCmd.SetHelpFunc(styledHelp)
@@ -345,7 +353,9 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Check that an explicitly requested profile actually exists.
+	// Check that an explicitly requested profile actually exists. A missing
+	// one leaves no usable credentials, so it is an auth error (exit 3), like
+	// every other way of having none (#210).
 	profileReq := gf.profile
 	if profileReq == "" {
 		profileReq = os.Getenv("NAMECOM_PROFILE")
@@ -357,12 +367,13 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 			for k := range cfgFile.Profiles {
 				names = append(names, k)
 			}
+			sort.Strings(names)
 			if len(names) > 0 {
-				return fmt.Errorf("profile %q not found in %s\n\nAvailable profiles: %s\nRun 'namecom auth login --profile %s' to create it",
-					profileReq, cfgPath, strings.Join(names, ", "), profileReq)
+				return cmdutil.NewAuthError(fmt.Errorf("profile %q not found in %s\n\nAvailable profiles: %s\nRun 'namecom auth login --profile %s' to create it",
+					profileReq, cfgPath, strings.Join(names, ", "), profileReq))
 			}
-			return fmt.Errorf("profile %q not found in %s (no profiles configured)\nRun 'namecom auth login --profile %s' to create it",
-				profileReq, cfgPath, profileReq)
+			return cmdutil.NewAuthError(fmt.Errorf("profile %q not found in %s (no profiles configured)\nRun 'namecom auth login --profile %s' to create it",
+				profileReq, cfgPath, profileReq))
 		}
 	}
 
