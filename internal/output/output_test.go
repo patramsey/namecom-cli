@@ -397,6 +397,40 @@ func TestSuccess_StructuredFormats(t *testing.T) {
 	})
 }
 
+// Hint went to stdout in table mode whatever -q said, so `-o table -q` on a
+// create printed the hint where a script expected the new ID (#173).
+func TestHint_SilentInQuietMode(t *testing.T) {
+	var w bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, QuietMode: true, Writer: &w, EWriter: &bytes.Buffer{}}
+	c.Hint("Run 'namecom dns list example.com' to see all records")
+	if w.Len() != 0 {
+		t.Errorf("--quiet should suppress hints, got: %q", w.String())
+	}
+}
+
+func TestQuiet(t *testing.T) {
+	t.Run("off prints nothing and reports false", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatJSON, Writer: &w}
+		if c.Quiet("42") {
+			t.Error("Quiet() = true with QuietMode off")
+		}
+		if w.Len() != 0 {
+			t.Errorf("Quiet() printed %q with QuietMode off", w.String())
+		}
+	})
+	t.Run("on prints one value per line, skipping empty ones", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatJSON, QuietMode: true, Writer: &w}
+		if !c.Quiet("a", "", "b") {
+			t.Error("Quiet() = false with QuietMode on")
+		}
+		if got := w.String(); got != "a\nb\n" {
+			t.Errorf("Quiet() printed %q, want %q", got, "a\nb\n")
+		}
+	})
+}
+
 // ---- flag value parsing -----------------------------------------------------
 
 // ParseFormat and ParseColorMode validate --output and --color. Both lowercase

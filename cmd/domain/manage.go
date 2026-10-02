@@ -624,6 +624,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if unlocking && wasLocked {
 		out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
 	}
+	if out.Quiet() {
+		return nil
+	}
 
 	switch out.Format {
 	case output.FormatJSON:

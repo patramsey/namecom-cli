@@ -321,6 +321,15 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if out.QuietMode {
+		if entry == nil || entry.ID == nil {
+			out.Warn("the API did not return the new URL forwarding's ID")
+			return nil
+		}
+		out.Quiet(strconv.Itoa(*entry.ID))
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(entry)
@@ -478,7 +487,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !sent {
+	if !sent || out.Quiet() {
 		return nil
 	}
 

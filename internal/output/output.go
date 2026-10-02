@@ -53,8 +53,25 @@ const (
 // Config holds the resolved output configuration, built once from global flags
 // and stored on the cobra command context.
 type Config struct {
-	Format    Format
-	QuietMode bool      // -q: print IDs/names only, one per line
+	Format Format
+	// QuietMode is -q/--quiet. It is a contract for scripts, and it wins over
+	// --output: a quiet command prints the same thing in every format.
+	//
+	//   - list commands print one identifier per line;
+	//   - create commands print only the new resource's identifier (an ID, or
+	//     the name where the name is the identifier: a domain, a vanity
+	//     nameserver hostname, an email mailbox);
+	//   - update, delete and other writes print nothing — the exit code is
+	//     the result;
+	//   - read commands that show one object print its most useful
+	//     identifying value, one per line, chosen per command (a comment at
+	//     its quiet branch says which and why).
+	//
+	// Hints, success lines, counts and spinners never print in quiet mode.
+	// Warnings and errors still go to stderr. Quiet() is the helper commands
+	// use to honour this. A --dry-run preview, `dns export` and `api` print
+	// their document regardless: that document is what was asked for.
+	QuietMode bool
 	NoHeader  bool      // --no-header: omit header row from table output
 	Color     ColorMode // --color flag value
 	Writer    io.Writer // defaults to os.Stdout
@@ -514,6 +531,28 @@ func (c *Config) PrintQuiet(vals []string) {
 	}
 }
 
+// Quiet reports whether quiet mode is on, and when it is, prints vals one per
+// line first, skipping empty ones. Commands call it ahead of their format
+// switch so -q overrides -o json as well as the table:
+//
+//	if out.Quiet(id) {
+//		return nil
+//	}
+//
+// Called with no values it prints nothing, which is the quiet output of every
+// update and delete.
+func (c *Config) Quiet(vals ...string) bool {
+	if !c.QuietMode {
+		return false
+	}
+	for _, v := range vals {
+		if v != "" {
+			fmt.Fprintln(c.Writer, v)
+		}
+	}
+	return true
+}
+
 // SandboxTag returns a styled "[sandbox]" badge when c.Sandbox is set, or ""
 // otherwise. Used to flag output that came from the sandbox API so it's never
 // mistaken for a production result.
@@ -556,9 +595,11 @@ func (c *Config) Success(msg string) {
 	}
 }
 
-// Hint prints a dimmed suggestion line to stdout — shown only in table mode.
+// Hint prints a dimmed suggestion line to stdout — shown only in table mode,
+// and never in quiet mode, where stdout is reserved for the values a script
+// captures: `ID=$(namecom dns create … -q)` received the hint instead.
 func (c *Config) Hint(msg string) {
-	if c.Format != FormatTable {
+	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
 	if c.ColorEnabled() {
