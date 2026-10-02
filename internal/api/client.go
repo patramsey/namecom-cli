@@ -158,7 +158,7 @@ func New(opts Options) (*Client, error) {
 		Transport: &headerTransport{
 			authHeader: authHeader,
 			userAgent:  ua,
-			authHost:   hostOf(baseURL),
+			authOrigin: originOf(baseURL),
 			base: &retryTransport{
 				base:       http.DefaultTransport,
 				limiter:    rate.NewLimiter(rate.Limit(rps), burst),
@@ -173,7 +173,7 @@ func New(opts Options) (*Client, error) {
 	// HTTP client goes through. This editor stays only so Prepare() keeps
 	// working for hand-built requests, and it delegates to the same
 	// implementation rather than restating it.
-	ht := &headerTransport{authHeader: authHeader, userAgent: ua, authHost: hostOf(baseURL)}
+	ht := &headerTransport{authHeader: authHeader, userAgent: ua, authOrigin: originOf(baseURL)}
 	editor := func(_ context.Context, req *http.Request) error {
 		ht.apply(req)
 		return nil

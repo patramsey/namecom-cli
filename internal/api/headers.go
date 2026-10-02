@@ -27,9 +27,9 @@ type headerTransport struct {
 	base       http.RoundTripper
 	authHeader string
 	userAgent  string
-	// authHost is the hostname the credential belongs to. Authorization is
-	// stamped only on requests to it — see apply.
-	authHost string
+	// authOrigin is the scheme, host, and port the credential belongs to.
+	// Authorization is sent only on requests to it — see apply.
+	authOrigin origin
 }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -53,9 +53,17 @@ func (t *headerTransport) apply(req *http.Request) {
 	// TestAPI_CredentialNotForwardedOnCrossHostRedirect exists to catch —
 	// which it did, when this logic first moved out of the request editor.
 	//
-	// The check is an exact hostname match, deliberately stricter than the
-	// subdomain rule net/http uses: this client talks to one host.
-	if req.Header.Get("Authorization") == "" && t.hostMatches(req) {
+	// The check is an exact origin match — scheme, host, and port — which is
+	// deliberately stricter than net/http's rule: this client talks to one
+	// origin. net/http compares redirect hosts by name only, so a redirect to
+	// another port on the same host, or from https to http, arrives here with
+	// Authorization already copied onto it. Leaving a present header alone is
+	// not enough, then: off-origin it is removed. That includes one supplied
+	// through `namecom api --header`, which is a credential all the same.
+	switch {
+	case !t.originMatches(req):
+		req.Header.Del("Authorization")
+	case req.Header.Get("Authorization") == "":
 		req.Header.Set("Authorization", t.authHeader)
 	}
 	// Absent, or stamped by the SDK. The Core SDK's cloneHeader() overwrites
@@ -97,25 +105,57 @@ func isWrite(method string) bool {
 	}
 }
 
-// hostMatches reports whether req is addressed to the host the credential
-// belongs to. An empty authHost means the transport was built without one, in
-// which case no credential is stamped at all rather than stamped everywhere.
-func (t *headerTransport) hostMatches(req *http.Request) bool {
-	if t.authHost == "" || req.URL == nil {
-		return false
-	}
-	return strings.EqualFold(req.URL.Hostname(), t.authHost)
+// origin is the part of a URL a credential is bound to. Comparing all three
+// parts keeps the credential off another service on the same host, and off
+// plain http when the API is reached over https.
+type origin struct {
+	scheme, host, port string
 }
 
-// hostOf extracts the hostname from a base URL, for binding the credential to
-// it. A URL that will not parse yields "", which makes hostMatches refuse to
-// stamp anything — failing closed rather than sending the token everywhere.
-func hostOf(baseURL string) string {
+// originMatches reports whether req is addressed to the origin the credential
+// belongs to. A zero authOrigin means the transport was built without one, in
+// which case no credential is sent at all rather than sent everywhere.
+func (t *headerTransport) originMatches(req *http.Request) bool {
+	if t.authOrigin == (origin{}) || req.URL == nil {
+		return false
+	}
+	return originOfURL(req.URL) == t.authOrigin
+}
+
+// originOf extracts the origin from a base URL, for binding the credential to
+// it. A URL that will not parse, or lacks a scheme or host, yields the zero
+// origin, which makes originMatches refuse to send anything — failing closed
+// rather than sending the token everywhere.
+func originOf(baseURL string) origin {
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return ""
+		return origin{}
 	}
-	return u.Hostname()
+	o := originOfURL(u)
+	if o.scheme == "" || o.host == "" {
+		return origin{}
+	}
+	return o
+}
+
+// originOfURL normalises u's origin: scheme and host lower-cased, and an
+// omitted port filled in with the scheme's default, so https://api.name.com
+// and https://api.name.com:443 compare equal.
+func originOfURL(u *url.URL) origin {
+	o := origin{
+		scheme: strings.ToLower(u.Scheme),
+		host:   strings.ToLower(u.Hostname()),
+		port:   u.Port(),
+	}
+	if o.port == "" {
+		switch o.scheme {
+		case "https":
+			o.port = "443"
+		case "http":
+			o.port = "80"
+		}
+	}
+	return o
 }
 
 // sdkUserAgentPrefix is what the Core SDK stamps as its User-Agent, minus the

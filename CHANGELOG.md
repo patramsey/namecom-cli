@@ -56,6 +56,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `Created A record (id 0)` and exit 0 when nothing was created. Reads still
   follow redirects. This applies to `namecom api` as well.
 
+### Security
+- Your credentials are sent only to the API's exact origin: the same scheme,
+  host and port as the endpoint in use. A redirect from the API to another
+  port on the same host, or from `https` to plain `http`, used to carry the
+  `Authorization` header along, because only the hostname was compared. It is
+  now removed, including one passed with `namecom api --header`.
+
 ## [0.4.7] - 2026-09-29
 
 Eleven bug fixes and two changes in how write commands behave. Most came from
