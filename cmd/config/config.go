@@ -171,6 +171,15 @@ func runUse(cmd *cobra.Command, args []string) error {
 	if _, ok := cfgFile.Profiles[profile]; !ok {
 		return fmt.Errorf("profile %q not found — run 'namecom config list-profiles' to see available profiles", profile)
 	}
+	if cmdutil.IsDryRun(cmd) {
+		PreviewChange(out, Change{
+			Action:  "set_default",
+			Profile: profile,
+			Default: profile,
+			Summary: fmt.Sprintf("set the default profile to %q", profile),
+		})
+		return nil
+	}
 	cfgFile.Default = profile
 	if err := config.Save(cfgFile); err != nil {
 		return fmt.Errorf("saving config: %w", err)

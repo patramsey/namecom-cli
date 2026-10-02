@@ -21,6 +21,10 @@ var hasControllingTerminal = func() bool {
 	return true
 }
 
+// setRawCmdLine is a no-op outside Windows: sh receives its arguments as an
+// argv array, with nothing to re-parse.
+func setRawCmdLine(_ *exec.Cmd, _ string, _ []string) {}
+
 // setProcessGroup puts the helper in its own process group and makes
 // cancellation kill the whole group — unless there is a controlling terminal
 // the helper might prompt on.

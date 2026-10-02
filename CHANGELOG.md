@@ -72,6 +72,24 @@ Releases before `0.2.0` predate this file. Their notes are on the
   exposed.
   Bodies with something redacted are logged re-encoded, so their key order
   and spacing can differ from what was sent.
+- `auth logout`, `auth login` and `config use` honour `--dry-run`. They
+  ignored it and wrote the config file: `auth logout --dry-run` deleted the
+  profile. They now print the change they would make and leave the file alone
+  — in JSON or YAML mode as one document with `dry_run`, `config`, `action`,
+  `profile` and `default` keys (`auth login` adds `username` and `sandbox`,
+  never the token). `auth login --dry-run` still asks its questions.
+- On Windows, commands no longer warn that the config file "is accessible by
+  other users" on every run. Windows reports every writable file with Unix
+  mode `0666`, so the warning could never be cleared; the check now runs only
+  on Unix-like systems.
+- On Windows, `token_cmd` runs through `cmd.exe` instead of `sh -c`. A stock
+  Windows install has no `sh`, so `token_cmd` failed with
+  `exec: "sh": executable file not found`. If your helper relied on `sh` (for
+  example from Git Bash), wrap it: `token_cmd: sh -c "…"`. macOS and Linux are
+  unchanged.
+- `auth login --sandbox` saves the profile with `sandbox: true` and no longer
+  asks the sandbox question. The flag was ignored, so the profile was saved for
+  production unless you also answered Yes at the prompt.
 
 ## [0.4.7] - 2026-09-29
 

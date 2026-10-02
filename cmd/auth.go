@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	configcmd "github.com/patramsey/namecom-cli/cmd/config"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -22,7 +23,8 @@ var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Configure credentials interactively",
 	Example: `  namecom auth login
-  namecom auth login --profile staging`,
+  namecom auth login --profile staging
+  namecom auth login --profile sandbox --sandbox`,
 	RunE: runAuthLogin,
 }
 
@@ -61,47 +63,12 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			"set credentials via NAMECOM_USERNAME and NAMECOM_TOKEN environment variables instead")
 	}
 
-	var (
-		username string
-		token    string
-		sandbox  bool
-	)
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Username").
-				Description("Your name.com API username (shown in the API settings page)").
-				Placeholder("yourname").
-				Value(&username).
-				Validate(func(s string) error {
-					if s == "" {
-						return errors.New("username is required")
-					}
-					return nil
-				}),
-
-			huh.NewInput().
-				Title("API Token").
-				Description("Your name.com API token — kept secret in the config file (chmod 600)").
-				Placeholder("••••••••••••••••").
-				EchoMode(huh.EchoModePassword).
-				Value(&token).
-				Validate(func(s string) error {
-					if s == "" {
-						return errors.New("token is required")
-					}
-					return nil
-				}),
-
-			huh.NewConfirm().
-				Title("Use sandbox API?").
-				Description("Sends requests to api.dev.name.com instead of api.name.com").
-				Value(&sandbox),
-		),
-	)
-
-	if err := form.Run(); err != nil {
+	// --sandbox answers the sandbox question. The form's answer used to start
+	// false and the flag was never read, so `auth login --sandbox` saved a
+	// production profile unless the user also said Yes at the prompt.
+	sandbox := cmdutil.IsSandbox(cmd)
+	a := loginAnswers{Sandbox: sandbox}
+	if err := askLogin(&a, !sandbox); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			out.Warn("aborted")
 			return nil
@@ -117,12 +84,25 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		cfgFile.Profiles = make(map[string]config.Profile)
 	}
 	cfgFile.Profiles[loginProfile] = config.Profile{
-		Username: username,
-		Token:    token,
-		Sandbox:  sandbox,
+		Username: a.Username,
+		Token:    a.Token,
+		Sandbox:  a.Sandbox,
 	}
 	if cfgFile.Default == "" {
 		cfgFile.Default = loginProfile
+	}
+	if cmdutil.IsDryRun(cmd) {
+		// The form still runs, so the preview can say what would be saved —
+		// everything but the token.
+		configcmd.PreviewChange(out, configcmd.Change{
+			Action:   "save_profile",
+			Profile:  loginProfile,
+			Username: a.Username,
+			Sandbox:  &a.Sandbox,
+			Default:  cfgFile.Default,
+			Summary:  fmt.Sprintf("save profile %q (username %s, %s)", loginProfile, a.Username, api.DefaultBaseURL(a.Sandbox)),
+		})
+		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {
 		return fmt.Errorf("saving config: %w", err)
@@ -133,6 +113,53 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	out.Hint("Run 'namecom status' to see your account overview")
 	out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
 	return nil
+}
+
+// loginAnswers holds what the login form collects.
+type loginAnswers struct {
+	Username string
+	Token    string
+	Sandbox  bool
+}
+
+// askLogin runs the login form, filling a. The sandbox question is asked only
+// when askSandbox is set; otherwise a.Sandbox is kept as given. It is
+// replaceable in tests: the token field is a password input, which huh reads
+// from a terminal even in accessible mode.
+var askLogin = func(a *loginAnswers, askSandbox bool) error {
+	fields := []huh.Field{
+		huh.NewInput().
+			Title("Username").
+			Description("Your name.com API username (shown in the API settings page)").
+			Placeholder("yourname").
+			Value(&a.Username).
+			Validate(func(s string) error {
+				if s == "" {
+					return errors.New("username is required")
+				}
+				return nil
+			}),
+
+		huh.NewInput().
+			Title("API Token").
+			Description("Your name.com API token — kept secret in the config file (chmod 600)").
+			Placeholder("••••••••••••••••").
+			EchoMode(huh.EchoModePassword).
+			Value(&a.Token).
+			Validate(func(s string) error {
+				if s == "" {
+					return errors.New("token is required")
+				}
+				return nil
+			}),
+	}
+	if askSandbox {
+		fields = append(fields, huh.NewConfirm().
+			Title("Use sandbox API?").
+			Description("Sends requests to api.dev.name.com instead of api.name.com").
+			Value(&a.Sandbox))
+	}
+	return huh.NewForm(huh.NewGroup(fields...)).Run()
 }
 
 func runAuthStatus(cmd *cobra.Command, _ []string) error {
@@ -227,6 +254,17 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 	delete(cfgFile.Profiles, profile)
 	if cfgFile.Default == profile {
 		cfgFile.Default = ""
+	}
+	if cmdutil.IsDryRun(cmd) {
+		// --dry-run describes the removal and keeps the file; it used to
+		// delete the profile.
+		configcmd.PreviewChange(out, configcmd.Change{
+			Action:  "remove_profile",
+			Profile: profile,
+			Default: cfgFile.Default,
+			Summary: fmt.Sprintf("remove profile %q", profile),
+		})
+		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {
 		return fmt.Errorf("saving config: %w", err)

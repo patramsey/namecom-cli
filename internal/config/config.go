@@ -17,10 +17,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,7 +162,7 @@ func Load() (*File, error) {
 	// written ahead of the structured error envelope, so emitting it into a
 	// pipe corrupts stderr for anything parsing it. A human sees it; a script
 	// gets clean output. (Save() now repairs the mode on the next write.)
-	if info.Mode().Perm()&0o077 != 0 && term.IsTerminal(int(os.Stderr.Fd())) {
+	if exposedMode(runtime.GOOS, info.Mode()) && term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprintf(os.Stderr, "warning: %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
 			path, info.Mode().Perm(), path)
 	}
@@ -326,8 +328,8 @@ func impliedDefault(f *File) string {
 // the CLI forever, and --timeout covers only HTTP. Overridable in tests.
 var tokenCmdTimeout = 15 * time.Second
 
-// runTokenCmd executes the token command through the shell and returns its
-// trimmed stdout.
+// runTokenCmd executes the token command through the platform shell (see
+// shellArgv) and returns its trimmed stdout.
 func runTokenCmd(cmdline string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tokenCmdTimeout)
 	defer cancel()
@@ -339,8 +341,10 @@ func runTokenCmd(cmdline string) (string, error) {
 	// environment variable, or an API response — so anyone who can set it can
 	// already run commands as this user. The mitigations that do apply are the
 	// timeout above and the process group below.
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline) //nolint:gosec
+	prog, args := shellArgv(runtime.GOOS, cmdline)
+	cmd := exec.CommandContext(ctx, prog, args...) //nolint:gosec
 	cmd.Stderr = os.Stderr
+	setRawCmdLine(cmd, prog, args)
 	setProcessGroup(cmd)
 	// WaitDelay bounds how long Wait blocks AFTER the deadline kills the shell.
 	//
@@ -365,6 +369,44 @@ func runTokenCmd(cmdline string) (string, error) {
 		return "", errors.New("produced empty output")
 	}
 	return tok, nil
+}
+
+// exposedMode reports whether a config file with this mode is readable by the
+// group or other users, on the OS named by goos.
+//
+// Always false on Windows. Go reports every writable file there as 0666 and
+// chmod 0600 only clears the read-only attribute, so the mode bits say nothing
+// about who can read the file: Load warned on every interactive command, and
+// nothing the user did could clear it. Who can read a file on Windows is an
+// ACL question this check does not attempt.
+func exposedMode(goos string, mode fs.FileMode) bool {
+	if goos == "windows" {
+		return false
+	}
+	return mode.Perm()&0o077 != 0
+}
+
+// shellArgv returns the program and arguments that run a token_cmd line on
+// the OS named by goos: `sh -c` on Unix-like systems, cmd.exe on Windows.
+//
+// token_cmd used to run through `sh -c` everywhere, and a stock Windows
+// install has no sh: the helper failed with `exec: "sh": executable file not
+// found`. cmd.exe is always there. A Windows user whose helper needs sh syntax
+// says so in the command itself — `sh -c "…"` or `bash -c "…"` — rather than
+// the CLI guessing from whether a Git Bash happens to be on PATH, which would
+// run the same config under different shells depending on the terminal it
+// was started from.
+//
+// For Windows, /d skips AutoRun commands from the registry, which could
+// otherwise print into the token, and /s with the outer quotes makes cmd run
+// everything between them as written. The arguments reach cmd.exe verbatim
+// (setRawCmdLine): Go's usual Windows argument escaping is for programs that
+// parse their command line like the C runtime, and cmd.exe does not.
+func shellArgv(goos, cmdline string) (string, []string) {
+	if goos == "windows" {
+		return "cmd.exe", []string{"/d", "/s", "/c", `"` + cmdline + `"`}
+	}
+	return "sh", []string{"-c", cmdline}
 }
 
 func firstNonEmpty(vals ...string) string {
