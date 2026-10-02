@@ -9,160 +9,40 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
-### Fixed
-- `namecom --help --output json`, `namecom -h --color never` and other global
-  flags placed after `--help` at the top level print the root help and exit 0.
-  They used to fail with `unknown command "json"` and exit 2; the same flags
-  already worked before `--help` and on subcommands.
-- **Script-visible:** a `--profile` or `NAMECOM_PROFILE` naming a profile that
-  does not exist now exits 3, the authentication code, instead of 1. The error
-  lists the profiles that do exist, in sorted order.
-- The `status` summary line no longer drops the count of domains expiring in
-  7–30 days when one expires within 7 days: it shows both, as "1 expiring
-  within 7 days  2 more within 30 days". Counts are pluralised ("1 domain",
-  "2 transfers pending"). JSON and YAML output, which already carried both
-  counts, is unchanged.
-- `contact resend` no longer reports a reply without a `sent` field as
-  throttled "until 0001-01-01". It fails with "unexpected response from the
-  API" instead, still exiting 1. A throttled reply that gives no retry time
-  says only "throttled", and with `-o json`/`yaml` prints no payload rather
-  than one carrying the zero date.
-- `url update --help` no longer shows `(default "redirect")` for `--type`.
-  Leaving `--type` out has always kept the forwarding's current type; the help
-  now says so. Root help lists the exit codes, and the `dns delete` example
-  that piped into `dns delete` without `--yes`, which failed every time, now
-  passes it.
-- A successful response whose body is JSON `null`, or a list in a response
-  that contains a `null` element, no longer crashes the command. A `null` body
-  now fails with "unexpected response from the API" and exits 1; before, about
-  40 commands panicked, `status` among them. A `null` list element is skipped:
-  it gets no table row, no `--quiet` line, and no entry in JSON or YAML output.
-  name.com does not send these itself, but a proxy or captive portal can.
-- **Script-visible:** `-q`/`--quiet` now follows one rule, whatever `--output`
-  says. Create commands print only the new resource's ID or name, so
-  `ID=$(namecom dns create … -q)` works in a pipe; before, `dns create` and
-  `url create` printed the whole JSON object there. Update, delete and other
-  write commands print nothing. Hints are no longer printed in quiet mode;
-  `-o table -q` used to print only a "→ Run …" line. A script that read the
-  JSON object from a quiet create or update gets the ID or nothing now; drop
-  `-q` to keep the object.
-- **Script-visible:** `-q` now applies to the read commands that ignored it.
-  Each prints one value per line instead of its full output: `version` the
-  version string, `status` the expired or soon-expiring domains, `auth status`
-  the username, `config show` the active profile, `config list-profiles` the
-  profile names, `domain pricing` the registration price as a bare number,
-  `domain contacts get` the registrant's email, `order get` the order ID,
-  `email get` the mailbox, and `transfer eligibility` the domain if it can be
-  moved by internal transfer (nothing otherwise).
-- `auth status` with rejected credentials names the profile, username,
-  endpoint and config file it checked, instead of printing only
-  `Unauthorized`. The exit code is unchanged (3); the error `message` in
-  JSON/YAML output gains the same details.
-- `dns import` no longer defines its own `--dry-run`, which hid the global
-  flag from its help. `--dry-run` works as before, before or after
-  `dns import`.
-- Shell completion for `domain claims` no longer offers the domains already
-  in your account; claims are checked on names you are about to register.
-- Shell completion offers values for `-o`/`--output`, `--color` and
-  `--profile` (profile names from the config file, read without running
-  `token_cmd`), profile names for `config use`, and HTTP methods for
-  `namecom api`. `domain register`, `domain check`, `domain search`,
-  `transfer create` and the `api` path no longer fall back to filenames.
-- `namecom version` labels the timestamp it shows `committed`, since it is
-  the time of the commit the binary was built from, not the build time. In
-  JSON and YAML output the field is renamed from `built` to `commitTime`.
-- `email update`, `email delete` and `dnssec delete` with `--dry-run` show
-  the mailbox or digest escaped in the path, as it is sent. A `/` or `?` in
-  it used to be shown as-is.
-- `status`, `version`, `auth login`, `auth status` and `auth logout` refuse
-  extra arguments (exit **2**) instead of ignoring them, and `domain search`
-  with an empty term exits **2** instead of printing an empty table.
-- `auth status -o json` and `-o yaml` report `verified` as the boolean
-  `true` instead of the string `"true"`. A script comparing it to the string
-  needs updating.
-- `config list-profiles` shows each profile's endpoint as a URL
-  (`https://api.name.com`), as `config show` and `auth status` do. The
-  `endpoint` field in its JSON and YAML output changes from the bare host to
-  the URL.
-- A TLS certificate the client rejects and a host name that does not exist
-  (NXDOMAIN) now fail at once. Both used to be retried three times, about
-  seven seconds, before the same error. DNS timeouts and refused connections
-  are still retried.
-- A `token_cmd` that prints more than one line is now refused (exit **3**)
-  with a message saying how many lines it printed, instead of sending all of
-  them as the token. The message does not repeat the output.
-- A negative `--timeout` now exits **2**. It used to mean no timeout at all.
-- `--debug-file` naming a file that already exists now makes it readable only
-  by you (mode 0600), as a new file already was. An existing file used to keep
-  its mode, often 0644.
-- `dns create` and `url create` report a successful response that does not
-  include the new record's or forwarding's ID as an unexpected response (exit
-  **1**, with a hint to check before retrying), instead of printing `(id 0)`
-  and exiting 0. In JSON and YAML mode the error replaces the printed object.
-- Record, URL forwarding, order and contact verification IDs must be positive
-  whole numbers. `0`, negative numbers and `+5` now exit **2** before anything
-  is sent; they used to reach the API (`contact resend -5`). An ID too large
-  to be one is reported as "must be a positive whole number" rather than
-  "must be a number".
-- `vanity-ns` commands refuse a hostname with an empty label
-  (`ns1..example.com`), a space, a character no hostname has, or a label over
-  63 characters, and exit **2** before anything is sent.
-- `dns create`, `dns update` and `dns import` check more of a record before
-  sending it, and exit **2** on: a host with characters no DNS name has (`"`,
-  `;`, `(`, `@`, or `*` other than a leading `*.`); a CNAME, ANAME, MX, NS or
-  SRV target with an empty label (`a..example.com`) or such characters; MX
-  and SRV answers containing a carriage return or newline; SRV weight or port
-  outside 0–65535; and `--priority` outside 0–65535. The API stored some of
-  these, and `dns export --zone` then wrote a zone that does not load.
-- Domain and nameserver arguments with an empty label (`bad..com`), a label
-  over 63 characters, or more than 253 characters in all now exit **2**
-  before anything is sent. `transfer eligibility bad..com` used to answer for
-  `bad.com`.
-- `url create --dry-run` and `url update --dry-run` no longer print a
-  `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
-  that line followed the dry-run document, so the output was not valid JSON and
-  `| jq` failed. The preview body already shows the host, target and type.
-- A 403 from `transfer internal-in` no longer says to run `namecom auth
-  login`. The error says the account needs enterprise reseller approval, and
-  the hint now says the credentials are fine. It still exits 3. The same hint
-  change applies to `contact verify`, which also printed the "check your
-  credentials" line. The `hint` field in the JSON/YAML error envelope changes
-  for both.
-- `transfer create` and `transfer internal-in` without `--auth-code`, when not
-  run in a terminal, now exit **2** (usage error) instead of 1, matching a
-  too-short `--auth-code`.
-- `--price` on `domain register`, `domain renew` and `transfer create` must be
-  a positive number. `Inf`, `NaN`, zero and negative values now exit **2**
-  before anything is sent. Before, `NaN`, zero and negatives were silently
-  ignored, and `Inf` was quoted in the prompt as `$+Inf`, gave an empty
-  `--dry-run` preview, and failed when sent.
-- A long non-JSON error body (a proxy's error page, say) is no longer cut in
-  the middle of a multi-byte character when it is shortened for the error
-  message, and invalid UTF-8 in such a body is replaced. The message, including
-  the one in the JSON error envelope, is now always valid UTF-8.
-- API errors from every command are now reported the way `namecom api`
-  reports them. A 500 whose body explains the failure (such as `Invalid IP`)
-  no longer suggests trying again shortly; an HTML error page from a proxy is
-  shortened to one line instead of becoming the whole error message; and a 401
-  mentions that the sandbox uses a separate API token. The error `message` in
-  JSON output changes for non-JSON error bodies: it no longer starts with the
-  status code (`502: <html>…`), and an empty body reads as the status text
-  (`Service Unavailable`) rather than the bare code.
-- A successful response whose body is empty, not JSON, or JSON of the wrong
-  shape now fails with `unexpected response from the API: …` and a hint that
-  a change may still have been made, instead of a Go decoder message naming
-  internal types (`json: cannot unmarshal array into Go value of type …`,
-  `expected a **api.DomainResponsePayload response …`). It still exits 1.
-- A final 429 or 5xx is reported at once instead of after an extra wait. The
-  API library slept before returning these even with its retries turned off:
-  up to 60 seconds on a 429's `Retry-After`, and a second or two on a 5xx. A
-  429 whose `Retry-After` outlasted `--timeout` could also come back as a
-  `request canceled` error with exit 1; it now exits 5 as documented.
-- A write (POST, PUT, PATCH, DELETE) answered with a redirect now fails,
-  naming the redirect, instead of following it. A redirected POST used to be
-  resent as a GET without its body, so `dns create` could report
-  `Created A record (id 0)` and exit 0 when nothing was created. Reads still
-  follow redirects. This applies to `namecom api` as well.
+## [0.4.8] - 2026-10-02
+
+Sixty bug fixes and two security hardening changes. They came from a broad bug
+hunt: live checks against the name.com sandbox, fuzz tests, a review of every
+command's `--help`, and builds for Linux and Windows. Two fixes stop
+credentials leaking: the token is now sent only to the API's exact origin, and
+`--debug` no longer logs transfer auth codes. Several crashes are gone,
+including on a DNS lookup failure and on unusual API responses.
+
+Much of what a script sees changes, all toward what was documented or
+intended. Check any script that relies on these:
+
+- `-q`/`--quiet` follows one rule whatever `--output` says: lists print one
+  ID per line, creates print only the new ID, other writes print nothing, and
+  single-object reads print one value.
+- Input is checked more strictly before anything is sent: domain and
+  nameserver names, DNS records, `--priority`, IDs (must be positive),
+  `--price` (must be finite and above 0, so `--price 0` is now refused), a
+  negative `--timeout`, and extra arguments to `status`, `version` and
+  `auth`. These exit **2**.
+- An unknown `--profile` exits **3**, not 1.
+- Internationalized domain arguments are sent, and shown in dry-runs, in
+  punycode (`xn--…`).
+- `domain check` exits **1** when it gets no answer for a name.
+- `version` JSON/YAML renames `built` to `commitTime`. `auth status` reports
+  `verified` as a boolean. `config list-profiles` shows endpoints as URLs.
+- Error messages for non-JSON bodies no longer start with the status code,
+  and `namecom api -o json` errors carry the response body in
+  `error.details` (unchanged from 0.4.7).
+- A `null` element in an API list is dropped from JSON/YAML output.
+- `namecom open` prints `{"url", "opened"}` in JSON mode and prints the URL
+  when it cannot open a browser.
+- On Windows, `token_cmd` runs through `cmd.exe`. Wrap sh syntax in
+  `sh -c "…"`.
 
 ### Security
 - Your credentials are sent only to the API's exact origin: the same scheme,
@@ -180,38 +60,52 @@ Releases before `0.2.0` predate this file. Their notes are on the
   exposed.
   Bodies with something redacted are logged re-encoded, so their key order
   and spacing can differ from what was sent.
+
+### Fixed
+- A DNS lookup failure, or a response the API client could not decode, no
+  longer crashes `namecom` with a Go panic and exit **2**. It is reported as an
+  ordinary error and exits **1**; a DNS failure gets the "could not reach the
+  API" hint. This hit every command when offline, and `domain requirements` for
+  `eu`, `jp` and `nyc` in the sandbox.
+- A successful response whose body is JSON `null`, or a list in a response
+  that contains a `null` element, no longer crashes the command. A `null` body
+  now fails with "unexpected response from the API" and exits 1; before, about
+  40 commands panicked, `status` among them. A `null` list element is skipped:
+  it gets no table row, no `--quiet` line, and no entry in JSON or YAML output.
+  name.com does not send these itself, but a proxy or captive portal can.
 - `auth logout`, `auth login` and `config use` honour `--dry-run`. They
   ignored it and wrote the config file: `auth logout --dry-run` deleted the
   profile. They now print the change they would make and leave the file alone
   — in JSON or YAML mode as one document with `dry_run`, `config`, `action`,
   `profile` and `default` keys (`auth login` adds `username` and `sandbox`,
   never the token). `auth login --dry-run` still asks its questions.
-- On Windows, commands no longer warn that the config file "is accessible by
-  other users" on every run. Windows reports every writable file with Unix
-  mode `0666`, so the warning could never be cleared; the check now runs only
-  on Unix-like systems.
-- On Windows, `token_cmd` runs through `cmd.exe` instead of `sh -c`. A stock
-  Windows install has no `sh`, so `token_cmd` failed with
-  `exec: "sh": executable file not found`. If your helper relied on `sh` (for
-  example from Git Bash), wrap it: `token_cmd: sh -c "…"`. macOS and Linux are
-  unchanged.
-- `auth login --sandbox` saves the profile with `sandbox: true` and no longer
-  asks the sandbox question. The flag was ignored, so the profile was saved for
-  production unless you also answered Yes at the prompt.
-- Shell completion now honors `--profile`, `--token`, `--base-url`,
-  `--sandbox` and `--timeout` typed on the command line. They were ignored, so
-  `namecom --profile prod dns list <TAB>` offered the default profile's
-  domains.
-- Shell completion no longer runs a profile's `token_cmd` on every TAB.
-  Credentials are resolved only when a completion needs the API (domain names,
-  record IDs), so completing subcommand and flag names no longer invokes a
-  password-manager helper.
-- Shell completion gives up after 2 seconds (or `--timeout`, if shorter) and
-  does not retry. An API that accepted connections but never answered froze
-  the shell for the full 30-second timeout on every TAB.
-- Domain-name completion now finds any domain on the account. It fetched only
-  the first 250 domains and ignored what had been typed; the typed text is now
-  sent to the API as a filter, the same one `domain list --filter` uses.
+- A write (POST, PUT, PATCH, DELETE) answered with a redirect now fails,
+  naming the redirect, instead of following it. A redirected POST used to be
+  resent as a GET without its body, so `dns create` could report
+  `Created A record (id 0)` and exit 0 when nothing was created. Reads still
+  follow redirects. This applies to `namecom api` as well.
+- A successful response whose body is empty, not JSON, or JSON of the wrong
+  shape now fails with `unexpected response from the API: …` and a hint that
+  a change may still have been made, instead of a Go decoder message naming
+  internal types (`json: cannot unmarshal array into Go value of type …`,
+  `expected a **api.DomainResponsePayload response …`). It still exits 1.
+- API errors from every command are now reported the way `namecom api`
+  reports them. A 500 whose body explains the failure (such as `Invalid IP`)
+  no longer suggests trying again shortly; an HTML error page from a proxy is
+  shortened to one line instead of becoming the whole error message; and a 401
+  mentions that the sandbox uses a separate API token. The error `message` in
+  JSON output changes for non-JSON error bodies: it no longer starts with the
+  status code (`502: <html>…`), and an empty body reads as the status text
+  (`Service Unavailable`) rather than the bare code.
+- A final 429 or 5xx is reported at once instead of after an extra wait. The
+  API library slept before returning these even with its retries turned off:
+  up to 60 seconds on a 429's `Retry-After`, and a second or two on a 5xx. A
+  429 whose `Retry-After` outlasted `--timeout` could also come back as a
+  `request canceled` error with exit 1; it now exits 5 as documented.
+- A long non-JSON error body (a proxy's error page, say) is no longer cut in
+  the middle of a multi-byte character when it is shortened for the error
+  message, and invalid UTF-8 in such a body is replaced. The message, including
+  the one in the JSON error envelope, is now always valid UTF-8.
 - Internationalized domain names work as arguments. `domain get bücher.com`,
   `dns list bücher.com` and every other command that puts the domain in the
   URL path sent it percent-encoded, which name.com's edge answered with an
@@ -223,6 +117,50 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and nothing is sent. Output that echoes the domain, such as dry-run paths,
   shows the punycode form. This adds `golang.org/x/net` (for its `idna`
   package) as a dependency.
+- **Script-visible:** `-q`/`--quiet` now follows one rule, whatever `--output`
+  says. Create commands print only the new resource's ID or name, so
+  `ID=$(namecom dns create … -q)` works in a pipe; before, `dns create` and
+  `url create` printed the whole JSON object there. Update, delete and other
+  write commands print nothing. Hints are no longer printed in quiet mode;
+  `-o table -q` used to print only a "→ Run …" line. A script that read the
+  JSON object from a quiet create or update gets the ID or nothing now; drop
+  `-q` to keep the object.
+- **Script-visible:** `-q` now applies to the read commands that ignored it.
+  Each prints one value per line instead of its full output: `version` the
+  version string, `status` the expired or soon-expiring domains, `auth status`
+  the username, `config show` the active profile, `config list-profiles` the
+  profile names, `domain pricing` the registration price as a bare number,
+  `domain contacts get` the registrant's email, `order get` the order ID,
+  `email get` the mailbox, and `transfer eligibility` the domain if it can be
+  moved by internal transfer (nothing otherwise).
+- `dns create` and `url create` report a successful response that does not
+  include the new record's or forwarding's ID as an unexpected response (exit
+  **1**, with a hint to check before retrying), instead of printing `(id 0)`
+  and exiting 0. In JSON and YAML mode the error replaces the printed object.
+- `--price` on `domain register`, `domain renew` and `transfer create` must be
+  a positive number. `Inf`, `NaN`, zero and negative values now exit **2**
+  before anything is sent. Before, `NaN`, zero and negatives were silently
+  ignored, and `Inf` was quoted in the prompt as `$+Inf`, gave an empty
+  `--dry-run` preview, and failed when sent.
+- Record, URL forwarding, order and contact verification IDs must be positive
+  whole numbers. `0`, negative numbers and `+5` now exit **2** before anything
+  is sent; they used to reach the API (`contact resend -5`). An ID too large
+  to be one is reported as "must be a positive whole number" rather than
+  "must be a number".
+- Domain and nameserver arguments with an empty label (`bad..com`), a label
+  over 63 characters, or more than 253 characters in all now exit **2**
+  before anything is sent. `transfer eligibility bad..com` used to answer for
+  `bad.com`.
+- `dns create`, `dns update` and `dns import` check more of a record before
+  sending it, and exit **2** on: a host with characters no DNS name has (`"`,
+  `;`, `(`, `@`, or `*` other than a leading `*.`); a CNAME, ANAME, MX, NS or
+  SRV target with an empty label (`a..example.com`) or such characters; MX
+  and SRV answers containing a carriage return or newline; SRV weight or port
+  outside 0–65535; and `--priority` outside 0–65535. The API stored some of
+  these, and `dns export --zone` then wrote a zone that does not load.
+- `vanity-ns` commands refuse a hostname with an empty label
+  (`ns1..example.com`), a space, a character no hostname has, or a label over
+  63 characters, and exit **2** before anything is sent.
 - `domain set-ns` rejects a nameserver containing whitespace, such as
   `--ns "ns1.example .com,ns2.example.com"`, as a usage error (exit 2) before
   sending anything. It was sent, so the mistake came back as an API error
@@ -240,11 +178,85 @@ Releases before `0.2.0` predate this file. Their notes are on the
   TXT value as an RFC 1035 decimal escape (`\010`). It was written raw, which
   left the quotes unbalanced, so BIND and other parsers refused to load the
   whole zone.
-- A DNS lookup failure, or a response the API client could not decode, no
-  longer crashes `namecom` with a Go panic and exit **2**. It is reported as an
-  ordinary error and exits **1**; a DNS failure gets the "could not reach the
-  API" hint. This hit every command when offline, and `domain requirements` for
-  `eu`, `jp` and `nyc` in the sandbox.
+- `domain check` in sandbox mode or with `--authoritative` no longer drops a
+  domain the registry returned no result for, such as one with an unknown TLD.
+  It gets a row and a warning. On every path, a `domain check` with any domain
+  left unanswered now exits **1** after printing its results; it used to exit
+  0, so scripts checking the exit code will see this.
+- `domain check`'s offer to register and the `domain check` / `domain search`
+  PRICE column describe the purchase the way `domain register` does. An
+  aftermarket, expiring or backorder price reads as a flat fee
+  (`$8625.00 flat (aftermarket_b)`) rather than `/yr`, and a premium price
+  shows its renewal price. JSON output is unchanged.
+- `domain requirements -q` lists only fields you can pass to
+  `--tld-requirement`. It used to include notice entries such as .ca's
+  `description`, which take no value, so scripts building flags from it will
+  see one name fewer. The table now prints those notices under the
+  capabilities instead of hiding them.
+- `domain update --lock=false` reports the transfer lock removed only after
+  the API accepts the change. During the 60-day transfer lock it printed the
+  warning and then the API's refusal.
+- **Script-visible:** a `--profile` or `NAMECOM_PROFILE` naming a profile that
+  does not exist now exits 3, the authentication code, instead of 1. The error
+  lists the profiles that do exist, in sorted order.
+- `namecom --help --output json`, `namecom -h --color never` and other global
+  flags placed after `--help` at the top level print the root help and exit 0.
+  They used to fail with `unknown command "json"` and exit 2; the same flags
+  already worked before `--help` and on subcommands.
+- The `status` summary line no longer drops the count of domains expiring in
+  7–30 days when one expires within 7 days: it shows both, as "1 expiring
+  within 7 days  2 more within 30 days". Counts are pluralised ("1 domain",
+  "2 transfers pending"). JSON and YAML output, which already carried both
+  counts, is unchanged.
+- `contact resend` no longer reports a reply without a `sent` field as
+  throttled "until 0001-01-01". It fails with "unexpected response from the
+  API" instead, still exiting 1. A throttled reply that gives no retry time
+  says only "throttled", and with `-o json`/`yaml` prints no payload rather
+  than one carrying the zero date.
+- `auth login --sandbox` saves the profile with `sandbox: true` and no longer
+  asks the sandbox question. The flag was ignored, so the profile was saved for
+  production unless you also answered Yes at the prompt.
+- On Windows, commands no longer warn that the config file "is accessible by
+  other users" on every run. Windows reports every writable file with Unix
+  mode `0666`, so the warning could never be cleared; the check now runs only
+  on Unix-like systems.
+- On Windows, `token_cmd` runs through `cmd.exe` instead of `sh -c`. A stock
+  Windows install has no `sh`, so `token_cmd` failed with
+  `exec: "sh": executable file not found`. If your helper relied on `sh` (for
+  example from Git Bash), wrap it: `token_cmd: sh -c "…"`. macOS and Linux are
+  unchanged.
+- A `token_cmd` that prints more than one line is now refused (exit **3**)
+  with a message saying how many lines it printed, instead of sending all of
+  them as the token. The message does not repeat the output.
+- A negative `--timeout` now exits **2**. It used to mean no timeout at all.
+- `--debug-file` naming a file that already exists now makes it readable only
+  by you (mode 0600), as a new file already was. An existing file used to keep
+  its mode, often 0644.
+- A TLS certificate the client rejects and a host name that does not exist
+  (NXDOMAIN) now fail at once. Both used to be retried three times, about
+  seven seconds, before the same error. DNS timeouts and refused connections
+  are still retried.
+- Shell completion now honors `--profile`, `--token`, `--base-url`,
+  `--sandbox` and `--timeout` typed on the command line. They were ignored, so
+  `namecom --profile prod dns list <TAB>` offered the default profile's
+  domains.
+- Shell completion no longer runs a profile's `token_cmd` on every TAB.
+  Credentials are resolved only when a completion needs the API (domain names,
+  record IDs), so completing subcommand and flag names no longer invokes a
+  password-manager helper.
+- Shell completion gives up after 2 seconds (or `--timeout`, if shorter) and
+  does not retry. An API that accepted connections but never answered froze
+  the shell for the full 30-second timeout on every TAB.
+- Domain-name completion now finds any domain on the account. It fetched only
+  the first 250 domains and ignored what had been typed; the typed text is now
+  sent to the API as a filter, the same one `domain list --filter` uses.
+- Shell completion for `domain claims` no longer offers the domains already
+  in your account; claims are checked on names you are about to register.
+- Shell completion offers values for `-o`/`--output`, `--color` and
+  `--profile` (profile names from the config file, read without running
+  `token_cmd`), profile names for `config use`, and HTTP methods for
+  `namecom api`. `domain register`, `domain check`, `domain search`,
+  `transfer create` and the `api` path no longer fall back to filenames.
 - On a credential failure (exit **3**), the `→ Run 'namecom auth status'…` line
   is no longer written to stdout, where `> out.txt` captured it, after the hint
   the error had already printed. Each error now carries one hint, on stderr
@@ -269,24 +281,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   or with leading or trailing whitespace, are now written double-quoted with
   escapes (`"a\nb"`) rather than as `|` block scalars; a YAML parser reads the
   same value either way.
-- `domain update --lock=false` reports the transfer lock removed only after
-  the API accepts the change. During the 60-day transfer lock it printed the
-  warning and then the API's refusal.
-- `domain check` in sandbox mode or with `--authoritative` no longer drops a
-  domain the registry returned no result for, such as one with an unknown TLD.
-  It gets a row and a warning. On every path, a `domain check` with any domain
-  left unanswered now exits **1** after printing its results; it used to exit
-  0, so scripts checking the exit code will see this.
-- `domain check`'s offer to register and the `domain check` / `domain search`
-  PRICE column describe the purchase the way `domain register` does. An
-  aftermarket, expiring or backorder price reads as a flat fee
-  (`$8625.00 flat (aftermarket_b)`) rather than `/yr`, and a premium price
-  shows its renewal price. JSON output is unchanged.
-- `domain requirements -q` lists only fields you can pass to
-  `--tld-requirement`. It used to include notice entries such as .ca's
-  `description`, which take no value, so scripts building flags from it will
-  see one name fewer. The table now prints those notices under the
-  capabilities instead of hiding them.
+- `url create --dry-run` and `url update --dry-run` no longer print a
+  `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
+  that line followed the dry-run document, so the output was not valid JSON and
+  `| jq` failed. The preview body already shows the host, target and type.
+- `email update`, `email delete` and `dnssec delete` with `--dry-run` show
+  the mailbox or digest escaped in the path, as it is sent. A `/` or `?` in
+  it used to be shown as-is.
+- `dns import` no longer defines its own `--dry-run`, which hid the global
+  flag from its help. `--dry-run` works as before, before or after
+  `dns import`.
 - `namecom open` honours `$BROWSER`, and no longer fails where nothing can
   open a browser (headless Linux, SSH sessions, containers). It prints
   `Open this URL in your browser: <url>` and exits 0 instead of exiting 1 with
@@ -295,6 +299,37 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `namecom open` with more than one argument exits **2** (usage error) instead
   of 1. Any other command that rejects the wrong number of positional
   arguments through cobra's own checks now exits 2 as well.
+- A 403 from `transfer internal-in` no longer says to run `namecom auth
+  login`. The error says the account needs enterprise reseller approval, and
+  the hint now says the credentials are fine. It still exits 3. The same hint
+  change applies to `contact verify`, which also printed the "check your
+  credentials" line. The `hint` field in the JSON/YAML error envelope changes
+  for both.
+- `transfer create` and `transfer internal-in` without `--auth-code`, when not
+  run in a terminal, now exit **2** (usage error) instead of 1, matching a
+  too-short `--auth-code`.
+- `status`, `version`, `auth login`, `auth status` and `auth logout` refuse
+  extra arguments (exit **2**) instead of ignoring them, and `domain search`
+  with an empty term exits **2** instead of printing an empty table.
+- `auth status -o json` and `-o yaml` report `verified` as the boolean
+  `true` instead of the string `"true"`. A script comparing it to the string
+  needs updating.
+- `config list-profiles` shows each profile's endpoint as a URL
+  (`https://api.name.com`), as `config show` and `auth status` do. The
+  `endpoint` field in its JSON and YAML output changes from the bare host to
+  the URL.
+- `namecom version` labels the timestamp it shows `committed`, since it is
+  the time of the commit the binary was built from, not the build time. In
+  JSON and YAML output the field is renamed from `built` to `commitTime`.
+- `auth status` with rejected credentials names the profile, username,
+  endpoint and config file it checked, instead of printing only
+  `Unauthorized`. The exit code is unchanged (3); the error `message` in
+  JSON/YAML output gains the same details.
+- `url update --help` no longer shows `(default "redirect")` for `--type`.
+  Leaving `--type` out has always kept the forwarding's current type; the help
+  now says so. Root help lists the exit codes, and the `dns delete` example
+  that piped into `dns delete` without `--yes`, which failed every time, now
+  passes it.
 
 ## [0.4.7] - 2026-09-29
 
@@ -1041,7 +1076,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/patramsey/namecom-cli/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/patramsey/namecom-cli/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/patramsey/namecom-cli/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/patramsey/namecom-cli/compare/v0.4.4...v0.4.5
