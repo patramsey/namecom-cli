@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -288,6 +289,30 @@ func TestVanityCreate_HostnameWrongDomain(t *testing.T) {
 	if !strings.Contains(err.Error(), "example.com") {
 		t.Errorf("error should name the expected domain, got: %v", err)
 	}
+}
+
+// TestVanityHostname_RejectsMalformedLabels pins #187: `ns1..example.com`
+// passed (the label became "ns1."), as did labels with characters no hostname
+// has. Each is a usage error before anything is sent.
+func TestVanityHostname_RejectsMalformedLabels(t *testing.T) {
+	for _, h := range []string{"ns1..example.com", "ns 1", "ns1?x", strings.Repeat("a", 64)} {
+		if _, err := vanityHostname(h, "example.com"); !isUsage(err) {
+			t.Errorf("vanityHostname(%q) = %v, want a usage error", h, err)
+		}
+		if _, err := vanityLabel("--hostname", h, "example.com"); !isUsage(err) {
+			t.Errorf("vanityLabel(%q) = %v, want a usage error", h, err)
+		}
+	}
+	for _, h := range []string{"ns1", "ns1.example.com", "a.b.example.com."} {
+		if _, err := vanityHostname(h, "example.com"); err != nil {
+			t.Errorf("vanityHostname(%q) = %v, want nil", h, err)
+		}
+	}
+}
+
+func isUsage(err error) bool {
+	var ue *cmdutil.UsageError
+	return errors.As(err, &ue)
 }
 
 // ---- update -----------------------------------------------------------------

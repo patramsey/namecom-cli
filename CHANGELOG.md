@@ -32,6 +32,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `vanity-ns` commands refuse a hostname with an empty label
+  (`ns1..example.com`), a space, a character no hostname has, or a label over
+  63 characters, and exit **2** before anything is sent.
 - `dns create`, `dns update` and `dns import` check more of a record before
   sending it, and exit **2** on: a host with characters no DNS name has (`"`,
   `;`, `(`, `@`, or `*` other than a leading `*.`); a CNAME, ANAME, MX, NS or

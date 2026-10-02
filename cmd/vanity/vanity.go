@@ -223,7 +223,7 @@ func vanityLabel(name, hostname, domain string) (string, error) {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	if !strings.Contains(h, ".") {
-		return h, nil // already a bare label
+		return h, validVanityName(h, domain) // already a bare label
 	}
 	suffix := "." + domain
 	if !strings.HasSuffix(h, suffix) {
@@ -233,7 +233,14 @@ func vanityLabel(name, hostname, domain string) (string, error) {
 	if label == "" {
 		return "", fmt.Errorf("%s %q must include a subdomain (e.g. ns1.%s)", name, hostname, domain)
 	}
-	return label, nil
+	return label, validVanityName(label, domain)
+}
+
+// validVanityName holds the nameserver a label names to the rules any other
+// nameserver argument gets. `ns1..example.com` used to pass with the label
+// "ns1." (#187), as did labels with spaces or characters no hostname has.
+func validVanityName(label, domain string) error {
+	return cmdutil.ValidNameserver(label+"."+domain, 0)
 }
 
 // vanityHostname is the FQDN that get/update/delete take as their path
