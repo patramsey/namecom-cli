@@ -1,13 +1,21 @@
 package cmdutil
 
 import (
+	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/spf13/cobra"
 )
+
+// CompletionTimeout bounds the API work behind one TAB. The shell is frozen
+// until completion returns, so a slow or unreachable API should cost the user
+// a moment, not the full --timeout; root.go also disables retries for the
+// completion client.
+const CompletionTimeout = 2 * time.Second
 
 // ClientFactory builds the API client on demand. root.go stores one on the
 // context of cobra's __complete command instead of a client, for two reasons.
@@ -46,9 +54,11 @@ func CompleteDomains(cmd *cobra.Command, args []string, _ string) ([]string, cob
 	if client == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), CompletionTimeout)
+	defer cancel()
 	p := 1
 	perPage := 250
-	result, err := client.SDK().Domains.ListDomains(cmd.Context(),
+	result, err := client.SDK().Domains.ListDomains(ctx,
 		&coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage})
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
@@ -68,10 +78,13 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 	if client == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	// One deadline for the whole walk, not one per page.
+	ctx, cancel := context.WithTimeout(cmd.Context(), CompletionTimeout)
+	defer cancel()
 	var completions []string
 	page := 1
 	for {
-		result, err := client.SDK().DNS.ListRecords(cmd.Context(),
+		result, err := client.SDK().DNS.ListRecords(ctx,
 			&coreapigo.ListRecordsRequest{DomainName: domain, Page: &page})
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveError

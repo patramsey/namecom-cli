@@ -98,6 +98,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   Credentials are resolved only when a completion needs the API (domain names,
   record IDs), so completing subcommand and flag names no longer invokes a
   password-manager helper.
+- Shell completion gives up after 2 seconds (or `--timeout`, if shorter) and
+  does not retry. An API that accepted connections but never answered froze
+  the shell for the full 30-second timeout on every TAB.
 
 ## [0.4.7] - 2026-09-29
 

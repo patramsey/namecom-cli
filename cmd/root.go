@@ -362,6 +362,14 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		UserAgent: "namecom-cli/" + Version,
 		Timeout:   gf.timeout,
 	}
+	// A TAB freezes the shell until it returns: one short attempt, and no
+	// candidates if the API cannot answer in time. A shorter --timeout wins.
+	if forCompletion {
+		if apiOpts.Timeout <= 0 || apiOpts.Timeout > cmdutil.CompletionTimeout {
+			apiOpts.Timeout = cmdutil.CompletionTimeout
+		}
+		apiOpts.MaxRetries = -1
+	}
 	if gf.baseURL != "" {
 		if err := validateBaseURL(gf.baseURL); err != nil {
 			return cmdutil.NewUsageError(err)

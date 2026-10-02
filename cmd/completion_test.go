@@ -10,8 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -153,4 +156,47 @@ func TestComplete_StaticCompletionSkipsCredentials(t *testing.T) {
 	if n := ran(); n != 1 {
 		t.Errorf("token_cmd ran %d times for one dynamic completion, want 1", n)
 	}
+}
+
+// TestComplete_ShortDeadlineNoRetries guards issue #178. Completion used the
+// full --timeout (30s by default) with retries and backoff, so an API that
+// accepted connections but never answered froze the shell for 30s per TAB.
+func TestComplete_ShortDeadlineNoRetries(t *testing.T) {
+	withConfig(t, loneProfile)
+
+	t.Run("a hung API gives up quickly", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}))
+		t.Cleanup(srv.Close)
+		t.Cleanup(func() { close(release) })
+
+		start := time.Now()
+		got := runComplete(t, "--base-url", srv.URL, "domain", "get", "")
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("completion took %s against a hung API, want about %s",
+				elapsed.Round(time.Millisecond), cmdutil.CompletionTimeout)
+		}
+		if len(got) != 0 {
+			t.Errorf("candidates = %v, want none on timeout", got)
+		}
+	})
+
+	t.Run("a 503 is not retried", func(t *testing.T) {
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(srv.Close)
+
+		runComplete(t, "--base-url", srv.URL, "dns", "delete", "example.com", "")
+		if n := requests.Load(); n != 1 {
+			t.Errorf("made %d requests, want 1: completion must not retry", n)
+		}
+	})
 }
