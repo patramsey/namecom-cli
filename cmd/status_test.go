@@ -248,6 +248,37 @@ func TestStatus_RendersExpiredAsExpired(t *testing.T) {
 	}
 }
 
+// TestStatus_SummaryLine pins #211: a domain due within 7 days hid the count
+// due in 7–30 days from the summary, and counts other than 1 read as
+// "2 transfer pending".
+func TestStatus_SummaryLine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    statusSummary
+		want string
+	}{
+		{"both expiry counts", statusSummary{DomainsTotal: 5, ExpiringCritical: 1, ExpiringSoon: 2},
+			"5 domains  1 expiring within 7 days  2 more within 30 days"},
+		{"only the 30-day count", statusSummary{DomainsTotal: 5, ExpiringSoon: 2},
+			"5 domains  2 expiring within 30 days"},
+		{"singular", statusSummary{DomainsTotal: 1, PendingTransfers: ptrInt(1)},
+			"1 domain  1 transfer pending"},
+		{"plural transfers", statusSummary{DomainsTotal: 3, PendingTransfers: ptrInt(2)},
+			"3 domains  2 transfers pending"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+			renderStatus(out, tc.s)
+			// The summary is the line after the profile header.
+			_, rest, _ := strings.Cut(buf.String(), "\n")
+			if got, _, _ := strings.Cut(rest, "\n"); got != tc.want {
+				t.Errorf("summary line = %q, want %q\n%s", got, tc.want, buf.String())
+			}
+		})
+	}
+}
+
 // TestStatus_NullBodyIsAnError pins #157: a 200 whose body is `null` made the
 // SDK return a nil response with a nil error, and status dereferenced it inside
 // an errgroup goroutine — a panic that bypassed Execute and took the process

@@ -17,6 +17,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - **Script-visible:** a `--profile` or `NAMECOM_PROFILE` naming a profile that
   does not exist now exits 3, the authentication code, instead of 1. The error
   lists the profiles that do exist, in sorted order.
+- The `status` summary line no longer drops the count of domains expiring in
+  7–30 days when one expires within 7 days: it shows both, as "1 expiring
+  within 7 days  2 more within 30 days". Counts are pluralised ("1 domain",
+  "2 transfers pending"). JSON and YAML output, which already carried both
+  counts, is unchanged.
 - `url update --help` no longer shows `(default "redirect")` for `--type`.
   Leaving `--type` out has always kept the forwarding's current type; the help
   now says so. Root help lists the exit codes, and the `dns delete` example
