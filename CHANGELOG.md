@@ -40,6 +40,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   JSON output changes for non-JSON error bodies: it no longer starts with the
   status code (`502: <html>…`), and an empty body reads as the status text
   (`Service Unavailable`) rather than the bare code.
+- A successful response whose body is empty, not JSON, or JSON of the wrong
+  shape now fails with `unexpected response from the API: …` and a hint that
+  a change may still have been made, instead of a Go decoder message naming
+  internal types (`json: cannot unmarshal array into Go value of type …`,
+  `expected a **api.DomainResponsePayload response …`). It still exits 1.
 
 ## [0.4.7] - 2026-09-29
 
