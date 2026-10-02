@@ -135,6 +135,10 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 	// set, and none at all for a lone profile with no key.
 	active := config.ActiveProfile(cfgFile, cmdutil.Overrides(cmd).Profile)
 
+	if out.Quiet(names...) {
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(redactProfiles(cfgFile, names, active))
@@ -223,6 +227,11 @@ func runShow(cmd *cobra.Command, _ []string) error {
 	}
 
 	path, _ := config.ActivePath()
+
+	// Quiet prints the profile API commands would use.
+	if out.Quiet(profileName) {
+		return nil
+	}
 
 	switch out.Format {
 	case output.FormatJSON:

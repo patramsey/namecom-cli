@@ -211,7 +211,18 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 //
 // Keys are lowercased for the structured views so they read as field names
 // rather than display labels.
+//
+// Quiet prints the username the credentials verified as: the identity, which
+// is what a script checking "am I logged in as the right account" compares.
 func renderAuthStatus(out *output.Config, rows [][]string) {
+	if out.QuietMode {
+		for _, r := range rows {
+			if r[0] == "Username" {
+				out.Quiet(r[1])
+			}
+		}
+		return
+	}
 	switch out.Format {
 	case output.FormatJSON, output.FormatYAML:
 		fields := make(map[string]string, len(rows))

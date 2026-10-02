@@ -284,6 +284,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The hostname is what get, update and delete take.
+	if out.QuietMode {
+		host := createHostname
+		if ns != nil && derefStr(ns.Hostname) != "" {
+			host = derefStr(ns.Hostname)
+		}
+		out.Quiet(host)
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(ns)
@@ -326,7 +336,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		ns, err = client.SDK().VanityNameservers.UpdateVanityNameserver(ctx, &body)
 		return api.FromSDKError(err)
 	})
-	if err != nil || !sent {
+	if err != nil || !sent || out.Quiet() {
 		return err
 	}
 

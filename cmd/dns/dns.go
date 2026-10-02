@@ -312,6 +312,15 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if out.QuietMode {
+		if record == nil || record.ID == nil {
+			out.Warn("the API did not return the new record's ID")
+			return nil
+		}
+		out.Quiet(strconv.Itoa(*record.ID))
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(record)
@@ -426,7 +435,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		updated, err = client.SDK().DNS.UpdateRecord(ctx, &body)
 		return api.FromSDKError(err)
 	})
-	if err != nil || !sent {
+	if err != nil || !sent || out.Quiet() {
 		return err
 	}
 

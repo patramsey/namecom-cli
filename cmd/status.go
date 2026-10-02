@@ -244,6 +244,17 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		Balance:          balance,
 	}
 
+	// Quiet prints the domains that need attention — expired or expiring
+	// within 30 days — one per line, ready for `xargs namecom domain renew`.
+	// Nothing means nothing is due. The totals have no single identifying
+	// value, and -o json carries them.
+	if out.QuietMode {
+		for _, e := range summary.ExpiringDomains {
+			out.Quiet(e.Domain)
+		}
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(summary)

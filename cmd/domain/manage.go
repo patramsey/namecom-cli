@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -292,6 +293,16 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Quiet prints the registrant's email: the registrant is the owner of
+	// record and the contact ICANN verification is sent to. Nothing is
+	// printed when the response has none.
+	if out.QuietMode {
+		if d.Contacts != nil && d.Contacts.Registrant != nil && d.Contacts.Registrant.Email != nil {
+			out.Quiet(*d.Contacts.Registrant.Email)
+		}
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(d.Contacts)
@@ -504,6 +515,16 @@ func runPricing(cmd *cobra.Command, args []string) error {
 		return api.FromSDKError(err)
 	}
 
+	// Quiet prints the registration price as a bare number ("12.99"), the one
+	// a script compares against before registering. Nothing when the API
+	// quotes none.
+	if out.QuietMode {
+		if pricing.PurchasePrice != nil {
+			out.Quiet(strconv.FormatFloat(*pricing.PurchasePrice, 'f', 2, 64))
+		}
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(pricing)
@@ -623,6 +644,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// accepted it: during the 60-day transfer lock it refuses (#167).
 	if unlocking && wasLocked {
 		out.WarnBox("Transfer lock removed — re-enable it after any transfer completes to protect against unauthorized outbound transfers")
+	}
+	if out.Quiet() {
+		return nil
 	}
 
 	switch out.Format {

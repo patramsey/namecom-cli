@@ -191,6 +191,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The digest is what get and delete take, so it is the identifier.
+	if out.QuietMode {
+		digest := body.Digest
+		if key != nil && key.Digest != "" {
+			digest = key.Digest
+		}
+		out.Quiet(digest)
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(key)

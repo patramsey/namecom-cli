@@ -258,6 +258,15 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if out.QuietMode {
+		registered := domainName
+		if created != nil && created.Domain != nil && created.Domain.DomainName != "" {
+			registered = created.Domain.DomainName
+		}
+		out.Quiet(registered)
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(created)
@@ -443,7 +452,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		renewed, err = client.SDK().Domains.RenewDomain(ctx, &body)
 		return err
 	})
-	if err != nil || !sent {
+	if err != nil || !sent || out.Quiet() {
 		return err
 	}
 

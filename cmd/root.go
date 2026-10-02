@@ -178,7 +178,7 @@ func init() {
 	pf.StringVar(&gf.token, "token", "", "API token (env: NAMECOM_TOKEN)")
 	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com)")
 	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml (default: table in TTY, json otherwise)")
-	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "print IDs/names only (one per line)")
+	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "script output, whatever --output says: lists print one ID/name per line, creates the new ID, other writes nothing")
 	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
 	pf.BoolVar(&gf.wide, "wide", false, "keep every table column even if it overflows the terminal")
 	pf.StringVar(&gf.color, "color", "auto", "colorize output: auto, always, never (env: NO_COLOR, CLICOLOR_FORCE)")

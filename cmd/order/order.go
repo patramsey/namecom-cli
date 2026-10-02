@@ -224,6 +224,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 	o.OrderItems = cmdutil.NonNil(o.OrderItems)
 
+	// Quiet prints the order ID, from the response where it has one.
+	if out.QuietMode {
+		oid := int(id)
+		if o != nil && o.ID != nil {
+			oid = *o.ID
+		}
+		out.Quiet(strconv.Itoa(oid))
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(o)
@@ -337,12 +347,17 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		problems = append(problems, msg)
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
+	switch {
+	case out.QuietMode:
+		// Nothing on stdout, but which items failed is still worth saying.
+		for _, p := range problems {
+			out.Warn(p)
+		}
+	case out.Format == output.FormatJSON:
 		if err := out.JSON(result); err != nil {
 			return err
 		}
-	case output.FormatYAML:
+	case out.Format == output.FormatYAML:
 		if err := out.YAML(result); err != nil {
 			return err
 		}

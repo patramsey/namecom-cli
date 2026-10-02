@@ -230,7 +230,7 @@ func runResend(cmd *cobra.Command, args []string) error {
 	// pipes `contact unverified -q` into xargs, so "I resent them all" has to be
 	// true or a domain silently misses its verification deadline.
 	if !result.Sent {
-		if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
+		if (out.Format == output.FormatJSON || out.Format == output.FormatYAML) && !out.QuietMode {
 			// Still emit the payload so a script can read nextEligibleAt, then
 			// fail so it cannot mistake this for a send.
 			if out.Format == output.FormatJSON {
@@ -242,6 +242,10 @@ func runResend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("verification email not sent for record %d — throttled until %s "+
 			"(the API allows one resend per record every 15 minutes)",
 			result.VerificationID, result.NextEligibleAt.Format(time.RFC3339))
+	}
+
+	if out.Quiet() {
+		return nil
 	}
 
 	switch out.Format {

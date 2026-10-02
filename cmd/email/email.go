@@ -177,6 +177,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return api.FromSDKError(err)
 	}
 
+	// Quiet prints the mailbox, as list -q does.
+	if out.QuietMode {
+		box := args[1]
+		if entry != nil && entry.EmailBox != "" {
+			box = entry.EmailBox
+		}
+		out.Quiet(box)
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(entry)
@@ -260,6 +270,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The mailbox is what get, update and delete take.
+	if out.QuietMode {
+		box := mailbox
+		if entry != nil && entry.EmailBox != "" {
+			box = entry.EmailBox
+		}
+		out.Quiet(box)
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(entry)
@@ -333,7 +353,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		entry, err = client.SDK().EmailForwardings.UpdateEmailForwarding(ctx, &body)
 		return api.FromSDKError(err)
 	})
-	if err != nil || !sent {
+	if err != nil || !sent || out.Quiet() {
 		return err
 	}
 

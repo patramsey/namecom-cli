@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -321,12 +322,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// `return` directly, which made --watch unreachable in JSON/YAML mode — i.e.
 	// in every pipe, since JSON is the default for non-TTY stdout. The flag
 	// exists for automation and did nothing in exactly the automation case.
-	switch out.Format {
-	case output.FormatJSON:
+	// Quiet prints the domain: it is what transfer get and cancel take.
+	switch {
+	case out.Quiet(domain):
+	case out.Format == output.FormatJSON:
 		if err := out.JSON(result); err != nil {
 			return err
 		}
-	case output.FormatYAML:
+	case out.Format == output.FormatYAML:
 		if err := out.YAML(result); err != nil {
 			return err
 		}
@@ -388,8 +391,13 @@ func watchTransfer(cmd *cobra.Command, out *output.Config, client *api.Client, d
 	// JSON/YAML mode (that is the automation case it exists for), and stdout
 	// already carries the create response as a structured document — writing
 	// human progress lines into that stream makes it unparseable.
+	// Quiet mode keeps it off both: stdout holds only the domain, and the
+	// outcome is the exit code plus the warning below for a failed transfer.
 	progress := out.Writer
-	if out.Format != output.FormatTable {
+	switch {
+	case out.QuietMode:
+		progress = io.Discard
+	case out.Format != output.FormatTable:
 		progress = out.EWriter
 	}
 	fmt.Fprintf(progress, "\nWatching transfer status — checking every 5 minutes (Ctrl+C to stop)\n")
@@ -495,6 +503,10 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return cmdutil.AsRestricted(api.FromSDKError(err), "internal transfer-in", "approved enterprise reseller")
 	}
 
+	if out.Quiet(domain) {
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(t)
@@ -560,7 +572,7 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 			&coreapigo.CancelOutboundTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
 		return err
 	})
-	if err != nil || !sent {
+	if err != nil || !sent || out.Quiet() {
 		return err
 	}
 
@@ -591,6 +603,17 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	result := elig
+
+	// Quiet prints the domain only when it is at name.com and its TLD supports
+	// internal transfer — the case this command exists to find — and nothing
+	// otherwise, so `[ -n "$(namecom transfer eligibility d.com -q)" ]` is the
+	// test. Echoing the domain unconditionally would tell a script nothing.
+	if out.QuietMode {
+		if result.AtName && result.SupportsInternalTransfer {
+			out.Quiet(result.DomainName)
+		}
+		return nil
+	}
 
 	switch out.Format {
 	case output.FormatJSON:
