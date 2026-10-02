@@ -45,6 +45,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a change may still have been made, instead of a Go decoder message naming
   internal types (`json: cannot unmarshal array into Go value of type …`,
   `expected a **api.DomainResponsePayload response …`). It still exits 1.
+- A final 429 or 5xx is reported at once instead of after an extra wait. The
+  API library slept before returning these even with its retries turned off:
+  up to 60 seconds on a 429's `Retry-After`, and a second or two on a 5xx. A
+  429 whose `Retry-After` outlasted `--timeout` could also come back as a
+  `request canceled` error with exit 1; it now exits 5 as documented.
 
 ## [0.4.7] - 2026-09-29
 
