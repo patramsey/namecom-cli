@@ -24,6 +24,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `-o table -q` used to print only a "→ Run …" line. A script that read the
   JSON object from a quiet create or update gets the ID or nothing now; drop
   `-q` to keep the object.
+- **Script-visible:** `-q` now applies to the read commands that ignored it.
+  Each prints one value per line instead of its full output: `version` the
+  version string, `status` the expired or soon-expiring domains, `auth status`
+  the username, `config show` the active profile, `config list-profiles` the
+  profile names, `domain pricing` the registration price as a bare number,
+  `domain contacts get` the registrant's email, `order get` the order ID,
+  `email get` the mailbox, and `transfer eligibility` the domain if it can be
+  moved by internal transfer (nothing otherwise).
 - `url create --dry-run` and `url update --dry-run` no longer print a
   `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
   that line followed the dry-run document, so the output was not valid JSON and

@@ -224,6 +224,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 	o.OrderItems = cmdutil.NonNil(o.OrderItems)
 
+	// Quiet prints the order ID, from the response where it has one.
+	if out.QuietMode {
+		oid := int(id)
+		if o != nil && o.ID != nil {
+			oid = *o.ID
+		}
+		out.Quiet(strconv.Itoa(oid))
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(o)

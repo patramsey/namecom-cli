@@ -604,6 +604,17 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 	}
 	result := elig
 
+	// Quiet prints the domain only when it is at name.com and its TLD supports
+	// internal transfer — the case this command exists to find — and nothing
+	// otherwise, so `[ -n "$(namecom transfer eligibility d.com -q)" ]` is the
+	// test. Echoing the domain unconditionally would tell a script nothing.
+	if out.QuietMode {
+		if result.AtName && result.SupportsInternalTransfer {
+			out.Quiet(result.DomainName)
+		}
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(result)

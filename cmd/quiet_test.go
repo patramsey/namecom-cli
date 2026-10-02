@@ -92,6 +92,78 @@ func TestQuietContract(t *testing.T) {
 			routes: map[string]string{"GET /core/v1/domains/example.com": domainJSON, "PATCH /core/v1/domains/example.com": domainJSON},
 			want:   "",
 		},
+
+		// Reads of one object: the chosen value.
+		{
+			name:   "domain get",
+			args:   []string{"domain", "get", "example.com"},
+			routes: map[string]string{"GET /core/v1/domains/example.com": domainJSON},
+			want:   "example.com\n",
+		},
+		{
+			name:   "domain pricing",
+			args:   []string{"domain", "pricing", "example.com"},
+			routes: map[string]string{"GET /core/v1/domains/example.com:getPricing": `{"purchasePrice":12.99,"renewalPrice":14.99,"transferPrice":9.99}`},
+			want:   "12.99\n",
+		},
+		{
+			name:   "domain contacts get",
+			args:   []string{"domain", "contacts", "get", "example.com"},
+			routes: map[string]string{"GET /core/v1/domains/example.com": `{"domainName":"example.com","contacts":{"registrant":{"email":"owner@example.org"},"admin":{"email":"admin@example.org"}}}`},
+			want:   "owner@example.org\n",
+		},
+		{
+			name:   "transfer eligibility, eligible",
+			args:   []string{"transfer", "eligibility", "example.com"},
+			routes: map[string]string{"GET /core/v1/transfers/eligibility/example.com": `{"domainName":"example.com","atName":true,"supportsInternalTransfer":true}`},
+			want:   "example.com\n",
+		},
+		{
+			name:   "transfer eligibility, not eligible",
+			args:   []string{"transfer", "eligibility", "example.com"},
+			routes: map[string]string{"GET /core/v1/transfers/eligibility/example.com": `{"domainName":"example.com","atName":false,"supportsInternalTransfer":true}`},
+			want:   "",
+		},
+		{
+			name:   "order get",
+			args:   []string{"order", "get", "5"},
+			routes: map[string]string{"GET /core/v1/orders/5": `{"id":5,"status":"success"}`},
+			want:   "5\n",
+		},
+		{
+			name:   "email get",
+			args:   []string{"email", "get", "example.com", "info"},
+			routes: map[string]string{"GET /core/v1/domains/example.com/email/forwarding/info": `{"domainName":"example.com","emailBox":"info","emailTo":"owner@example.org"}`},
+			want:   "info\n",
+		},
+		{
+			// Every ListDomains call gets the same page, so the expiry query
+			// reports old.example as expired; that is the line quiet prints.
+			name:   "status",
+			args:   []string{"status"},
+			routes: map[string]string{"GET /core/v1/domains": `{"domains":[{"domainName":"old.example","expireDate":"2020-01-01T00:00:00Z"}],"totalCount":1}`},
+			want:   "old.example\n",
+		},
+		{
+			name: "auth status",
+			args: []string{"auth", "status"},
+			want: "workuser\n",
+		},
+		{
+			name: "config show",
+			args: []string{"config", "show"},
+			want: "work\n",
+		},
+		{
+			name: "config list-profiles",
+			args: []string{"config", "list-profiles"},
+			want: "work\n",
+		},
+		{
+			name: "version",
+			args: []string{"version"},
+			want: gatherBuildInfo().Version + "\n",
+		},
 	}
 
 	for _, tc := range tests {

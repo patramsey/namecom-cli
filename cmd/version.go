@@ -32,6 +32,10 @@ func runVersion(cmd *cobra.Command, _ []string) error {
 }
 
 func renderVersion(out *output.Config, info buildInfo) error {
+	// Quiet prints the bare version string.
+	if out.Quiet(info.Version) {
+		return nil
+	}
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(info)

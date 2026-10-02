@@ -177,6 +177,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return api.FromSDKError(err)
 	}
 
+	// Quiet prints the mailbox, as list -q does.
+	if out.QuietMode {
+		box := args[1]
+		if entry != nil && entry.EmailBox != "" {
+			box = entry.EmailBox
+		}
+		out.Quiet(box)
+		return nil
+	}
+
 	switch out.Format {
 	case output.FormatJSON:
 		return out.JSON(entry)
