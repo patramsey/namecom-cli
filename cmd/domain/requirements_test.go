@@ -437,3 +437,50 @@ func TestDomainRequirements_NotFoundKeepsExitCode(t *testing.T) {
 		t.Errorf("error %q no longer carries the 404, so the command exits 1 instead of 4", err)
 	}
 }
+
+// requirementsWithNotice has the shape #172 reported for .ca: two settable
+// enum fields beside a `type: notice` entry, which the SDK documents as text
+// to show before registration with nothing to submit (required is always
+// false).
+const requirementsWithNotice = `{
+  "tldInfo": {"allowedRegistrationYears": [1, 2]},
+  "requirements": {"fields": {
+    "description": {"type": "notice", "required": false,
+      "description": "Registrations that do not meet the CIRA Canadian Presence Requirements will fail."},
+    "lang_pref": {"type": "enum", "required": true, "label": "Language preference",
+      "options": [{"label": "English", "value": "en"}, {"label": "French", "value": "fr"}]},
+    "legal_type": {"type": "enum", "required": true, "label": "Legal type",
+      "options": [{"label": "Canadian citizen", "value": "CCT"}]}
+  }},
+  "contacts": {}
+}`
+
+// TestDomainRequirements_NoticesAreShownNotListed pins #172. -q exists to
+// build --tld-requirement arguments, so a notice (nothing to submit) does not
+// belong in it; and the table, the only human view, must show the notice text
+// rather than hide a warning that the order will fail.
+func TestDomainRequirements_NoticesAreShownNotListed(t *testing.T) {
+	t.Run("quiet lists only settable fields", func(t *testing.T) {
+		srv, _ := jsonServer(t, http.StatusOK, requirementsWithNotice)
+		var stdout bytes.Buffer
+		out := tableOut(&stdout)
+		out.QuietMode = true
+		if err := runRequirements(cmdWithOutput(t, srv, out), []string{"ca"}); err != nil {
+			t.Fatalf("runRequirements: %v", err)
+		}
+		if got, want := strings.Fields(stdout.String()), []string{"lang_pref", "legal_type"}; strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("quiet output = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("table shows the notice", func(t *testing.T) {
+		srv, _ := jsonServer(t, http.StatusOK, requirementsWithNotice)
+		var stdout bytes.Buffer
+		if err := runRequirements(cmdWithOutput(t, srv, tableOut(&stdout)), []string{"ca"}); err != nil {
+			t.Fatalf("runRequirements: %v", err)
+		}
+		if want := "Canadian Presence Requirements will fail"; !strings.Contains(stdout.String(), want) {
+			t.Errorf("table output missing the notice %q:\n%s", want, stdout.String())
+		}
+	})
+}

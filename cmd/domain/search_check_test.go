@@ -891,8 +891,9 @@ func TestArgMatcher_DefectsFoundInReview(t *testing.T) {
 }
 
 // TestCheck_UnverifiedDomainIsNotReportedAsTaken is the safety net that makes
-// the above survivable. Whatever the matcher can or cannot resolve, a domain
-// the CLI never got an answer for must never render as "taken" — that is the
+// the above survivable. Whether the matcher cannot resolve a reply or the API
+// simply leaves a domain out, a domain the CLI never got an answer for must
+// never render as "taken" — that is the
 // original bug, and reporting an available domain as unavailable is the
 // expensive direction to be wrong in.
 func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
@@ -900,11 +901,12 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "zonecheck"):
-			// Two IDN args, replies in canonical form: unresolvable by elimination.
+			// Arguments are sent as punycode now (#160), so replies match them
+			// exactly; leave one domain out of the reply so the CLI genuinely
+			// has no answer for it.
 			_, _ = w.Write([]byte(`{"results":[
-			  {"domainName":"xn--caf-dma.com","available":true},
-			  {"domainName":"xn--rsum-bpad.com","available":true}
-			],"total":2}`))
+			  {"domainName":"xn--caf-dma.com","available":true}
+			],"total":1}`))
 		case strings.Contains(r.URL.Path, "checkAvailability"):
 			_, _ = w.Write([]byte(`{"results":[]}`))
 		default:
@@ -914,8 +916,10 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd, buf := cmdForCheckJSON(t, srv)
-	if err := runCheck(cmd, []string{"café.com", "résumé.com"}); err != nil {
-		t.Fatalf("runCheck: %v", err)
+	// The rows are still printed, but an unanswered domain fails the command
+	// (#170) so a script cannot mistake the placeholder for an answer.
+	if err := runCheck(cmd, []string{"café.com", "résumé.com"}); err == nil {
+		t.Fatal("want an error for domains whose availability is unknown")
 	}
 
 	var got []*coreapigo.SearchResult
@@ -1023,4 +1027,103 @@ func lastCell(row string) string {
 		return ""
 	}
 	return cells[len(cells)-1]
+}
+
+// TestCheck_RegistryPathAccountsForEveryArgument pins #170. The sandbox and
+// --authoritative path rendered CheckAvailability's results as-is, so a name
+// the API left out (foo.zzzz: no such TLD) vanished from the output and the
+// command exited 0. Every argument must come back as a row, and an argument
+// with no answer must fail the command, on both paths.
+func TestCheck_RegistryPathAccountsForEveryArgument(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/core/v1/domains:checkAvailability" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"results":[{"domainName":"example.com","purchasable":true,"purchasePrice":12.99}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := cmd.ParseFlags([]string{"--authoritative"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runCheck(cmd, []string{"example.com", "foo.zzzz"})
+	if err == nil || !strings.Contains(err.Error(), "foo.zzzz") {
+		t.Errorf("want an error naming foo.zzzz, got %v", err)
+	}
+
+	var got []*coreapigo.SearchResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 2 || got[0].DomainName != "example.com" || got[1].DomainName != "foo.zzzz" {
+		t.Fatalf("want a row per argument in order, got %s", buf.String())
+	}
+	if got[1].Purchasable {
+		t.Error("an unanswered domain must not be reported purchasable")
+	}
+}
+
+// TestCheck_PriceWordingFollowsPurchaseKind pins #171. #142 fixed "/yr" in
+// `domain register`'s prompt, but `domain check`'s register offer and the
+// check/search PRICE column still quoted every price per year: an aftermarket
+// name read "$8625.00/yr" when it is a one-off fee, and a premium name hid
+// that it renews far cheaper.
+func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
+	aftermarket := coreapigo.SearchPurchaseType("aftermarket_b")
+	registration := coreapigo.SearchPurchaseTypeRegistration
+	yes := true
+
+	for _, tc := range []struct {
+		name           string
+		result         coreapigo.SearchResult
+		wantCell       string
+		wantPrompt     string
+		notWantInPrice string
+	}{
+		{
+			name: "aftermarket is a flat fee",
+			result: coreapigo.SearchResult{DomainName: "example.org", Purchasable: true,
+				PurchasePrice: new(8625.0), RenewalPrice: new(21.99), PurchaseType: &aftermarket},
+			wantCell:       "$8625.00 flat (aftermarket_b)",
+			wantPrompt:     "Register example.org at $8625.00 flat (aftermarket_b, not per year)?",
+			notWantInPrice: "/yr",
+		},
+		{
+			name: "premium shows its renewal price",
+			result: coreapigo.SearchResult{DomainName: "shoe.luxe", Purchasable: true,
+				PurchasePrice: new(1000.0), RenewalPrice: new(24.99), Premium: &yes, PurchaseType: &registration},
+			wantCell:       "$1000.00 (renews $24.99/yr)",
+			wantPrompt:     "Register shoe.luxe for 1 year(s) at $1000.00 (premium; renews at $24.99/yr)?",
+			notWantInPrice: "$1000.00/yr",
+		},
+		{
+			name: "ordinary registration stays per year",
+			result: coreapigo.SearchResult{DomainName: "free.com", Purchasable: true,
+				PurchasePrice: new(12.99), RenewalPrice: new(12.99)},
+			wantCell:   "$12.99/yr",
+			wantPrompt: "Register free.com for 1 year(s) at $12.99/yr?",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.result
+			if got := checkRegisterPrompt(&r); got != tc.wantPrompt {
+				t.Errorf("register offer = %q, want %q", got, tc.wantPrompt)
+			}
+
+			var buf bytes.Buffer
+			out := outWithFormat(output.FormatTable, &buf)
+			out.Wide = true
+			if err := renderSearchResults(out, []*coreapigo.SearchResult{&r}); err != nil {
+				t.Fatalf("renderSearchResults: %v", err)
+			}
+			if !strings.Contains(buf.String(), tc.wantCell) {
+				t.Errorf("PRICE cell %q missing:\n%s", tc.wantCell, buf.String())
+			}
+			if tc.notWantInPrice != "" && strings.Contains(buf.String(), tc.notWantInPrice) {
+				t.Errorf("table must not say %q:\n%s", tc.notWantInPrice, buf.String())
+			}
+		})
+	}
 }

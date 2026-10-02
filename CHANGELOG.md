@@ -161,6 +161,24 @@ Releases before `0.2.0` predate this file. Their notes are on the
   or with leading or trailing whitespace, are now written double-quoted with
   escapes (`"a\nb"`) rather than as `|` block scalars; a YAML parser reads the
   same value either way.
+- `domain update --lock=false` reports the transfer lock removed only after
+  the API accepts the change. During the 60-day transfer lock it printed the
+  warning and then the API's refusal.
+- `domain check` in sandbox mode or with `--authoritative` no longer drops a
+  domain the registry returned no result for, such as one with an unknown TLD.
+  It gets a row and a warning. On every path, a `domain check` with any domain
+  left unanswered now exits **1** after printing its results; it used to exit
+  0, so scripts checking the exit code will see this.
+- `domain check`'s offer to register and the `domain check` / `domain search`
+  PRICE column describe the purchase the way `domain register` does. An
+  aftermarket, expiring or backorder price reads as a flat fee
+  (`$8625.00 flat (aftermarket_b)`) rather than `/yr`, and a premium price
+  shows its renewal price. JSON output is unchanged.
+- `domain requirements -q` lists only fields you can pass to
+  `--tld-requirement`. It used to include notice entries such as .ca's
+  `description`, which take no value, so scripts building flags from it will
+  see one name fewer. The table now prints those notices under the
+  capabilities instead of hiding them.
 
 ## [0.4.7] - 2026-09-29
 
