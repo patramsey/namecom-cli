@@ -41,8 +41,9 @@ func runImportDryRun(t *testing.T, format output.Format, payload string) string 
 	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
-	importFile, importDryRun = path, true
-	t.Cleanup(func() { importFile = ""; importDryRun = false })
+	cmd.PersistentFlags().Bool("dry-run", true, "")
+	importFile = path
+	t.Cleanup(func() { importFile = "" })
 
 	if err := runImport(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("dns import --dry-run: %v", err)

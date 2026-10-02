@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -128,7 +129,7 @@ func TestAuthStatus_ReportsTheActiveProfile(t *testing.T) {
 			if err := runAuthStatus(cmd, nil); err != nil {
 				t.Fatalf("runAuthStatus: %v", err)
 			}
-			var got map[string]string
+			var got map[string]any
 			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 				t.Fatalf("parsing output: %v\n%s", err, buf.String())
 			}
@@ -194,5 +195,32 @@ func TestPersistentPreRun_StoresOverridesForCredentialFreeCommands(t *testing.T)
 	}
 	if got := cmdutil.Overrides(show).Profile; got != "staging" {
 		t.Errorf("config show sees --profile %q, want staging", got)
+	}
+}
+
+// TestAuthStatus_RejectionNamesTheCredentials pins #187: with a bad token,
+// auth status printed only "Unauthorized", although the error hints point
+// users to it to see which credentials are in use.
+func TestAuthStatus_RejectionNamesTheCredentials(t *testing.T) {
+	path := withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Unauthorized"}`))
+	}))
+	t.Cleanup(srv.Close)
+	prev := gf
+	gf = globalFlags{baseURL: srv.URL}
+	t.Cleanup(func() { gf = prev })
+
+	cmd, _ := jsonCmd(t)
+	err := runAuthStatus(cmd, nil)
+	if got := exitCode(err); got != 3 {
+		t.Errorf("exit code = %d, want 3 (%v)", got, err)
+	}
+	for _, want := range []string{"Unauthorized", `profile "work"`, `username "workuser"`, srv.URL, path} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v does not mention %s", err, want)
+		}
 	}
 }

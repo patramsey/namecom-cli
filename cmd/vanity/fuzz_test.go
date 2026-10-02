@@ -11,7 +11,7 @@ import (
 func FuzzVanityHostname(f *testing.F) {
 	for _, s := range []string{"ns1", "NS1", "ns1.example.com", "ns1.example.com.",
 		" ns1 ", "example.com", ".example.com", "ns1.other.com", "a.b.example.com",
-		"ns1.example.com..", "xexample.com"} {
+		"ns1.example.com..", "xexample.com", "ns1..example.com"} {
 		f.Add(s, "example.com")
 	}
 	f.Fuzz(func(t *testing.T, hostname, domain string) {
@@ -29,7 +29,7 @@ func FuzzVanityHostname(f *testing.F) {
 			t.Fatalf("vanityHostname(%q, %q) = %q, not under the domain", hostname, domain, fqdn)
 		}
 		label := strings.TrimSuffix(fqdn, "."+domain)
-		if label == "" {
+		if label == "" || strings.Contains(fqdn, "..") {
 			t.Fatalf("vanityHostname(%q, %q) = %q has an empty label", hostname, domain, fqdn)
 		}
 		again, err := vanityHostname(fqdn, domain)

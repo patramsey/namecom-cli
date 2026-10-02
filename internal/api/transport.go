@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -63,6 +65,16 @@ func retryableStatus(code int) bool {
 // them just made the user wait out the full backoff for a verdict available
 // immediately.
 func transientErr(err error) bool {
+	// Network failures that every attempt repeats (#187). A name that does
+	// not exist and a certificate the client rejects were each retried three
+	// times, about seven seconds, before the same error. A DNS timeout or
+	// server failure is not IsNotFound and is still retried below.
+	if dnsErr, ok := errors.AsType[*net.DNSError](err); ok && dnsErr.IsNotFound {
+		return false
+	}
+	if certificateErr(err) {
+		return false
+	}
 	// Network-layer failures: refused, reset, timeout, DNS.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
@@ -87,6 +99,22 @@ func transientErr(err error) bool {
 		}
 	}
 	return true
+}
+
+// certificateErr reports whether err is a TLS certificate the client did not
+// accept: untrusted, expired, or issued for another name.
+func certificateErr(err error) bool {
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[x509.HostnameError](err); ok {
+		return true
+	}
+	_, ok := errors.AsType[x509.CertificateInvalidError](err)
+	return ok
 }
 
 // idempotent reports whether retrying req on a 5xx is safe. GET/HEAD/PUT/DELETE

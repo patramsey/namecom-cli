@@ -150,6 +150,13 @@ func TestParseVerificationID_RejectsOutOfRange(t *testing.T) {
 	if _, err := parseVerificationID("abc"); err == nil {
 		t.Error("a non-numeric id must be rejected")
 	}
+	// #187: zero, negative and signed IDs were sent (`contact resend -5`).
+	for _, s := range []string{"0", "-5", "+5"} {
+		var ue *cmdutil.UsageError
+		if _, err := parseVerificationID(s); !errors.As(err, &ue) {
+			t.Errorf("parseVerificationID(%q) = %v, want a usage error", s, err)
+		}
+	}
 }
 
 // TestResend_ThrottledIsNotAnExitZero guards the pipeline this command's own

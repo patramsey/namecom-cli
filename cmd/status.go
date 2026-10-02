@@ -21,6 +21,7 @@ var statusCmd = &cobra.Command{
 	Long:  `Displays domain counts, expiry alerts, and pending transfers at a glance.`,
 	Example: `  namecom status
   namecom status --profile staging`,
+	Args: cobra.NoArgs,
 	RunE: runStatus,
 }
 

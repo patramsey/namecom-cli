@@ -26,7 +26,8 @@ import (
 )
 
 // parseCharStrings reads zone-file TXT rdata as a sequence of RFC 1035
-// quoted character-strings separated by single spaces, undoing \X escapes.
+// quoted character-strings separated by single spaces, undoing \X and \DDD
+// escapes (quoteTXT writes control characters as \DDD since #188).
 // It is deliberately strict: it accepts exactly the shape quoteTXT promises.
 func parseCharStrings(s string) ([]string, error) {
 	var out []string
@@ -43,6 +44,18 @@ func parseCharStrings(s string) ([]string, error) {
 			if c == '\\' {
 				if i+1 >= len(s) {
 					return nil, errors.New("dangling backslash")
+				}
+				if d := s[i+1]; d >= '0' && d <= '9' {
+					if i+4 > len(s) {
+						return nil, errors.New("short \\DDD escape")
+					}
+					n, err := strconv.ParseUint(s[i+1:i+4], 10, 8)
+					if err != nil {
+						return nil, fmt.Errorf("bad \\DDD escape %q", s[i:i+4])
+					}
+					b.WriteByte(byte(n))
+					i += 4
+					continue
 				}
 				b.WriteByte(s[i+1])
 				i += 2
@@ -90,10 +103,10 @@ func FuzzQuoteTXT(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		got := quoteTXT(s)
 		if alreadyQuoted(s) {
-			// Passed through verbatim by design; see the tests below for
-			// what that lets through.
-			if got != s {
-				t.Fatalf("already-quoted input changed: %q -> %q", s, got)
+			// Passed through by design, with only control characters
+			// escaped; see the tests below for what that lets through.
+			if got != escapeControls(s) {
+				t.Fatalf("already-quoted input changed beyond escaping controls: %q -> %q", s, got)
 			}
 			return
 		}
@@ -171,6 +184,9 @@ func fuzzRecord(typeIdx uint8, host, answer string, ttl, prio int64) (*coreapigo
 		Type: &rtype, Host: &apiHost, Answer: &answer, Fqdn: &fqdn, TTL: ttl,
 	}
 	if rtype == "MX" || rtype == "SRV" {
+		if cmdutil.ValidPriority(prio) != nil {
+			return nil, false
+		}
 		r.Priority = &prio
 	}
 	return r, true
@@ -255,8 +271,9 @@ func FuzzExportImportRoundTrip(f *testing.F) {
 		ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 		ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 		icmd.SetContext(ctx)
-		importFile, importDryRun = path, true
-		defer func() { importFile, importDryRun = "", false }()
+		icmd.PersistentFlags().Bool("dry-run", true, "")
+		importFile = path
+		defer func() { importFile = "" }()
 		if err := runImport(icmd, []string{"example.com"}); err != nil {
 			t.Fatalf("import rejected its own export of %+v: %v\nexport: %s", rec, err, exported)
 		}
@@ -312,15 +329,10 @@ func FuzzExportZoneChecks(f *testing.F) {
 		if !ok || *rec.Type == "ANAME" {
 			return // ANAME is exported as a comment
 		}
-		// Owner names and hostname targets are written unescaped. ValidDNSHost
-		// accepts any byte but space/tab (`"`, `;`, `(` included), which the
-		// server presumably refuses, so keep names to the hostname alphabet
-		// and fuzz the free-text rdata instead.
-		// Priority is not range-checked client side (any int64 is sent);
-		// only 0-65535 is a priority the server could have stored.
-		if rec.Priority != nil && (*rec.Priority < 0 || *rec.Priority > 65535) {
-			return
-		}
+		// Owner names and hostname targets are written unescaped. The
+		// validators hold ASCII to the hostname alphabet but leave non-ASCII
+		// to the server, so keep names to that alphabet here and fuzz the
+		// free-text rdata instead.
 		if *rec.Host != "" && !plainName(*rec.Host) {
 			return
 		}
@@ -339,10 +351,7 @@ func FuzzExportZoneChecks(f *testing.F) {
 				return
 			}
 		case "SRV":
-			// ValidDNSAnswer splits SRV with strings.Fields, so it accepts
-			// "0\r0 x"; keep to single-space-separated fields here.
-			f := strings.Fields(*rec.Answer)
-			if strings.Join(f, " ") != *rec.Answer || !plainName(f[2]) || !uint16Field(f[0]) || !uint16Field(f[1]) {
+			if !plainName(strings.Fields(*rec.Answer)[2]) {
 				return
 			}
 		}
@@ -393,12 +402,6 @@ func plainName(s string) bool {
 	return hostnameAlphabet(s) && cmdutil.ValidDNSHost(strings.TrimSuffix(s, ".")) == nil
 }
 
-func uint16Field(s string) bool {
-	n, err := strconv.ParseUint(s, 10, 16)
-	_ = n
-	return err == nil
-}
-
 // skipKnownZoneBug skips records whose zone export is known to be broken, so
 // the fuzzer keeps looking for new failures. Each case names its bug.
 func skipKnownZoneBug(rec *coreapigo.Record) bool {
@@ -409,12 +412,6 @@ func skipKnownZoneBug(rec *coreapigo.Record) bool {
 		// verbatim, so an unbalanced `"a"b"` or a quoted value over 255 bytes
 		// is emitted as-is and the zone does not load.
 		if alreadyQuoted(a) && !unskip("quoted") {
-			return true
-		}
-		// KNOWN BUG (fuzz): quoteTXT does not escape a newline, so a TXT
-		// value containing one ends the zone line inside the quotes.
-		// Minimal input: TXT "\n".
-		if strings.ContainsAny(a, "\n") && !unskip("newline") {
 			return true
 		}
 	}

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -199,4 +201,77 @@ func TestComplete_ShortDeadlineNoRetries(t *testing.T) {
 			t.Errorf("made %d requests, want 1: completion must not retry", n)
 		}
 	})
+}
+
+// TestComplete_FlagValuesAndProfiles pins #187: -o, --color and --profile
+// values, and the profile argument of `config use`, completed filenames.
+func TestComplete_FlagValuesAndProfiles(t *testing.T) {
+	withConfig(t, twoProfiles)
+	tests := []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"domain", "list", "-o", ""}, []string{"table", "json", "yaml"}},
+		{[]string{"domain", "list", "--output", ""}, []string{"table", "json", "yaml"}},
+		{[]string{"status", "--color", ""}, []string{"auto", "always", "never"}},
+		{[]string{"status", "--profile", ""}, []string{"prod", "staging"}},
+		{[]string{"auth", "logout", "--profile", ""}, []string{"prod", "staging"}},
+		{[]string{"config", "use", ""}, []string{"prod", "staging"}},
+	}
+	for _, tc := range tests {
+		got := runComplete(t, tc.args...)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("complete %q = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+	// Commands whose arguments are new names or a raw path offer no files:
+	// no candidates, and a directive that turns the shell's file fallback off.
+	// Nor do they list the account's domains, so no request is expected.
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	for _, args := range [][]string{
+		{"domain", "register", ""}, {"domain", "check", ""}, {"domain", "search", ""},
+		{"domain", "claims", ""}, {"transfer", "create", ""}, {"api", "GET", ""},
+		{"config", "use", "prod", ""},
+	} {
+		args = append([]string{"--base-url", srv.URL}, args...)
+		if d := completeDirective(t, args...); d&cobra.ShellCompDirectiveNoFileComp == 0 {
+			t.Errorf("complete %q directive = %d, want NoFileComp set", args, d)
+		}
+	}
+	if got := runComplete(t, "api", ""); !slices.Contains(got, "GET") || !slices.Contains(got, "DELETE") {
+		t.Errorf("complete api = %v, want the HTTP methods", got)
+	}
+	// Once the profile is given, `config use` has nothing more to offer.
+	if got := runComplete(t, "config", "use", "prod", ""); len(got) != 0 {
+		t.Errorf("complete config use prod = %v, want none", got)
+	}
+}
+
+// completeDirective is runComplete for the directive: the ":<n>" line cobra
+// prints last, which tells the shell whether to fall back to filenames.
+func completeDirective(t *testing.T, args ...string) cobra.ShellCompDirective {
+	t.Helper()
+	prev := gf
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&bytes.Buffer{})
+	t.Cleanup(func() { gf = prev; rootCmd.SetArgs(nil); rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
+	rootCmd.SetArgs(append([]string{cobra.ShellCompRequestCmd}, args...))
+	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("__complete %s: %v", strings.Join(args, " "), err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if n, ok := strings.CutPrefix(line, ":"); ok {
+			d, err := strconv.Atoi(n)
+			if err != nil {
+				t.Fatalf("bad directive line %q", line)
+			}
+			return cobra.ShellCompDirective(d)
+		}
+	}
+	t.Fatalf("no directive in %q", stdout.String())
+	return 0
 }

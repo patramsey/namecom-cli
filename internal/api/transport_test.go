@@ -2,14 +2,19 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -417,6 +422,58 @@ func TestStillRetriesTransientNetworkError(t *testing.T) {
 	}
 	if retries == 0 {
 		t.Error("a transient network error must still be retried")
+	}
+}
+
+// TestNoRetryOnCertificateError pins #187: a TLS certificate the client does
+// not trust was retried three times (~7s) although every attempt fails the
+// same way.
+func TestNoRetryOnCertificateError(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0) // the rejected handshakes
+	srv.StartTLS()
+	defer srv.Close()
+
+	var retries int
+	c, err := New(Options{BaseURL: srv.URL, MaxRetries: 2, OnRetry: func(int, time.Duration) { retries++ }})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if _, err := c.HTTPClient().Do(req); err == nil {
+		t.Fatal("expected a certificate error from a self-signed test server")
+	}
+	if retries != 0 {
+		t.Errorf("certificate error was retried %d times", retries)
+	}
+}
+
+// TestTransientErr_PermanentNetworkFailures: an NXDOMAIN and a certificate
+// the client rejects are permanent (#187); a DNS timeout or a refused
+// connection is not.
+func TestTransientErr_PermanentNetworkFailures(t *testing.T) {
+	wrap := func(err error) error {
+		return &url.Error{Op: "Get", URL: "https://x.invalid", Err: &net.OpError{Op: "dial", Net: "tcp", Err: err}}
+	}
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nxdomain", wrap(&net.DNSError{Err: "no such host", Name: "x.invalid", IsNotFound: true}), false},
+		{"unknown authority", &url.Error{Op: "Get", URL: "https://x", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, false},
+		{"hostname mismatch", &url.Error{Op: "Get", URL: "https://x", Err: x509.HostnameError{Host: "x"}}, false},
+		{"dns timeout", wrap(&net.DNSError{Err: "i/o timeout", Name: "x", IsTimeout: true}), true},
+		{"dns server failure", wrap(&net.DNSError{Err: "server misbehaving", Name: "x", IsTemporary: true}), true},
+		{"refused", wrap(syscall.ECONNREFUSED), true},
+	}
+	for _, tc := range tests {
+		if got := transientErr(tc.err); got != tc.want {
+			t.Errorf("%s: transientErr = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

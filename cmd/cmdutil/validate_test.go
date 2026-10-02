@@ -76,10 +76,41 @@ func TestValidDNSHost(t *testing.T) {
 		"ends-with-hyphen-",
 		string(make([]byte, 64)) + ".com", // label > 63 chars
 		string(make([]byte, 250)) + ".example.com", // total > 253 chars
+		// #187: any byte but space and tab used to pass. `dns export --zone`
+		// writes the owner name as-is, so `0"` broke the zone file.
+		`0"`, "a;b", "a(b", "a)b", "a\rb", "a\nb", "a@b", "a/b", "a*b", "www.*",
 	}
 	for _, s := range bad {
 		if err := ValidDNSHost(s); err == nil {
 			t.Errorf("ValidDNSHost(%q) expected error, got nil", s)
+		}
+	}
+}
+
+func TestPositiveID(t *testing.T) {
+	for s, want := range map[string]int32{"1": 1, "9911": 9911, "2147483647": math.MaxInt32, "007": 7} {
+		if got, ok := PositiveID(s); !ok || got != want {
+			t.Errorf("PositiveID(%q) = %d, %v, want %d, true", s, got, ok, want)
+		}
+	}
+	for _, s := range []string{"", "0", "-5", "+5", " 5", "5 ", "abc", "2147483648", "1e3", "0x10"} {
+		if got, ok := PositiveID(s); ok {
+			t.Errorf("PositiveID(%q) = %d, true, want rejected", s, got)
+		}
+	}
+}
+
+func TestValidPriority(t *testing.T) {
+	for _, p := range []int64{0, 10, 65535} {
+		if err := ValidPriority(p); err != nil {
+			t.Errorf("ValidPriority(%d) = %v, want nil", p, err)
+		}
+	}
+	// #187: -8 was sent, and the exported zone then failed to load.
+	for _, p := range []int64{-8, -1, 65536, math.MaxInt64} {
+		var ue *UsageError
+		if err := ValidPriority(p); !errors.As(err, &ue) {
+			t.Errorf("ValidPriority(%d) = %v, want a usage error", p, err)
 		}
 	}
 }
@@ -105,6 +136,24 @@ func TestValidDNSAnswer(t *testing.T) {
 		{"SRV", "@", "onlyone", true},
 		{"SRV", "@", "notint 443 target.com.", true},
 		{"SRV", "@", "10 notint target.com.", true},
+		// #187: hostname targets with empty labels or stray bytes, SRV fields
+		// split on CR, and out-of-range SRV numbers all used to pass.
+		{"CNAME", "www", ".00", true},
+		{"CNAME", "www", "a..example.com", true},
+		{"CNAME", "www", "a\"b.example.com", true},
+		{"ANAME", "@", "a..example.com", true},
+		{"NS", "sub", "ns1..example.com", true},
+		{"NS", "sub", "ns1.example.com.", false},
+		{"MX", "@", "mail\rexample.com", true},
+		{"MX", "@", "mail\n.example.com", true},
+		{"MX", "@", "mail..example.com", true},
+		{"MX", "@", ".", false}, // null MX (RFC 7505)
+		{"SRV", "@", "0\r0 0 target.example.com.", true},
+		{"SRV", "@", "10 443 a..example.com", true},
+		{"SRV", "@", "-1 443 target.example.com.", true},
+		{"SRV", "@", "+1 443 target.example.com.", true},
+		{"SRV", "@", "1 65536 target.example.com.", true},
+		{"SRV", "@", "65535 65535 target.example.com.", false},
 		{"CAA", "@", "0 issue letsencrypt.org", false},
 		{"CAA", "@", "0 issuewild letsencrypt.org", false},
 		{"CAA", "@", "0 iodef mailto:admin@example.com", false},
@@ -194,13 +243,19 @@ func TestValidTTL(t *testing.T) {
 }
 
 func TestValidDomainName(t *testing.T) {
-	ok := []string{"example.com", "sub.example.co.uk", "a.b"}
+	ok := []string{"example.com", "sub.example.co.uk", "a.b", strings.Repeat("a", 63) + ".com"}
 	for _, s := range ok {
 		if err := ValidDomainName(s); err != nil {
 			t.Errorf("ValidDomainName(%q) unexpected error: %v", s, err)
 		}
 	}
-	bad := []string{"", "nodot", "has space.com", ".leading.com", "trailing.com.", "no dot"}
+	bad := []string{"", "nodot", "has space.com", ".leading.com", "trailing.com.", "no dot",
+		// #187: an empty label reached the API, and `transfer eligibility
+		// bad..com` answered for bad.com. So did labels over 63 bytes.
+		"bad..com",
+		strings.Repeat("a", 64) + ".com",
+		strings.Repeat("a.", 127) + "com", // 257 bytes in all
+	}
 	for _, s := range bad {
 		if err := ValidDomainName(s); err == nil {
 			t.Errorf("ValidDomainName(%q) expected error, got nil", s)
@@ -234,6 +289,9 @@ func TestValidNameserver(t *testing.T) {
 		"::ffff:1.2.3.4",
 		"user@example.com",
 		"ns1.exa?mple.com",
+		// DNS length limits (#187), the same ones domain arguments now get.
+		strings.Repeat("a", 64) + ".example.com",
+		strings.Repeat("a.", 127) + "com",
 	}
 	for _, s := range bad {
 		if err := ValidNameserver(s, 0); err == nil {

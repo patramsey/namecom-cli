@@ -467,11 +467,11 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 }
 
 func parseID(s string) (int32, error) {
-	n, err := strconv.ParseInt(s, 10, 32)
-	if err != nil {
-		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid order ID %q: must be a number", s))
+	n, ok := cmdutil.PositiveID(s)
+	if !ok {
+		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid order ID %q: must be a positive whole number", s))
 	}
-	return int32(n), nil
+	return n, nil
 }
 
 // orderDate prints an order's creation time as YYYY-MM-DD, the form every other

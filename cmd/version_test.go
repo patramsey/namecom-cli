@@ -37,15 +37,16 @@ func TestRunVersion_TableOutput(t *testing.T) {
 		{
 			name: "full info",
 			info: buildInfo{
-				Version: "1.2.3",
-				Commit:  "abc1234567890",
-				Dirty:   false,
-				Built:   "2025-01-01T00:00:00Z",
-				Go:      "go1.26.4",
-				OS:      "linux",
-				Arch:    "amd64",
+				Version:    "1.2.3",
+				Commit:     "abc1234567890",
+				Dirty:      false,
+				CommitTime: "2025-01-01T00:00:00Z",
+				Go:         "go1.26.4",
+				OS:         "linux",
+				Arch:       "amd64",
 			},
-			contain: []string{"1.2.3", "abc1234", "(clean)", "2025-01-01", "go1.26.4", "linux/amd64"},
+			// #187: the time is vcs.time, the commit's, and is labelled so.
+			contain: []string{"1.2.3", "abc1234", "(clean)", "committed: 2025-01-01", "go1.26.4", "linux/amd64"},
 		},
 		{
 			name:    "dirty build",
@@ -85,13 +86,13 @@ func TestRunVersion_JSONOutput(t *testing.T) {
 	var buf bytes.Buffer
 	out := &output.Config{Format: output.FormatJSON, Writer: &buf}
 	info := buildInfo{
-		Version: "1.2.3",
-		Commit:  "abc123",
-		Dirty:   true,
-		Built:   "2025-01-01T00:00:00Z",
-		Go:      "go1.26.4",
-		OS:      "linux",
-		Arch:    "amd64",
+		Version:    "1.2.3",
+		Commit:     "abc123",
+		Dirty:      true,
+		CommitTime: "2025-01-01T00:00:00Z",
+		Go:         "go1.26.4",
+		OS:         "linux",
+		Arch:       "amd64",
 	}
 	if err := renderVersion(out, info); err != nil {
 		t.Fatalf("renderVersion: %v", err)
@@ -109,5 +110,8 @@ func TestRunVersion_JSONOutput(t *testing.T) {
 	}
 	if !got.Dirty {
 		t.Error("Dirty = false, want true")
+	}
+	if !strings.Contains(buf.String(), `"commitTime": "2025-01-01T00:00:00Z"`) || strings.Contains(buf.String(), `"built"`) {
+		t.Errorf("want the commit time under commitTime, not built:\n%s", buf.String())
 	}
 }

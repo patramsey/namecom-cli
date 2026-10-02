@@ -301,9 +301,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 // out-of-range id fails here with a clear message instead of silently
 // truncating into a request for a different record.
 func parseVerificationID(s string) (int, error) {
-	n, err := strconv.ParseInt(s, 10, 32)
-	if err != nil {
-		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid verification ID %q: must be a number "+
+	n, ok := cmdutil.PositiveID(s)
+	if !ok {
+		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid verification ID %q: must be a positive whole number "+
 			"(run 'namecom contact unverified' to list them)", s))
 	}
 	return int(n), nil

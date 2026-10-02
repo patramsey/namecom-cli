@@ -190,6 +190,14 @@ func init() {
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "pin every write in this invocation to one idempotency key (default: a fresh key per write)")
 	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
 
+	// Flag values the shell can offer; without these, TAB after -o, --color
+	// or --profile completed filenames (#187).
+	_ = rootCmd.RegisterFlagCompletionFunc("output",
+		cobra.FixedCompletions([]string{"table", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp))
+	_ = rootCmd.RegisterFlagCompletionFunc("color",
+		cobra.FixedCompletions([]string{"auto", "always", "never"}, cobra.ShellCompDirectiveNoFileComp))
+	_ = rootCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
+
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
 	rootCmd.SetHelpFunc(styledHelp)
@@ -198,6 +206,12 @@ func init() {
 func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	if err := initOutputContext(cmd); err != nil {
 		return err
+	}
+	// http.Client reads any timeout <= 0 as "none", so `--timeout -1s` used
+	// to remove the budget it looks like it tightens (#187). Zero keeps the
+	// API client's default.
+	if gf.timeout < 0 {
+		return cmdutil.NewUsageError(fmt.Errorf("--timeout must not be negative (got %s)", gf.timeout))
 	}
 	// Stored before the skip below: `config show --profile x` never builds a
 	// client, and when only initContext stored these the flag never reached it.
@@ -402,6 +416,15 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		f, err := os.OpenFile(gf.debugFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return fmt.Errorf("opening debug file: %w", err)
+		}
+		// The 0600 above applies only to a file this call creates; one that
+		// already existed kept its mode, often 0644 (#187). Tighten a regular
+		// file only: --debug-file /dev/stderr names a terminal device.
+		if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o077 != 0 {
+			if err := f.Chmod(0o600); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("restricting debug file permissions: %w", err)
+			}
 		}
 		// File is intentionally left open for the process lifetime.
 		apiOpts.DebugLog = f

@@ -43,6 +43,11 @@ func TestAuthStatus_StructuredOutputIsParseable(t *testing.T) {
 		if env["profile"] != "prod" || env["username"] != "alice" {
 			t.Errorf("structured output lost fields: %#v", env)
 		}
+		// #187: this was the string "true", so `jq -e .verified` passed on
+		// any value and a typed decoder failed.
+		if env["verified"] != true {
+			t.Errorf("verified = %#v, want the boolean true", env["verified"])
+		}
 	})
 
 	t.Run("yaml", func(t *testing.T) {
@@ -57,6 +62,9 @@ func TestAuthStatus_StructuredOutputIsParseable(t *testing.T) {
 		}
 		if env["environment"] != "production" {
 			t.Errorf("structured output lost fields: %#v", env)
+		}
+		if env["verified"] != true {
+			t.Errorf("verified = %#v, want the boolean true", env["verified"])
 		}
 	})
 

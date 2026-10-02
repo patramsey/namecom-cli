@@ -2,10 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // The config-writing commands ignored the global --dry-run (#166): `auth
@@ -84,4 +88,38 @@ func TestAuthLogin_DryRunLeavesConfig(t *testing.T) {
 	if strings.Contains(buf.String(), "tok") {
 		t.Errorf("dry-run printed the token:\n%s", buf.String())
 	}
+}
+
+// TestDNSImport_GlobalDryRunEitherPosition pins #187: dns import had its own
+// --dry-run, which shadowed the global flag and hid it from the command's
+// help. With only the global flag, both positions still preview.
+func TestDNSImport_GlobalDryRunEitherPosition(t *testing.T) {
+	withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("--dry-run sent %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	path := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(path, []byte(`[{"type":"A","host":"www","answer":"1.2.3.4","ttl":300}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"--dry-run", "dns", "import", "example.com", "--file", path},
+		{"dns", "import", "example.com", "--file", path, "--dry-run"},
+	} {
+		if err := executeRoot(t, append([]string{"--base-url", srv.URL, "-o", "json"}, args...)...); err != nil {
+			t.Errorf("namecom %s: %v", strings.Join(args, " "), err)
+		}
+	}
+	if f := dnsImportCmd().LocalNonPersistentFlags().Lookup("dry-run"); f != nil {
+		t.Error("dns import still defines its own --dry-run")
+	}
+}
+
+func dnsImportCmd() *cobra.Command {
+	c, _, err := rootCmd.Find([]string{"dns", "import"})
+	if err != nil {
+		panic(err)
+	}
+	return c
 }

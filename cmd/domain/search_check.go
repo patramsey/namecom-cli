@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -140,8 +141,9 @@ var searchCmd = &cobra.Command{
 	Short: "Search for available domains matching a keyword",
 	Example: `  namecom domain search mystartup
   namecom domain search myidea -q  # print only available domains`,
-	Args: cmdutil.ExactArgs(1),
-	RunE: runSearch,
+	Args:              cmdutil.ExactArgs(1),
+	ValidArgsFunction: cobra.NoFileCompletions,
+	RunE:              runSearch,
 }
 
 var checkAuthoritative bool
@@ -154,7 +156,9 @@ var checkCmd = &cobra.Command{
   namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly
   namecom domain check --sandbox example.com        # sandbox: registry check used automatically`,
 	Args: cmdutil.MinimumNArgs(1),
-	RunE: runCheck,
+	// Names to check are not ones you own, nor files (#187).
+	ValidArgsFunction: cobra.NoFileCompletions,
+	RunE:              runCheck,
 }
 
 func init() {
@@ -164,6 +168,11 @@ func init() {
 func runSearch(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
+	// An empty term printed an empty table and exited 0 (#187), which a
+	// script cannot tell from "nothing matched".
+	if strings.TrimSpace(args[0]) == "" {
+		return cmdutil.NewUsageError(errors.New("search term must not be empty"))
+	}
 
 	stop := out.Spin("Searching domains…")
 	result, err := client.SDK().Domains.Search(cmd.Context(),

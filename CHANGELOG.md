@@ -32,6 +32,70 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `auth status` with rejected credentials names the profile, username,
+  endpoint and config file it checked, instead of printing only
+  `Unauthorized`. The exit code is unchanged (3); the error `message` in
+  JSON/YAML output gains the same details.
+- `dns import` no longer defines its own `--dry-run`, which hid the global
+  flag from its help. `--dry-run` works as before, before or after
+  `dns import`.
+- Shell completion for `domain claims` no longer offers the domains already
+  in your account; claims are checked on names you are about to register.
+- Shell completion offers values for `-o`/`--output`, `--color` and
+  `--profile` (profile names from the config file, read without running
+  `token_cmd`), profile names for `config use`, and HTTP methods for
+  `namecom api`. `domain register`, `domain check`, `domain search`,
+  `transfer create` and the `api` path no longer fall back to filenames.
+- `namecom version` labels the timestamp it shows `committed`, since it is
+  the time of the commit the binary was built from, not the build time. In
+  JSON and YAML output the field is renamed from `built` to `commitTime`.
+- `email update`, `email delete` and `dnssec delete` with `--dry-run` show
+  the mailbox or digest escaped in the path, as it is sent. A `/` or `?` in
+  it used to be shown as-is.
+- `status`, `version`, `auth login`, `auth status` and `auth logout` refuse
+  extra arguments (exit **2**) instead of ignoring them, and `domain search`
+  with an empty term exits **2** instead of printing an empty table.
+- `auth status -o json` and `-o yaml` report `verified` as the boolean
+  `true` instead of the string `"true"`. A script comparing it to the string
+  needs updating.
+- `config list-profiles` shows each profile's endpoint as a URL
+  (`https://api.name.com`), as `config show` and `auth status` do. The
+  `endpoint` field in its JSON and YAML output changes from the bare host to
+  the URL.
+- A TLS certificate the client rejects and a host name that does not exist
+  (NXDOMAIN) now fail at once. Both used to be retried three times, about
+  seven seconds, before the same error. DNS timeouts and refused connections
+  are still retried.
+- A `token_cmd` that prints more than one line is now refused (exit **3**)
+  with a message saying how many lines it printed, instead of sending all of
+  them as the token. The message does not repeat the output.
+- A negative `--timeout` now exits **2**. It used to mean no timeout at all.
+- `--debug-file` naming a file that already exists now makes it readable only
+  by you (mode 0600), as a new file already was. An existing file used to keep
+  its mode, often 0644.
+- `dns create` and `url create` report a successful response that does not
+  include the new record's or forwarding's ID as an unexpected response (exit
+  **1**, with a hint to check before retrying), instead of printing `(id 0)`
+  and exiting 0. In JSON and YAML mode the error replaces the printed object.
+- Record, URL forwarding, order and contact verification IDs must be positive
+  whole numbers. `0`, negative numbers and `+5` now exit **2** before anything
+  is sent; they used to reach the API (`contact resend -5`). An ID too large
+  to be one is reported as "must be a positive whole number" rather than
+  "must be a number".
+- `vanity-ns` commands refuse a hostname with an empty label
+  (`ns1..example.com`), a space, a character no hostname has, or a label over
+  63 characters, and exit **2** before anything is sent.
+- `dns create`, `dns update` and `dns import` check more of a record before
+  sending it, and exit **2** on: a host with characters no DNS name has (`"`,
+  `;`, `(`, `@`, or `*` other than a leading `*.`); a CNAME, ANAME, MX, NS or
+  SRV target with an empty label (`a..example.com`) or such characters; MX
+  and SRV answers containing a carriage return or newline; SRV weight or port
+  outside 0–65535; and `--priority` outside 0–65535. The API stored some of
+  these, and `dns export --zone` then wrote a zone that does not load.
+- Domain and nameserver arguments with an empty label (`bad..com`), a label
+  over 63 characters, or more than 253 characters in all now exit **2**
+  before anything is sent. `transfer eligibility bad..com` used to answer for
+  `bad.com`.
 - `url create --dry-run` and `url update --dry-run` no longer print a
   `host=… to=… type=…` summary line after the preview. In JSON or YAML mode
   that line followed the dry-run document, so the output was not valid JSON and

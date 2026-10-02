@@ -220,7 +220,7 @@ func TestURLCreate_ValidTypes(t *testing.T) {
 				called = true
 				sentBody, _ = io.ReadAll(r.Body)
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"host":"@","forwardsTo":"https://example.com","type":"` + fwdType + `"}`))
+				_, _ = w.Write([]byte(`{"id":7,"host":"@","forwardsTo":"https://example.com","type":"` + fwdType + `"}`))
 			}))
 			t.Cleanup(srv.Close)
 
@@ -302,6 +302,29 @@ func TestURLCreate_EmptyHostIsUsageError(t *testing.T) {
 				t.Errorf("error should point at @ for the apex, got: %v", err)
 			}
 		})
+	}
+}
+
+// TestURLCreate_MissingIDIsUnexpectedResponse pins #187 (suggested on #185):
+// a 2xx without the new forwarding's ID printed "Created URL forwarding (id
+// 0)" and exited 0. Every other url command needs that ID, so it is an
+// unexpected response, in every output format.
+func TestURLCreate_MissingIDIsUnexpectedResponse(t *testing.T) {
+	for _, resp := range []string{`{"host":"@","forwardsTo":"https://example.com","type":"redirect"}`, `{"id":0}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(resp))
+		}))
+		t.Cleanup(srv.Close)
+		cmd := cmdForURLCreate(t, srv)
+		cmdutil.Out(cmd).Format = output.FormatJSON
+		if err := cmd.ParseFlags([]string{"--to", "https://example.com"}); err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
+		err := runCreate(cmd, []string{"example.com"})
+		if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+			t.Errorf("response %s: runCreate = %v, want *api.UnexpectedResponseError", resp, err)
+		}
 	}
 }
 

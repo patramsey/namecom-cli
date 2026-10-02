@@ -49,9 +49,8 @@ var (
 	updateTTL      int64
 	updatePriority int64
 
-	exportZone   bool
-	importFile   string
-	importDryRun bool
+	exportZone bool
+	importFile string
 )
 
 var listCmd = &cobra.Command{
@@ -157,7 +156,6 @@ func init() {
 	exportCmd.Flags().BoolVar(&exportZone, "zone", false, "output RFC 1035 zone-file format instead of JSON")
 
 	importCmd.Flags().StringVar(&importFile, "file", "", "JSON file to import (required)")
-	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "show what would be created without calling the API")
 	_ = importCmd.MarkFlagRequired("file")
 
 	cmdutil.GroupCmd(Cmd)
@@ -283,6 +281,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if cmd.Flags().Changed("priority") {
+		if err := cmdutil.ValidPriority(createPriority); err != nil {
+			return err
+		}
+	}
 
 	body := coreapigo.DNSCreateRecordBody{
 		DomainName: domain,
@@ -306,6 +309,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}, func(ctx context.Context, body coreapigo.DNSCreateRecordBody) error {
 		var err error
 		record, err = client.SDK().DNS.CreateRecord(ctx, &body)
+		if err == nil && (record == nil || derefInt(record.ID) <= 0) {
+			// A 2xx without the new record's ID is not a record we can name:
+			// a redirected POST answered as a GET printed "Created A record
+			// (id 0)" and exited 0 having created nothing (#185, #187).
+			return &api.UnexpectedResponseError{Reason: "the response did not include the new record's ID"}
+		}
 		return api.FromSDKError(err)
 	})
 	if err != nil || !sent {
@@ -344,6 +353,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	id, err := parseID(args[1])
 	if err != nil {
 		return err
+	}
+	if cmd.Flags().Changed("priority") {
+		if err := cmdutil.ValidPriority(updatePriority); err != nil {
+			return err
+		}
 	}
 
 	// Read-modify-write: fetch existing record so unset flags don't blank fields.
@@ -551,7 +565,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	dryRun := importDryRun || cmdutil.IsDryRun(cmd)
+	// The global --dry-run only. A local flag of the same name used to shadow
+	// it, which hid the global one from this command's help (#187); a
+	// persistent flag is accepted after the subcommand as well as before.
+	dryRun := cmdutil.IsDryRun(cmd)
 
 	data, err := readImportData(importFile)
 	if err != nil {
@@ -597,6 +614,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 		if err := cmdutil.ValidTTL(r.TTL); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		}
+		if r.Priority != nil {
+			if err := cmdutil.ValidPriority(*r.Priority); err != nil {
+				return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+			}
 		}
 	}
 
@@ -868,13 +890,13 @@ func markFormFlags(cmd *cobra.Command, priorityStr string) {
 }
 
 func parseID(s string) (int, error) {
-	n, err := strconv.ParseInt(s, 10, 32)
-	if err != nil {
-		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid record ID %q: must be a number", s))
+	n, ok := cmdutil.PositiveID(s)
+	if !ok {
+		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid record ID %q: must be a positive whole number", s))
 	}
-	// The SDK reports and accepts record IDs as int; ParseInt still bounds at
-	// 32 bits so an ID that could not have come from this API is rejected here
-	// rather than at the server.
+	// The SDK reports and accepts record IDs as int; PositiveID still bounds
+	// at 32 bits so an ID that could not have come from this API is rejected
+	// here rather than at the server.
 	return int(n), nil
 }
 

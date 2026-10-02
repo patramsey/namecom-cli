@@ -383,3 +383,21 @@ func TestListProfiles_MarksActiveProfile(t *testing.T) {
 		})
 	}
 }
+
+// TestListProfiles_EndpointIncludesScheme pins #187: #135 made config show
+// print the endpoint as a URL, but list-profiles kept the bare host.
+func TestListProfiles_EndpointIncludesScheme(t *testing.T) {
+	for _, format := range []output.Format{output.FormatJSON, output.FormatYAML, output.FormatTable} {
+		t.Run(string(format), func(t *testing.T) {
+			cmd, buf := showCmdFor(t, format, "")
+			if err := runListProfiles(cmd, nil); err != nil {
+				t.Fatalf("runListProfiles: %v", err)
+			}
+			for _, want := range []string{"https://api.name.com", "https://api.dev.name.com"} {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("%s output should show endpoint %s:\n%s", format, want, buf.String())
+				}
+			}
+		})
+	}
+}

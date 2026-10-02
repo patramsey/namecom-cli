@@ -2,14 +2,17 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/output"
 )
 
@@ -83,5 +86,63 @@ func TestDebugLogRedactsAuthCode(t *testing.T) {
 				t.Errorf("debug log should show the auth code as [redacted]:\n%s", log)
 			}
 		})
+	}
+}
+
+// executeRoot runs `namecom <args>` through the real root with stdout and
+// stderr discarded, and returns its error.
+func executeRoot(t *testing.T, args ...string) error {
+	t.Helper()
+	t.Cleanup(output.StubInteractive(false))
+	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("opening %s: %v", os.DevNull, err)
+	}
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = devnull, devnull
+	prev := gf
+	t.Cleanup(func() {
+		os.Stdout, os.Stderr = stdout, stderr
+		_ = devnull.Close()
+		gf = prev
+		rootCmd.SetArgs(nil)
+	})
+	rootCmd.SetArgs(args)
+	return rootCmd.ExecuteContext(context.Background())
+}
+
+// TestDebugFile_ExistingFileMadePrivate pins #187: only a new --debug-file was
+// created 0600. One that already existed kept its mode, so a world-readable
+// file went on collecting request and response bodies.
+func TestDebugFile_ExistingFileMadePrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits do not apply on windows")
+	}
+	withConfig(t, loneProfile)
+	srv := helloServer(t)
+	logPath := filepath.Join(t.TempDir(), "debug.log")
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil { //nolint:gosec // the mode under test
+		t.Fatal(err)
+	}
+	if err := executeRoot(t, "--base-url", srv.URL, "-o", "json", "--debug-file", logPath, "auth", "status"); err != nil {
+		t.Fatalf("auth status: %v", err)
+	}
+	fi, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := fi.Mode().Perm(); mode != 0o600 {
+		t.Errorf("--debug-file mode = %o, want 600", mode)
+	}
+}
+
+// TestTimeout_NegativeIsUsageError pins #187: a negative --timeout silently
+// meant no timeout at all (http.Client treats any value <= 0 as none).
+func TestTimeout_NegativeIsUsageError(t *testing.T) {
+	withConfig(t, loneProfile)
+	err := executeRoot(t, "--base-url", "http://127.0.0.1:1", "--timeout", "-1s", "domain", "list")
+	var ue *cmdutil.UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("--timeout -1s = %v, want a usage error", err)
 	}
 }

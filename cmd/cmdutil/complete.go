@@ -3,12 +3,14 @@ package cmdutil
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -118,6 +120,25 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 		page = next
 	}
 	return completions, cobra.ShellCompDirectiveNoFileComp
+}
+
+// CompleteProfiles offers the profile names in the config file, for --profile
+// and `config use`. It reads the file only: no credential is resolved and no
+// token_cmd runs. Without it these fell back to filename completion (#187).
+func CompleteProfiles(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	f, err := config.Load()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names := make([]string, 0, len(f.Profiles))
+	for name := range f.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
 func derefStr(s *string) string {

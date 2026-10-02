@@ -310,3 +310,27 @@ func TestExitCode_APIUnknownMethod(t *testing.T) {
 		}
 	}
 }
+
+// TestExitCode_ExtraArgsAreUsageErrors pins #187: commands that take no
+// arguments accepted and ignored any, so `namecom status example.com` looked
+// like it reported on that domain.
+func TestExitCode_ExtraArgsAreUsageErrors(t *testing.T) {
+	// Should a command run anyway, keep it off any real config and API.
+	withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	for _, args := range [][]string{
+		{"status", "example.com"},
+		{"version", "extra"},
+		{"auth", "status", "extra"},
+		{"auth", "logout", "extra"},
+		{"auth", "login", "extra"},
+	} {
+		args = append([]string{"--base-url", srv.URL}, args...)
+		if got := exitCode(cmdutil.ClassifyCobraUsage(executeRoot(t, args...))); got != 2 {
+			t.Errorf("namecom %s: exit %d, want 2", strings.Join(args, " "), got)
+		}
+	}
+}

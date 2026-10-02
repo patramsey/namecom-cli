@@ -166,9 +166,11 @@ it. 'domain register' performs this check automatically and will not proceed
 without acknowledgement — this command is for inspecting a domain beforehand.`,
 	Example: `  namecom domain claims tiktok.page
   namecom domain claims example.com -o json`,
-	Args:              cmdutil.ExactArgs(1),
-	RunE:              runClaims,
-	ValidArgsFunction: cmdutil.CompleteDomains,
+	Args: cmdutil.ExactArgs(1),
+	RunE: runClaims,
+	// Claims matter for a name you are about to register, so the domains
+	// already in the account are the wrong candidates (#187).
+	ValidArgsFunction: cobra.NoFileCompletions,
 }
 
 func init() {

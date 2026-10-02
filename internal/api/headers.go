@@ -16,9 +16,10 @@ import (
 // its own copy of this logic, and three copies of an auth rule is how one of
 // them ends up sending an unauthenticated request.
 //
-// It is placed outside retryTransport so the debug log written by the retry
-// layer shows the headers as sent. Key stability across retries does not depend
-// on that ordering, which is worth stating because it looks like it should:
+// It is placed outside retryTransport, so the request the retry layer sees and
+// replays already carries these headers. (Its --debug log prints the method,
+// URL and body, not headers.) Key stability across retries does not depend on
+// that ordering, which is worth stating because it looks like it should:
 // retryTransport replays the same *http.Request, and apply only fills headers
 // that are absent, so the key set on the first attempt survives into the rest
 // either way. Verified by inverting the nesting and watching

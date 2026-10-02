@@ -25,6 +25,7 @@ var authLoginCmd = &cobra.Command{
 	Example: `  namecom auth login
   namecom auth login --profile staging
   namecom auth login --profile sandbox --sandbox`,
+	Args: cobra.NoArgs,
 	RunE: runAuthLogin,
 }
 
@@ -33,6 +34,7 @@ var authStatusCmd = &cobra.Command{
 	Short: "Verify credentials by calling the API hello endpoint",
 	Example: `  namecom auth status
   namecom auth status --profile staging`,
+	Args: cobra.NoArgs,
 	RunE: runAuthStatus,
 }
 
@@ -41,6 +43,7 @@ var authLogoutCmd = &cobra.Command{
 	Short: "Remove credentials for the active profile",
 	Example: `  namecom auth logout
   namecom auth logout --profile staging`,
+	Args: cobra.NoArgs,
 	RunE: runAuthLogout,
 }
 
@@ -50,6 +53,9 @@ var logoutProfile string
 func init() {
 	authLoginCmd.Flags().StringVar(&loginProfile, "profile", "default", "profile name to save credentials under")
 	authLogoutCmd.Flags().StringVar(&logoutProfile, "profile", "", "profile to remove (defaults to the active profile)")
+	// logout's local --profile shadows the global one, completion included.
+	// login's names a profile that may not exist yet, so it offers none.
+	_ = authLogoutCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
 	cmdutil.GroupCmd(authCmd)
 	authCmd.AddCommand(authLoginCmd, authStatusCmd, authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
@@ -177,12 +183,17 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	// API's credential check, not part of a resource group.
 	_, err := client.SDK().Hello(cmd.Context())
 	stop()
-	if err != nil {
-		return api.FromSDKError(err)
-	}
 
 	// Report the identity the Hello call just used, resolved the same way.
 	id := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
+	if err != nil {
+		// The error hints send users here to see which credentials are in
+		// use, so a rejection says which ones were rejected rather than only
+		// "Unauthorized" (#187). Wrapped, so the exit code is unchanged.
+		cfgPath, _ := config.ActivePath()
+		return fmt.Errorf("%w (profile %q, username %q, endpoint %s, config %s)",
+			api.FromSDKError(err), id.Profile, id.Username, client.BaseURL(), cfgPath)
+	}
 
 	env := "production"
 	if client.BaseURL() == "https://api.dev.name.com" {
@@ -225,11 +236,12 @@ func renderAuthStatus(out *output.Config, rows [][]string) {
 	}
 	switch out.Format {
 	case output.FormatJSON, output.FormatYAML:
-		fields := make(map[string]string, len(rows))
+		fields := make(map[string]any, len(rows)+1)
 		for _, r := range rows {
 			fields[strings.ToLower(strings.ReplaceAll(r[0], " ", "_"))] = r[1]
 		}
-		fields["verified"] = "true"
+		// A boolean, not the string "true" it used to be (#187).
+		fields["verified"] = true
 		if out.Format == output.FormatJSON {
 			_ = out.JSON(fields)
 			return
