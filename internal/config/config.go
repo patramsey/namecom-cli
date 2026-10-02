@@ -17,10 +17,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,7 +162,7 @@ func Load() (*File, error) {
 	// written ahead of the structured error envelope, so emitting it into a
 	// pipe corrupts stderr for anything parsing it. A human sees it; a script
 	// gets clean output. (Save() now repairs the mode on the next write.)
-	if info.Mode().Perm()&0o077 != 0 && term.IsTerminal(int(os.Stderr.Fd())) {
+	if exposedMode(runtime.GOOS, info.Mode()) && term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprintf(os.Stderr, "warning: %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
 			path, info.Mode().Perm(), path)
 	}
@@ -365,6 +367,21 @@ func runTokenCmd(cmdline string) (string, error) {
 		return "", errors.New("produced empty output")
 	}
 	return tok, nil
+}
+
+// exposedMode reports whether a config file with this mode is readable by the
+// group or other users, on the OS named by goos.
+//
+// Always false on Windows. Go reports every writable file there as 0666 and
+// chmod 0600 only clears the read-only attribute, so the mode bits say nothing
+// about who can read the file: Load warned on every interactive command, and
+// nothing the user did could clear it. Who can read a file on Windows is an
+// ACL question this check does not attempt.
+func exposedMode(goos string, mode fs.FileMode) bool {
+	if goos == "windows" {
+		return false
+	}
+	return mode.Perm()&0o077 != 0
 }
 
 func firstNonEmpty(vals ...string) string {

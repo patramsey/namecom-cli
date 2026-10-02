@@ -78,6 +78,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   — in JSON or YAML mode as one document with `dry_run`, `config`, `action`,
   `profile` and `default` keys (`auth login` adds `username` and `sandbox`,
   never the token). `auth login --dry-run` still asks its questions.
+- On Windows, commands no longer warn that the config file "is accessible by
+  other users" on every run. Windows reports every writable file with Unix
+  mode `0666`, so the warning could never be cleared; the check now runs only
+  on Unix-like systems.
 - `auth login --sandbox` saves the profile with `sandbox: true` and no longer
   asks the sandbox question. The flag was ignored, so the profile was saved for
   production unless you also answered Yes at the prompt.
