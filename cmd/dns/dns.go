@@ -18,6 +18,9 @@ import (
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 // Cmd is the `namecom dns` parent command.
@@ -369,7 +372,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if cmd.Flags().Changed("type") {
-		if err := cmdutil.ValidDNSType(updateType); err != nil {
+		// The update endpoint rejects CAA just as create does.
+		if err := cmdutil.ValidDNSCreateType(updateType); err != nil {
 			return err
 		}
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
@@ -545,9 +549,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading import file: %w", err)
 	}
 
+	// A malformed file is bad input, not a failed request: exit 2.
+	data, err = decodeImportData(data)
+	if err != nil {
+		return cmdutil.NewUsageError(fmt.Errorf("decoding import file: %w", err))
+	}
 	var records []*coreapigo.Record
 	if err := json.Unmarshal(data, &records); err != nil {
-		return fmt.Errorf("parsing import file: %w", err)
+		return cmdutil.NewUsageError(fmt.Errorf("parsing import file: %w", err))
 	}
 
 	// Validate every record before writing any of them. `dns create` validates
@@ -910,11 +919,29 @@ const maxCharString = 255
 // zone file spells one long TXT value. The split is on bytes of the unescaped
 // value, so it can never fall inside an escape sequence, and it backs off to a
 // UTF-8 boundary so a character is not cut in two.
+//
+// Control characters are written as RFC 1035 \DDD decimal escapes, quoted or
+// not: a raw newline inside a quoted string leaves the quotes unbalanced, and
+// the whole zone fails to load.
 func quoteTXT(s string) string {
 	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
-		return s
+		return escapeControls(s)
 	}
-	escape := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	escape := func(s string) string {
+		var b strings.Builder
+		for i := 0; i < len(s); i++ {
+			switch c := s[i]; {
+			case c == '\\' || c == '"':
+				b.WriteByte('\\')
+				b.WriteByte(c)
+			case isControl(c):
+				fmt.Fprintf(&b, `\%03d`, c)
+			default:
+				b.WriteByte(c)
+			}
+		}
+		return b.String()
+	}
 	var parts []string
 	for {
 		n := len(s)
@@ -927,12 +954,43 @@ func quoteTXT(s string) string {
 				n = maxCharString
 			}
 		}
-		parts = append(parts, `"`+escape.Replace(s[:n])+`"`)
+		parts = append(parts, `"`+escape(s[:n])+`"`)
 		s = s[n:]
 		if s == "" {
 			return strings.Join(parts, " ")
 		}
 	}
+}
+
+// isControl reports whether c is an ASCII control character.
+func isControl(c byte) bool { return c < 0x20 || c == 0x7f }
+
+// escapeControls rewrites the control characters in already-quoted rdata as
+// \DDD escapes and leaves everything else alone. A backslash-escaped control
+// character (`\` then a newline) means that character, so it becomes the same
+// \DDD; an escaped backslash is skipped as a pair so its second `\` is not
+// taken to escape what follows.
+func escapeControls(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) {
+			i++
+			if isControl(s[i]) {
+				fmt.Fprintf(&b, `\%03d`, s[i])
+			} else {
+				b.WriteByte(c)
+				b.WriteByte(s[i])
+			}
+			continue
+		}
+		if isControl(c) {
+			fmt.Fprintf(&b, `\%03d`, c)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // readImportData reads the import payload from a path, or from stdin when the
@@ -945,6 +1003,16 @@ func readImportData(path string) ([]byte, error) {
 	// G304: reading a caller-named file is this function's entire purpose —
 	// --file is the documented way to pass an import payload.
 	return os.ReadFile(path) //nolint:gosec
+}
+
+// decodeImportData returns the import payload as UTF-8 with no byte-order
+// mark. Windows PowerShell 5.1's `>` writes UTF-16LE with a BOM, so the
+// documented `dns export X > records.json` produced a file json.Unmarshal
+// could not read; some editors add a UTF-8 BOM. A UTF-8 or UTF-16 BOM picks
+// the encoding and is dropped. Without one the bytes pass through unchanged.
+func decodeImportData(data []byte) ([]byte, error) {
+	decoded, _, err := transform.Bytes(unicode.BOMOverride(encoding.Nop.NewDecoder()), data)
+	return decoded, err
 }
 
 // displayHost renders a record's host for a table. The API returns the apex as

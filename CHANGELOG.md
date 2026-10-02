@@ -121,6 +121,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   instead. Spaces around the commas are still trimmed as before. Characters
   no hostname contains (`*`, `@`, `:`) and invalid internationalized names
   are refused the same way, matching the rules for domain arguments.
+- `dns update --type CAA` exits **2** with a usage error, as `dns create` and
+  `dns import` already did. It used to pass validation, so `--dry-run` showed a
+  request the API rejects, and a real run failed with exit 1.
+- `dns import` reads files that start with a byte-order mark, including the
+  UTF-16 files Windows PowerShell 5.1 writes for
+  `namecom dns export X > records.json`. They failed with "invalid character".
+  A file that is not valid JSON now exits **2** instead of 1.
+- `dns export --zone` writes a newline, tab or other control character in a
+  TXT value as an RFC 1035 decimal escape (`\010`). It was written raw, which
+  left the quotes unbalanced, so BIND and other parsers refused to load the
+  whole zone.
 
 ## [0.4.7] - 2026-09-29
 

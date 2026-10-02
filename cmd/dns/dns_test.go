@@ -5,14 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 
@@ -741,6 +744,41 @@ func TestDNSUpdate_TypeChangeRejectedByExistingAnswer(t *testing.T) {
 	}
 }
 
+// TestDNSUpdate_CAAIsRefused guards #169: create and import refuse CAA as a
+// usage error because the API rejects it, but update still accepted it, so
+// --dry-run previewed a PUT that could only fail.
+func TestDNSUpdate_CAAIsRefused(t *testing.T) {
+	recType, recHost, recAnswer, recID := "A", "@", "1.2.3.4", 123
+	record := coreapigo.Record{ID: &recID, Type: &recType, Host: &recHost, Answer: &recAnswer}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Error("PUT should not be sent for --type CAA")
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(record)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := cmdForUpdate(t, srv)
+	if err := cmd.ParseFlags([]string{"--type", "CAA", "--answer", `0 issue "letsencrypt.org"`}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+
+	err := runUpdate(cmd, []string{"example.com", "123"})
+	if err == nil {
+		t.Fatal("expected --type CAA to be refused, got nil")
+	}
+	var ue *cmdutil.UsageError
+	if !errors.As(err, &ue) {
+		t.Errorf("expected a usage error (exit 2), got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "does not accept CAA") {
+		t.Errorf("error should say the API does not accept CAA, got: %v", err)
+	}
+}
+
 func TestDNSUpdate_SuccessPath(t *testing.T) {
 	recType := "A"
 	recHost := "www"
@@ -1102,6 +1140,77 @@ func TestDNSImport_ReadsFile(t *testing.T) {
 	}
 }
 
+// utf16Bytes encodes s as UTF-16 with a leading byte-order mark.
+func utf16Bytes(s string, bigEndian bool) []byte {
+	var b []byte
+	for _, u := range append([]uint16{0xFEFF}, utf16.Encode([]rune(s))...) {
+		if bigEndian {
+			b = append(b, byte(u>>8), byte(u))
+		} else {
+			b = append(b, byte(u), byte(u>>8))
+		}
+	}
+	return b
+}
+
+// TestDNSImport_DecodesBOMAndUTF16 guards #182. Windows PowerShell 5.1's `>`
+// writes UTF-16LE with a byte-order mark, and other editors write a UTF-8 BOM,
+// so `dns export X > records.json` then `dns import` failed there with
+// "invalid character". The BOM decides the encoding.
+func TestDNSImport_DecodesBOMAndUTF16(t *testing.T) {
+	const payload = `[{"type":"TXT","host":"@","answer":"héllo","ttl":300}]` + "\r\n"
+	cases := map[string][]byte{
+		"utf-8":     []byte(payload),
+		"utf-8 bom": append([]byte{0xEF, 0xBB, 0xBF}, payload...),
+		"utf-16le":  utf16Bytes(payload, false),
+		"utf-16be":  utf16Bytes(payload, true),
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := runImportDryRun(t, output.FormatJSON, string(data))
+			if !strings.Contains(got, `"héllo"`) {
+				t.Errorf("expected the decoded answer in the preview, got: %q", got)
+			}
+		})
+	}
+}
+
+// TestDNSImport_MalformedFileIsUsageError pins that a file that is not a JSON
+// array of records exits 2: the input is wrong, not the API or the network.
+func TestDNSImport_MalformedFileIsUsageError(t *testing.T) {
+	cases := map[string]string{
+		"object":         `{"type":"A"}`,
+		"trailing comma": `[{"type":"A",}]`,
+		"odd utf-16":     "\xff\xfe[",
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "records.json")
+			if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+			client, err := api.New(api.Options{BaseURL: neverCalledServer(t).URL})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+				Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+			cmd := &cobra.Command{}
+			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+			cmd.SetContext(ctx)
+			importFile, importDryRun = path, true
+			t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+			err = runImport(cmd, []string{"example.com"})
+			var ue *cmdutil.UsageError
+			if !errors.As(err, &ue) {
+				t.Errorf("expected a usage error (exit 2), got: %v", err)
+			}
+		})
+	}
+}
+
 // cmdForExport builds an export command whose output goes to the returned buffer.
 func cmdForExport(t *testing.T, srv *httptest.Server, format output.Format) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
@@ -1277,6 +1386,71 @@ func TestQuoteTXT_SplitsLongValues(t *testing.T) {
 func TestQuoteTXT_ShortValueIsOneString(t *testing.T) {
 	if got, want := quoteTXT(`say "hi"`), `"say \"hi\""`; got != want {
 		t.Errorf("quoteTXT = %q, want %q", got, want)
+	}
+}
+
+// txtControlCases are TXT answers holding characters that cannot appear raw in
+// a zone-file string, and how quoteTXT must write them (#188).
+var txtControlCases = []struct{ name, in, want string }{
+	{"newline", "a\nb", `"a\010b"`},
+	{"tab and CR", "a\tb\r", `"a\009b\013"`},
+	{"DEL", "a\x7fb", `"a\127b"`},
+	{"already quoted", "\"\n\"", `"\010"`},
+	{"already quoted, escaped newline", "\"a\\\nb\"", `"a\010b"`},
+	{"already quoted, escaped backslash", "\"a\\\\\nb\"", `"a\\\010b"`},
+}
+
+// TestQuoteTXT_EscapesControlCharacters guards #188: quoteTXT escaped only
+// backslash and quote, so a newline in a TXT value was written raw inside the
+// quoted string and the whole zone failed to load ("unbalanced quotes"). Such
+// characters must become RFC 1035 \DDD decimal escapes, which keep the value.
+func TestQuoteTXT_EscapesControlCharacters(t *testing.T) {
+	for _, tc := range txtControlCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quoteTXT(tc.in); got != tc.want {
+				t.Errorf("quoteTXT(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDNSExport_ZoneControlCharactersLoad checks the same values end to end
+// with BIND's named-checkzone: the exported zone must load, and its TXT
+// records must hold the original bytes.
+func TestDNSExport_ZoneControlCharactersLoad(t *testing.T) {
+	checkzone, err := exec.LookPath("named-checkzone")
+	if err != nil {
+		t.Skip("named-checkzone not installed")
+	}
+	var recs []string
+	for i, tc := range txtControlCases {
+		answer, _ := json.Marshal(tc.in)
+		recs = append(recs, fmt.Sprintf(`{"id":%d,"type":"TXT","host":"t%d","fqdn":"t%d.example.com.","answer":%s,"ttl":300}`, i, i, i, answer))
+	}
+	srv := recordsServer(t, `{"records":[`+strings.Join(recs, ",")+`],"nextPage":0}`)
+	cmd, buf := cmdForExport(t, srv, output.FormatTable)
+	exportZone = true
+	t.Cleanup(func() { exportZone = false })
+	if err := runExport(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runExport: %v", err)
+	}
+
+	zone := "$ORIGIN example.com.\n" +
+		"@\t300\tIN\tSOA\tns1.example.com. hostmaster.example.com. 1 3600 600 86400 300\n" +
+		"@\t300\tIN\tNS\tns1.example.com.\n" +
+		"ns1\t300\tIN\tA\t192.0.2.1\n" + buf.String()
+	path := filepath.Join(t.TempDir(), "example.com.zone")
+	if err := os.WriteFile(path, []byte(zone), 0o600); err != nil {
+		t.Fatalf("writing zone: %v", err)
+	}
+	dump, err := exec.Command(checkzone, "-q", "-D", "-o", "-", "example.com", path).CombinedOutput() //nolint:gosec
+	if err != nil {
+		t.Fatalf("named-checkzone rejected the zone: %v\n%s\nzone:\n%s", err, dump, zone)
+	}
+	for _, tc := range txtControlCases {
+		if !strings.Contains(string(dump), tc.want) {
+			t.Errorf("%s: loaded zone lacks %s:\n%s", tc.name, tc.want, dump)
+		}
 	}
 }
 
