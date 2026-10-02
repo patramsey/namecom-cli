@@ -32,8 +32,9 @@ var useCmd = &cobra.Command{
 	Short: "Set the default credential profile",
 	Example: `  namecom config use sandbox
   namecom config use default`,
-	Args: cmdutil.ExactArgs(1),
-	RunE: runUse,
+	Args:              cmdutil.ExactArgs(1),
+	ValidArgsFunction: cmdutil.CompleteProfiles,
+	RunE:              runUse,
 }
 
 var showCmd = &cobra.Command{

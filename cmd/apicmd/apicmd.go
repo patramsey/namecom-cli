@@ -32,6 +32,13 @@ and body — instead of sent. GET and HEAD still run.`,
   namecom api POST /core/v1/domains/example.com/records --data '{"host":"@","type":"A","answer":"1.2.3.4","ttl":300}'
   echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records`,
 	Args: cmdutil.ExactArgs(2),
+	// The method, then nothing: a path is not a file (#187).
+	ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return allowedMethods, cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	},
 	RunE: runAPI,
 }
 

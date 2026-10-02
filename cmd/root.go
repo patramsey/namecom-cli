@@ -190,6 +190,14 @@ func init() {
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "pin every write in this invocation to one idempotency key (default: a fresh key per write)")
 	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
 
+	// Flag values the shell can offer; without these, TAB after -o, --color
+	// or --profile completed filenames (#187).
+	_ = rootCmd.RegisterFlagCompletionFunc("output",
+		cobra.FixedCompletions([]string{"table", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp))
+	_ = rootCmd.RegisterFlagCompletionFunc("color",
+		cobra.FixedCompletions([]string{"auto", "always", "never"}, cobra.ShellCompDirectiveNoFileComp))
+	_ = rootCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
+
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
 	rootCmd.SetHelpFunc(styledHelp)

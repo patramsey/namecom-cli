@@ -32,6 +32,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- Shell completion offers values for `-o`/`--output`, `--color` and
+  `--profile` (profile names from the config file, read without running
+  `token_cmd`), profile names for `config use`, and HTTP methods for
+  `namecom api`. `domain register`, `domain check`, `domain search`,
+  `transfer create` and the `api` path no longer fall back to filenames.
 - `namecom version` labels the timestamp it shows `committed`, since it is
   the time of the commit the binary was built from, not the build time. In
   JSON and YAML output the field is renamed from `built` to `commitTime`.

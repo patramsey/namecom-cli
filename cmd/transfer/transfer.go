@@ -58,7 +58,9 @@ var createCmd = &cobra.Command{
 	Example: `  namecom transfer create example.com --auth-code XXXXXX
   namecom transfer create example.com --auth-code XXXXXX --privacy`,
 	Args: cmdutil.ExactArgs(1),
-	RunE: runCreate,
+	// A domain to transfer in is held elsewhere, not in this account (#187).
+	ValidArgsFunction: cobra.NoFileCompletions,
+	RunE:              runCreate,
 }
 
 var internalCmd = &cobra.Command{

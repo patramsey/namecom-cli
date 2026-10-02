@@ -23,7 +23,9 @@ var registerCmd = &cobra.Command{
 	Example: `  namecom domain register example.com
   namecom domain register example.com --years 2 --privacy --autorenew`,
 	Args: cmdutil.ExactArgs(1),
-	RunE: runRegister,
+	// A name to register is not one you own, nor a file (#187).
+	ValidArgsFunction: cobra.NoFileCompletions,
+	RunE:              runRegister,
 }
 
 var renewCmd = &cobra.Command{
