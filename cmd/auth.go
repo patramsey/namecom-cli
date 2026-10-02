@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	configcmd "github.com/patramsey/namecom-cli/cmd/config"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -89,6 +90,19 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	}
 	if cfgFile.Default == "" {
 		cfgFile.Default = loginProfile
+	}
+	if cmdutil.IsDryRun(cmd) {
+		// The form still runs, so the preview can say what would be saved —
+		// everything but the token.
+		configcmd.PreviewChange(out, configcmd.Change{
+			Action:   "save_profile",
+			Profile:  loginProfile,
+			Username: a.Username,
+			Sandbox:  &a.Sandbox,
+			Default:  cfgFile.Default,
+			Summary:  fmt.Sprintf("save profile %q (username %s, %s)", loginProfile, a.Username, api.DefaultBaseURL(a.Sandbox)),
+		})
+		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {
 		return fmt.Errorf("saving config: %w", err)
@@ -240,6 +254,17 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 	delete(cfgFile.Profiles, profile)
 	if cfgFile.Default == profile {
 		cfgFile.Default = ""
+	}
+	if cmdutil.IsDryRun(cmd) {
+		// --dry-run describes the removal and keeps the file; it used to
+		// delete the profile.
+		configcmd.PreviewChange(out, configcmd.Change{
+			Action:  "remove_profile",
+			Profile: profile,
+			Default: cfgFile.Default,
+			Summary: fmt.Sprintf("remove profile %q", profile),
+		})
+		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {
 		return fmt.Errorf("saving config: %w", err)
