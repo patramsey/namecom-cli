@@ -18,6 +18,9 @@ import (
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 // Cmd is the `namecom dns` parent command.
@@ -546,9 +549,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading import file: %w", err)
 	}
 
+	// A malformed file is bad input, not a failed request: exit 2.
+	data, err = decodeImportData(data)
+	if err != nil {
+		return cmdutil.NewUsageError(fmt.Errorf("decoding import file: %w", err))
+	}
 	var records []*coreapigo.Record
 	if err := json.Unmarshal(data, &records); err != nil {
-		return fmt.Errorf("parsing import file: %w", err)
+		return cmdutil.NewUsageError(fmt.Errorf("parsing import file: %w", err))
 	}
 
 	// Validate every record before writing any of them. `dns create` validates
@@ -946,6 +954,16 @@ func readImportData(path string) ([]byte, error) {
 	// G304: reading a caller-named file is this function's entire purpose —
 	// --file is the documented way to pass an import payload.
 	return os.ReadFile(path) //nolint:gosec
+}
+
+// decodeImportData returns the import payload as UTF-8 with no byte-order
+// mark. Windows PowerShell 5.1's `>` writes UTF-16LE with a BOM, so the
+// documented `dns export X > records.json` produced a file json.Unmarshal
+// could not read; some editors add a UTF-8 BOM. A UTF-8 or UTF-16 BOM picks
+// the encoding and is dropped. Without one the bytes pass through unchanged.
+func decodeImportData(data []byte) ([]byte, error) {
+	decoded, _, err := transform.Bytes(unicode.BOMOverride(encoding.Nop.NewDecoder()), data)
+	return decoded, err
 }
 
 // displayHost renders a record's host for a table. The API returns the apex as

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 
@@ -1134,6 +1135,77 @@ func TestDNSImport_ReadsFile(t *testing.T) {
 	}
 	if string(got) != payload {
 		t.Errorf("expected file payload %q, got %q", payload, string(got))
+	}
+}
+
+// utf16Bytes encodes s as UTF-16 with a leading byte-order mark.
+func utf16Bytes(s string, bigEndian bool) []byte {
+	var b []byte
+	for _, u := range append([]uint16{0xFEFF}, utf16.Encode([]rune(s))...) {
+		if bigEndian {
+			b = append(b, byte(u>>8), byte(u))
+		} else {
+			b = append(b, byte(u), byte(u>>8))
+		}
+	}
+	return b
+}
+
+// TestDNSImport_DecodesBOMAndUTF16 guards #182. Windows PowerShell 5.1's `>`
+// writes UTF-16LE with a byte-order mark, and other editors write a UTF-8 BOM,
+// so `dns export X > records.json` then `dns import` failed there with
+// "invalid character". The BOM decides the encoding.
+func TestDNSImport_DecodesBOMAndUTF16(t *testing.T) {
+	const payload = `[{"type":"TXT","host":"@","answer":"héllo","ttl":300}]` + "\r\n"
+	cases := map[string][]byte{
+		"utf-8":     []byte(payload),
+		"utf-8 bom": append([]byte{0xEF, 0xBB, 0xBF}, payload...),
+		"utf-16le":  utf16Bytes(payload, false),
+		"utf-16be":  utf16Bytes(payload, true),
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := runImportDryRun(t, output.FormatJSON, string(data))
+			if !strings.Contains(got, `"héllo"`) {
+				t.Errorf("expected the decoded answer in the preview, got: %q", got)
+			}
+		})
+	}
+}
+
+// TestDNSImport_MalformedFileIsUsageError pins that a file that is not a JSON
+// array of records exits 2: the input is wrong, not the API or the network.
+func TestDNSImport_MalformedFileIsUsageError(t *testing.T) {
+	cases := map[string]string{
+		"object":         `{"type":"A"}`,
+		"trailing comma": `[{"type":"A",}]`,
+		"odd utf-16":     "\xff\xfe[",
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "records.json")
+			if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+			client, err := api.New(api.Options{BaseURL: neverCalledServer(t).URL})
+			if err != nil {
+				t.Fatalf("api.New: %v", err)
+			}
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever,
+				Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+			cmd := &cobra.Command{}
+			ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
+			ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
+			cmd.SetContext(ctx)
+			importFile, importDryRun = path, true
+			t.Cleanup(func() { importFile = ""; importDryRun = false })
+
+			err = runImport(cmd, []string{"example.com"})
+			var ue *cmdutil.UsageError
+			if !errors.As(err, &ue) {
+				t.Errorf("expected a usage error (exit 2), got: %v", err)
+			}
+		})
 	}
 }
 
