@@ -891,8 +891,9 @@ func TestArgMatcher_DefectsFoundInReview(t *testing.T) {
 }
 
 // TestCheck_UnverifiedDomainIsNotReportedAsTaken is the safety net that makes
-// the above survivable. Whatever the matcher can or cannot resolve, a domain
-// the CLI never got an answer for must never render as "taken" — that is the
+// the above survivable. Whether the matcher cannot resolve a reply or the API
+// simply leaves a domain out, a domain the CLI never got an answer for must
+// never render as "taken" — that is the
 // original bug, and reporting an available domain as unavailable is the
 // expensive direction to be wrong in.
 func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
@@ -900,11 +901,12 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "zonecheck"):
-			// Two IDN args, replies in canonical form: unresolvable by elimination.
+			// Arguments are sent as punycode now (#160), so replies match them
+			// exactly; leave one domain out of the reply so the CLI genuinely
+			// has no answer for it.
 			_, _ = w.Write([]byte(`{"results":[
-			  {"domainName":"xn--caf-dma.com","available":true},
-			  {"domainName":"xn--rsum-bpad.com","available":true}
-			],"total":2}`))
+			  {"domainName":"xn--caf-dma.com","available":true}
+			],"total":1}`))
 		case strings.Contains(r.URL.Path, "checkAvailability"):
 			_, _ = w.Write([]byte(`{"results":[]}`))
 		default:
