@@ -132,6 +132,28 @@ Releases before `0.2.0` predate this file. Their notes are on the
   TXT value as an RFC 1035 decimal escape (`\010`). It was written raw, which
   left the quotes unbalanced, so BIND and other parsers refused to load the
   whole zone.
+- A DNS lookup failure, or a response the API client could not decode, no
+  longer crashes `namecom` with a Go panic and exit **2**. It is reported as an
+  ordinary error and exits **1**; a DNS failure gets the "could not reach the
+  API" hint. This hit every command when offline, and `domain requirements` for
+  `eu`, `jp` and `nyc` in the sandbox.
+- On a credential failure (exit **3**), the `→ Run 'namecom auth status'…` line
+  is no longer written to stdout, where `> out.txt` captured it, after the hint
+  the error had already printed. Each error now carries one hint, on stderr
+  with the error: `hint:` in table mode and the envelope's `hint` key in JSON
+  and YAML. A missing or failing credential now gets that hint in the envelope
+  too.
+- Argument-count errors (`namecom domain get a b`) now honour `-o`, `--color`
+  and the other output flags. They were rendered in the default format for the
+  terminal, so `-o table` in a pipe still printed the JSON envelope, and
+  `-o yaml` printed JSON.
+- `--color always` now colours output that is piped or redirected, as
+  `CLICOLOR_FORCE=1` already did; it used to print plain text whenever stdout
+  was not a terminal. `--color never` likewise guarantees no escape codes.
+- `--dry-run` fails with an error (exit **1**) when the request body cannot be
+  encoded, for example a `--price` of `Inf`. It used to print nothing in JSON
+  and YAML modes, or a request line with an empty body in table mode, and exit
+  0.
 
 ## [0.4.7] - 2026-09-29
 

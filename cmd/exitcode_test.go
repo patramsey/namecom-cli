@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +44,9 @@ func TestExitCode(t *testing.T) {
 		{"api 403", &api.APIError{StatusCode: 403}, 3},
 		{"api 404", &api.APIError{StatusCode: 404}, 4},
 		{"api 429", &api.APIError{StatusCode: 429}, 5},
+		// #156: a DNS failure is a runtime error, not the usage code its
+		// panic used to exit with.
+		{"dns failure", fmt.Errorf("getting domain: %w", &net.DNSError{Err: "no such host", Name: "x.invalid", IsNotFound: true}), 1},
 	}
 
 	for _, tc := range tests {
@@ -304,31 +308,5 @@ func TestExitCode_APIUnknownMethod(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-// TestShowAuthHint guards issue #161. A RestrictedError is a 403 that means
-// "this account is not enrolled", so it keeps exit 3 but must not get the
-// "check your credentials" line Execute prints for every other exit 3.
-func TestShowAuthHint(t *testing.T) {
-	forbidden := &api.APIError{StatusCode: http.StatusForbidden}
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{"api 401", &api.APIError{StatusCode: http.StatusUnauthorized}, true},
-		{"api 403", forbidden, true},
-		{"no credentials", cmdutil.NewAuthError(errors.New("no credentials configured")), true},
-		{"restricted 403", cmdutil.AsRestricted(forbidden, "internal transfer-in", "approved enterprise reseller"), false},
-		{"wrapped restricted 403", fmt.Errorf("ctx: %w", cmdutil.AsRestricted(forbidden, "contact verify", "approved reseller")), false},
-		{"api 404", &api.APIError{StatusCode: http.StatusNotFound}, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := showAuthHint(tc.err); got != tc.want {
-				t.Errorf("showAuthHint(%v) = %v, want %v", tc.err, got, tc.want)
-			}
-		})
 	}
 }

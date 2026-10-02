@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"reflect"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/muesli/termenv"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -121,6 +123,28 @@ func (c *Config) ColorEnabled() bool {
 		return true
 	}
 	return isStdoutTTY()
+}
+
+// ApplyColorProfile makes lipgloss's renderer agree with an explicit --color.
+//
+// ColorEnabled decides whether this package styles a string, but lipgloss
+// makes its own terminal check when it renders one: with stdout piped it
+// detects no colour support and drops every escape, so `--color always | cat`
+// printed plain text. always therefore forces a colour profile when none was
+// detected, and never forces plain text. auto leaves lipgloss's detection,
+// which already honours NO_COLOR and CLICOLOR_FORCE, alone.
+//
+// The renderer is process-global, so this is called once, from the root
+// command, when the flags are applied.
+func (c *Config) ApplyColorProfile() {
+	switch c.Color {
+	case ColorAlways:
+		if lipgloss.ColorProfile() == termenv.Ascii {
+			lipgloss.SetColorProfile(termenv.ANSI256)
+		}
+	case ColorNever:
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
 }
 
 // Adaptive color tokens — Dark values are vivid for dark terminals; Light
@@ -594,16 +618,21 @@ func errorHint(err error) string {
 		}
 	}
 	// Unwrap to find a hintable cause (e.g. fmt.Errorf("fetching: %w", apiErr)).
-	type unwrapper interface{ Unwrap() error }
-	for u, ok := err.(unwrapper); ok; u, ok = err.(unwrapper) {
-		err = u.Unwrap()
-		if h, ok2 := err.(hintable); ok2 {
+	// The loop stops at a nil cause: *net.DNSError and *json.UnmarshalTypeError
+	// both have an Unwrap that returns nil, and assigning that to err crashed
+	// the err.Error() below on every DNS failure and undecodable response.
+	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
+		if h, ok := cause.(hintable); ok {
 			if hint := h.UserHint(); hint != "" {
 				return hint
 			}
 		}
 	}
-	// Network-level failures.
+	// Network-level failures. Any DNS failure counts, not only "no such host":
+	// a resolver that times out or misbehaves is still the network.
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
+		return "could not reach the API — check your network connection"
+	}
 	msg := err.Error()
 	if strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "connection refused") ||
@@ -964,22 +993,27 @@ type DryRunRequest struct {
 // to parse text to inspect the planned request. That includes the non-TTY
 // JSON default, as it does for Success — the text form in a pipe was the one
 // thing a `| jq` could not read.
-func (c *Config) DryRun(method, path string, body any) {
+//
+// A body that cannot be encoded is an error, and nothing is printed. The error
+// used to be discarded, so a --price of +Inf previewed as no output at all in
+// JSON and YAML, and as a request line with no body in table mode — and the
+// command exited 0 as though the preview had worked.
+func (c *Config) DryRun(method, path string, body any) error {
+	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body}
 	switch c.Format {
 	case FormatJSON:
-		_ = c.JSON(DryRunRequest{DryRun: true, Method: method, Path: path, Body: body})
-		return
+		return dryRunErr(c.JSON(req))
 	case FormatYAML:
-		_ = c.YAML(DryRunRequest{DryRun: true, Method: method, Path: path, Body: body})
-		return
+		return dryRunErr(c.YAML(req))
 	}
-	c.dryRunText(method, path, body)
+	return c.dryRunText([]DryRunRequest{req})
 }
 
 // DryRunAll prints several previewed requests: one array in JSON and YAML
 // modes, so the plan parses as a single document, and one request line each
-// in table mode. The DryRun field of each request is set here.
-func (c *Config) DryRunAll(reqs []DryRunRequest) {
+// in table mode. The DryRun field of each request is set here. As with
+// DryRun, a body that cannot be encoded fails the whole preview.
+func (c *Config) DryRunAll(reqs []DryRunRequest) error {
 	all := make([]DryRunRequest, len(reqs))
 	for i, r := range reqs {
 		r.DryRun = true
@@ -987,31 +1021,49 @@ func (c *Config) DryRunAll(reqs []DryRunRequest) {
 	}
 	switch c.Format {
 	case FormatJSON:
-		_ = c.JSON(all)
-		return
+		return dryRunErr(c.JSON(all))
 	case FormatYAML:
-		_ = c.YAML(all)
-		return
+		return dryRunErr(c.YAML(all))
 	}
-	for _, r := range all {
-		c.dryRunText(r.Method, r.Path, r.Body)
-	}
+	return c.dryRunText(all)
 }
 
-func (c *Config) dryRunText(method, path string, body any) {
-	if c.ColorEnabled() {
-		tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("dry-run")
-		m := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(method)
-		p := styleDim.Render(path)
-		fmt.Fprintf(c.Writer, "  [%s]  %s %s\n", tag, m, p)
-	} else {
-		fmt.Fprintf(c.Writer, "%s %s\n", method, path)
+func dryRunErr(err error) error {
+	if err != nil {
+		return fmt.Errorf("previewing request: %w", err)
 	}
-	if body != nil {
-		b, _ := json.MarshalIndent(body, "", "  ")
-		indented := "  " + strings.ReplaceAll(string(b), "\n", "\n  ")
-		fmt.Fprintln(c.Writer, indented)
+	return nil
+}
+
+// dryRunText encodes every body before printing anything, so a failure
+// leaves no request line behind without its body.
+func (c *Config) dryRunText(reqs []DryRunRequest) error {
+	bodies := make([][]byte, len(reqs))
+	for i, r := range reqs {
+		if r.Body == nil {
+			continue
+		}
+		b, err := json.MarshalIndent(r.Body, "", "  ")
+		if err != nil {
+			return dryRunErr(err)
+		}
+		bodies[i] = b
 	}
+	for i, r := range reqs {
+		if c.ColorEnabled() {
+			tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("dry-run")
+			m := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(r.Method)
+			p := styleDim.Render(r.Path)
+			fmt.Fprintf(c.Writer, "  [%s]  %s %s\n", tag, m, p)
+		} else {
+			fmt.Fprintf(c.Writer, "%s %s\n", r.Method, r.Path)
+		}
+		if bodies[i] != nil {
+			indented := "  " + strings.ReplaceAll(string(bodies[i]), "\n", "\n  ")
+			fmt.Fprintln(c.Writer, indented)
+		}
+	}
+	return nil
 }
 
 // Count prints a dim result count footer — only in table mode, skipped in quiet mode.

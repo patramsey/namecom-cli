@@ -111,17 +111,7 @@ func Execute() {
 	})
 
 	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
-		err = normalizeError(err)
-		cfg := resolvedOut
-		if cfg == nil {
-			cfg = output.DefaultConfig()
-		}
-		cfg.Error(err)
-		code := exitCode(err)
-		if showAuthHint(err) {
-			cfg.Hint("Run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure")
-		}
-		os.Exit(code)
+		os.Exit(reportError(errorOutput(), err))
 	}
 
 	// Show update notification if the goroutine finished in time.
@@ -247,26 +237,10 @@ func completionClient(cmd *cobra.Command) (*api.Client, error) {
 // command context. It runs for every command, including those that skip API
 // credential setup (auth, version, etc.).
 func initOutputContext(cmd *cobra.Command) error {
-	out := output.DefaultConfig()
-	// Bad --output/--color values are invocation mistakes, not runtime failures:
-	// classify them so they exit 2 like any other usage error.
-	if gf.output != "" {
-		f, err := output.ParseFormat(gf.output)
-		if err != nil {
-			return cmdutil.NewUsageError(err)
-		}
-		out.Format = f
+	out, err := buildOutputConfig()
+	if err != nil {
+		return err
 	}
-	if gf.color != "auto" {
-		cm, err := output.ParseColorMode(gf.color)
-		if err != nil {
-			return cmdutil.NewUsageError(err)
-		}
-		out.Color = cm
-	}
-	out.QuietMode = gf.quiet
-	out.NoHeader = gf.noHeader
-	out.Wide = gf.wide
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
 	// Remember it for Execute's error path. That path ran before this config
 	// existed and fell back to output.DefaultConfig(), which decides format by
@@ -277,10 +251,53 @@ func initOutputContext(cmd *cobra.Command) error {
 	return nil
 }
 
+// buildOutputConfig applies the parsed output flags to the default config.
+func buildOutputConfig() (*output.Config, error) {
+	out := output.DefaultConfig()
+	// Bad --output/--color values are invocation mistakes, not runtime failures:
+	// classify them so they exit 2 like any other usage error.
+	if gf.output != "" {
+		f, err := output.ParseFormat(gf.output)
+		if err != nil {
+			return nil, cmdutil.NewUsageError(err)
+		}
+		out.Format = f
+	}
+	if gf.color != "auto" {
+		cm, err := output.ParseColorMode(gf.color)
+		if err != nil {
+			return nil, cmdutil.NewUsageError(err)
+		}
+		out.Color = cm
+	}
+	out.ApplyColorProfile()
+	out.QuietMode = gf.quiet
+	out.NoHeader = gf.noHeader
+	out.Wide = gf.wide
+	return out, nil
+}
+
 // resolvedOut is the output config built by initOutputContext, retained so the
-// top-level error handler can honor --output/--color. Nil until flags are
-// parsed (e.g. a malformed flag), in which case the default config applies.
+// top-level error handler can honor --output/--color. Nil when the command
+// failed before PersistentPreRunE ran; see errorOutput.
 var resolvedOut *output.Config
+
+// errorOutput returns the config the top-level error handler renders with.
+//
+// Cobra validates the argument count before PersistentPreRunE, so for
+// `namecom domain get a b -o yaml` resolvedOut was still nil and the error
+// came out in the TTY-detected default format, ignoring -o. The flags are
+// parsed by then, so they are applied here directly. Only when they cannot
+// be — a malformed flag, or a bad --output value — does the default apply.
+func errorOutput() *output.Config {
+	if resolvedOut != nil {
+		return resolvedOut
+	}
+	if out, err := buildOutputConfig(); err == nil {
+		return out
+	}
+	return output.DefaultConfig()
+}
 
 // flagOverrides collects the global credential flags as config.Overrides.
 func flagOverrides(cmd *cobra.Command) config.Overrides {
@@ -433,6 +450,18 @@ func skipClientInit(cmd *cobra.Command) bool {
 	return false
 }
 
+// reportError renders err through cfg and returns the exit code for it.
+//
+// Hints travel with the error, on stderr. An exit-3 hint used to be printed
+// separately with cfg.Hint, which writes to stdout — so it landed in
+// `namecom … > out.txt` — and repeated the hint the error already carried.
+// cmdutil.AuthError now carries its own.
+func reportError(cfg *output.Config, err error) int {
+	err = normalizeError(err)
+	cfg.Error(err)
+	return exitCode(err)
+}
+
 // exitCode maps an error to a CLI exit code following the documented table:
 //
 //	0 success, 1 API/runtime, 2 usage, 3 auth, 4 not-found, 5 rate-limited
@@ -463,17 +492,6 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 1
-}
-
-// showAuthHint reports whether Execute should follow err with the "check your
-// credentials" line. Every exit 3 gets it except a RestrictedError: that 403
-// means the account is not enrolled in a gated program, and the credentials
-// are fine (#161).
-func showAuthHint(err error) bool {
-	if _, ok := errors.AsType[*cmdutil.RestrictedError](err); ok {
-		return false
-	}
-	return exitCode(err) == 3
 }
 
 // validateBaseURL checks a --base-url value before it is used, so a typo fails
