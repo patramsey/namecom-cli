@@ -32,6 +32,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `--debug-file` naming a file that already exists now makes it readable only
+  by you (mode 0600), as a new file already was. An existing file used to keep
+  its mode, often 0644.
 - `dns create` and `url create` report a successful response that does not
   include the new record's or forwarding's ID as an unexpected response (exit
   **1**, with a hint to check before retrying), instead of printing `(id 0)`

@@ -403,6 +403,15 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		if err != nil {
 			return fmt.Errorf("opening debug file: %w", err)
 		}
+		// The 0600 above applies only to a file this call creates; one that
+		// already existed kept its mode, often 0644 (#187). Tighten a regular
+		// file only: --debug-file /dev/stderr names a terminal device.
+		if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o077 != 0 {
+			if err := f.Chmod(0o600); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("restricting debug file permissions: %w", err)
+			}
+		}
 		// File is intentionally left open for the process lifetime.
 		apiOpts.DebugLog = f
 	case gf.debug:
