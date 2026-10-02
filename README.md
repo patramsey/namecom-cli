@@ -278,6 +278,11 @@ profiles:
     token_cmd: "op read op://vault/namecom/token"  # 1Password example
 ```
 
+The command runs through `sh -c` on macOS and Linux, and through `cmd.exe` on
+Windows. For `sh` syntax on Windows, say so in the command — for example
+`token_cmd: sh -c "op read op://vault/namecom/token | tr -d '\r'"` — with `sh`
+on your `PATH` (Git for Windows ships one).
+
 ## Shell completion
 
 ```bash
