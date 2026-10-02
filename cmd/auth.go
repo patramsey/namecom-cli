@@ -225,11 +225,12 @@ func renderAuthStatus(out *output.Config, rows [][]string) {
 	}
 	switch out.Format {
 	case output.FormatJSON, output.FormatYAML:
-		fields := make(map[string]string, len(rows))
+		fields := make(map[string]any, len(rows)+1)
 		for _, r := range rows {
 			fields[strings.ToLower(strings.ReplaceAll(r[0], " ", "_"))] = r[1]
 		}
-		fields["verified"] = "true"
+		// A boolean, not the string "true" it used to be (#187).
+		fields["verified"] = true
 		if out.Format == output.FormatJSON {
 			_ = out.JSON(fields)
 			return

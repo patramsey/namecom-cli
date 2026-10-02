@@ -128,7 +128,7 @@ func TestAuthStatus_ReportsTheActiveProfile(t *testing.T) {
 			if err := runAuthStatus(cmd, nil); err != nil {
 				t.Fatalf("runAuthStatus: %v", err)
 			}
-			var got map[string]string
+			var got map[string]any
 			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 				t.Fatalf("parsing output: %v\n%s", err, buf.String())
 			}

@@ -32,6 +32,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain contacts get` the registrant's email, `order get` the order ID,
   `email get` the mailbox, and `transfer eligibility` the domain if it can be
   moved by internal transfer (nothing otherwise).
+- `auth status -o json` and `-o yaml` report `verified` as the boolean
+  `true` instead of the string `"true"`. A script comparing it to the string
+  needs updating.
 - `config list-profiles` shows each profile's endpoint as a URL
   (`https://api.name.com`), as `config show` and `auth status` do. The
   `endpoint` field in its JSON and YAML output changes from the bare host to
