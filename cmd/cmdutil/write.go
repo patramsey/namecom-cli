@@ -53,6 +53,7 @@ var confirmFunc = Confirm
 //  1. Under --dry-run it prints the request and returns sent=false. It never
 //     prompts — a dry run in CI has no terminal, and asking a human to
 //     approve something that will not happen is noise — and never calls send.
+//     A body the preview cannot encode is returned as the error.
 //  2. Otherwise, when Prompt is set, it confirms (honouring --yes). A decline
 //     prints "aborted" and returns sent=false with a nil error, so the
 //     command exits 0 as it always has.
@@ -64,8 +65,7 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	out := Out(cmd)
 
 	if IsDryRun(cmd) {
-		out.DryRun(w.Method, w.Path, previewOf(w))
-		return false, nil
+		return false, out.DryRun(w.Method, w.Path, previewOf(w))
 	}
 
 	if w.Prompt != "" {

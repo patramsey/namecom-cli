@@ -630,8 +630,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if dryRun {
 		// One document for the whole plan in JSON and YAML modes, so a script
 		// parses every request at once rather than a stream of them.
-		out.DryRunAll(previews)
-		return nil
+		return out.DryRunAll(previews)
 	}
 	out.Success(fmt.Sprintf("Imported %d record(s) to %s", created, domain))
 	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to verify the imported records", domain))

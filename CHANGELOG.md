@@ -150,6 +150,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `--color always` now colours output that is piped or redirected, as
   `CLICOLOR_FORCE=1` already did; it used to print plain text whenever stdout
   was not a terminal. `--color never` likewise guarantees no escape codes.
+- `--dry-run` fails with an error (exit **1**) when the request body cannot be
+  encoded, for example a `--price` of `Inf`. It used to print nothing in JSON
+  and YAML modes, or a request line with an empty body in table mode, and exit
+  0.
 
 ## [0.4.7] - 2026-09-29
 

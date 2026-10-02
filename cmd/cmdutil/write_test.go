@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -92,6 +93,27 @@ func TestRunWrite_DryRunNoBodyPrintsOnlyTheRequestLine(t *testing.T) {
 	}
 	if got := stdout.String(); got != "DELETE /core/v1/things/1\n" {
 		t.Errorf("preview = %q, want only the request line", got)
+	}
+}
+
+// TestRunWrite_DryRunPreviewFailureIsReturned covers the output half of #168:
+// a body the preview cannot encode (a +Inf price) must fail the command, not
+// print nothing and exit 0.
+func TestRunWrite_DryRunPreviewFailureIsReturned(t *testing.T) {
+	failIfConfirmed(t)
+	cmd, stdout, _ := writeCmd(t, true, false)
+	sent, err := RunWrite(cmd, Write[map[string]float64]{
+		Method: "POST", Path: "/core/v1/domains",
+		Body: map[string]float64{"purchasePrice": math.Inf(1)}, Prompt: "Register?",
+	}, func(context.Context, map[string]float64) error {
+		t.Error("send was called under --dry-run")
+		return nil
+	})
+	if err == nil || sent {
+		t.Fatalf("RunWrite = (%v, %v), want (false, an encoding error)", sent, err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("a failed preview should print nothing, got %q", stdout.String())
 	}
 }
 
