@@ -20,6 +20,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   change applies to `contact verify`, which also printed the "check your
   credentials" line. The `hint` field in the JSON/YAML error envelope changes
   for both.
+- `transfer create` and `transfer internal-in` without `--auth-code`, when not
+  run in a terminal, now exit **2** (usage error) instead of 1, matching a
+  too-short `--auth-code`.
 
 ## [0.4.7] - 2026-09-29
 

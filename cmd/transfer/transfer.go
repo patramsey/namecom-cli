@@ -240,7 +240,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--auth-code is required (or set interactively in a TTY)")
+			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -427,7 +427,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 
 	if internalAuthCode == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--auth-code is required (or set interactively in a TTY)")
+			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
 		}
 		form := huh.NewForm(
 			huh.NewGroup(

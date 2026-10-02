@@ -1128,3 +1128,26 @@ func TestTransferInternalIn_ForbiddenIsRestricted(t *testing.T) {
 		t.Errorf("a restricted-access error must not suggest 'auth login':\n%s", stderr.String())
 	}
 }
+
+// TestTransfer_MissingAuthCodeIsUsageError guards issue #165. Without a TTY
+// there is no prompt to fall back on, so a missing --auth-code is an
+// invocation mistake and exits 2, like the too-short code right after it. It
+// was a plain fmt.Errorf and exited 1.
+func TestTransfer_MissingAuthCodeIsUsageError(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	srv := neverCalledServer(t)
+	createAuthCode, createPrivacy, createPrice = "", false, 0
+
+	for name, run := range map[string]func() error{
+		"create":      func() error { return runCreate(cmdForTransferCreate(t, srv), []string{"example.com"}) },
+		"internal-in": func() error { return runInternalIn(cmdForInternalIn(t, srv), []string{"example.com"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			var usage *cmdutil.UsageError
+			if !errors.As(err, &usage) {
+				t.Errorf("missing --auth-code should be a usage error (exit 2), got %T: %v", err, err)
+			}
+		})
+	}
+}
