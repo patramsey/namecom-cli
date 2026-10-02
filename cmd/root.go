@@ -201,6 +201,13 @@ func init() {
 		cobra.FixedCompletions([]string{"auto", "always", "never"}, cobra.ShellCompDirectiveNoFileComp))
 	_ = rootCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
 
+	// Cobra adds -h/--help and --version only after it has picked the command
+	// to run, but picking it skips flag values by asking whether each flag
+	// takes one. An unknown --help was assumed to, so `namecom --help -o json`
+	// swallowed -o and ran "json" as a subcommand (#209). Define them up front.
+	rootCmd.InitDefaultHelpFlag()
+	rootCmd.InitDefaultVersionFlag()
+
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
 	rootCmd.SetHelpFunc(styledHelp)

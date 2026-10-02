@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 )
 
 // noStyle is the identity style function, so tests assert on the text
@@ -293,5 +295,28 @@ func TestRootHelp_ListsExitCodes(t *testing.T) {
 		if !strings.Contains(rootCmd.Long, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, rootCmd.Long)
 		}
+	}
+}
+
+// TestRootHelp_FlagsAfterHelp pins #209: `namecom --help --output json` exited
+// 2 with `unknown command "json"`. Cobra adds the help flag only after it has
+// resolved the command, so at that point --help was an unknown flag assumed to
+// take a value: it swallowed --output, and json was left as a subcommand name.
+func TestRootHelp_FlagsAfterHelp(t *testing.T) {
+	for _, args := range [][]string{
+		{"--help", "--output", "json"},
+		{"--help", "--color", "never"},
+		{"-h", "-o", "yaml"},
+		{"--output", "json", "--help"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			// A parsed --help stays set on the shared root; clear it so the
+			// next test that runs the root is not served help instead.
+			t.Cleanup(func() { _ = rootCmd.Flags().Set("help", "false") })
+			if err := executeRoot(t, args...); err != nil {
+				t.Errorf("namecom %s: %v (exit %d), want root help and exit 0",
+					strings.Join(args, " "), err, exitCode(cmdutil.ClassifyCobraUsage(err)))
+			}
+		})
 	}
 }

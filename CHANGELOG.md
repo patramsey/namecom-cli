@@ -10,6 +10,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- `namecom --help --output json`, `namecom -h --color never` and other global
+  flags placed after `--help` at the top level print the root help and exit 0.
+  They used to fail with `unknown command "json"` and exit 2; the same flags
+  already worked before `--help` and on subcommands.
 - `url update --help` no longer shows `(default "redirect")` for `--type`.
   Leaving `--type` out has always kept the forwarding's current type; the help
   now says so. Root help lists the exit codes, and the `dns delete` example
