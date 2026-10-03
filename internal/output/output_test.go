@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -881,6 +882,71 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 			t.Errorf("dropped columns that fit:\n%s", got)
 		}
 	})
+}
+
+// TestKVTableFitsTerminalWidth: KVTable (`domain get`, `auth status`) was
+// rendered at its natural width, so a long value — a nameserver list, a
+// forwarding URL — ran past the terminal and the borders came apart on wrap
+// (issue #187). Values now wrap inside the table; --wide and a pipe opt out.
+func TestKVTableFitsTerminalWidth(t *testing.T) {
+	value := "ns1.example-nameserver.com, ns2.example-nameserver.com, ns3.example-nameserver.com"
+	rows := [][]string{
+		{"Domain", "example.com"},
+		{"Nameservers", value},
+	}
+	render := func(c *Config) string {
+		var buf bytes.Buffer
+		c.Format, c.Writer, c.EWriter = FormatTable, &buf, &buf
+		c.KVTable(rows)
+		return buf.String()
+	}
+	widest := func(s string) int {
+		widest := 0
+		for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+			if w := lipgloss.Width(line); w > widest {
+				widest = w
+			}
+		}
+		return widest
+	}
+	// squash removes borders and whitespace, so wrapped text can be compared
+	// with the original value.
+	squash := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) || strings.ContainsRune("│─╭╮╰╯├┤┬┴┼", r) {
+				return -1
+			}
+			return r
+		}, s)
+	}
+
+	t.Run("wraps long values to fit", func(t *testing.T) {
+		got := render(&Config{MaxWidth: 40})
+		if w := widest(got); w > 40 {
+			t.Errorf("table rendered %d columns wide, want <= 40:\n%s", w, got)
+		}
+		if !strings.Contains(got, "Nameservers") {
+			t.Errorf("key column was cut:\n%s", got)
+		}
+		if !strings.Contains(squash(got), squash(value)) {
+			t.Errorf("value was truncated, want it wrapped in full:\n%s", got)
+		}
+	})
+
+	natural := render(&Config{})
+	t.Run("--wide keeps the natural width", func(t *testing.T) {
+		if got := render(&Config{MaxWidth: 40, Wide: true}); got != natural {
+			t.Errorf("--wide changed the table:\n%s\nwant:\n%s", got, natural)
+		}
+	})
+	t.Run("wide enough is unchanged", func(t *testing.T) {
+		if got := render(&Config{MaxWidth: 200}); got != natural {
+			t.Errorf("a table that fits was resized:\n%s\nwant:\n%s", got, natural)
+		}
+	})
+	if !strings.Contains(natural, value) {
+		t.Errorf("unconstrained table split the value:\n%s", natural)
+	}
 }
 
 // TestExpiryStyleThresholds pins the urgency thresholds. The expired and

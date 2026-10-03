@@ -133,8 +133,9 @@ func (c *Config) ColorEnabled() bool {
 	case ColorNever:
 		return false
 	}
-	// ColorAuto: respect NO_COLOR (presence-based) and CLICOLOR_FORCE.
-	if _, set := os.LookupEnv("NO_COLOR"); set {
+	// ColorAuto: respect NO_COLOR (presence-based) and CLICOLOR_FORCE, and
+	// stay plain on a Windows console that cannot interpret escape codes.
+	if _, set := os.LookupEnv("NO_COLOR"); set || !vtSupported {
 		return false
 	}
 	if os.Getenv("CLICOLOR_FORCE") == "1" {
@@ -520,6 +521,15 @@ func (c *Config) KVTable(rows [][]string) {
 		t.Row(row...)
 	}
 
+	// Wrap values to the terminal, as Table drops columns to fit it: a long
+	// value — a nameserver list, a forwarding URL — otherwise ran past the
+	// edge and the borders came apart. Width is set only when the table is too
+	// wide, because lipgloss also stretches a narrower table to fill it.
+	// --wide and a non-terminal writer keep the natural width.
+	if !c.Wide && c.MaxWidth > 0 && tableWidth(colWidths(nil, rows, 2)) > c.MaxWidth {
+		t = t.Width(c.MaxWidth)
+	}
+
 	fmt.Fprintln(c.Writer, t.Render())
 }
 
@@ -857,7 +867,10 @@ var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 // variable, like IsInteractive, because under go test stderr is never a
 // terminal: every spinner was a no-op there, so nothing could show that a
 // command stops the spinner it starts. See RecordSpinners.
-var spinnerTTY = isStderrTTY
+//
+// A Windows console without virtual terminal processing counts as no
+// terminal: the spinner's `\r\033[K` would print as text there.
+var spinnerTTY = func() bool { return vtSupported && isStderrTTY() }
 
 // spinRecorder, when set by RecordSpinners, stands in for the animation.
 var spinRecorder *SpinRecorder
