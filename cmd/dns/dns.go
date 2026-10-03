@@ -267,13 +267,15 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
 	}
-	if err := cmdutil.ValidDNSHost(createHost); err != nil {
+	host, err := asciiHost(createHost)
+	if err != nil {
 		return err
 	}
-	if err := cmdutil.ValidDNSAnswer(createType, createHost, createAnswer); err != nil {
+	answer, err := asciiAnswer(createType, host, createAnswer)
+	if err != nil {
 		return err
 	}
-	for _, w := range cmdutil.DNSAnswerWarnings(createType, createAnswer, createPriority, cmd.Flags().Changed("priority")) {
+	for _, w := range cmdutil.DNSAnswerWarnings(createType, answer, createPriority, cmd.Flags().Changed("priority")) {
 		out.Warn(w)
 	}
 	if cmd.Flags().Changed("ttl") {
@@ -290,8 +292,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	body := coreapigo.DNSCreateRecordBody{
 		DomainName: domain,
 		Type:       coreapigo.DNSCreateRecordBodyType(createType),
-		Host:       createHost,
-		Answer:     createAnswer,
+		Host:       host,
+		Answer:     answer,
 		TTL:        &createTTL,
 	}
 	// Gate on the flag, not the value: 0 is a valid MX/SRV priority, so deciding
@@ -402,10 +404,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
 	}
 	if cmd.Flags().Changed("host") {
-		if err := cmdutil.ValidDNSHost(updateHost); err != nil {
+		host, err := asciiHost(updateHost)
+		if err != nil {
 			return err
 		}
-		body.Host = &updateHost
+		body.Host = &host
 	}
 	if cmd.Flags().Changed("answer") {
 		rtype := string(body.Type)
@@ -413,13 +416,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if body.Host != nil {
 			host = *body.Host
 		}
-		if err := cmdutil.ValidDNSAnswer(rtype, host, updateAnswer); err != nil {
+		answer, err := asciiAnswer(rtype, host, updateAnswer)
+		if err != nil {
 			return err
 		}
-		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, derefInt64(body.Priority), body.Priority != nil) {
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, answer, derefInt64(body.Priority), body.Priority != nil) {
 			out.Warn(w)
 		}
-		body.Answer = updateAnswer
+		body.Answer = answer
 	} else if cmd.Flags().Changed("type") {
 		// Type changed but answer kept from the existing record: re-validate the
 		// existing answer against the new type so the mismatch is caught client-side
@@ -606,12 +610,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSCreateType(rtype); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
-		if err := cmdutil.ValidDNSHost(host); err != nil {
+		// Converted in place, so the request body carries the ASCII form.
+		asciiH, err := asciiHost(host)
+		if err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
-		if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+		asciiA, err := asciiAnswer(rtype, asciiH, answer)
+		if err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
+		r.Host, r.Answer = &asciiH, &asciiA
 		if err := cmdutil.ValidTTL(r.TTL); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
@@ -919,6 +927,59 @@ func derefInt64(n *int64) int64 {
 		return 0
 	}
 	return *n
+}
+
+// asciiHost validates a host and returns the form to send, with any Unicode
+// labels in punycode (#187): the server got them as typed, and --dry-run
+// previewed them that way. The typed value is checked first, so its errors read
+// as they always have; the converted one again, since DNS length limits apply
+// to what is sent.
+func asciiHost(host string) (string, error) {
+	if err := cmdutil.ValidDNSHost(host); err != nil {
+		return "", err
+	}
+	a, err := cmdutil.ASCIIHostname(host, "--host")
+	if err != nil {
+		return "", err
+	}
+	if a != host {
+		if err := cmdutil.ValidDNSHost(a); err != nil {
+			return "", err
+		}
+	}
+	return a, nil
+}
+
+// asciiAnswer is asciiHost for a record answer. Only the hostname a CNAME,
+// ANAME, MX, NS or SRV record points at is converted; other answers (TXT, A,
+// AAAA) are not names and are returned as typed.
+func asciiAnswer(rtype, host, answer string) (string, error) {
+	if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+		return "", err
+	}
+	var a string
+	var err error
+	switch rtype = strings.ToUpper(rtype); rtype {
+	case "CNAME", "ANAME", "MX", "NS":
+		a, err = cmdutil.ASCIIHostname(answer, rtype+" record target")
+	case "SRV":
+		// "weight port target": only the last field is a name.
+		i := strings.LastIndexByte(answer, ' ')
+		var target string
+		target, err = cmdutil.ASCIIHostname(answer[i+1:], "SRV record target")
+		a = answer[:i+1] + target
+	default:
+		return answer, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if a != answer {
+		if err := cmdutil.ValidDNSAnswer(rtype, host, a); err != nil {
+			return "", err
+		}
+	}
+	return a, nil
 }
 
 // qualify appends the trailing dot that makes a hostname absolute in a zone

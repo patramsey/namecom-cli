@@ -187,7 +187,13 @@ func fuzzRecord(typeIdx uint8, host, answer string, ttl, prio int64) (*coreapigo
 	if host == "" {
 		host = "@"
 	}
-	if cmdutil.ValidDNSHost(host) != nil || cmdutil.ValidDNSAnswer(rtype, host, answer) != nil || cmdutil.ValidTTL(ttl) != nil {
+	// asciiHost and asciiAnswer are the create/import checks, which include
+	// converting a Unicode name to punycode.
+	h, err := asciiHost(host)
+	if err != nil || cmdutil.ValidTTL(ttl) != nil {
+		return nil, false
+	}
+	if _, err := asciiAnswer(rtype, h, answer); err != nil {
 		return nil, false
 	}
 	fqdn := "example.com."
@@ -259,7 +265,7 @@ func (e *fuzzExporter) export(t *testing.T, records []*coreapigo.Record, format 
 
 // FuzzExportImportRoundTrip exports one valid record as JSON, feeds that
 // export to `dns import --dry-run`, and checks the planned create carries the
-// same type, host, answer, TTL and priority.
+// same type, host, answer, TTL and priority (names in their ASCII form).
 func FuzzExportImportRoundTrip(f *testing.F) {
 	exp := newFuzzExporter(f)
 	f.Add(uint8(0), "www", "1.2.3.4", int64(300), int64(0))
@@ -314,7 +320,11 @@ func FuzzExportImportRoundTrip(f *testing.F) {
 		if wantHost == "" {
 			wantHost = "@"
 		}
-		if b.Type != *rec.Type || b.Host != wantHost || b.Answer != *rec.Answer ||
+		// Import sends Unicode names in punycode; fuzzRecord checked both
+		// convert.
+		wantHost, _ = asciiHost(wantHost)
+		wantAnswer, _ := asciiAnswer(*rec.Type, wantHost, *rec.Answer)
+		if b.Type != *rec.Type || b.Host != wantHost || b.Answer != wantAnswer ||
 			b.TTL == nil || *b.TTL != rec.TTL {
 			t.Fatalf("round trip changed the record:\n in: %s %q %q ttl=%d\nout: %s %q %q ttl=%v",
 				*rec.Type, *rec.Host, *rec.Answer, rec.TTL, b.Type, b.Host, b.Answer, b.TTL)
