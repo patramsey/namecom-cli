@@ -114,6 +114,9 @@ func (e *contextError) Unwrap() error { return e.err }
 type UnexpectedResponseError struct {
 	Reason string
 	Err    error
+	// Read marks the response to a request that changes nothing, so the hint
+	// does not warn that a change may have been made.
+	Read bool
 }
 
 func (e *UnexpectedResponseError) Error() string {
@@ -125,6 +128,9 @@ func (e *UnexpectedResponseError) Unwrap() error { return e.Err }
 // UserHint warns that a write may have gone through: the API answered with a
 // success status, only its reply was unreadable.
 func (e *UnexpectedResponseError) UserHint() string {
+	if e.Read {
+		return "--debug shows the response"
+	}
 	return "the API reported success, so a change may have been made — check before retrying; --debug shows the response"
 }
 

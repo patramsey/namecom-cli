@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -34,6 +36,55 @@ var secretFields = map[string]bool{
 func isSecretField(key string) bool {
 	k := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(key))
 	return secretFields[k]
+}
+
+// credentialHeaders are the headers whose values are never logged, in
+// canonical form. Authorization carries the Basic-encoded token, which is the
+// token itself to anyone holding a base64 decoder.
+var credentialHeaders = map[string]bool{
+	"Authorization":       true,
+	"Proxy-Authorization": true,
+	"Cookie":              true,
+	"Set-Cookie":          true,
+}
+
+// isCredentialHeader reports whether a header's value must be redacted: one of
+// credentialHeaders, or a name that ends in one of the secret field names, so
+// `namecom api --header 'X-Api-Token: …'` is caught too.
+func isCredentialHeader(name string) bool {
+	if credentialHeaders[http.CanonicalHeaderKey(name)] {
+		return true
+	}
+	k := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(name))
+	for field := range secretFields {
+		if strings.HasSuffix(k, field) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactHeaders returns h's headers as "Name: value" lines, sorted by name,
+// with the value of every credential header replaced by Redacted. keep, when
+// non-nil, limits the result to the headers it accepts.
+func redactHeaders(h http.Header, keep func(name string) bool) []string {
+	names := make([]string, 0, len(h))
+	for name := range h {
+		if keep == nil || keep(name) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	var lines []string
+	for _, name := range names {
+		for _, v := range h[name] {
+			if isCredentialHeader(name) {
+				v = Redacted
+			}
+			lines = append(lines, name+": "+v)
+		}
+	}
+	return lines
 }
 
 // RedactBody returns body with the value of every secret field, at any depth,

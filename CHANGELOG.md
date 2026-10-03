@@ -14,6 +14,24 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `contacts` field to transfer requests and a `warning` field to
   transfer-status webhooks; nothing the CLI sends or prints changes.
 
+### Fixed
+- The `--debug` / `--debug-file` log now starts each entry with an RFC 3339
+  timestamp (milliseconds), shows each response's round-trip time, and lists
+  the request headers as sent and the useful response headers
+  (`Content-Type`, `Retry-After`, `Location`, request IDs and rate-limit
+  headers). `Authorization`, `Cookie` and other credential headers are shown
+  as `[redacted]`. A failed attempt is now logged too, rather than leaving a
+  request line with no outcome. Anything parsing the log should expect the
+  timestamp before `→` and `←`.
+- Single-resource reads no longer treat a `200 {}` as success. `domain get`,
+  `domain contacts get`, `dnssec get`, `email get`, `order get`,
+  `transfer get`, `url get` and `vanity-ns get` printed an empty resource and
+  exited 0; a response missing the resource's identifying field (its name,
+  ID, mailbox or digest) is now an "unexpected response from the API" error
+  and exits **1**. Under `--quiet`, `order get` and `email get` no longer echo
+  the requested ID or mailbox back when the response has none. List commands
+  are unchanged: an empty list is still a valid answer.
+
 ## [0.4.8] - 2026-10-02
 
 Sixty bug fixes and two security hardening changes. They came from a broad bug

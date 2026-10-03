@@ -17,8 +17,8 @@ import (
 // them ends up sending an unauthenticated request.
 //
 // It is placed outside retryTransport, so the request the retry layer sees and
-// replays already carries these headers. (Its --debug log prints the method,
-// URL and body, not headers.) Key stability across retries does not depend on
+// replays already carries these headers, and its --debug log shows them as
+// sent, with Authorization redacted. Key stability across retries does not depend on
 // that ordering, which is worth stating because it looks like it should:
 // retryTransport replays the same *http.Request, and apply only fills headers
 // that are absent, so the key set on the first attempt survives into the rest

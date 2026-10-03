@@ -146,3 +146,20 @@ func ClassifyCobraUsage(err error) error {
 	}
 	return err
 }
+
+// RequireField returns an *api.UnexpectedResponseError when value, the field
+// that identifies the resource a get command fetched, is its zero value — an
+// empty string or a nil pointer. what names it for the message: "the domain
+// name" reads as "the response did not include the domain name".
+//
+// A `200 {}` decodes without error into a response with every field zero, and
+// get commands printed that as an empty resource and exited 0 (#187). Only
+// single-resource reads use this: an empty list is a valid answer, and a write
+// has its own checks on what it needs back.
+func RequireField[T comparable](what string, value T) error {
+	var zero T
+	if value != zero {
+		return nil
+	}
+	return &api.UnexpectedResponseError{Reason: "the response did not include " + what, Read: true}
+}

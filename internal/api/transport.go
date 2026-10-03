@@ -165,13 +165,15 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			req.Body = body
 		}
 
-		t.logRequest(req, attempt)
+		start := time.Now()
+		t.logRequest(req, attempt, start)
 		resp, err := t.base.RoundTrip(req)
 		lastResp, lastErr = resp, err
 
 		// Network/transport error: retry only if the request is idempotent AND
 		// the failure could plausibly be transient.
 		if err != nil {
+			t.logError(err, start)
 			if attempt < t.maxRetries && idempotent(req) && transientErr(err) {
 				delay := t.backoffDelay(attempt, nil)
 				if !fitsDeadline(ctx, delay) {
@@ -188,7 +190,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 
-		t.logResponse(resp, attempt)
+		t.logResponse(resp, start)
 
 		// Decide whether to retry based on status.
 		if attempt < t.maxRetries && retryableStatus(resp.StatusCode) {
@@ -298,7 +300,17 @@ func parseRetryAfter(v string) *time.Duration {
 	return &d
 }
 
-func (t *retryTransport) logRequest(req *http.Request, attempt int) {
+// debugTimeFormat is RFC 3339 with milliseconds: enough to order entries and
+// line them up against a server-side log, which is what a timestamp in a bug
+// report is for.
+const debugTimeFormat = "2006-01-02T15:04:05.000Z07:00"
+
+// logRequest writes the request line, headers and body. Headers are logged as
+// sent — this transport sits inside headerTransport, so auth, User-Agent and
+// the idempotency key are already on req — with every credential header's
+// value redacted (see redactHeaders) and secrets in the body redacted (see
+// RedactBody).
+func (t *retryTransport) logRequest(req *http.Request, attempt int, start time.Time) {
 	if t.logw == nil {
 		return
 	}
@@ -306,9 +318,10 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int) {
 	if attempt > 0 {
 		prefix = fmt.Sprintf("→ (retry %d)", attempt)
 	}
-	// Authorization is intentionally never logged, and secrets in the body
-	// are redacted — see RedactBody.
-	fmt.Fprintf(t.logw, "%s %s %s\n", prefix, req.Method, req.URL.String())
+	fmt.Fprintf(t.logw, "%s %s %s %s\n", start.Format(debugTimeFormat), prefix, req.Method, req.URL.String())
+	for _, line := range redactHeaders(req.Header, nil) {
+		fmt.Fprintf(t.logw, "  %s\n", line)
+	}
 	if req.Body != nil && req.GetBody != nil {
 		body, err := req.GetBody()
 		if err == nil {
@@ -325,11 +338,18 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int) {
 	}
 }
 
-func (t *retryTransport) logResponse(resp *http.Response, _ int) {
+// logResponse writes the status with the attempt's round-trip time, the
+// response headers that help diagnose a request (see debugResponseHeader), and
+// the body.
+func (t *retryTransport) logResponse(resp *http.Response, start time.Time) {
 	if t.logw == nil {
 		return
 	}
-	fmt.Fprintf(t.logw, "← %s\n", resp.Status)
+	now := time.Now()
+	fmt.Fprintf(t.logw, "%s ← %s (%s)\n", now.Format(debugTimeFormat), resp.Status, now.Sub(start).Round(time.Microsecond))
+	for _, line := range redactHeaders(resp.Header, debugResponseHeader) {
+		fmt.Fprintf(t.logw, "  %s\n", line)
+	}
 	// Read the full body so the caller receives it intact; truncate only the log.
 	data, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -343,4 +363,30 @@ func (t *retryTransport) logResponse(resp *http.Response, _ int) {
 			fmt.Fprintf(t.logw, "  body: %s\n", logged)
 		}
 	}
+}
+
+// logError writes a failed attempt, which otherwise left a request line with
+// nothing after it and the retry that followed unexplained.
+func (t *retryTransport) logError(err error, start time.Time) {
+	if t.logw == nil {
+		return
+	}
+	now := time.Now()
+	fmt.Fprintf(t.logw, "%s ← error: %v (%s)\n", now.Format(debugTimeFormat), err, now.Sub(start).Round(time.Microsecond))
+}
+
+// debugResponseHeader reports whether a response header is worth logging:
+// the body's type, the server's retry and redirect instructions, and the IDs
+// and rate-limit state a name.com support request or a 429 needs. The rest —
+// caching, security policy, server banners — would bury these.
+func debugResponseHeader(name string) bool {
+	switch k := strings.ToLower(name); {
+	case k == "content-type", k == "retry-after", k == "location":
+		return true
+	case strings.Contains(k, "request-id"), strings.Contains(k, "requestid"),
+		strings.Contains(k, "trace-id"), strings.Contains(k, "correlation-id"),
+		strings.Contains(k, "ratelimit"):
+		return true
+	}
+	return false
 }

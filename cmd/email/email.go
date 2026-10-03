@@ -177,14 +177,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return api.FromSDKError(err)
 	}
+	if err := cmdutil.RequireField("the mailbox", entry.EmailBox); err != nil {
+		return err
+	}
 
 	// Quiet prints the mailbox, as list -q does.
 	if out.QuietMode {
-		box := args[1]
-		if entry != nil && entry.EmailBox != "" {
-			box = entry.EmailBox
-		}
-		out.Quiet(box)
+		out.Quiet(entry.EmailBox)
 		return nil
 	}
 

@@ -166,3 +166,34 @@ func TestClassifyCobraUsage(t *testing.T) {
 		}
 	})
 }
+
+// RequireField treats a zero identifying field — an empty string or a nil
+// pointer — as an unexpected response, and anything else as present (#187).
+func TestRequireField(t *testing.T) {
+	id := 7
+	for _, err := range []error{
+		RequireField("the domain name", "example.com"),
+		RequireField("the order ID", &id),
+	} {
+		if err != nil {
+			t.Errorf("RequireField on a present field = %v, want nil", err)
+		}
+	}
+	for _, err := range []error{
+		RequireField("the domain name", ""),
+		RequireField("the order ID", (*int)(nil)),
+	} {
+		u, ok := errors.AsType[*api.UnexpectedResponseError](err)
+		if !ok {
+			t.Fatalf("RequireField on a missing field = %v, want an *api.UnexpectedResponseError", err)
+		}
+		// A get changed nothing, so the hint must not say a change may have
+		// been made.
+		if u.UserHint() != "--debug shows the response" {
+			t.Errorf("hint = %q, want the read-only hint", u.UserHint())
+		}
+	}
+	if got := RequireField("the domain name", "").Error(); got != "unexpected response from the API: the response did not include the domain name" {
+		t.Errorf("message = %q", got)
+	}
+}

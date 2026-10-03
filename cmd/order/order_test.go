@@ -264,6 +264,24 @@ func TestOrderGet_BadID(t *testing.T) {
 	}
 }
 
+// TestOrderGet_EmptyObjectIsAnError pins #187: a `200 {}` printed an empty
+// order and exited 0, and --quiet printed the requested ID as if found.
+func TestOrderGet_EmptyObjectIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, quiet := range []bool{false, true} {
+		cmd := cmdForOrderGet(t, srv)
+		cmdutil.Out(cmd).QuietMode = quiet
+		err := runGet(cmd, []string{"42"})
+		if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+			t.Fatalf("quiet=%v: runGet = %v, want an *api.UnexpectedResponseError", quiet, err)
+		}
+	}
+}
+
 func TestOrderGet_Success(t *testing.T) {
 	id := 42
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

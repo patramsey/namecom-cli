@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	coreapigo "github.com/namedotcom/core-api-go"
 	"net/http"
 	"net/http/httptest"
@@ -390,6 +391,42 @@ func TestDomainGet_NullBodyIsAnError(t *testing.T) {
 	err := runGet(cmd, []string{"example.com"})
 	if err == nil || !strings.Contains(err.Error(), "unexpected response from the API") {
 		t.Fatalf("runGet = %v, want an unexpected-response error", err)
+	}
+}
+
+// TestDomainGet_EmptyObjectIsAnError pins #187: a `200 {}` printed a domain
+// with every field blank and exited 0. A domain without its name is not a
+// domain, so it is an unexpected response, in every output mode.
+func TestDomainGet_EmptyObjectIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, quiet := range []bool{false, true} {
+		cmd := cmdForDomainGet(t, srv)
+		cmdutil.Out(cmd).QuietMode = quiet
+		err := runGet(cmd, []string{"example.com"})
+		if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+			t.Fatalf("quiet=%v: runGet = %v, want an *api.UnexpectedResponseError", quiet, err)
+		}
+		if got := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String(); got != "" {
+			t.Errorf("quiet=%v: printed %q for an empty response", quiet, got)
+		}
+	}
+}
+
+// TestContactsGet_EmptyObjectIsAnError covers contacts get, which reads the
+// same endpoint as domain get and printed `null` for a `200 {}`.
+func TestContactsGet_EmptyObjectIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(srv.Close)
+
+	err := runContactsGet(cmdForDomainGet(t, srv), []string{"example.com"})
+	if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+		t.Fatalf("runContactsGet = %v, want an *api.UnexpectedResponseError", err)
 	}
 }
 
