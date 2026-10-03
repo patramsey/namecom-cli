@@ -14,6 +14,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `contacts` field to transfer requests and a `warning` field to
   transfer-status webhooks; nothing the CLI sends or prints changes.
 
+### Fixed
+- The `--debug` / `--debug-file` log now starts each entry with an RFC 3339
+  timestamp (milliseconds), shows each response's round-trip time, and lists
+  the request headers as sent and the useful response headers
+  (`Content-Type`, `Retry-After`, `Location`, request IDs and rate-limit
+  headers). `Authorization`, `Cookie` and other credential headers are shown
+  as `[redacted]`. A failed attempt is now logged too, rather than leaving a
+  request line with no outcome. Anything parsing the log should expect the
+  timestamp before `→` and `←`.
+
 ## [0.4.8] - 2026-10-02
 
 Sixty bug fixes and two security hardening changes. They came from a broad bug
