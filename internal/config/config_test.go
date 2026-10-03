@@ -4,10 +4,56 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// isolateHome points os.UserHomeDir and os.UserConfigDir at a new temp
+// directory, which it returns, and clears NAMECOM_CONFIG. The variables they
+// read differ by platform: the home directory is HOME on unix but USERPROFILE
+// on Windows, and the config directory is XDG_CONFIG_HOME on unix, under HOME
+// on darwin, and AppData on Windows. Setting HOME alone left the legacy
+// ~/.namecom lookup on Windows pointing at the real profile directory.
+func isolateHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
+	t.Setenv("NAMECOM_CONFIG", "")
+	return home
+}
+
+// shellLine returns sh, or cmdExe on Windows, where token_cmd runs through
+// cmd.exe: it has no single-quote quoting, does not split commands on ";",
+// and printf, touch and sleep exist only if Git for Windows put them on PATH.
+func shellLine(sh, cmdExe string) string {
+	if runtime.GOOS == "windows" {
+		return cmdExe
+	}
+	return sh
+}
+
+// wantPrivateMode checks that a file holding a token is mode 0600.
+// Windows has no Unix mode bits: Go reports a writable file as 0666, and
+// Chmod only toggles the read-only attribute, so only the rest of the calling
+// test applies there.
+func wantPrivateMode(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("%s holds a token; mode = %#o, want 0600", path, perm)
+	}
+}
 
 func TestResolvePrecedence(t *testing.T) {
 	f := &File{
@@ -110,7 +156,7 @@ func TestResolveTokenCmd(t *testing.T) {
 	f := &File{
 		Default: "prod",
 		Profiles: map[string]Profile{
-			"prod": {Username: "u", TokenCmd: "printf secret-token"},
+			"prod": {Username: "u", TokenCmd: shellLine("printf secret-token", "echo secret-token")},
 		},
 	}
 	creds, err := Resolve(f, Overrides{})
@@ -134,14 +180,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// File must be 0600.
-	info, err := os.Stat(filepath.Join(dir, "config.yaml"))
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("perm = %#o, want 0600", perm)
-	}
+	wantPrivateMode(t, filepath.Join(dir, "config.yaml"))
 
 	got, err := Load()
 	if err != nil {
@@ -187,8 +226,7 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 // CI job or test harness that set it to a scratch path was quietly running
 // against production.
 func TestExplicitConfigPathIsNotOverridden(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := isolateHome(t)
 
 	legacyDir := filepath.Join(home, ".namecom")
 	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
@@ -219,10 +257,7 @@ func TestExplicitConfigPathIsNotOverridden(t *testing.T) {
 // location, reported success — and left the token sitting in the legacy file,
 // now invisible because the new empty file shadowed it.
 func TestSaveWritesBackToLoadedFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("NAMECOM_CONFIG", "")
+	home := isolateHome(t)
 
 	legacyDir := filepath.Join(home, ".namecom")
 	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
@@ -278,13 +313,7 @@ func TestSaveRepairsUnsafePermissions(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("config holding a token should be 0600 after save, got %04o", mode)
-	}
+	wantPrivateMode(t, path)
 }
 
 // TestRunTokenCmd_TimesOut guards a CI hang: runTokenCmd used exec.Command with
@@ -310,8 +339,16 @@ func TestRunTokenCmd_TimesOut(t *testing.T) {
 	// Credential helpers are overwhelmingly pipelines in practice
 	// (`op read … | tr -d '\n'`, `vault read … | jq -r .token`), so this is the
 	// shape that actually needs bounding.
+	//
+	// On Windows, ping stands in for sleep (`timeout /t` refuses to run with
+	// stdin redirected). Only cmd.exe is killed at the deadline, leaving ping
+	// and findstr holding the pipe for WaitDelay to cut off; they then run out
+	// their ~9s. Their stderr goes to nul so they do not also hold the test
+	// binary's stderr, which can keep `go test` waiting on them after the run
+	// (with Git's sleep on PATH, the package took 30s on the first Windows CI
+	// run).
 	start := time.Now()
-	_, err := runTokenCmd("sleep 30 | cat")
+	_, err := runTokenCmd(shellLine("sleep 30 | cat", "ping -n 10 127.0.0.1 2>nul | findstr x 2>nul"))
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -327,7 +364,7 @@ func TestRunTokenCmd_TimesOut(t *testing.T) {
 
 // TestRunTokenCmd_Succeeds pins the normal path still works.
 func TestRunTokenCmd_Succeeds(t *testing.T) {
-	tok, err := runTokenCmd("echo '  s3cret  '")
+	tok, err := runTokenCmd(shellLine("echo '  s3cret  '", "echo   s3cret  "))
 	if err != nil {
 		t.Fatalf("runTokenCmd: %v", err)
 	}
@@ -346,10 +383,7 @@ func TestRunTokenCmd_Succeeds(t *testing.T) {
 // nonexistent file.
 func TestActivePath_ReportsTheFileActuallyUsed(t *testing.T) {
 	t.Run("legacy file present", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-		t.Setenv("NAMECOM_CONFIG", "")
+		home := isolateHome(t)
 
 		legacyDir := filepath.Join(home, ".namecom")
 		if err := os.MkdirAll(legacyDir, 0o700); err != nil {
@@ -383,10 +417,7 @@ func TestActivePath_ReportsTheFileActuallyUsed(t *testing.T) {
 	})
 
 	t.Run("nothing on disk reports the canonical location", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-		t.Setenv("NAMECOM_CONFIG", "")
+		isolateHome(t)
 
 		got, err := ActivePath()
 		if err != nil {
@@ -718,7 +749,9 @@ func TestIdentity_NeverRunsTokenCmd(t *testing.T) {
 	}
 	marker := filepath.Join(t.TempDir(), "ran")
 	f := &File{Profiles: map[string]Profile{
-		"work": {Username: "w", TokenCmd: "touch " + marker + "; printf tok"},
+		"work": {Username: "w", TokenCmd: shellLine(
+			"touch '"+marker+"'; printf tok",
+			`type nul > "`+marker+`"& echo tok`)},
 	}}
 	got := Identity(f, Overrides{})
 	if got.Profile != "work" || got.Username != "w" || got.Token != "" {
