@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -133,7 +134,7 @@ func TestComplete_HonorsGlobalFlags(t *testing.T) {
 // function calls the API.
 func TestComplete_StaticCompletionSkipsCredentials(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "token_cmd-ran")
-	withConfig(t, "profiles:\n  work:\n    username: workuser\n    token_cmd: echo ran >> "+marker+"; echo wtok\n")
+	withConfig(t, "profiles:\n  work:\n    username: workuser\n    token_cmd: "+markerTokenCmd(marker, "wtok")+"\n")
 
 	ran := func() int {
 		b, err := os.ReadFile(marker)
@@ -158,6 +159,17 @@ func TestComplete_StaticCompletionSkipsCredentials(t *testing.T) {
 	if n := ran(); n != 1 {
 		t.Errorf("token_cmd ran %d times for one dynamic completion, want 1", n)
 	}
+}
+
+// markerTokenCmd returns a token_cmd that appends "ran" to marker and prints
+// tok, written for the shell token_cmd runs through on this OS: sh, or
+// cmd.exe on Windows, which neither splits commands on ";" nor strips single
+// quotes. The result is a valid plain YAML scalar on both.
+func markerTokenCmd(marker, tok string) string {
+	if runtime.GOOS == "windows" {
+		return `echo ran>> "` + marker + `"& echo ` + tok
+	}
+	return `echo ran >> '` + marker + `'; echo ` + tok
 }
 
 // TestComplete_ShortDeadlineNoRetries guards issue #178. Completion used the
