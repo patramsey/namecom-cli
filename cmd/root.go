@@ -132,6 +132,7 @@ func Execute() {
 }
 
 func init() {
+	cobra.OnFinalize(closeDebugLog)
 	rootCmd.AddGroup(
 		&cobra.Group{ID: "domains", Title: "Domain Commands:"},
 		&cobra.Group{ID: "account", Title: "Account Commands:"},
@@ -440,7 +441,8 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 				return fmt.Errorf("restricting debug file permissions: %w", err)
 			}
 		}
-		// File is intentionally left open for the process lifetime.
+		closeDebugLog()
+		debugLogFile = f
 		apiOpts.DebugLog = f
 	case gf.debug:
 		apiOpts.DebugLog = os.Stderr
@@ -470,6 +472,19 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	ctx = context.WithValue(ctx, cmdutil.KeyOverrides, ov)
 	cmd.SetContext(ctx)
 	return nil
+}
+
+// debugLogFile is the open --debug-file, if any. closeDebugLog runs as a cobra
+// finalizer, so it is closed when the command returns, on error paths too.
+// It used to stay open for the process lifetime, which on Windows locks the
+// file until the process exits.
+var debugLogFile *os.File
+
+func closeDebugLog() {
+	if debugLogFile != nil {
+		_ = debugLogFile.Close()
+		debugLogFile = nil
+	}
 }
 
 // skipClientInit returns true for commands that don't need API credentials.
