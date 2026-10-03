@@ -31,6 +31,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and exits **1**. Under `--quiet`, `order get` and `email get` no longer echo
   the requested ID or mailbox back when the response has none. List commands
   are unchanged: an empty list is still a valid answer.
+- `domain lock`, `domain autorenew` and `domain privacy` read the domain
+  first, and when it is already in the requested state they print "… is
+  already on/off" and exit 0 without sending anything; `--dry-run` says the
+  same. `lock on` for a domain inside its 60-day transfer lock used to fail
+  with "Domain can not be unlocked until …". When the API refuses to unlock
+  during that window, `domain lock off` and `domain update --lock=false` now
+  say so, keeping the API's date; the exit code is still 1. Scripts see one
+  extra GET per toggle, and a JSON `message` reading "already" where a
+  no-op PATCH used to be sent.
 
 ## [0.4.8] - 2026-10-02
 

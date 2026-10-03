@@ -2,6 +2,7 @@ package domain
 
 import (
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -10,6 +11,14 @@ import (
 )
 
 const domainStub = `{"domainName":"example.com","locked":true,"autorenewEnabled":true,"privacyEnabled":false,"nameservers":["ns1.name.com","ns2.name.com"],"expireDate":"2027-01-01","createDate":"2026-01-01"}`
+
+// toggleStub is a domain whose three toggles are all the opposite of enable.
+// A toggle already in the requested state reads the domain and sends nothing
+// (#187), so a test of the request a toggle sends needs one that changes.
+func toggleStub(enable bool) string {
+	v := strconv.FormatBool(!enable)
+	return `{"domainName":"example.com","locked":` + v + `,"autorenewEnabled":` + v + `,"privacyEnabled":` + v + `}`
+}
 
 // TestRequestShape_Domain pins the wire request for every mutating command in
 // this group, captured from the generated client before the port to the Core
@@ -23,7 +32,7 @@ func TestRequestShape_Domain(t *testing.T) {
 	t.Run("lock on", func(t *testing.T) {
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "PATCH", Path: "/core/v1/domains/example.com", Body: `{"locked":true}`,
-		}, cmdForToggle, runLock, []string{"on", "example.com"}, domainStub)
+		}, cmdForToggle, runLock, []string{"on", "example.com"}, toggleStub(true))
 	})
 
 	t.Run("autorenew off", func(t *testing.T) {

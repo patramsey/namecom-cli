@@ -53,7 +53,7 @@ var lockCmd = &cobra.Command{
 // under --dry-run or when the user declines.
 func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, prompt string) (sent bool, err error) {
 	client := cmdutil.APIClient(cmd)
-	return cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
+	sent, err = cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
 		Method: "PATCH",
 		Path:   fmt.Sprintf("/core/v1/domains/%s", req.DomainName),
 		Body:   req,
@@ -62,6 +62,79 @@ func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, p
 		_, err := client.SDK().Domains.UpdateDomain(ctx, req)
 		return api.FromSDKError(err)
 	})
+	return sent, explainUpdateError(err, req)
+}
+
+// toggleAlreadySet reads the domain and reports whether the setting get
+// returns already equals want, in which case the toggle sends nothing.
+//
+// The PATCH is not idempotent in practice: during the 60-day transfer lock
+// after a registration or transfer the API refuses any body carrying `locked`,
+// so `lock on` for a domain that is already locked failed with "Domain can not
+// be unlocked until …" (#187). One GET avoids sending a change that is not a
+// change. It runs under --dry-run too, which then reports the same outcome
+// instead of previewing a request that would not be made.
+//
+// A response with no domain object is not evidence of anything, so it reports
+// false and the PATCH goes ahead as before.
+func toggleAlreadySet(cmd *cobra.Command, domainName string, want bool, get func(*coreapigo.DomainResponsePayload) bool) (bool, error) {
+	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(),
+		&coreapigo.GetDomainRequest{DomainName: domainName})
+	if err != nil {
+		return false, api.FromSDKError(err)
+	}
+	return d != nil && get(d) == want, nil
+}
+
+// onOff is a toggle state in the words its command takes.
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
+// transferLockError is the API's refusal to change `locked` during the 60-day
+// transfer lock, restated. The API answers "Invalid Argument (Domain can not
+// be unlocked until 2026-11-28 06:37:39)", which says neither why nor that the
+// lock lifts by itself. The date is the API's, kept verbatim. It unwraps to
+// the *api.APIError, so the exit code is unchanged.
+type transferLockError struct {
+	domain, until string
+	locking       bool
+	err           error
+}
+
+func (e *transferLockError) Error() string {
+	if e.locking {
+		return fmt.Sprintf("%s is already transfer-locked: it is in the 60-day lock that follows a registration or transfer, "+
+			"and the API refuses any change to the lock, even to restate it, until %s", e.domain, e.until)
+	}
+	return fmt.Sprintf("%s cannot be unlocked until %s: it is in the 60-day transfer lock that follows a registration or transfer",
+		e.domain, e.until)
+}
+
+func (e *transferLockError) Unwrap() error { return e.err }
+
+func (e *transferLockError) UserHint() string {
+	return "the lock lifts on its own on that date; nothing needs to be done before then"
+}
+
+// explainUpdateError restates the UpdateDomain refusals whose API wording is
+// unhelpful, given the request that drew them. Any other error is returned
+// unchanged.
+func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	if !ok {
+		return err
+	}
+	text := apiErr.Message + " " + apiErr.Details
+	if req.Locked != nil {
+		if _, until, found := strings.Cut(text, "can not be unlocked until "); found && strings.TrimSpace(until) != "" {
+			return &transferLockError{domain: req.DomainName, until: strings.TrimSpace(until), locking: *req.Locked, err: err}
+		}
+	}
+	return err
 }
 
 func runLock(cmd *cobra.Command, args []string) error {
@@ -73,6 +146,16 @@ func runLock(cmd *cobra.Command, args []string) error {
 	domainName, err := cmdutil.DomainArg(args, 1)
 	if err != nil {
 		return err
+	}
+
+	already, err := toggleAlreadySet(cmd, domainName, enable,
+		func(d *coreapigo.DomainResponsePayload) bool { return d.Locked })
+	if err != nil {
+		return err
+	}
+	if already {
+		out.Success(fmt.Sprintf("Transfer lock is already %s for %s; nothing to change", onOff(enable), domainName))
+		return nil
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, Locked: &enable}
@@ -116,6 +199,15 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	already, err := toggleAlreadySet(cmd, domainName, enable,
+		func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled })
+	if err != nil {
+		return err
+	}
+	if already {
+		out.Success(fmt.Sprintf("Auto-renewal is already %s for %s; nothing to change", onOff(enable), domainName))
+		return nil
+	}
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, AutorenewEnabled: &enable}
 	if sent, err := applyDomainToggle(cmd, req, ""); err != nil || !sent {
 		return err
@@ -156,6 +248,16 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	domainName, err := cmdutil.DomainArg(args, 1)
 	if err != nil {
 		return err
+	}
+
+	already, err := toggleAlreadySet(cmd, domainName, enable,
+		func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled })
+	if err != nil {
+		return err
+	}
+	if already {
+		out.Success(fmt.Sprintf("WHOIS privacy is already %s for %s; nothing to change", onOff(enable), domainName))
+		return nil
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
@@ -640,7 +742,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return api.FromSDKError(err)
 	})
 	if err != nil || !sent {
-		return err
+		return explainUpdateError(err, req)
 	}
 	// Removing the transfer lock has no cost but a real security consequence,
 	// so warn for the same reason `domain lock off` does. Only after the API

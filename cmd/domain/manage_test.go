@@ -1384,6 +1384,12 @@ func TestDryRunMatchesRealRequest_Domain(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// resp has every toggle off, so an "off" toggle would be a no-op
+			// that sends nothing (#187); give those a domain where it is on.
+			resp := resp
+			if tc.args[0] == "off" {
+				resp = toggleStub(false)
+			}
 			dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(resp))
@@ -1612,7 +1618,8 @@ func TestToggleCommands_UseUpdateDomain(t *testing.T) {
 				method, path = r.Method, r.URL.Path
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"domainName":"example.com"}`))
+				// The opposite state, so the toggle is a change and is sent.
+				_, _ = w.Write([]byte(toggleStub(tc.wantValue)))
 			}))
 			t.Cleanup(srv.Close)
 
