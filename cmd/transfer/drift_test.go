@@ -241,6 +241,26 @@ func TestRequestShape_Transfer(t *testing.T) {
 			Body:   `{"domainName":"example.com","authCode":"AUTH123"}`,
 		}, build, runInternalIn, []string{"example.com"}, transferStub)
 	})
+
+	// --contacts-file (#217) adds a "contacts" key holding the file's object
+	// unchanged. The two cases above pin that it is absent without the flag.
+	paths := map[string]string{"create": "/core/v1/transfers", "internal-in": "/core/v1/transfers/internal/in"}
+	for name, c := range contactsCmds {
+		t.Run(name+" with contacts", func(t *testing.T) {
+			build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := c.build(t, srv)
+				if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", "--contacts-file", writeContactsFile(t, testContacts)}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
+			}
+			drifttest.AssertRequest(t, drifttest.Request{
+				Method: "POST",
+				Path:   paths[name],
+				Body:   `{"domainName":"example.com","authCode":"AUTH123","contacts":` + testContacts + `}`,
+			}, build, c.run, []string{"example.com"}, transferStub)
+		})
+	}
 }
 
 // failIfWritten is the stub handler for dry-run tests. Reads are expected —
@@ -286,6 +306,21 @@ func TestDryRunMatchesRealRequest_TransferBody(t *testing.T) {
 		}
 		drifttest.AssertDryRunBodyMatchesRedacted(t, build, runInternalIn, []string{"example.com"}, transferStub, redacted)
 	})
+
+	// The contacts are previewed in full; only the auth code is redacted.
+	for name, c := range contactsCmds {
+		t.Run(name+" with contacts", func(t *testing.T) {
+			build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := c.build(t, srv)
+				if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", "--contacts-file", writeContactsFile(t, testContacts)}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				t.Cleanup(func() { createAuthCode = "" })
+				return cmd
+			}
+			drifttest.AssertDryRunBodyMatchesRedacted(t, build, c.run, []string{"example.com"}, transferStub, redacted)
+		})
+	}
 
 	t.Run("cancel", func(t *testing.T) {
 		drifttest.AssertDryRunBodyMatches(t, cmdForTransferGet, runCancel, []string{"example.com"}, transferStub)

@@ -9,6 +9,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Added
+- `transfer create` and `transfer internal-in` take `--contacts-file`, the
+  same JSON file `domain register --contacts-file` reads. The WHOIS contacts
+  in it are applied when the domain lands in the account, so a transfer no
+  longer needs a follow-up `domain contacts set`. Roles left out of the file
+  get the account defaults, and each role given must be complete. Changing
+  contacts may start a registrar transfer lock, depending on account
+  settings; the confirmation prompt says so. The file is read before the
+  auth-code prompt, and a missing or invalid one exits 2. `--dry-run` shows
+  the contacts in the previewed body.
+
 ### Changed
 - The name.com Core SDK is now pinned to v1.35.0. It adds an optional
   `contacts` field to transfer requests and a `warning` field to

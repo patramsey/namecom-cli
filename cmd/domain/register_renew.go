@@ -2,10 +2,8 @@ package domain
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -193,15 +191,11 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		Years:  &years,
 	}
 	if registerContactsFile != "" {
-		f, err := os.ReadFile(registerContactsFile) //nolint:gosec // G304: --contacts-file names the file to read; that is the flag's purpose
+		contacts, err := cmdutil.ReadContactsFile(registerContactsFile)
 		if err != nil {
-			return fmt.Errorf("reading contacts file: %w", err)
+			return err
 		}
-		var contacts coreapigo.ContactsRequest
-		if err := json.Unmarshal(f, &contacts); err != nil {
-			return fmt.Errorf("parsing contacts file: %w", err)
-		}
-		body.Domain.Contacts = &contacts
+		body.Domain.Contacts = contacts
 	}
 	if len(tldReqs) > 0 {
 		body.TldRequirements = tldReqs

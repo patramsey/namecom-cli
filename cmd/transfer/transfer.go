@@ -28,8 +28,12 @@ var (
 	createPrivacy  bool
 	createPrice    float64
 	createWatch    bool
+	// createContactsFile and internalContactsFile name a ContactsRequest JSON
+	// file, the format `domain register --contacts-file` takes.
+	createContactsFile string
 
-	internalAuthCode string
+	internalAuthCode     string
+	internalContactsFile string
 )
 
 var listAll bool
@@ -56,7 +60,11 @@ var createCmd = &cobra.Command{
 	Use:   "create <domain>",
 	Short: "Initiate a transfer in from another registrar",
 	Example: `  namecom transfer create example.com --auth-code XXXXXX
-  namecom transfer create example.com --auth-code XXXXXX --privacy`,
+  namecom transfer create example.com --auth-code XXXXXX --privacy
+
+  # Apply WHOIS contacts on arrival instead of the account defaults. Changing
+  # contacts may start a registrar transfer lock, per account settings.
+  namecom transfer create example.com --auth-code XXXXXX --contacts-file contacts.json`,
 	Args: cmdutil.ExactArgs(1),
 	// A domain to transfer in is held elsewhere, not in this account (#187).
 	ValidArgsFunction: cobra.NoFileCompletions,
@@ -74,9 +82,10 @@ name.com support to request access.
 
 The losing account must unlock the domain and supply the authorization code from
 the name.com dashboard first — this command cannot do either.`,
-	Example: `  namecom transfer internal-in example.com --auth-code XXXXXX`,
-	Args:    cmdutil.ExactArgs(1),
-	RunE:    runInternalIn,
+	Example: `  namecom transfer internal-in example.com --auth-code XXXXXX
+  namecom transfer internal-in example.com --auth-code XXXXXX --contacts-file contacts.json`,
+	Args: cmdutil.ExactArgs(1),
+	RunE: runInternalIn,
 }
 
 var cancelCmd = &cobra.Command{
@@ -111,8 +120,10 @@ func init() {
 	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "purchase WHOIS privacy with transfer")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price for premium domain transfers")
 	createCmd.Flags().BoolVar(&createWatch, "watch", false, "poll transfer status every 5 minutes until complete or failed")
+	createCmd.Flags().StringVar(&createContactsFile, "contacts-file", "", contactsFileUsage)
 
 	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code")
+	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
 
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full transfer history)")
 
@@ -249,6 +260,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	contacts, err := readContactsFlag(createContactsFile)
+	if err != nil {
+		return err
+	}
+
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
 		if !output.IsInteractive() {
@@ -302,6 +318,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if createPrice > 0 {
 		body.PurchasePrice = &createPrice
 	}
+	body.Contacts = contacts
 
 	// RunWrite skips the prompt under --dry-run: nothing will be sent, and in
 	// a script Confirm hard-errors without --yes, which made --dry-run
@@ -444,6 +461,11 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	contacts, err := readContactsFlag(internalContactsFile)
+	if err != nil {
+		return err
+	}
+
 	if internalAuthCode == "" {
 		if !output.IsInteractive() {
 			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
@@ -479,6 +501,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	body := coreapigo.CreateInternalTransferInRequest{
 		DomainName: domain,
 		AuthCode:   internalAuthCode,
+		Contacts:   contacts,
 	}
 
 	var t *coreapigo.DomainResponsePayload
@@ -491,7 +514,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 			b.AuthCode = redactedAuthCode
 			return b
 		},
-		Prompt: fmt.Sprintf("Transfer %s from another name.com account?", domain),
+		Prompt: fmt.Sprintf("Transfer %s from another name.com account%s?", domain, contactsPromptNote(body.Contacts)),
 	}, func(ctx context.Context, body coreapigo.CreateInternalTransferInRequest) error {
 		var err error
 		t, err = client.SDK().Transfers.CreateInternalTransferIn(ctx, &body)
@@ -670,7 +693,32 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 			priceMsg += " plus WHOIS privacy"
 		}
 	}
-	return fmt.Sprintf("Initiate transfer of %s%s?", domain, priceMsg)
+	return fmt.Sprintf("Initiate transfer of %s%s%s?", domain, priceMsg, contactsPromptNote(body.Contacts))
+}
+
+// contactsFileUsage is the --contacts-file help for both transfer writes.
+const contactsFileUsage = "JSON file of WHOIS contacts to apply, as for 'domain register'; " +
+	"omitted roles get account defaults (may start a transfer lock)"
+
+// readContactsFlag reads --contacts-file, or returns nil when it is unset. It
+// runs before the auth-code prompt and any request, so a bad file is a usage
+// error (exit 2) reported before the user has typed a secret.
+func readContactsFlag(path string) (*coreapigo.ContactsRequest, error) {
+	if path == "" {
+		return nil, nil
+	}
+	contacts, err := cmdutil.ReadContactsFile(path)
+	return contacts, cmdutil.NewUsageError(err)
+}
+
+// contactsPromptNote is appended to a transfer prompt when the body carries
+// contacts. The SDK documents that applying them may start a registrar
+// contact-change transfer lock, which is worth knowing before approving.
+func contactsPromptNote(c *coreapigo.ContactsRequest) string {
+	if c == nil {
+		return ""
+	}
+	return " and apply the contacts file (may start a transfer lock)"
 }
 
 // redactedAuthCode replaces the auth code in a --dry-run preview. It is the
