@@ -9,6 +9,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- The name.com Core SDK is now pinned to v1.35.0. It adds an optional
+  `contacts` field to transfer requests and a `warning` field to
+  transfer-status webhooks; nothing the CLI sends or prints changes.
+
 ## [0.4.8] - 2026-10-02
 
 Sixty bug fixes and two security hardening changes. They came from a broad bug

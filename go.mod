@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/muesli/termenv v0.16.0
-	github.com/namedotcom/core-api-go v1.34.0
+	github.com/namedotcom/core-api-go v1.35.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/mod v0.41.0
