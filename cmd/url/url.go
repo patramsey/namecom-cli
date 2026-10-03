@@ -204,14 +204,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := cmdutil.RequireField("the forwarding's ID", entry.ID); err != nil {
+		return err
+	}
 
 	// --quiet prints the identifying value only, matching list commands.
 	if out.QuietMode {
-		id := ""
-		if entry.ID != nil {
-			id = strconv.Itoa(*entry.ID)
-		}
-		out.PrintQuiet([]string{id})
+		out.PrintQuiet([]string{strconv.Itoa(*entry.ID)})
 		return nil
 	}
 

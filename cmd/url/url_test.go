@@ -134,6 +134,20 @@ func TestURLGet_BadID(t *testing.T) {
 	}
 }
 
+// TestURLGet_EmptyObjectIsAnError pins #187: a `200 {}` printed an empty
+// forwarding and exited 0.
+func TestURLGet_EmptyObjectIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(srv.Close)
+
+	err := runGet(cmdForURLGet(t, srv), []string{"example.com", "7"})
+	if _, ok := errors.AsType[*api.UnexpectedResponseError](err); !ok {
+		t.Fatalf("runGet = %v, want an *api.UnexpectedResponseError", err)
+	}
+}
+
 func TestURLGet_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

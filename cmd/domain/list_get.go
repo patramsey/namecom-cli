@@ -284,6 +284,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+	if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
+		return err
+	}
 
 	// --quiet prints the identifying value only, matching list commands.
 	if out.QuietMode {

@@ -292,6 +292,9 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
+		return err
+	}
 
 	// Quiet prints the registrant's email: the registrant is the owner of
 	// record and the contact ICANN verification is sent to. Nothing is

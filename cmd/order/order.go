@@ -222,15 +222,14 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := cmdutil.RequireField("the order ID", o.ID); err != nil {
+		return err
+	}
 	o.OrderItems = cmdutil.NonNil(o.OrderItems)
 
-	// Quiet prints the order ID, from the response where it has one.
+	// Quiet prints the order ID from the response.
 	if out.QuietMode {
-		oid := int(id)
-		if o != nil && o.ID != nil {
-			oid = *o.ID
-		}
-		out.Quiet(strconv.Itoa(oid))
+		out.Quiet(strconv.Itoa(*o.ID))
 		return nil
 	}
 

@@ -187,6 +187,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := cmdutil.RequireField("the nameserver's hostname", ns.Hostname); err != nil {
+		return err
+	}
 
 	// --quiet prints the identifying value only, matching list commands.
 	if out.QuietMode {
