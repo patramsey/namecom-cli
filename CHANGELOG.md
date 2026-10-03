@@ -78,6 +78,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   reading the request or the created record sees the `xn--…` form. A name
   with no valid internationalized form now exits **2** instead of reaching
   the server. TXT, A and AAAA answers are unchanged.
+- A missing, unreadable or invalid contacts file now exits 2 (usage error)
+  instead of 1, for `domain register --contacts-file` and `domain contacts
+  set --from-file`, matching `transfer create`. Scripts that check for exit
+  code 1 here need updating. `domain register` also reads the file before
+  checking availability and pricing or showing the guided form, so a bad
+  path fails immediately.
 
 ## [0.4.8] - 2026-10-02
 

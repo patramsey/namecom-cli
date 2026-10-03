@@ -2650,3 +2650,52 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 		})
 	}
 }
+
+// TestContactFiles_BadFileIsUsageError pins that `domain register
+// --contacts-file` and `domain contacts set --from-file` reject a missing or
+// invalid file before any request or prompt, with exit 2, as `transfer create`
+// does. Register used to read the file only after the availability check,
+// the guided form and the pricing lookup, and both exited 1.
+func TestContactFiles_BadFileIsUsageError(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	files := map[string]func(t *testing.T) string{
+		"missing": func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.json") },
+		"invalid JSON": func(t *testing.T) string {
+			p := filepath.Join(t.TempDir(), "contacts.json")
+			if err := os.WriteFile(p, []byte(`not json`), 0o600); err != nil {
+				t.Fatalf("writing contacts file: %v", err)
+			}
+			return p
+		},
+	}
+	cmds := map[string]func(t *testing.T, path string) error{
+		"register": func(t *testing.T, path string) error {
+			cmd := cmdForRegister(t, neverCalledServer(t))
+			t.Cleanup(func() { registerContactsFile = "" })
+			if err := cmd.ParseFlags([]string{"--contacts-file", path}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return runRegister(cmd, []string{"example.com"})
+		},
+		"contacts set": func(t *testing.T, path string) error {
+			cmd := baseCmd(t, neverCalledServer(t))
+			t.Cleanup(func() { contactsFile = "" })
+			cmd.Flags().StringVar(&contactsFile, "from-file", path, "")
+			return runContactsSet(cmd, []string{"example.com"})
+		},
+	}
+	for cname, run := range cmds {
+		for fname, file := range files {
+			t.Run(cname+"/"+fname, func(t *testing.T) {
+				err := run(t, file(t))
+				var usage *cmdutil.UsageError
+				if !errors.As(err, &usage) {
+					t.Fatalf("bad contacts file should be a usage error (exit 2), got %T: %v", err, err)
+				}
+				if !strings.Contains(err.Error(), "contacts file") {
+					t.Errorf("error should name the contacts file, got: %v", err)
+				}
+			})
+		}
+	}
+}

@@ -701,14 +701,13 @@ const contactsFileUsage = "JSON file of WHOIS contacts to apply, as for 'domain 
 	"omitted roles get account defaults (may start a transfer lock)"
 
 // readContactsFlag reads --contacts-file, or returns nil when it is unset. It
-// runs before the auth-code prompt and any request, so a bad file is a usage
-// error (exit 2) reported before the user has typed a secret.
+// runs before the auth-code prompt and any request, so a bad file (a usage
+// error, exit 2) is reported before the user has typed a secret.
 func readContactsFlag(path string) (*coreapigo.ContactsRequest, error) {
 	if path == "" {
 		return nil, nil
 	}
-	contacts, err := cmdutil.ReadContactsFile(path)
-	return contacts, cmdutil.NewUsageError(err)
+	return cmdutil.ReadContactsFile(path)
 }
 
 // contactsPromptNote is appended to a transfer prompt when the body carries

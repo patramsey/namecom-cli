@@ -106,6 +106,16 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Read --contacts-file up front too, for the same reason: it used to be
+	// read after the availability check, the guided form and the pricing
+	// lookup, so a typo in the path cost all three.
+	var contacts *coreapigo.ContactsRequest
+	if registerContactsFile != "" {
+		if contacts, err = cmdutil.ReadContactsFile(registerContactsFile); err != nil {
+			return err
+		}
+	}
+
 	// Check availability before collecting any further input. CheckAvailability
 	// is used here (not ZoneCheck) because it's authoritative — it includes
 	// pricing, premium status, and the reason a domain isn't available, all of
@@ -190,13 +200,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		Domain: &payload,
 		Years:  &years,
 	}
-	if registerContactsFile != "" {
-		contacts, err := cmdutil.ReadContactsFile(registerContactsFile)
-		if err != nil {
-			return err
-		}
-		body.Domain.Contacts = contacts
-	}
+	body.Domain.Contacts = contacts
 	if len(tldReqs) > 0 {
 		body.TldRequirements = tldReqs
 	}
