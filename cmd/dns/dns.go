@@ -267,13 +267,15 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
 	}
-	if err := cmdutil.ValidDNSHost(createHost); err != nil {
+	host, err := asciiHost(createHost)
+	if err != nil {
 		return err
 	}
-	if err := cmdutil.ValidDNSAnswer(createType, createHost, createAnswer); err != nil {
+	answer, err := asciiAnswer(createType, host, createAnswer)
+	if err != nil {
 		return err
 	}
-	for _, w := range cmdutil.DNSAnswerWarnings(createType, createAnswer, createPriority, cmd.Flags().Changed("priority")) {
+	for _, w := range cmdutil.DNSAnswerWarnings(createType, answer, createPriority, cmd.Flags().Changed("priority")) {
 		out.Warn(w)
 	}
 	if cmd.Flags().Changed("ttl") {
@@ -290,8 +292,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	body := coreapigo.DNSCreateRecordBody{
 		DomainName: domain,
 		Type:       coreapigo.DNSCreateRecordBodyType(createType),
-		Host:       createHost,
-		Answer:     createAnswer,
+		Host:       host,
+		Answer:     answer,
 		TTL:        &createTTL,
 	}
 	// Gate on the flag, not the value: 0 is a valid MX/SRV priority, so deciding
@@ -402,10 +404,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
 	}
 	if cmd.Flags().Changed("host") {
-		if err := cmdutil.ValidDNSHost(updateHost); err != nil {
+		host, err := asciiHost(updateHost)
+		if err != nil {
 			return err
 		}
-		body.Host = &updateHost
+		body.Host = &host
 	}
 	if cmd.Flags().Changed("answer") {
 		rtype := string(body.Type)
@@ -413,13 +416,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if body.Host != nil {
 			host = *body.Host
 		}
-		if err := cmdutil.ValidDNSAnswer(rtype, host, updateAnswer); err != nil {
+		answer, err := asciiAnswer(rtype, host, updateAnswer)
+		if err != nil {
 			return err
 		}
-		for _, w := range cmdutil.DNSAnswerWarnings(rtype, updateAnswer, derefInt64(body.Priority), body.Priority != nil) {
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, answer, derefInt64(body.Priority), body.Priority != nil) {
 			out.Warn(w)
 		}
-		body.Answer = updateAnswer
+		body.Answer = answer
 	} else if cmd.Flags().Changed("type") {
 		// Type changed but answer kept from the existing record: re-validate the
 		// existing answer against the new type so the mismatch is caught client-side
@@ -606,12 +610,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSCreateType(rtype); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
-		if err := cmdutil.ValidDNSHost(host); err != nil {
+		// Converted in place, so the request body carries the ASCII form.
+		asciiH, err := asciiHost(host)
+		if err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
-		if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+		asciiA, err := asciiAnswer(rtype, asciiH, answer)
+		if err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
+		r.Host, r.Answer = &asciiH, &asciiA
 		if err := cmdutil.ValidTTL(r.TTL); err != nil {
 			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
 		}
@@ -921,6 +929,59 @@ func derefInt64(n *int64) int64 {
 	return *n
 }
 
+// asciiHost validates a host and returns the form to send, with any Unicode
+// labels in punycode (#187): the server got them as typed, and --dry-run
+// previewed them that way. The typed value is checked first, so its errors read
+// as they always have; the converted one again, since DNS length limits apply
+// to what is sent.
+func asciiHost(host string) (string, error) {
+	if err := cmdutil.ValidDNSHost(host); err != nil {
+		return "", err
+	}
+	a, err := cmdutil.ASCIIHostname(host, "--host")
+	if err != nil {
+		return "", err
+	}
+	if a != host {
+		if err := cmdutil.ValidDNSHost(a); err != nil {
+			return "", err
+		}
+	}
+	return a, nil
+}
+
+// asciiAnswer is asciiHost for a record answer. Only the hostname a CNAME,
+// ANAME, MX, NS or SRV record points at is converted; other answers (TXT, A,
+// AAAA) are not names and are returned as typed.
+func asciiAnswer(rtype, host, answer string) (string, error) {
+	if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+		return "", err
+	}
+	var a string
+	var err error
+	switch rtype = strings.ToUpper(rtype); rtype {
+	case "CNAME", "ANAME", "MX", "NS":
+		a, err = cmdutil.ASCIIHostname(answer, rtype+" record target")
+	case "SRV":
+		// "weight port target": only the last field is a name.
+		i := strings.LastIndexByte(answer, ' ')
+		var target string
+		target, err = cmdutil.ASCIIHostname(answer[i+1:], "SRV record target")
+		a = answer[:i+1] + target
+	default:
+		return answer, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if a != answer {
+		if err := cmdutil.ValidDNSAnswer(rtype, host, a); err != nil {
+			return "", err
+		}
+	}
+	return a, nil
+}
+
 // qualify appends the trailing dot that makes a hostname absolute in a zone
 // file. The API strips it on storage, so a CNAME to example.net comes back as
 // "example.net" — which a zone parser reads as example.net.<origin>. A name
@@ -944,33 +1005,27 @@ func qualifyTarget(rdata string) string {
 const maxCharString = 255
 
 // quoteTXT wraps TXT rdata in quoted character-strings, escaping embedded
-// backslashes and quotes, unless it is already quoted. A value over 255 bytes
-// (a 2048-bit DKIM key, say) is split into several strings, which is how a
-// zone file spells one long TXT value. The split is on bytes of the unescaped
-// value, so it can never fall inside an escape sequence, and it backs off to a
-// UTF-8 boundary so a character is not cut in two.
+// backslashes and quotes. A value over 255 bytes (a 2048-bit DKIM key, say) is
+// split into several strings, which is how a zone file spells one long TXT
+// value. The split is on bytes of the unescaped value, so it can never fall
+// inside an escape sequence, and it backs off to a UTF-8 boundary so a
+// character is not cut in two.
 //
-// Control characters are written as RFC 1035 \DDD decimal escapes, quoted or
-// not: a raw newline inside a quoted string leaves the quotes unbalanced, and
-// the whole zone fails to load.
+// A value that is already a well-formed run of quoted character-strings, each
+// within the limit, is taken as zone syntax and rewritten in the same form.
+// Anything else that merely starts and ends with a quote — `"a"b"`, or one
+// quoted string over 255 bytes — used to be passed through as-is, and the zone
+// did not load (#187); it is now content like any other value.
+//
+// Control characters are written as RFC 1035 \DDD decimal escapes: a raw
+// newline inside a quoted string leaves the quotes unbalanced, and the whole
+// zone fails to load.
 func quoteTXT(s string) string {
-	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
-		return escapeControls(s)
-	}
-	escape := func(s string) string {
-		var b strings.Builder
-		for i := 0; i < len(s); i++ {
-			switch c := s[i]; {
-			case c == '\\' || c == '"':
-				b.WriteByte('\\')
-				b.WriteByte(c)
-			case isControl(c):
-				fmt.Fprintf(&b, `\%03d`, c)
-			default:
-				b.WriteByte(c)
-			}
+	if parts, ok := parseQuotedTXT(s); ok {
+		for i, p := range parts {
+			parts[i] = `"` + escapeTXT(p) + `"`
 		}
-		return b.String()
+		return strings.Join(parts, " ")
 	}
 	var parts []string
 	for {
@@ -984,7 +1039,7 @@ func quoteTXT(s string) string {
 				n = maxCharString
 			}
 		}
-		parts = append(parts, `"`+escape(s[:n])+`"`)
+		parts = append(parts, `"`+escapeTXT(s[:n])+`"`)
 		s = s[n:]
 		if s == "" {
 			return strings.Join(parts, " ")
@@ -992,36 +1047,88 @@ func quoteTXT(s string) string {
 	}
 }
 
-// isControl reports whether c is an ASCII control character.
-func isControl(c byte) bool { return c < 0x20 || c == 0x7f }
-
-// escapeControls rewrites the control characters in already-quoted rdata as
-// \DDD escapes and leaves everything else alone. A backslash-escaped control
-// character (`\` then a newline) means that character, so it becomes the same
-// \DDD; an escaped backslash is skipped as a pair so its second `\` is not
-// taken to escape what follows.
-func escapeControls(s string) string {
+// escapeTXT escapes one character-string's bytes for use between quotes.
+func escapeTXT(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '\\' && i+1 < len(s) {
-			i++
-			if isControl(s[i]) {
-				fmt.Fprintf(&b, `\%03d`, s[i])
-			} else {
-				b.WriteByte(c)
-				b.WriteByte(s[i])
-			}
-			continue
-		}
-		if isControl(c) {
+		switch c := s[i]; {
+		case c == '\\' || c == '"':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case isControl(c):
 			fmt.Fprintf(&b, `\%03d`, c)
-			continue
+		default:
+			b.WriteByte(c)
 		}
-		b.WriteByte(c)
 	}
 	return b.String()
 }
+
+// parseQuotedTXT reads s as zone-file TXT rdata: one or more quoted
+// character-strings separated by spaces or tabs. It returns the unescaped
+// bytes of each, and ok == false unless every string is closed, every escape
+// is complete (\X, or \DDD with DDD at most 255), and every string fits in
+// 255 bytes. A raw control character inside the quotes is taken as itself.
+func parseQuotedTXT(s string) (parts []string, ok bool) {
+	i := 0
+	for {
+		if i >= len(s) || s[i] != '"' {
+			return nil, false
+		}
+		i++
+		var b strings.Builder
+		for {
+			if i >= len(s) {
+				return nil, false // unterminated
+			}
+			c := s[i]
+			if c == '"' {
+				i++
+				break
+			}
+			if c != '\\' {
+				b.WriteByte(c)
+				i++
+				continue
+			}
+			if i+1 >= len(s) {
+				return nil, false
+			}
+			if !isDigit(s[i+1]) {
+				b.WriteByte(s[i+1])
+				i += 2
+				continue
+			}
+			if i+4 > len(s) || !isDigit(s[i+2]) || !isDigit(s[i+3]) {
+				return nil, false
+			}
+			n, err := strconv.ParseUint(s[i+1:i+4], 10, 8)
+			if err != nil {
+				return nil, false
+			}
+			b.WriteByte(byte(n))
+			i += 4
+		}
+		if b.Len() > maxCharString {
+			return nil, false
+		}
+		parts = append(parts, b.String())
+		if i == len(s) {
+			return parts, true
+		}
+		if s[i] != ' ' && s[i] != '\t' {
+			return nil, false
+		}
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
+	}
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// isControl reports whether c is an ASCII control character.
+func isControl(c byte) bool { return c < 0x20 || c == 0x7f }
 
 // readImportData reads the import payload from a path, or from stdin when the
 // path is "-". The help examples advertise `dns export old.com | dns import

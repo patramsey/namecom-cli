@@ -510,6 +510,30 @@ func CanonicalDomain(s string) string {
 	return d
 }
 
+// ASCIIHostname converts the Unicode labels of a DNS name — a record's host or
+// the hostname a record points at — to punycode with the profile
+// CanonicalDomain uses, so `bücher` is sent as `xn--bcher-kva` (#187). Labels
+// that are already ASCII are left exactly as typed: `@`, `*`, `_sip` and a
+// trailing dot are not IDNA but are valid there. A label with no valid IDNA
+// form is a usage error naming what, e.g. "--host".
+func ASCIIHostname(name, what string) (string, error) {
+	if isASCII(name) {
+		return name, nil
+	}
+	labels := strings.Split(name, ".")
+	for i, l := range labels {
+		if isASCII(l) {
+			continue
+		}
+		a, err := idna.Lookup.ToASCII(l)
+		if err != nil {
+			return "", usagef("%s %q is not a valid internationalized name: %v", what, name, err)
+		}
+		labels[i] = a
+	}
+	return strings.Join(labels, "."), nil
+}
+
 // ValidAuthCode checks that a transfer auth code is plausibly non-trivial.
 func ValidAuthCode(code string) error {
 	if code == "" {

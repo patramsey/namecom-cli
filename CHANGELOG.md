@@ -55,6 +55,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
   Scripts: JSON/YAML gain `purchaseType` and `purchaseTypePrice` for these
   names (existing fields unchanged), and `-q` prints the acquisition price
   instead of the standard one. The command now makes one extra request.
+- `dns export --zone` no longer writes a zone that fails to load when a TXT
+  value starts and ends with a quote but is not well-formed zone syntax, such
+  as `"a"b"` or a single quoted string over 255 bytes. Such a value is now
+  quoted and split like any other. A well-formed quoted value is kept, but is
+  rewritten with single spaces between strings and only the escapes it needs.
+- `dns create`, `dns update` and `dns import` convert an internationalized
+  `--host`, and the hostname a CNAME, ANAME, MX, NS or SRV record points at,
+  to punycode before sending, as domain arguments already were. `--host
+  bücher` is sent, and shown by `--dry-run`, as `xn--bcher-kva`, so a script
+  reading the request or the created record sees the `xn--…` form. A name
+  with no valid internationalized form now exits **2** instead of reaching
+  the server. TXT, A and AAAA answers are unchanged.
 
 ## [0.4.8] - 2026-10-02
 
