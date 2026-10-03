@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -499,18 +498,15 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	f, err := os.ReadFile(contactsFile) //nolint:gosec // G304: --contacts-file names the file to read; that is the flag's purpose
+	// A bad file is a usage error (exit 2), like the other contacts files.
+	contacts, err := cmdutil.ReadContactsFile(contactsFile)
 	if err != nil {
-		return fmt.Errorf("reading contacts file: %w", err)
-	}
-	var contacts coreapigo.ContactsRequest
-	if err := json.Unmarshal(f, &contacts); err != nil {
-		return fmt.Errorf("parsing contacts file: %w", err)
+		return err
 	}
 
 	// Preview the SDK body, not the file's contents: the request wraps them
 	// as {"contacts": {...}}.
-	body := coreapigo.DomainsSetContactsBody{DomainName: domain, Contacts: &contacts}
+	body := coreapigo.DomainsSetContactsBody{DomainName: domain, Contacts: contacts}
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DomainsSetContactsBody]{
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/domains/%s:setContacts", domain),

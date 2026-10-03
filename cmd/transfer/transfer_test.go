@@ -57,6 +57,8 @@ func cmdForTransferCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().StringVar(&createAuthCode, "auth-code", "", "")
 	cmd.Flags().BoolVar(&createPrivacy, "privacy", false, "")
 	cmd.Flags().Float64Var(&createPrice, "price", 0, "")
+	cmd.Flags().StringVar(&createContactsFile, "contacts-file", "", "")
+	t.Cleanup(func() { createContactsFile = "" })
 	return cmd
 }
 
@@ -127,7 +129,8 @@ func cmdForInternalIn(t *testing.T, srv *httptest.Server) *cobra.Command {
 		t.Fatalf("setting yes flag: %v", err)
 	}
 	cmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "")
-	t.Cleanup(func() { internalAuthCode = "" })
+	cmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", "")
+	t.Cleanup(func() { internalAuthCode, internalContactsFile = "", "" })
 	return cmd
 }
 
@@ -1168,6 +1171,92 @@ func TestTransferCreate_RejectsNonPositivePrice(t *testing.T) {
 			var usage *cmdutil.UsageError
 			if !errors.As(err, &usage) {
 				t.Errorf("want a usage error, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// ---- --contacts-file (#217) -------------------------------------------------
+
+const testContacts = `{"registrant":{"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com"}}`
+
+func writeContactsFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "contacts.json")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing contacts file: %v", err)
+	}
+	return p
+}
+
+// contactsCmds are the two transfer writes that take --contacts-file.
+var contactsCmds = map[string]struct {
+	build func(*testing.T, *httptest.Server) *cobra.Command
+	run   func(*cobra.Command, []string) error
+}{
+	"create":      {cmdForTransferCreate, runCreate},
+	"internal-in": {cmdForInternalIn, runInternalIn},
+}
+
+// TestTransfer_BadContactsFileIsUsageError pins that an unreadable or
+// unparseable --contacts-file fails before anything else happens: no request
+// (not even the pricing lookup), no prompt, exit 2. No --auth-code is passed,
+// so a check that ran after the auth-code check would report that instead.
+func TestTransfer_BadContactsFileIsUsageError(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	files := map[string]func(t *testing.T) string{
+		"missing":      func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.json") },
+		"invalid JSON": func(t *testing.T) string { return writeContactsFile(t, `not json`) },
+	}
+	for cname, c := range contactsCmds {
+		for fname, file := range files {
+			t.Run(cname+"/"+fname, func(t *testing.T) {
+				cmd := c.build(t, neverCalledServer(t))
+				if err := cmd.ParseFlags([]string{"--contacts-file", file(t)}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				err := c.run(cmd, []string{"example.com"})
+				var usage *cmdutil.UsageError
+				if !errors.As(err, &usage) {
+					t.Fatalf("bad --contacts-file should be a usage error (exit 2), got %T: %v", err, err)
+				}
+				if !strings.Contains(err.Error(), "contacts file") {
+					t.Errorf("error should name the contacts file, got: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestTransfer_PromptMentionsContacts pins that the confirmation says the
+// contacts will be applied, and that doing so may lock the domain. Without
+// --yes in a non-interactive test, Confirm's error carries the prompt.
+func TestTransfer_PromptMentionsContacts(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	for name, c := range contactsCmds {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("transferred without confirmation: %s %s", r.Method, r.URL)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"transferPrice":12.99}`))
+			}))
+			t.Cleanup(srv.Close)
+			cmd := c.build(t, srv)
+			if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", "--contacts-file", writeContactsFile(t, testContacts)}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			if err := cmd.PersistentFlags().Set("yes", "false"); err != nil {
+				t.Fatalf("unsetting --yes: %v", err)
+			}
+			t.Cleanup(func() { createAuthCode = "" })
+			err := c.run(cmd, []string{"example.com"})
+			if err == nil {
+				t.Fatal("expected the non-interactive confirm error")
+			}
+			if !strings.Contains(err.Error(), "contacts") || !strings.Contains(err.Error(), "lock") {
+				t.Errorf("prompt should mention the contacts and the possible transfer lock:\n%v", err)
 			}
 		})
 	}

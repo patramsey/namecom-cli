@@ -200,6 +200,9 @@ namecom dns export acme.io --zone > acme.io.zone           # export as BIND zone
 namecom transfer eligibility acme.io                      # confirm it's eligible
 namecom transfer create acme.io --auth-code XXXXXX
 namecom transfer get acme.io                              # check status
+# set WHOIS contacts on arrival (same JSON as domain register --contacts-file);
+# changing contacts may start a registrar transfer lock
+namecom transfer create acme.io --auth-code XXXXXX --contacts-file contacts.json
 ```
 
 **Set up email and URL forwarding:**
