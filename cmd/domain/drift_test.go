@@ -66,7 +66,7 @@ func TestDryRunMatchesRealRequest_DomainWriteBodies(t *testing.T) {
 	}
 	for _, tc := range toggles {
 		t.Run(tc.name, func(t *testing.T) {
-			drifttest.AssertDryRunBodyMatches(t, baseCmd, tc.run, tc.args, domainStub)
+			drifttest.AssertDryRunBodyMatches(t, baseCmd, tc.run, tc.args, toggleStub(tc.args[0] == "on"))
 		})
 	}
 

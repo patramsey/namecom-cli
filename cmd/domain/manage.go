@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -53,7 +54,7 @@ var lockCmd = &cobra.Command{
 // under --dry-run or when the user declines.
 func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, prompt string) (sent bool, err error) {
 	client := cmdutil.APIClient(cmd)
-	return cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
+	sent, err = cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
 		Method: "PATCH",
 		Path:   fmt.Sprintf("/core/v1/domains/%s", req.DomainName),
 		Body:   req,
@@ -62,6 +63,104 @@ func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, p
 		_, err := client.SDK().Domains.UpdateDomain(ctx, req)
 		return api.FromSDKError(err)
 	})
+	return sent, explainUpdateError(err, req)
+}
+
+// toggleAlreadySet reads the domain and reports whether the setting get
+// returns already equals want, in which case the toggle sends nothing.
+//
+// The PATCH is not idempotent in practice: during the 60-day transfer lock
+// after a registration or transfer the API refuses any body carrying `locked`,
+// so `lock on` for a domain that is already locked failed with "Domain can not
+// be unlocked until …" (#187). One GET avoids sending a change that is not a
+// change. It runs under --dry-run too, which then reports the same outcome
+// instead of previewing a request that would not be made.
+//
+// A response with no domain object is not evidence of anything, so it reports
+// false and the PATCH goes ahead as before.
+func toggleAlreadySet(cmd *cobra.Command, domainName string, want bool, get func(*coreapigo.DomainResponsePayload) bool) (bool, error) {
+	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(),
+		&coreapigo.GetDomainRequest{DomainName: domainName})
+	if err != nil {
+		return false, api.FromSDKError(err)
+	}
+	return d != nil && get(d) == want, nil
+}
+
+// onOff is a toggle state in the words its command takes.
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
+// transferLockError is the API's refusal to change `locked` during the 60-day
+// transfer lock, restated. The API answers "Invalid Argument (Domain can not
+// be unlocked until 2026-11-28 06:37:39)", which says neither why nor that the
+// lock lifts by itself. The date is the API's, kept verbatim. It unwraps to
+// the *api.APIError, so the exit code is unchanged.
+type transferLockError struct {
+	domain, until string
+	locking       bool
+	err           error
+}
+
+func (e *transferLockError) Error() string {
+	if e.locking {
+		return fmt.Sprintf("%s is already transfer-locked: it is in the 60-day lock that follows a registration or transfer, "+
+			"and the API refuses any change to the lock, even to restate it, until %s", e.domain, e.until)
+	}
+	return fmt.Sprintf("%s cannot be unlocked until %s: it is in the 60-day transfer lock that follows a registration or transfer",
+		e.domain, e.until)
+}
+
+func (e *transferLockError) Unwrap() error { return e.err }
+
+func (e *transferLockError) UserHint() string {
+	return "the lock lifts on its own on that date; nothing needs to be done before then"
+}
+
+// privacyNotPurchasedError is the API's 409 to enabling WHOIS privacy on a
+// domain that has none purchased: "You may need to purchase WHOIS Privacy".
+// UpdateDomain only turns on privacy the domain already has, and the CLI has no
+// purchase command, so the error says where to buy it. It unwraps to the
+// *api.APIError, so the exit code is unchanged.
+type privacyNotPurchasedError struct {
+	domain string
+	err    error
+}
+
+func (e *privacyNotPurchasedError) Error() string {
+	return fmt.Sprintf("WHOIS privacy is not purchased for %s, and this command can only turn on privacy the domain already has; "+
+		"buy it in your name.com account at https://www.name.com/account, then run this again", e.domain)
+}
+
+func (e *privacyNotPurchasedError) Unwrap() error { return e.err }
+
+func (e *privacyNotPurchasedError) UserHint() string {
+	return fmt.Sprintf("run 'namecom open %s' to open the domain's page on name.com", e.domain)
+}
+
+// explainUpdateError restates the UpdateDomain refusals whose API wording is
+// unhelpful, given the request that drew them. Any other error is returned
+// unchanged.
+func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	if !ok {
+		return err
+	}
+	text := apiErr.Message + " " + apiErr.Details
+	if apiErr.StatusCode == http.StatusConflict && req.PrivacyEnabled != nil && *req.PrivacyEnabled &&
+		strings.Contains(strings.ToLower(text), "purchase") {
+		return &privacyNotPurchasedError{domain: req.DomainName, err: err}
+	}
+	if req.Locked != nil {
+		if _, until, found := strings.Cut(text, "can not be unlocked until "); found && strings.TrimSpace(until) != "" {
+			return &transferLockError{domain: req.DomainName, until: strings.TrimSpace(until), locking: *req.Locked, err: err}
+		}
+	}
+	return err
 }
 
 func runLock(cmd *cobra.Command, args []string) error {
@@ -73,6 +172,16 @@ func runLock(cmd *cobra.Command, args []string) error {
 	domainName, err := cmdutil.DomainArg(args, 1)
 	if err != nil {
 		return err
+	}
+
+	already, err := toggleAlreadySet(cmd, domainName, enable,
+		func(d *coreapigo.DomainResponsePayload) bool { return d.Locked })
+	if err != nil {
+		return err
+	}
+	if already {
+		out.Success(fmt.Sprintf("Transfer lock is already %s for %s; nothing to change", onOff(enable), domainName))
+		return nil
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, Locked: &enable}
@@ -116,6 +225,15 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	already, err := toggleAlreadySet(cmd, domainName, enable,
+		func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled })
+	if err != nil {
+		return err
+	}
+	if already {
+		out.Success(fmt.Sprintf("Auto-renewal is already %s for %s; nothing to change", onOff(enable), domainName))
+		return nil
+	}
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, AutorenewEnabled: &enable}
 	if sent, err := applyDomainToggle(cmd, req, ""); err != nil || !sent {
 		return err
@@ -158,9 +276,20 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	already, err := toggleAlreadySet(cmd, domainName, enable,
+		func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled })
+	if err != nil {
+		return err
+	}
+	if already {
+		out.Success(fmt.Sprintf("WHOIS privacy is already %s for %s; nothing to change", onOff(enable), domainName))
+		return nil
+	}
+
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
-	// Enabling privacy can incur a charge on accounts without a bundled privacy
-	// plan, so confirm before doing it. Disabling never charges.
+	// Confirm before enabling. It never charges: UpdateDomain turns on privacy
+	// the domain already has, and fails with a 409 when none was purchased,
+	// which explainUpdateError restates (#187). The prompt says so.
 	prompt := ""
 	if enable {
 		prompt = privacyPrompt(domainName)
@@ -517,37 +646,111 @@ func runPricing(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return api.FromSDKError(err)
 	}
+	acq, err := acquisition(cmd, domain)
+	if err != nil {
+		return err
+	}
 
 	// Quiet prints the registration price as a bare number ("12.99"), the one
-	// a script compares against before registering. Nothing when the API
-	// quotes none.
+	// a script compares against before registering: the acquisition price
+	// when there is one, since that is what `domain register` pays. Nothing
+	// when the API quotes none.
 	if out.QuietMode {
-		if pricing.PurchasePrice != nil {
-			out.Quiet(strconv.FormatFloat(*pricing.PurchasePrice, 'f', 2, 64))
+		price := pricing.PurchasePrice
+		if acq != nil {
+			price = acq.PurchasePrice
+		}
+		if price != nil {
+			out.Quiet(strconv.FormatFloat(*price, 'f', 2, 64))
 		}
 		return nil
 	}
 
+	// JSON/YAML print the API's pricing as before, with the acquisition added
+	// alongside when there is one, so a script reading purchasePrice is
+	// unaffected.
+	var doc any = pricing
+	if acq != nil {
+		pt, price := nonDefaultPurchaseType(acq)
+		if doc, err = withPurchase(pricing, *pt, price); err != nil {
+			return err
+		}
+	}
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(pricing)
+		return out.JSON(doc)
 	case output.FormatYAML:
-		return out.YAML(pricing)
-	default:
-		fmtPrice := func(p *float64) string {
-			if p == nil {
-				return "N/A"
-			}
-			return fmt.Sprintf("$%.2f", *p)
-		}
-		out.Table([]string{"TYPE", "PRICE"}, [][]string{
-			{"Register", fmtPrice(pricing.PurchasePrice)},
-			{"Renew", fmtPrice(pricing.RenewalPrice)},
-			{"Transfer", fmtPrice(pricing.TransferPrice)},
-			{"Premium", boolStr(pricing.Premium)},
-		})
+		return out.YAML(doc)
 	}
+
+	fmtPrice := func(p *float64) string {
+		if p == nil {
+			return "N/A"
+		}
+		return fmt.Sprintf("$%.2f", *p)
+	}
+	register := fmtPrice(pricing.PurchasePrice)
+	if acq != nil {
+		// Worded by searchPriceLabel, as `domain check` and `search` show it.
+		pt, _ := nonDefaultPurchaseType(acq)
+		register = fmt.Sprintf("price unknown (%s)", *pt)
+		if acq.PurchasePrice != nil {
+			register = searchPriceLabel(acq)
+		}
+		out.Warn(fmt.Sprintf("%s is not a standard registration (purchase type %s): registering it costs %s, not %s",
+			domain, *pt, register, fmtPrice(pricing.PurchasePrice)))
+	}
+	out.Table([]string{"TYPE", "PRICE"}, [][]string{
+		{"Register", register},
+		{"Renew", fmtPrice(pricing.RenewalPrice)},
+		{"Transfer", fmtPrice(pricing.TransferPrice)},
+		{"Premium", boolStr(pricing.Premium)},
+	})
 	return nil
+}
+
+// acquisition returns domain's availability result when registering it would
+// be an aftermarket, expiring or backorder purchase rather than a plain
+// registration, and nil otherwise.
+//
+// GetPricingForDomain cannot say: the SDK documents its purchasePrice as
+// "Does not include aftermarket, expiring, or backorder acquisition prices".
+// `domain register` checks availability and pays that price, so `domain
+// pricing` showed $17.99 for a name register would buy at $8625 (#187).
+func acquisition(cmd *cobra.Command, domain string) (*coreapigo.SearchResult, error) {
+	res, err := cmdutil.APIClient(cmd).SDK().Domains.CheckAvailability(cmd.Context(),
+		&coreapigo.AvailabilityRequest{DomainNames: []string{domain}})
+	if err != nil {
+		return nil, fmt.Errorf("checking availability: %w", api.FromSDKError(err))
+	}
+	for _, r := range cmdutil.NonNil(res.Results) {
+		if r == nil || !r.Purchasable {
+			continue
+		}
+		if pt, _ := nonDefaultPurchaseType(r); pt != nil {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+
+// withPurchase is pricing's JSON/YAML document with the acquisition added as
+// purchaseType and purchaseTypePrice. PricingResponse marshals itself, so the
+// fields are added to its encoding rather than by embedding it.
+func withPurchase(pricing *coreapigo.PricingResponse, purchaseType string, price *float64) (map[string]any, error) {
+	b, err := json.Marshal(pricing)
+	if err != nil {
+		return nil, err
+	}
+	doc := map[string]any{}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	doc["purchaseType"] = purchaseType
+	if price != nil {
+		doc["purchaseTypePrice"] = *price
+	}
+	return doc, nil
 }
 
 // -- update --
@@ -619,10 +822,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Enabling privacy can be billable, and `domain privacy on` confirms before
-	// doing it. This command reaches the identical API call, so it has to ask
-	// too — otherwise there are two routes to the same charge and only one of
-	// them pauses. Only gate on turning it ON: disabling never costs anything.
+	// `domain privacy on` confirms before enabling privacy, and this command
+	// reaches the identical API call, so it asks too — two routes to the same
+	// change should not differ in whether they pause. Only turning it ON is
+	// gated, and neither route charges (#187).
 	prompt := ""
 	if enablingPrivacy && !wasPrivate {
 		prompt = privacyPrompt(domain)
@@ -640,7 +843,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return api.FromSDKError(err)
 	})
 	if err != nil || !sent {
-		return err
+		return explainUpdateError(err, req)
 	}
 	// Removing the transfer lock has no cost but a real security consequence,
 	// so warn for the same reason `domain lock off` does. Only after the API
@@ -665,10 +868,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 // privacyPrompt is the confirmation for turning WHOIS privacy on, shared by
-// `domain privacy on` and `domain update --privacy`, which reach the same
-// possibly billable API call.
+// `domain privacy on` and `domain update --privacy`, which reach the same API
+// call. It used to call that call "a billable action", but it never bills: it
+// enables privacy already purchased, or fails (#187).
 func privacyPrompt(domain string) string {
-	return fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domain)
+	return fmt.Sprintf("Enable WHOIS privacy for %s? This turns on privacy already purchased for the domain; it does not charge.", domain)
 }
 
 func init() {
