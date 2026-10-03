@@ -9,19 +9,32 @@ import (
 	// terminal, and this package's init must run after it to undo noquery.
 	_ "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/patramsey/namecom-cli/internal/output/noquery"
 )
 
+// vtSupported is false when stdout or stderr is a Windows console that
+// refused virtual terminal processing — an old conhost, where an escape code
+// prints as text. Colour in auto mode and the spinner are then left off.
+// Everywhere else it is true.
+var vtSupported = true
+
 func init() {
 	noquery.Restore()
+	vtSupported = enableVirtualTerminal()
 
 	// The colour profile is read from the environment, not the terminal, but
 	// lipgloss caches it the first time it is asked: if anything asked while
 	// noquery had TERM set to "dumb", every style would render plain. Set it
-	// from the restored environment so that cannot happen.
+	// from the restored environment so that cannot happen. A console that
+	// cannot interpret escape codes gets none unless --color always asks.
 	r := lipgloss.DefaultRenderer()
-	r.SetColorProfile(r.Output().EnvColorProfile())
+	profile := r.Output().EnvColorProfile()
+	if !vtSupported {
+		profile = termenv.Ascii
+	}
+	r.SetColorProfile(profile)
 
 	// AdaptiveColor asks the terminal for its background colour the first time
 	// one is rendered, unless the answer has been set. Set it, so nothing this

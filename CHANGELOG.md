@@ -91,6 +91,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   late answer was left in the shell's input. Nothing is queried now: the
   light or dark colour palette comes from `COLORFGBG` when the terminal sets
   it, and is dark otherwise.
+- On Windows, colour and the spinner now work in consoles that do not have
+  escape-code processing turned on by default: `namecom` turns it on at
+  startup. Where the console refuses it (older Windows versions), output is
+  plain and there is no spinner, instead of escape codes printed as text.
+  `--color always` still colours.
 
 ## [0.4.8] - 2026-10-02
 

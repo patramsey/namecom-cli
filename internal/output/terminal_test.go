@@ -67,3 +67,30 @@ func TestNoQueryInitOrder(t *testing.T) {
 		t.Errorf("init order: noquery line %d, bubbletea line %d, output line %d; want noquery < bubbletea < output", nq, bt, out)
 	}
 }
+
+// TestNoVirtualTerminal: on a Windows console that refuses virtual terminal
+// processing (issue #187), escape codes print as text, so auto colour and the
+// spinner are off. --color always is an explicit request and still colours.
+func TestNoVirtualTerminal(t *testing.T) {
+	if _, set := os.LookupEnv("NO_COLOR"); set {
+		t.Skip("NO_COLOR is set, so auto colour is off regardless")
+	}
+	t.Setenv("CLICOLOR_FORCE", "1")
+	if !(&Config{Color: ColorAuto}).ColorEnabled() {
+		t.Fatal("precondition: CLICOLOR_FORCE=1 should enable auto colour")
+	}
+
+	prev := vtSupported
+	vtSupported = false
+	t.Cleanup(func() { vtSupported = prev })
+
+	if (&Config{Color: ColorAuto}).ColorEnabled() {
+		t.Error("ColorEnabled() in auto mode = true without VT processing, want false")
+	}
+	if !(&Config{Color: ColorAlways}).ColorEnabled() {
+		t.Error("ColorEnabled() with --color always = false, want true")
+	}
+	if spinnerTTY() {
+		t.Error("spinnerTTY() = true without VT processing, want false")
+	}
+}
