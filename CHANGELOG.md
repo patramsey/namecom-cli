@@ -96,6 +96,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   startup. Where the console refuses it (older Windows versions), output is
   plain and there is no spinner, instead of escape codes printed as text.
   `--color always` still colours.
+- Key-value tables (`domain get`, `auth status` and other single-object
+  views) now fit the terminal: a long value wraps inside its cell instead
+  of running past the edge and breaking the borders. `--wide` keeps the old
+  one-line layout, and piped or redirected output is unchanged.
 
 ## [0.4.8] - 2026-10-02
 

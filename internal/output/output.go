@@ -521,6 +521,15 @@ func (c *Config) KVTable(rows [][]string) {
 		t.Row(row...)
 	}
 
+	// Wrap values to the terminal, as Table drops columns to fit it: a long
+	// value — a nameserver list, a forwarding URL — otherwise ran past the
+	// edge and the borders came apart. Width is set only when the table is too
+	// wide, because lipgloss also stretches a narrower table to fill it.
+	// --wide and a non-terminal writer keep the natural width.
+	if !c.Wide && c.MaxWidth > 0 && tableWidth(colWidths(nil, rows, 2)) > c.MaxWidth {
+		t = t.Width(c.MaxWidth)
+	}
+
 	fmt.Fprintln(c.Writer, t.Render())
 }
 
