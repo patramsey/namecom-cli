@@ -553,6 +553,13 @@ func checkRegisterServer(t *testing.T, registered *bool) *httptest.Server {
 // convert `check` into `register`.
 func TestCheck_YesDoesNotAutoPurchase(t *testing.T) {
 	defer output.StubInteractive(true)()
+	// The stub behaves like Confirm when the human answers No: --yes, if it
+	// were passed through, would still say yes without asking.
+	var asked bool
+	stubConfirm(t, func(yes bool, _ string) bool {
+		asked = true
+		return yes
+	})
 
 	var registered bool
 	srv := checkRegisterServer(t, &registered)
@@ -561,18 +568,39 @@ func TestCheck_YesDoesNotAutoPurchase(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
-	// confirm() with yes=false and no TTY to read from must not silently succeed.
-	_ = runCheck(cmd, []string{"free.com"})
+	if err := runCheck(cmd, []string{"free.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
 
+	if !asked {
+		t.Error("the register offer was not made, so this test no longer exercises it")
+	}
 	if registered {
 		t.Error("MONEY BUG: `domain check --yes` registered the domain without an explicit answer")
 	}
+}
+
+// stubConfirm replaces confirm for the test's duration with answer, which is
+// given the yes value the caller passed and the prompt. A test that simulates
+// a terminal and can reach confirm must use it: the real prompt opens the
+// console even when stdin is not a terminal, and waits there.
+func stubConfirm(t *testing.T, answer func(yes bool, prompt string) bool) {
+	t.Helper()
+	prev := confirm
+	confirm = func(_ *output.Config, yes bool, msg string) (bool, error) {
+		return answer(yes, msg), nil
+	}
+	t.Cleanup(func() { confirm = prev })
 }
 
 // TestCheck_DryRunDoesNotPurchase guards the other half: runCheck never
 // consulted cmdutil.IsDryRun at all, so --dry-run performed a real purchase.
 func TestCheck_DryRunDoesNotPurchase(t *testing.T) {
 	defer output.StubInteractive(true)()
+	stubConfirm(t, func(bool, string) bool {
+		t.Error("--dry-run made the register offer")
+		return true
+	})
 
 	var registered bool
 	srv := checkRegisterServer(t, &registered)
