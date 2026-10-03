@@ -40,6 +40,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   say so, keeping the API's date; the exit code is still 1. Scripts see one
   extra GET per toggle, and a JSON `message` reading "already" where a
   no-op PATCH used to be sent.
+- `domain privacy on` and `domain update --privacy=true` no longer call
+  enabling privacy "a billable action": it never charges. It turns on privacy
+  already purchased for the domain, and the prompt now says so. When none was
+  purchased, the API's 409 "You may need to purchase WHOIS Privacy" now
+  explains that the CLI cannot buy it and points to your name.com account
+  (https://www.name.com/account); the exit code is still 1. `privacy off` on
+  a domain without privacy prints "already off" and exits 0 (see above).
 
 ## [0.4.8] - 2026-10-02
 

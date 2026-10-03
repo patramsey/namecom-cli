@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -120,6 +121,27 @@ func (e *transferLockError) UserHint() string {
 	return "the lock lifts on its own on that date; nothing needs to be done before then"
 }
 
+// privacyNotPurchasedError is the API's 409 to enabling WHOIS privacy on a
+// domain that has none purchased: "You may need to purchase WHOIS Privacy".
+// UpdateDomain only turns on privacy the domain already has, and the CLI has no
+// purchase command, so the error says where to buy it. It unwraps to the
+// *api.APIError, so the exit code is unchanged.
+type privacyNotPurchasedError struct {
+	domain string
+	err    error
+}
+
+func (e *privacyNotPurchasedError) Error() string {
+	return fmt.Sprintf("WHOIS privacy is not purchased for %s, and this command can only turn on privacy the domain already has; "+
+		"buy it in your name.com account at https://www.name.com/account, then run this again", e.domain)
+}
+
+func (e *privacyNotPurchasedError) Unwrap() error { return e.err }
+
+func (e *privacyNotPurchasedError) UserHint() string {
+	return fmt.Sprintf("run 'namecom open %s' to open the domain's page on name.com", e.domain)
+}
+
 // explainUpdateError restates the UpdateDomain refusals whose API wording is
 // unhelpful, given the request that drew them. Any other error is returned
 // unchanged.
@@ -129,6 +151,10 @@ func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
 		return err
 	}
 	text := apiErr.Message + " " + apiErr.Details
+	if apiErr.StatusCode == http.StatusConflict && req.PrivacyEnabled != nil && *req.PrivacyEnabled &&
+		strings.Contains(strings.ToLower(text), "purchase") {
+		return &privacyNotPurchasedError{domain: req.DomainName, err: err}
+	}
 	if req.Locked != nil {
 		if _, until, found := strings.Cut(text, "can not be unlocked until "); found && strings.TrimSpace(until) != "" {
 			return &transferLockError{domain: req.DomainName, until: strings.TrimSpace(until), locking: *req.Locked, err: err}
@@ -261,8 +287,9 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
-	// Enabling privacy can incur a charge on accounts without a bundled privacy
-	// plan, so confirm before doing it. Disabling never charges.
+	// Confirm before enabling. It never charges: UpdateDomain turns on privacy
+	// the domain already has, and fails with a 409 when none was purchased,
+	// which explainUpdateError restates (#187). The prompt says so.
 	prompt := ""
 	if enable {
 		prompt = privacyPrompt(domainName)
@@ -721,10 +748,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Enabling privacy can be billable, and `domain privacy on` confirms before
-	// doing it. This command reaches the identical API call, so it has to ask
-	// too — otherwise there are two routes to the same charge and only one of
-	// them pauses. Only gate on turning it ON: disabling never costs anything.
+	// `domain privacy on` confirms before enabling privacy, and this command
+	// reaches the identical API call, so it asks too — two routes to the same
+	// change should not differ in whether they pause. Only turning it ON is
+	// gated, and neither route charges (#187).
 	prompt := ""
 	if enablingPrivacy && !wasPrivate {
 		prompt = privacyPrompt(domain)
@@ -767,10 +794,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 // privacyPrompt is the confirmation for turning WHOIS privacy on, shared by
-// `domain privacy on` and `domain update --privacy`, which reach the same
-// possibly billable API call.
+// `domain privacy on` and `domain update --privacy`, which reach the same API
+// call. It used to call that call "a billable action", but it never bills: it
+// enables privacy already purchased, or fails (#187).
 func privacyPrompt(domain string) string {
-	return fmt.Sprintf("Enable WHOIS privacy for %s? This may be a billable action.", domain)
+	return fmt.Sprintf("Enable WHOIS privacy for %s? This turns on privacy already purchased for the domain; it does not charge.", domain)
 }
 
 func init() {

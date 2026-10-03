@@ -129,3 +129,81 @@ func TestLockRefusal_TransferLockIsExplained(t *testing.T) {
 		})
 	}
 }
+
+// privacyNotPurchased is the API's 409 for enabling WHOIS privacy on a domain
+// that has none purchased.
+const privacyNotPurchased = `{"message":"You may need to purchase WHOIS Privacy"}`
+
+// TestPrivacyPrompt_DoesNotClaimBilling covers #187: the prompt said enabling
+// privacy "may be a billable action", but UpdateDomain never charges — it
+// turns on privacy the domain already has, or fails.
+func TestPrivacyPrompt_DoesNotClaimBilling(t *testing.T) {
+	p := privacyPrompt("example.com")
+	if strings.Contains(p, "billable") {
+		t.Errorf("the prompt must not say enabling privacy may bill: %q", p)
+	}
+	if !strings.Contains(p, "does not charge") {
+		t.Errorf("the prompt should say it does not charge: %q", p)
+	}
+}
+
+// TestPrivacyOn_NotPurchasedIsExplained covers the 409 half of the privacy
+// item in #187: the CLI cannot buy privacy, so the API's "You may need to
+// purchase WHOIS Privacy" becomes an error saying where to buy it, still an
+// API error (exit 1). The same 409 to turning privacy off is not about a
+// purchase and is left alone.
+func TestPrivacyOn_NotPurchasedIsExplained(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	serve := func(t *testing.T, current string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPatch {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(privacyNotPurchased))
+				return
+			}
+			_, _ = w.Write([]byte(current))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	for name, run := range map[string]func(*httptest.Server) error{
+		"privacy on": func(srv *httptest.Server) error {
+			return runPrivacy(toggleCmd(t, srv, "yes"), []string{"on", "example.com"})
+		},
+		"update --privacy=true": func(srv *httptest.Server) error {
+			cmd := withRootFlags(t, cmdForUpdate(t, srv))
+			if err := cmd.Root().PersistentFlags().Set("yes", "true"); err != nil {
+				t.Fatalf("setting yes: %v", err)
+			}
+			if err := cmd.Flags().Set("privacy", "true"); err != nil {
+				t.Fatalf("setting privacy: %v", err)
+			}
+			return runUpdate(cmd, []string{"example.com"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run(serve(t, toggleStub(true)))
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			for _, want := range []string{"not purchased", "https://www.name.com/account"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("want %q in the error, got %q", want, err)
+				}
+			}
+			if apiErr, ok := errors.AsType[*api.APIError](err); !ok || apiErr.StatusCode != http.StatusConflict {
+				t.Errorf("the API error must stay reachable so the exit code is unchanged, got %T", err)
+			}
+		})
+	}
+
+	t.Run("privacy off keeps the API's error", func(t *testing.T) {
+		err := runPrivacy(toggleCmd(t, serve(t, toggleStub(false)), "yes"), []string{"off", "example.com"})
+		if err == nil || strings.Contains(err.Error(), "not purchased") {
+			t.Errorf("want the API's own error, got %v", err)
+		}
+	})
+}

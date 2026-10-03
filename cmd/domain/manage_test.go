@@ -1942,9 +1942,9 @@ func TestRegisterRenew_MultiYearPromptIsNotLabelledPerYear(t *testing.T) {
 	}
 }
 
-// TestUpdate_PrivacyPurchaseIsConfirmed guards a consistency hole with real
-// money behind it. `domain privacy on` deliberately confirms first, because
-// enabling WHOIS privacy can be billable on accounts without a bundled plan.
+// TestUpdate_PrivacyPurchaseIsConfirmed guards a consistency hole. `domain
+// privacy on` deliberately confirms first. (It was thought to be billable; it
+// is not — see TestPrivacyPrompt_DoesNotClaimBilling — but the prompt stays.)
 // `domain update --privacy=true` reaches the identical API call — both now PATCH
 // /core/v1/domains/{name} with privacyEnabled — but asked nothing.
 //
@@ -1962,7 +1962,7 @@ func TestUpdate_PrivacyPurchaseIsConfirmed(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	// No --yes: non-interactively, a billable change must not proceed silently.
+	// No --yes: non-interactively, a confirmed change must not proceed silently.
 	cmd := baseCmd(t, srv)
 	cmd.Flags().Bool("autorenew", false, "")
 	cmd.Flags().Bool("privacy", false, "")
@@ -1978,15 +1978,15 @@ func TestUpdate_PrivacyPurchaseIsConfirmed(t *testing.T) {
 
 	err := runUpdate(cmd, []string{"example.com"})
 	if err == nil {
-		t.Fatal("enabling privacy is billable and must be confirmed, like 'domain privacy on'")
+		t.Fatal("enabling privacy must be confirmed, like 'domain privacy on'")
 	}
 	if patched {
 		t.Error("the update was sent despite no confirmation")
 	}
 }
 
-// TestUpdate_NonBillableChangesDoNotPrompt is the counterweight: only the
-// billable field should gate. Turning autorenew on must stay frictionless.
+// TestUpdate_NonBillableChangesDoNotPrompt is the counterweight: only enabling
+// privacy should gate. Turning autorenew on must stay frictionless.
 func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	defer output.StubInteractive(false)()
 
@@ -2014,7 +2014,7 @@ func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	}
 
 	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
-		t.Fatalf("a non-billable update must not require confirmation: %v", err)
+		t.Fatalf("an autorenew update must not require confirmation: %v", err)
 	}
 	if !patched {
 		t.Error("the update was not sent")
