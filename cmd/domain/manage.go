@@ -646,37 +646,111 @@ func runPricing(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return api.FromSDKError(err)
 	}
+	acq, err := acquisition(cmd, domain)
+	if err != nil {
+		return err
+	}
 
 	// Quiet prints the registration price as a bare number ("12.99"), the one
-	// a script compares against before registering. Nothing when the API
-	// quotes none.
+	// a script compares against before registering: the acquisition price
+	// when there is one, since that is what `domain register` pays. Nothing
+	// when the API quotes none.
 	if out.QuietMode {
-		if pricing.PurchasePrice != nil {
-			out.Quiet(strconv.FormatFloat(*pricing.PurchasePrice, 'f', 2, 64))
+		price := pricing.PurchasePrice
+		if acq != nil {
+			price = acq.PurchasePrice
+		}
+		if price != nil {
+			out.Quiet(strconv.FormatFloat(*price, 'f', 2, 64))
 		}
 		return nil
 	}
 
+	// JSON/YAML print the API's pricing as before, with the acquisition added
+	// alongside when there is one, so a script reading purchasePrice is
+	// unaffected.
+	var doc any = pricing
+	if acq != nil {
+		pt, price := nonDefaultPurchaseType(acq)
+		if doc, err = withPurchase(pricing, *pt, price); err != nil {
+			return err
+		}
+	}
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(pricing)
+		return out.JSON(doc)
 	case output.FormatYAML:
-		return out.YAML(pricing)
-	default:
-		fmtPrice := func(p *float64) string {
-			if p == nil {
-				return "N/A"
-			}
-			return fmt.Sprintf("$%.2f", *p)
-		}
-		out.Table([]string{"TYPE", "PRICE"}, [][]string{
-			{"Register", fmtPrice(pricing.PurchasePrice)},
-			{"Renew", fmtPrice(pricing.RenewalPrice)},
-			{"Transfer", fmtPrice(pricing.TransferPrice)},
-			{"Premium", boolStr(pricing.Premium)},
-		})
+		return out.YAML(doc)
 	}
+
+	fmtPrice := func(p *float64) string {
+		if p == nil {
+			return "N/A"
+		}
+		return fmt.Sprintf("$%.2f", *p)
+	}
+	register := fmtPrice(pricing.PurchasePrice)
+	if acq != nil {
+		// Worded by searchPriceLabel, as `domain check` and `search` show it.
+		pt, _ := nonDefaultPurchaseType(acq)
+		register = fmt.Sprintf("price unknown (%s)", *pt)
+		if acq.PurchasePrice != nil {
+			register = searchPriceLabel(acq)
+		}
+		out.Warn(fmt.Sprintf("%s is not a standard registration (purchase type %s): registering it costs %s, not %s",
+			domain, *pt, register, fmtPrice(pricing.PurchasePrice)))
+	}
+	out.Table([]string{"TYPE", "PRICE"}, [][]string{
+		{"Register", register},
+		{"Renew", fmtPrice(pricing.RenewalPrice)},
+		{"Transfer", fmtPrice(pricing.TransferPrice)},
+		{"Premium", boolStr(pricing.Premium)},
+	})
 	return nil
+}
+
+// acquisition returns domain's availability result when registering it would
+// be an aftermarket, expiring or backorder purchase rather than a plain
+// registration, and nil otherwise.
+//
+// GetPricingForDomain cannot say: the SDK documents its purchasePrice as
+// "Does not include aftermarket, expiring, or backorder acquisition prices".
+// `domain register` checks availability and pays that price, so `domain
+// pricing` showed $17.99 for a name register would buy at $8625 (#187).
+func acquisition(cmd *cobra.Command, domain string) (*coreapigo.SearchResult, error) {
+	res, err := cmdutil.APIClient(cmd).SDK().Domains.CheckAvailability(cmd.Context(),
+		&coreapigo.AvailabilityRequest{DomainNames: []string{domain}})
+	if err != nil {
+		return nil, fmt.Errorf("checking availability: %w", api.FromSDKError(err))
+	}
+	for _, r := range cmdutil.NonNil(res.Results) {
+		if r == nil || !r.Purchasable {
+			continue
+		}
+		if pt, _ := nonDefaultPurchaseType(r); pt != nil {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+
+// withPurchase is pricing's JSON/YAML document with the acquisition added as
+// purchaseType and purchaseTypePrice. PricingResponse marshals itself, so the
+// fields are added to its encoding rather than by embedding it.
+func withPurchase(pricing *coreapigo.PricingResponse, purchaseType string, price *float64) (map[string]any, error) {
+	b, err := json.Marshal(pricing)
+	if err != nil {
+		return nil, err
+	}
+	doc := map[string]any{}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	doc["purchaseType"] = purchaseType
+	if price != nil {
+		doc["purchaseTypePrice"] = *price
+	}
+	return doc, nil
 }
 
 // -- update --

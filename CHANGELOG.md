@@ -47,6 +47,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   explains that the CLI cannot buy it and points to your name.com account
   (https://www.name.com/account); the exit code is still 1. `privacy off` on
   a domain without privacy prints "already off" and exits 0 (see above).
+- `domain pricing` no longer under-reports a name that would be bought on the
+  aftermarket, as expiring, or by backorder. It showed the standard $17.99 for
+  a name `domain check` and `domain register` priced at $8625. It now also
+  checks availability, and for such a name its Register row and a warning
+  show that price and purchase type, worded as `domain check` shows them.
+  Scripts: JSON/YAML gain `purchaseType` and `purchaseTypePrice` for these
+  names (existing fields unchanged), and `-q` prints the acquisition price
+  instead of the standard one. The command now makes one extra request.
 
 ## [0.4.8] - 2026-10-02
 
