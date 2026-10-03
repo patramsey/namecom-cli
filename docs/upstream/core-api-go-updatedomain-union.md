@@ -40,7 +40,8 @@ want: {"autorenewEnabled":true,"locked":false,"privacyEnabled":false}
 
 `locked` is the **transfer lock**. A caller asking to unlock a domain — or, worse,
 to *lock* one — gets a success response and no change, and finds out when a
-domain transfers away. `privacyEnabled` is billable. These are not fields where a
+domain transfers away. `privacyEnabled` controls whether a registrant's details
+are public. These are not fields where a
 silent drop is recoverable by retrying.
 
 The failure mode is the dangerous kind: the code reads correctly, compiles, and
