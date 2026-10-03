@@ -9,6 +9,29 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-03
+
+One new feature and the last fixes from the bug hunt. `transfer create` and
+`transfer internal-in` can now set the contacts a domain gets when it lands in
+your account, using the SDK's new support for it.
+
+Some output a script might notice changes:
+
+- `domain lock`, `domain autorenew` and `domain privacy` exit **0** without
+  sending anything when the domain is already in the requested state.
+- `domain pricing` reports the acquisition price for aftermarket, expiring
+  and backorder names. JSON/YAML gain `purchaseType` and `purchaseTypePrice`.
+- A bad contacts file now exits **2** for `domain register`,
+  `domain contacts set`, `transfer create` and `transfer internal-in`.
+- Single-resource `get` commands exit **1** on an empty `{}` response, and
+  `order get -q` / `email get -q` no longer echo the requested ID when the
+  response has none.
+- Internationalized DNS hosts and record targets are sent, and shown, in
+  punycode (`xn--…`). Well-formed quoted TXT values are rewritten in canonical
+  form on `dns export --zone`.
+- `--debug` lines start with a timestamp and include request headers, with
+  credentials redacted.
+
 ### Added
 - `transfer create` and `transfer internal-in` take `--contacts-file`, the
   same JSON file `domain register --contacts-file` reads. The WHOIS contacts
@@ -26,22 +49,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   transfer-status webhooks; nothing the CLI sends or prints changes.
 
 ### Fixed
-- The `--debug` / `--debug-file` log now starts each entry with an RFC 3339
-  timestamp (milliseconds), shows each response's round-trip time, and lists
-  the request headers as sent and the useful response headers
-  (`Content-Type`, `Retry-After`, `Location`, request IDs and rate-limit
-  headers). `Authorization`, `Cookie` and other credential headers are shown
-  as `[redacted]`. A failed attempt is now logged too, rather than leaving a
-  request line with no outcome. Anything parsing the log should expect the
-  timestamp before `→` and `←`.
-- Single-resource reads no longer treat a `200 {}` as success. `domain get`,
-  `domain contacts get`, `dnssec get`, `email get`, `order get`,
-  `transfer get`, `url get` and `vanity-ns get` printed an empty resource and
-  exited 0; a response missing the resource's identifying field (its name,
-  ID, mailbox or digest) is now an "unexpected response from the API" error
-  and exits **1**. Under `--quiet`, `order get` and `email get` no longer echo
-  the requested ID or mailbox back when the response has none. List commands
-  are unchanged: an empty list is still a valid answer.
 - `domain lock`, `domain autorenew` and `domain privacy` read the domain
   first, and when it is already in the requested state they print "… is
   already on/off" and exit 0 without sending anything; `--dry-run` says the
@@ -66,11 +73,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   Scripts: JSON/YAML gain `purchaseType` and `purchaseTypePrice` for these
   names (existing fields unchanged), and `-q` prints the acquisition price
   instead of the standard one. The command now makes one extra request.
-- `dns export --zone` no longer writes a zone that fails to load when a TXT
-  value starts and ends with a quote but is not well-formed zone syntax, such
-  as `"a"b"` or a single quoted string over 255 bytes. Such a value is now
-  quoted and split like any other. A well-formed quoted value is kept, but is
-  rewritten with single spaces between strings and only the escapes it needs.
+- A missing, unreadable or invalid contacts file now exits 2 (usage error)
+  instead of 1, for `domain register --contacts-file` and `domain contacts
+  set --from-file`, matching `transfer create`. Scripts that check for exit
+  code 1 here need updating. `domain register` also reads the file before
+  checking availability and pricing or showing the guided form, so a bad
+  path fails immediately.
 - `dns create`, `dns update` and `dns import` convert an internationalized
   `--host`, and the hostname a CNAME, ANAME, MX, NS or SRV record points at,
   to punycode before sending, as domain arguments already were. `--host
@@ -78,12 +86,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   reading the request or the created record sees the `xn--…` form. A name
   with no valid internationalized form now exits **2** instead of reaching
   the server. TXT, A and AAAA answers are unchanged.
-- A missing, unreadable or invalid contacts file now exits 2 (usage error)
-  instead of 1, for `domain register --contacts-file` and `domain contacts
-  set --from-file`, matching `transfer create`. Scripts that check for exit
-  code 1 here need updating. `domain register` also reads the file before
-  checking availability and pricing or showing the guided form, so a bad
-  path fails immediately.
+- `dns export --zone` no longer writes a zone that fails to load when a TXT
+  value starts and ends with a quote but is not well-formed zone syntax, such
+  as `"a"b"` or a single quoted string over 255 bytes. Such a value is now
+  quoted and split like any other. A well-formed quoted value is kept, but is
+  rewritten with single spaces between strings and only the escapes it needs.
 - Every command run in a terminal wrote two terminal queries to stdout
   (`ESC]11;?` for the background colour and `ESC[6n` for the cursor
   position) and waited for the answers, even with `NO_COLOR` or
@@ -100,6 +107,22 @@ Releases before `0.2.0` predate this file. Their notes are on the
   views) now fit the terminal: a long value wraps inside its cell instead
   of running past the edge and breaking the borders. `--wide` keeps the old
   one-line layout, and piped or redirected output is unchanged.
+- Single-resource reads no longer treat a `200 {}` as success. `domain get`,
+  `domain contacts get`, `dnssec get`, `email get`, `order get`,
+  `transfer get`, `url get` and `vanity-ns get` printed an empty resource and
+  exited 0; a response missing the resource's identifying field (its name,
+  ID, mailbox or digest) is now an "unexpected response from the API" error
+  and exits **1**. Under `--quiet`, `order get` and `email get` no longer echo
+  the requested ID or mailbox back when the response has none. List commands
+  are unchanged: an empty list is still a valid answer.
+- The `--debug` / `--debug-file` log now starts each entry with an RFC 3339
+  timestamp (milliseconds), shows each response's round-trip time, and lists
+  the request headers as sent and the useful response headers
+  (`Content-Type`, `Retry-After`, `Location`, request IDs and rate-limit
+  headers). `Authorization`, `Cookie` and other credential headers are shown
+  as `[redacted]`. A failed attempt is now logged too, rather than leaving a
+  request line with no outcome. Anything parsing the log should expect the
+  timestamp before `→` and `←`.
 
 ## [0.4.8] - 2026-10-02
 
@@ -1168,7 +1191,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/patramsey/namecom-cli/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/patramsey/namecom-cli/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/patramsey/namecom-cli/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/patramsey/namecom-cli/compare/v0.4.5...v0.4.6
