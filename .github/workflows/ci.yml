@@ -71,7 +71,7 @@ jobs:
           cache: true
 
       - name: Test
-        run: go test -count=1 ./...
+        run: go test -count=1 -timeout 5m ./...
 
   lint:
     name: Lint
