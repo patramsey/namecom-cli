@@ -944,33 +944,27 @@ func qualifyTarget(rdata string) string {
 const maxCharString = 255
 
 // quoteTXT wraps TXT rdata in quoted character-strings, escaping embedded
-// backslashes and quotes, unless it is already quoted. A value over 255 bytes
-// (a 2048-bit DKIM key, say) is split into several strings, which is how a
-// zone file spells one long TXT value. The split is on bytes of the unescaped
-// value, so it can never fall inside an escape sequence, and it backs off to a
-// UTF-8 boundary so a character is not cut in two.
+// backslashes and quotes. A value over 255 bytes (a 2048-bit DKIM key, say) is
+// split into several strings, which is how a zone file spells one long TXT
+// value. The split is on bytes of the unescaped value, so it can never fall
+// inside an escape sequence, and it backs off to a UTF-8 boundary so a
+// character is not cut in two.
 //
-// Control characters are written as RFC 1035 \DDD decimal escapes, quoted or
-// not: a raw newline inside a quoted string leaves the quotes unbalanced, and
-// the whole zone fails to load.
+// A value that is already a well-formed run of quoted character-strings, each
+// within the limit, is taken as zone syntax and rewritten in the same form.
+// Anything else that merely starts and ends with a quote — `"a"b"`, or one
+// quoted string over 255 bytes — used to be passed through as-is, and the zone
+// did not load (#187); it is now content like any other value.
+//
+// Control characters are written as RFC 1035 \DDD decimal escapes: a raw
+// newline inside a quoted string leaves the quotes unbalanced, and the whole
+// zone fails to load.
 func quoteTXT(s string) string {
-	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
-		return escapeControls(s)
-	}
-	escape := func(s string) string {
-		var b strings.Builder
-		for i := 0; i < len(s); i++ {
-			switch c := s[i]; {
-			case c == '\\' || c == '"':
-				b.WriteByte('\\')
-				b.WriteByte(c)
-			case isControl(c):
-				fmt.Fprintf(&b, `\%03d`, c)
-			default:
-				b.WriteByte(c)
-			}
+	if parts, ok := parseQuotedTXT(s); ok {
+		for i, p := range parts {
+			parts[i] = `"` + escapeTXT(p) + `"`
 		}
-		return b.String()
+		return strings.Join(parts, " ")
 	}
 	var parts []string
 	for {
@@ -984,7 +978,7 @@ func quoteTXT(s string) string {
 				n = maxCharString
 			}
 		}
-		parts = append(parts, `"`+escape(s[:n])+`"`)
+		parts = append(parts, `"`+escapeTXT(s[:n])+`"`)
 		s = s[n:]
 		if s == "" {
 			return strings.Join(parts, " ")
@@ -992,36 +986,88 @@ func quoteTXT(s string) string {
 	}
 }
 
-// isControl reports whether c is an ASCII control character.
-func isControl(c byte) bool { return c < 0x20 || c == 0x7f }
-
-// escapeControls rewrites the control characters in already-quoted rdata as
-// \DDD escapes and leaves everything else alone. A backslash-escaped control
-// character (`\` then a newline) means that character, so it becomes the same
-// \DDD; an escaped backslash is skipped as a pair so its second `\` is not
-// taken to escape what follows.
-func escapeControls(s string) string {
+// escapeTXT escapes one character-string's bytes for use between quotes.
+func escapeTXT(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '\\' && i+1 < len(s) {
-			i++
-			if isControl(s[i]) {
-				fmt.Fprintf(&b, `\%03d`, s[i])
-			} else {
-				b.WriteByte(c)
-				b.WriteByte(s[i])
-			}
-			continue
-		}
-		if isControl(c) {
+		switch c := s[i]; {
+		case c == '\\' || c == '"':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case isControl(c):
 			fmt.Fprintf(&b, `\%03d`, c)
-			continue
+		default:
+			b.WriteByte(c)
 		}
-		b.WriteByte(c)
 	}
 	return b.String()
 }
+
+// parseQuotedTXT reads s as zone-file TXT rdata: one or more quoted
+// character-strings separated by spaces or tabs. It returns the unescaped
+// bytes of each, and ok == false unless every string is closed, every escape
+// is complete (\X, or \DDD with DDD at most 255), and every string fits in
+// 255 bytes. A raw control character inside the quotes is taken as itself.
+func parseQuotedTXT(s string) (parts []string, ok bool) {
+	i := 0
+	for {
+		if i >= len(s) || s[i] != '"' {
+			return nil, false
+		}
+		i++
+		var b strings.Builder
+		for {
+			if i >= len(s) {
+				return nil, false // unterminated
+			}
+			c := s[i]
+			if c == '"' {
+				i++
+				break
+			}
+			if c != '\\' {
+				b.WriteByte(c)
+				i++
+				continue
+			}
+			if i+1 >= len(s) {
+				return nil, false
+			}
+			if !isDigit(s[i+1]) {
+				b.WriteByte(s[i+1])
+				i += 2
+				continue
+			}
+			if i+4 > len(s) || !isDigit(s[i+2]) || !isDigit(s[i+3]) {
+				return nil, false
+			}
+			n, err := strconv.ParseUint(s[i+1:i+4], 10, 8)
+			if err != nil {
+				return nil, false
+			}
+			b.WriteByte(byte(n))
+			i += 4
+		}
+		if b.Len() > maxCharString {
+			return nil, false
+		}
+		parts = append(parts, b.String())
+		if i == len(s) {
+			return parts, true
+		}
+		if s[i] != ' ' && s[i] != '\t' {
+			return nil, false
+		}
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
+	}
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// isControl reports whether c is an ASCII control character.
+func isControl(c byte) bool { return c < 0x20 || c == 0x7f }
 
 // readImportData reads the import payload from a path, or from stdin when the
 // path is "-". The help examples advertise `dns export old.com | dns import

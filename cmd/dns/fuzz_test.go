@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,8 +29,10 @@ import (
 // parseCharStrings reads zone-file TXT rdata as a sequence of RFC 1035
 // quoted character-strings separated by single spaces, undoing \X and \DDD
 // escapes (quoteTXT writes control characters as \DDD since #188).
-// It is deliberately strict: it accepts exactly the shape quoteTXT promises.
-func parseCharStrings(s string) ([]string, error) {
+// Strict, it accepts exactly the shape quoteTXT promises: one space between
+// strings. Lenient, it accepts any run of spaces and tabs there, as a zone file
+// does; that is how quoteTXT must read a value that is already quoted.
+func parseCharStrings(s string, lenient bool) ([]string, error) {
 	var out []string
 	i := 0
 	for {
@@ -76,21 +79,21 @@ func parseCharStrings(s string) ([]string, error) {
 		if i == len(s) {
 			return out, nil
 		}
-		if s[i] != ' ' {
+		if s[i] != ' ' && (!lenient || s[i] != '\t') {
 			return nil, fmt.Errorf("expected separator at %d in %q", i, s)
 		}
 		i++
+		for lenient && i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
 	}
 }
 
-// alreadyQuoted is the quoteTXT pass-through condition.
-func alreadyQuoted(s string) bool {
-	return len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`)
-}
-
 // FuzzQuoteTXT checks that quoteTXT's output is a run of character-strings
-// that each fit in 255 bytes, that concatenate back to the input, and that do
-// not split a UTF-8 character when the input is valid UTF-8.
+// that each fit in 255 bytes. Input that is already a well-formed run of
+// quoted strings within the limit must keep those strings. Any other input is
+// content: its strings must concatenate back to it, without splitting a UTF-8
+// character when the input is valid UTF-8.
 func FuzzQuoteTXT(f *testing.F) {
 	f.Add("v=spf1 include:_spf.example.com ~all")
 	f.Add(`say "hi" \ there`)
@@ -100,32 +103,46 @@ func FuzzQuoteTXT(f *testing.F) {
 	f.Add(strings.Repeat("\\", 300))
 	f.Add("")
 	f.Add(`"already quoted"`)
+	f.Add(`"a"b"`)
+	f.Add("\"a\" \t \"b\"")
+	f.Add(`"\065\999"`)
+	f.Add(`"` + strings.Repeat("k", 300) + `"`)
 	f.Fuzz(func(t *testing.T, s string) {
 		got := quoteTXT(s)
-		if alreadyQuoted(s) {
-			// Passed through by design, with only control characters
-			// escaped; see the tests below for what that lets through.
-			if got != escapeControls(s) {
-				t.Fatalf("already-quoted input changed beyond escaping controls: %q -> %q", s, got)
-			}
-			return
-		}
-		parts, err := parseCharStrings(got)
+		parts, err := parseCharStrings(got, false)
 		if err != nil {
 			t.Fatalf("quoteTXT(%q) = %q does not parse: %v", s, got, err)
-		}
-		if strings.Join(parts, "") != s {
-			t.Fatalf("quoteTXT(%q) round trip = %q", s, strings.Join(parts, ""))
 		}
 		for _, p := range parts {
 			if len(p) > maxCharString {
 				t.Fatalf("chunk of %d bytes exceeds %d", len(p), maxCharString)
 			}
+		}
+		if in, err := parseCharStrings(s, true); err == nil && fitsCharStrings(in) {
+			if !slices.Equal(parts, in) {
+				t.Fatalf("quoteTXT(%q) changed well-formed strings %q to %q", s, in, parts)
+			}
+			return
+		}
+		if strings.Join(parts, "") != s {
+			t.Fatalf("quoteTXT(%q) round trip = %q", s, strings.Join(parts, ""))
+		}
+		for _, p := range parts {
 			if utf8.ValidString(s) && !utf8.ValidString(p) {
 				t.Fatalf("chunk %q splits a UTF-8 character of %q", p, s)
 			}
 		}
 	})
+}
+
+// fitsCharStrings reports whether every string is within the RFC 1035 limit.
+func fitsCharStrings(parts []string) bool {
+	for _, p := range parts {
+		if len(p) > maxCharString {
+			return false
+		}
+	}
+	return true
 }
 
 // FuzzQualifyTarget checks qualify/qualifyTarget: idempotent, only ever add a
@@ -355,9 +372,6 @@ func FuzzExportZoneChecks(f *testing.F) {
 				return
 			}
 		}
-		if skipKnownZoneBug(rec) {
-			return
-		}
 		exportZone = true
 		defer func() { exportZone = false }()
 		line := string(exp.export(t, []*coreapigo.Record{rec}, output.FormatTable))
@@ -400,31 +414,4 @@ func hostnameAlphabet(s string) bool {
 // optionally absolute.
 func plainName(s string) bool {
 	return hostnameAlphabet(s) && cmdutil.ValidDNSHost(strings.TrimSuffix(s, ".")) == nil
-}
-
-// skipKnownZoneBug skips records whose zone export is known to be broken, so
-// the fuzzer keeps looking for new failures. Each case names its bug.
-func skipKnownZoneBug(rec *coreapigo.Record) bool {
-	a := *rec.Answer
-	switch *rec.Type {
-	case "TXT":
-		// KNOWN BUG (fuzz): quoteTXT passes an already-quoted value through
-		// verbatim, so an unbalanced `"a"b"` or a quoted value over 255 bytes
-		// is emitted as-is and the zone does not load.
-		if alreadyQuoted(a) && !unskip("quoted") {
-			return true
-		}
-	}
-	return false
-}
-
-// unskip reports whether FUZZ_UNSKIP names a known-bug skip to disable, so the
-// fuzzer can be pointed back at a case once it is fixed.
-func unskip(name string) bool {
-	for f := range strings.SplitSeq(os.Getenv("FUZZ_UNSKIP"), ",") {
-		if f == name || f == "all" {
-			return true
-		}
-	}
-	return false
 }

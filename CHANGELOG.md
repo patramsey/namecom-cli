@@ -55,6 +55,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   Scripts: JSON/YAML gain `purchaseType` and `purchaseTypePrice` for these
   names (existing fields unchanged), and `-q` prints the acquisition price
   instead of the standard one. The command now makes one extra request.
+- `dns export --zone` no longer writes a zone that fails to load when a TXT
+  value starts and ends with a quote but is not well-formed zone syntax, such
+  as `"a"b"` or a single quoted string over 255 bytes. Such a value is now
+  quoted and split like any other. A well-formed quoted value is kept, but is
+  rewritten with single spaces between strings and only the escapes it needs.
 
 ## [0.4.8] - 2026-10-02
 

@@ -1499,6 +1499,33 @@ func TestQuoteTXT_ShortValueIsOneString(t *testing.T) {
 	}
 }
 
+// TestQuoteTXT_MalformedQuotedIsRequoted guards #187: a value that starts and
+// ends with a quote was passed through as zone syntax unchecked, so `"a"b"`
+// (unbalanced) or a single quoted string over 255 bytes was written as-is and
+// the zone did not load. Only a well-formed run of character-strings, each
+// within the limit, is kept as zone syntax; anything else is content, and is
+// quoted and split like any other value.
+func TestQuoteTXT_MalformedQuotedIsRequoted(t *testing.T) {
+	long := strings.Repeat("k", 300)
+	tests := []struct{ name, in, want string }{
+		{"unbalanced", `"a"b"`, `"\"a\"b\""`},
+		{"dangling escape", `"a\"`, `"\"a\\\""`},
+		{"bad decimal escape", `"\999"`, `"\"\\999\""`},
+		{"over 255 bytes", `"` + long + `"`,
+			`"\"` + strings.Repeat("k", 254) + `" "` + strings.Repeat("k", 46) + `\""`},
+		{"well-formed pair is kept", `"a b" "c"`, `"a b" "c"`},
+		{"extra separator space is normalized", `"a"  "b"`, `"a" "b"`},
+		{"255 bytes is kept", `"` + strings.Repeat("k", 255) + `"`, `"` + strings.Repeat("k", 255) + `"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quoteTXT(tc.in); got != tc.want {
+				t.Errorf("quoteTXT(%q) =\n %q\nwant\n %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // txtControlCases are TXT answers holding characters that cannot appear raw in
 // a zone-file string, and how quoteTXT must write them (#188).
 var txtControlCases = []struct{ name, in, want string }{
