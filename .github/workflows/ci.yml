@@ -56,6 +56,23 @@ jobs:
           files: coverage.out
           fail_ci_if_error: false
 
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    # Windows has its own token_cmd runner (cmd.exe) and permission handling,
+    # whose tests only run here. No -race or coverage: the Linux job covers
+    # those, and this job exists to run the Windows code paths at all.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test -count=1 -timeout 5m ./...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

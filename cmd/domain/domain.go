@@ -3,7 +3,6 @@ package domain
 
 import (
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
-	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -35,9 +34,13 @@ func init() {
 	)
 }
 
-func confirm(out *output.Config, yes bool, msg string) (bool, error) {
-	return cmdutil.Confirm(out, yes, msg)
-}
+// confirm is cmdutil.Confirm, replaceable in tests. The prompts it guards (the
+// register offer after `check`, the trademark-claim acknowledgement) are not
+// RunWrite confirmations, so cmdutil.StubConfirm does not reach them, and a
+// test that simulates a terminal would otherwise open a real form: huh falls
+// back to /dev/tty or CONIN$ when stdin is not one, and on a Windows CI runner
+// CONIN$ exists, so the form waited for input until the test timed out.
+var confirm = cmdutil.Confirm
 
 // derefBool dereferences a *bool, returning false for nil.
 func derefBool(b *bool) bool {

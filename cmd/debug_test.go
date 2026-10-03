@@ -136,6 +136,45 @@ func TestDebugFile_ExistingFileMadePrivate(t *testing.T) {
 	}
 }
 
+// TestDebugFile_ClosedWhenCommandFinishes pins that --debug-file is closed
+// when the command returns, whether it succeeded or failed. It was left open
+// for the process lifetime, which on Windows locks the file: the log could
+// not be removed or rotated while the process ran, and every test that used
+// it failed in t.TempDir's cleanup.
+func TestDebugFile_ClosedWhenCommandFinishes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"success", http.StatusOK},
+		{"API error", http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withConfig(t, loneProfile)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"domainName":"example.com","message":"x"}`))
+			}))
+			t.Cleanup(srv.Close)
+			logPath := filepath.Join(t.TempDir(), "debug.log")
+
+			err := executeRoot(t, "--base-url", srv.URL, "-o", "json", "--debug-file", logPath, "domain", "get", "example.com")
+			if (err != nil) != (tc.status != http.StatusOK) {
+				t.Fatalf("domain get with a %d response: err = %v", tc.status, err)
+			}
+			if debugLogFile != nil {
+				t.Error("the --debug-file handle is still held after the command returned")
+			}
+			// Removing a file that is still open fails on Windows. Elsewhere
+			// this at least checks the log was written where the flag said.
+			if err := os.Remove(logPath); err != nil {
+				t.Errorf("removing the debug log after the command: %v", err)
+			}
+		})
+	}
+}
+
 // TestTimeout_NegativeIsUsageError pins #187: a negative --timeout silently
 // meant no timeout at all (http.Client treats any value <= 0 as none).
 func TestTimeout_NegativeIsUsageError(t *testing.T) {
