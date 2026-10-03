@@ -84,6 +84,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   code 1 here need updating. `domain register` also reads the file before
   checking availability and pricing or showing the guided form, so a bad
   path fails immediately.
+- Every command run in a terminal wrote two terminal queries to stdout
+  (`ESC]11;?` for the background colour and `ESC[6n` for the cursor
+  position) and waited for the answers, even with `NO_COLOR` or
+  `--color never`. A terminal that does not answer stalled the command, and a
+  late answer was left in the shell's input. Nothing is queried now: the
+  light or dark colour palette comes from `COLORFGBG` when the terminal sets
+  it, and is dark otherwise.
 
 ## [0.4.8] - 2026-10-02
 
