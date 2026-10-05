@@ -184,6 +184,11 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	case guided && dryRun:
 		out.Hint("The guided form does not run under --dry-run; pass --years, --privacy or --autorenew to preview other options")
 	case guided:
+		// The form starts with privacy and auto-renew on: privacy costs
+		// nothing at name.com, and a lapsed registration is the costlier
+		// mistake. The flags keep their off defaults, so --yes and scripts
+		// register exactly what they ask for.
+		registerPrivacy, registerAutorenew = true, true
 		if err := askRegister(domainName, quote); err != nil {
 			return err
 		}
