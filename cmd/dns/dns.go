@@ -139,13 +139,14 @@ func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages automatically")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
 
-	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT (required)")
+	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT (required; prompted in a terminal)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
-	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required)")
+	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required; prompted in a terminal)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
 	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records")
-	_ = createCmd.MarkFlagRequired("type")
-	_ = createCmd.MarkFlagRequired("answer")
+	// --type and --answer are required, but not marked so: cobra would reject
+	// the command before runCreate could offer the guided form (#230).
+	// runCreate makes them a usage error itself when there is no terminal.
 
 	updateCmd.Flags().StringVar(&updateType, "type", "", "new record type")
 	updateCmd.Flags().StringVar(&updateHost, "host", "", "new host")
@@ -254,9 +255,17 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Guided form when interactive and required flags not supplied.
-	if output.IsInteractive() && !cmd.Flags().Changed("type") && !cmd.Flags().Changed("answer") {
+	// Guided form for whatever --type and --answer left out. Without a
+	// terminal there is no one to ask, so a missing one is a usage error.
+	if missing := missingCreateFlags(); len(missing) > 0 {
+		if !output.IsInteractive() {
+			return cmdutil.NewUsageError(fmt.Errorf("required flag(s) %s not set — pass them, or run in a terminal for the guided form", strings.Join(missing, ", ")))
+		}
 		if err := dnsCreateForm(cmd); err != nil {
+			if errors.Is(err, errFormAborted) {
+				out.Warn("aborted")
+				return nil
+			}
 			return err
 		}
 	}
@@ -801,6 +810,46 @@ func recordRowsNoType(out *output.Config, records []*coreapigo.Record) [][]strin
 // huh's accessible (line-based) mode, since go test has no terminal.
 var runForm = func(f *huh.Form) error { return f.Run() }
 
+// StubFormRunner replaces how the guided `dns create` form is run, and returns
+// a function that restores it. It is for tests outside this package, which
+// drive `dns create` through the root command and have no terminal:
+//
+//	defer dns.StubFormRunner(func(f *huh.Form) error { ... })()
+func StubFormRunner(run func(*huh.Form) error) func() {
+	prev := runForm
+	runForm = run
+	return func() { runForm = prev }
+}
+
+// errFormAborted reports Ctrl-C in the guided form. runCreate prints "aborted"
+// and exits 0, as a declined confirmation does.
+var errFormAborted = errors.New("aborted")
+
+// missingCreateFlags names the required `dns create` flags left empty.
+func missingCreateFlags() []string {
+	var missing []string
+	if strings.TrimSpace(createType) == "" {
+		missing = append(missing, `"type"`)
+	}
+	if strings.TrimSpace(createAnswer) == "" {
+		missing = append(missing, `"answer"`)
+	}
+	return missing
+}
+
+// runFormStep runs one form, mapping Ctrl-C to errFormAborted. Every step
+// goes through it: the priority step once ignored Ctrl-C and created the
+// record without a priority (#230).
+func runFormStep(f *huh.Form) error {
+	if err := runForm(f); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return errFormAborted
+		}
+		return err
+	}
+	return nil
+}
+
 func dnsCreateForm(cmd *cobra.Command) error {
 	typeOptions := []huh.Option[string]{
 		huh.NewOption("A — IPv4 address", "A"),
@@ -813,9 +862,15 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		huh.NewOption("TXT — text record", "TXT"),
 	}
 
-	ttlStr := "300"
+	ttlStr := strconv.FormatInt(createTTL, 10)
 	priorityStr := ""
+	if cmd.Flags().Changed("priority") {
+		priorityStr = strconv.FormatInt(createPriority, 10)
+	}
 
+	// The validators are the ones runCreate applies after the form, IDN
+	// conversion included, so a value runCreate would reject is asked for
+	// again here rather than failing after everything was typed.
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
@@ -825,7 +880,10 @@ func dnsCreateForm(cmd *cobra.Command) error {
 			huh.NewInput().
 				Title("Host (@ for apex)").
 				Value(&createHost).
-				Validate(cmdutil.ValidDNSHost),
+				Validate(func(s string) error {
+					_, err := asciiHost(s)
+					return err
+				}),
 			huh.NewInput().
 				Title("Answer / value").
 				Value(&createAnswer).
@@ -834,7 +892,8 @@ func dnsCreateForm(cmd *cobra.Command) error {
 						return fmt.Errorf("answer is required")
 					}
 					if createType != "" {
-						return cmdutil.ValidDNSAnswer(createType, createHost, s)
+						_, err := asciiAnswer(createType, createHost, s)
+						return err
 					}
 					return nil
 				}),
@@ -851,10 +910,7 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		),
 	)
 
-	if err := runForm(form); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return fmt.Errorf("aborted")
-		}
+	if err := runFormStep(form); err != nil {
 		return err
 	}
 
@@ -872,11 +928,18 @@ func dnsCreateForm(cmd *cobra.Command) error {
 		priorityForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewInput().
-					Title("Priority").
-					Value(&priorityStr),
+					Title("Priority (0-65535)").
+					Value(&priorityStr).
+					Validate(func(s string) error {
+						n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+						if err != nil {
+							return fmt.Errorf("priority must be a whole number")
+						}
+						return cmdutil.ValidPriority(n)
+					}),
 			),
 		)
-		if err := runForm(priorityForm); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+		if err := runFormStep(priorityForm); err != nil {
 			return err
 		}
 	}
