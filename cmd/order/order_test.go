@@ -558,8 +558,12 @@ func TestRefund_DeclinedConfirmationDoesNotRefund(t *testing.T) {
 	defer output.StubInteractive(false)()
 
 	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The prompt fetches the order to name its items (#235); only a
+		// write is a refund.
+		if r.Method != http.MethodGet {
+			hits++
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
 	}))

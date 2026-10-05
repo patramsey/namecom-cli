@@ -41,6 +41,72 @@ func TestOrderRows_SayWhatWasBought(t *testing.T) {
 	}
 }
 
+// TestRefundPrompt_NamesItemsAndAmount pins #235: the refund prompt read
+// "Refund order 2142141, items [1]? This cannot be undone." — a Go slice, with
+// no product or amount. It now fetches the order and names both; a missing
+// order or item fails before the question, and no refund is sent.
+func TestRefundPrompt_NamesItemsAndAmount(t *testing.T) {
+	const order = `{"id":2142141,"status":"success","finalAmount":47.97,"orderItems":[
+		{"id":1,"name":"acme.io","price":35.98,"type":"registration","isRefundable":true},
+		{"id":2,"name":"acme.io","price":11.99,"type":"whois_privacy","isRefundable":true}]}`
+
+	for _, tc := range []struct {
+		name, items string
+		status      int
+		wantPrompt  string
+		wantErr     string
+	}{
+		{"one item", "1", http.StatusOK,
+			"Refund $35.98 for acme.io registration (order 2142141, item 1)? This cannot be undone.", ""},
+		{"two items", "1,2", http.StatusOK,
+			"Refund $47.97 for acme.io registration, acme.io whois privacy (order 2142141, items 1, 2)? This cannot be undone.", ""},
+		{"item not on the order", "9", http.StatusOK, "", "order 2142141 has no item 9"},
+		{"order not found", "1", http.StatusNotFound, "", "order 2142141 not found"},
+		{"lookup fails", "1,2", http.StatusBadRequest,
+			"Refund order 2142141, items 1, 2? This cannot be undone.", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var prompts []string
+			defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("refund sent without a yes: %s %s", r.Method, r.URL)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				if tc.status == http.StatusOK {
+					_, _ = w.Write([]byte(order))
+				} else {
+					_, _ = w.Write([]byte(`{"message":"nope"}`))
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := cmdForRefund(t, srv, false)
+			refundOrderID, refundItemIDs = 0, nil
+			if err := cmd.ParseFlags([]string{"--order-id", "2142141", "--item-ids", tc.items}); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Root().PersistentFlags().Set("yes", "false"); err != nil {
+				t.Fatal(err)
+			}
+			err := runRefund(cmd, nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("runRefund = %v, want an error containing %q", err, tc.wantErr)
+				}
+				if len(prompts) != 0 {
+					t.Errorf("prompted %q before failing", prompts)
+				}
+				return
+			}
+			if len(prompts) != 1 || prompts[0] != tc.wantPrompt {
+				t.Errorf("prompts = %q\nwant      [%q]", prompts, tc.wantPrompt)
+			}
+		})
+	}
+}
+
 // TestOrderGet_RefundHintOnlyForRefundableItems pins #235: `order get`
 // suggested `order refund` even when no item could be refunded.
 func TestOrderGet_RefundHintOnlyForRefundableItems(t *testing.T) {

@@ -293,6 +293,17 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		OrderItemIDs: itemIDs,
 	}
 
+	// The prompt names what is refunded and for how much, which takes the
+	// order. It is fetched only when the question will be asked: --dry-run
+	// never prompts, and --yes answers it unseen.
+	prompt := refundFallbackPrompt(body)
+	if !cmdutil.IsDryRun(cmd) && !cmdutil.IsYes(cmd) {
+		var err error
+		if prompt, err = refundPrompt(cmd, body); err != nil {
+			return err
+		}
+	}
+
 	// The preview is the body itself. It previously printed a hand-rolled
 	// "orderId=… itemIds=…" line beside a nil body, so the preview was a
 	// paraphrase of the request rather than the request. Nothing here is
@@ -306,7 +317,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		Method: "POST",
 		Path:   "/core/v1/refund",
 		Body:   body,
-		Prompt: fmt.Sprintf("Refund order %d, items %v? This cannot be undone.", body.OrderID, body.OrderItemIDs),
+		Prompt: prompt,
 	}, func(ctx context.Context, body coreapigo.RefundRequest) error {
 		var err error
 		result, err = client.SDK().Refunds.ProcessRefund(ctx, &body)
@@ -381,6 +392,70 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%d of %s %s not refunded", failed, output.Plural(len(result.Results), "item"), verb)
 	}
 	return nil
+}
+
+// refundPrompt is the confirmation for body, naming each item and the total:
+// "Refund $35.98 for acme.io registration (order 2142141, item 1)? This
+// cannot be undone." It read "Refund order 2142141, items [1]?" — a Go slice,
+// and neither the product nor the amount (#235).
+//
+// An order that does not exist fails here, before the question, as does an
+// item ID the order does not have. Any other failure to fetch the order falls
+// back to the prompt without names: the lookup only words the question, and
+// should not stand between the user and a refund.
+func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, error) {
+	out := cmdutil.Out(cmd)
+	stop := out.Spin("Fetching order…")
+	o, err := cmdutil.APIClient(cmd).SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: body.OrderID})
+	stop()
+	if cmdutil.IsNotFound(err) {
+		return "", cmdutil.NotFound(err, fmt.Sprintf("order %d not found — run 'namecom order list' to see your orders", body.OrderID))
+	}
+	if err != nil || o == nil {
+		return refundFallbackPrompt(body), nil
+	}
+
+	byID := make(map[int]*coreapigo.OrderItem, len(o.OrderItems))
+	for _, it := range o.OrderItems {
+		if it != nil {
+			byID[it.ID] = it
+		}
+	}
+	var total float64
+	descs := make([]string, 0, len(body.OrderItemIDs))
+	for _, id := range body.OrderItemIDs {
+		it, ok := byID[id]
+		if !ok {
+			return "", cmdutil.NewUsageError(fmt.Errorf("order %d has no item %d — run 'namecom order get %d' to see its items",
+				body.OrderID, id, body.OrderID))
+		}
+		total += it.Price
+		desc := "item " + strconv.Itoa(id)
+		if it.Name != nil && *it.Name != "" {
+			desc = *it.Name
+		}
+		if it.Type != "" {
+			desc += " " + strings.ReplaceAll(it.Type, "_", " ")
+		}
+		descs = append(descs, desc)
+	}
+	return fmt.Sprintf("Refund %s for %s (order %d, %s)? This cannot be undone.",
+		formatAmount(total, o.Currency), strings.Join(descs, ", "), body.OrderID, itemList(body.OrderItemIDs)), nil
+}
+
+// refundFallbackPrompt is the refund confirmation without the order's
+// details: "Refund order 2142141, items 1, 2? This cannot be undone."
+func refundFallbackPrompt(body coreapigo.RefundRequest) string {
+	return fmt.Sprintf("Refund order %d, %s? This cannot be undone.", body.OrderID, itemList(body.OrderItemIDs))
+}
+
+// itemList is "item 1" or "items 1, 2".
+func itemList(ids []int) string {
+	s := make([]string, len(ids))
+	for i, id := range ids {
+		s[i] = strconv.Itoa(id)
+	}
+	return output.PluralNoun(len(ids), "item") + " " + strings.Join(s, ", ")
 }
 
 // conflictRefundResult recovers the refund result from a 409. When every item

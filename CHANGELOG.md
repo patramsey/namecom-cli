@@ -41,6 +41,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `order get` suggests `order refund` only when an item is refundable, and
   names those items. **Scripts** splitting the plain table by column position
   need updating; JSON and YAML are unchanged.
+- The `order refund` prompt names what is refunded and for how much:
+  "Refund $35.98 for acme.io registration (order 2142141, item 1)? This
+  cannot be undone." It read "Refund order 2142141, items [1]?". To word it,
+  the command fetches the order when it is about to ask (not under `--yes` or
+  `--dry-run`), and fails before asking when the order does not exist (exit
+  4) or has no such item (exit 2). **Scripts** matching the prompt text need
+  updating.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
