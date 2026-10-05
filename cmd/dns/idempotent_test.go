@@ -167,13 +167,15 @@ func TestDNSCreate_IfNotExists(t *testing.T) {
 		if err := runCreate(cmd, []string{"example.com"}); err != nil {
 			t.Fatalf("runCreate: %v", err)
 		}
-		stdout, stderr := captured()
+		stdout, _ := captured()
 		var got map[string]any
 		if err := json.Unmarshal([]byte(stdout), &got); err != nil || got["id"] != float64(42) {
 			t.Errorf("stdout = %q (%v)", stdout, err)
 		}
-		if !strings.Contains(stderr, "TTL 300, not 3600") || !strings.Contains(stderr, "dns update example.com 42") {
-			t.Errorf("stderr = %q", stderr)
+		// In JSON mode the warning is kept for the end of the command (#240).
+		warned := strings.Join(cmdutil.Out(cmd).TakeWarnings(), "\n")
+		if !strings.Contains(warned, "TTL 300, not 3600") || !strings.Contains(warned, "dns update example.com 42") {
+			t.Errorf("warnings = %q", warned)
 		}
 	})
 
@@ -319,9 +321,11 @@ func TestDNSDelete_IfExistsSeveral(t *testing.T) {
 		if err := runDelete(cmd, []string{"example.com", "1", "2", "3"}); err != nil {
 			t.Fatal(err)
 		}
-		var reqs []map[string]any
-		if err := json.Unmarshal(stdout.Bytes(), &reqs); err != nil || len(reqs) != 2 {
-			t.Fatalf("stdout = %q (%v), want a two-request array", stdout.String(), err)
+		var plan struct {
+			Data []map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil || len(plan.Data) != 2 {
+			t.Fatalf("stdout = %q (%v), want a two-request plan", stdout.String(), err)
 		}
 		if len(z.writeLog()) != 0 {
 			t.Errorf("wrote %q", z.writeLog())

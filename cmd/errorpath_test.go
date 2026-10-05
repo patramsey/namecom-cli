@@ -41,13 +41,14 @@ func TestReportError_AuthHintOnStderrOnce(t *testing.T) {
 					t.Errorf("an error must write nothing to stdout, got:\n%s", w.String())
 				}
 				// Table mode prints the hint as a "→" line (#238), the
-				// structured modes as a "hint" key.
-				marker := "hint"
+				// structured modes as error.hint, and — deprecated, for one
+				// release — again as a top-level "hint" key (#240).
+				marker, want := "hint", 2
 				if f == output.FormatTable {
-					marker = "→ "
+					marker, want = "→ ", 1
 				}
-				if n := strings.Count(ew.String(), marker); n != 1 {
-					t.Errorf("want exactly one hint on stderr, got %d:\n%s", n, ew.String())
+				if n := strings.Count(ew.String(), marker); n != want {
+					t.Errorf("want the hint %d time(s) on stderr, got %d:\n%s", want, n, ew.String())
 				}
 				if !strings.Contains(ew.String(), "namecom auth") {
 					t.Errorf("hint should point at the auth commands, got:\n%s", ew.String())

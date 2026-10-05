@@ -522,11 +522,13 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 		return nil
 	}
 
+	// In the {"data": [...]} envelope every list uses; it was a bare array
+	// (#240).
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(results)
+		return out.JSONList(results, nil, 0)
 	case output.FormatYAML:
-		return out.YAML(results)
+		return out.YAMLList(results, nil, 0)
 	default:
 		headers := []string{"DOMAIN", "AVAILABILITY", "PRICE", "RENEWS", "PREMIUM"}
 		rows := make([][]string, 0, len(results))

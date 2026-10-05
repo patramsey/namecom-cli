@@ -32,7 +32,7 @@ func TestDryRun_StructuredFormats(t *testing.T) {
 			t.Fatalf("dry-run output is not JSON: %v\n%s", err, w.String())
 		}
 		want := map[string]any{
-			"dry_run": true, "method": "POST", "path": "/core/v1/domains/example.com/records",
+			"dryRun": true, "method": "POST", "path": "/core/v1/domains/example.com/records",
 			"body": map[string]any{"host": "www", "ttl": float64(300)},
 		}
 		assertEqualJSON(t, got, want)
@@ -47,7 +47,7 @@ func TestDryRun_StructuredFormats(t *testing.T) {
 		if err := yaml.Unmarshal(w.Bytes(), &got); err != nil {
 			t.Fatalf("dry-run output is not YAML: %v\n%s", err, w.String())
 		}
-		if got["dry_run"] != true || got["method"] != "PUT" || got["path"] != "/core/v1/domains/example.com/records/7" {
+		if got["dryRun"] != true || got["method"] != "PUT" || got["path"] != "/core/v1/domains/example.com/records/7" {
 			t.Errorf("unexpected YAML document:\n%s", w.String())
 		}
 		b, ok := got["body"].(map[string]any)
@@ -87,49 +87,54 @@ func TestDryRun_StructuredFormats(t *testing.T) {
 		var w bytes.Buffer
 		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &w}
 		must(t, c.DryRun("POST", "/core/v1/x", body))
-		if !strings.HasPrefix(w.String(), "POST /core/v1/x\n") || strings.Contains(w.String(), "dry_run") {
+		if !strings.HasPrefix(w.String(), "POST /core/v1/x\n") || strings.Contains(w.String(), "dryRun") {
 			t.Errorf("table mode should keep the request line, got: %q", w.String())
 		}
 	})
 }
 
-// TestDryRunAll covers previews of several requests (`dns import`): one JSON
-// array in structured modes, so a script can parse the whole plan at once.
+// TestDryRunAll covers previews of several requests (`dns import`): one
+// {"dryRun": true, "data": [...]} document in structured modes, so a script
+// can parse the whole plan at once, wrapped like every other list (#240).
 func TestDryRunAll(t *testing.T) {
 	reqs := []DryRunRequest{
 		{Method: "POST", Path: "/a", Body: map[string]any{"n": 1}},
 		{Method: "POST", Path: "/b", Body: map[string]any{"n": 2}},
 	}
+	type plan struct {
+		DryRun bool             `json:"dryRun" yaml:"dryRun"`
+		Data   []map[string]any `json:"data" yaml:"data"`
+	}
 
-	t.Run("json array", func(t *testing.T) {
+	t.Run("json envelope", func(t *testing.T) {
 		var w bytes.Buffer
 		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w}
 		must(t, c.DryRunAll(reqs))
-		var got []map[string]any
+		var got plan
 		if err := json.Unmarshal(w.Bytes(), &got); err != nil {
-			t.Fatalf("output is not a JSON array: %v\n%s", err, w.String())
+			t.Fatalf("output is not a JSON object: %v\n%s", err, w.String())
 		}
-		if len(got) != 2 || got[0]["path"] != "/a" || got[1]["path"] != "/b" || got[1]["dry_run"] != true {
-			t.Errorf("unexpected array: %s", w.String())
+		if !got.DryRun || len(got.Data) != 2 || got.Data[0]["path"] != "/a" || got.Data[1]["path"] != "/b" || got.Data[1]["dryRun"] != true {
+			t.Errorf("unexpected plan: %s", w.String())
 		}
 	})
 
-	t.Run("yaml sequence", func(t *testing.T) {
+	t.Run("yaml envelope", func(t *testing.T) {
 		var w bytes.Buffer
 		c := &Config{Format: FormatYAML, Color: ColorNever, Writer: &w}
 		must(t, c.DryRunAll(reqs))
-		var got []map[string]any
-		if err := yaml.Unmarshal(w.Bytes(), &got); err != nil || len(got) != 2 {
-			t.Fatalf("output is not a two-item YAML sequence: %v\n%s", err, w.String())
+		var got plan
+		if err := yaml.Unmarshal(w.Bytes(), &got); err != nil || len(got.Data) != 2 {
+			t.Fatalf("output is not a two-item YAML plan: %v\n%s", err, w.String())
 		}
 	})
 
-	t.Run("empty is an empty array", func(t *testing.T) {
+	t.Run("empty is an empty data array", func(t *testing.T) {
 		var w bytes.Buffer
 		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w}
 		must(t, c.DryRunAll(nil))
-		if strings.TrimSpace(w.String()) != "[]" {
-			t.Errorf("no requests should print [], got %q", w.String())
+		if !strings.Contains(w.String(), `"data": []`) {
+			t.Errorf(`no requests should print "data": [], got %q`, w.String())
 		}
 	})
 
@@ -183,7 +188,7 @@ func TestDryRunQuote(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertEqualJSON(t, got, map[string]any{
-			"dry_run": true, "method": "POST", "path": "/core/v1/domains/a.io:renew",
+			"dryRun": true, "method": "POST", "path": "/core/v1/domains/a.io:renew",
 			"body":  map[string]any{"years": float64(2)},
 			"quote": map[string]any{"total": 39.98, "currency": "USD", "years": float64(2)},
 		})

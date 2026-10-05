@@ -53,6 +53,7 @@ line, ready for `xargs`.
 - [Commands](#commands)
 - [Workflows](#workflows)
 - [Output formats](#output-formats)
+- [JSON contract](#json-contract)
 - [Configuration](#configuration)
 - [Shell completion](#shell-completion)
 - [Global flags](#global-flags)
@@ -320,8 +321,85 @@ they hid; `--wide` keeps them all.
 
 `--dry-run` prints the request a write would send, and sends nothing. In JSON
 mode — including the default when piped — that is a JSON document with
-`dry_run`, `method`, `path` and `body` keys; `-o table` prints
+`dryRun`, `method`, `path` and `body` keys; `-o table` prints
 `METHOD /path` and the body instead.
+
+## JSON contract
+
+With `-o json` — the default when output is piped — and with `-o yaml`,
+which carries the same keys, output follows the rules below. A change to any
+of them is a breaking change and is called out in the
+[CHANGELOG](CHANGELOG.md).
+
+- **One document per stream.** The result goes to stdout. stderr carries at
+  most one document: the error envelope when the command fails, or
+  `{"warnings": [...]}` when it succeeded with something to say.
+- **Lists are `{"data": [...]}`**, with `nextPage` and `total` added when the
+  list is paged. `data` is `[]`, never `null`, when there is nothing in it.
+  This covers every `list`, and `domain check`, `domain search`,
+  `config list-profiles` and `dns export` too (`dns import` reads both that
+  and the bare array older versions exported).
+- **One resource is the object itself**, as the API returns it: `domain get`,
+  `dns create`, `email update`.
+- **Keys are camelCase** everywhere: `domainsTotal`, `dryRun`,
+  `idempotencyKey`. Values that name a kind of thing, such as error types
+  (`not_found`) or dry-run actions (`save_profile`), are snake_case.
+- **A write with no resource to return** prints
+  `{"success": true, "changed": true, "message": "…"}`. `changed` is `false`
+  when the target was already in the requested state and nothing was sent —
+  `domain lock on` for a locked domain. `message` is for people; branch on
+  `changed`, not on its wording.
+- **A dry run** prints `{"dryRun": true, "method": …, "path": …, "body": …}`,
+  with a `quote` object for a write that costs money. `dns import --dry-run`
+  plans several requests: `{"dryRun": true, "data": [ … ]}`.
+- **Warnings** — a `--base-url` that is not name.com, duplicate IDs dropped
+  from `order refund`, records created before a `dns import` failed — are
+  not printed as text. They come out at the end, in the error envelope's
+  `warnings`, or as `{"warnings": [...]}` on stderr when the command
+  succeeded.
+- **Nothing is HTML-escaped.** `<`, `>` and `&` print as themselves.
+- **Errors** are one document on stderr:
+
+  ```json
+  {
+    "error": {
+      "type": "not_found",
+      "status": 404,
+      "message": "Not Found",
+      "hint": "check the name or ID for typos"
+    }
+  }
+  ```
+
+  `type` is always there, and is one of:
+
+  | `type` | Meaning | Exit code |
+  |---|---|---|
+  | `usage` | The command line is wrong: an unknown command or flag, a bad argument or value | 2 |
+  | `confirmation_required` | A write needs `--yes`, because there is no terminal to ask | 2 |
+  | `auth` | Credentials missing, failing or rejected, or access denied (HTTP 401/403) | 3 |
+  | `not_found` | HTTP 404 | 4 |
+  | `rate_limited` | HTTP 429, after the CLI's own retries | 5 |
+  | `conflict` | The thing already exists (the API answers a duplicate DNS record with a 400 that says so), or HTTP 409, which the API uses for a reused idempotency key | 1 |
+  | `aborted` | A confirmation was declined or a prompt cancelled | 1 |
+  | `network` | No HTTP response: a timeout, or a connection that failed | 1 |
+  | `api` | Any other failure: another API error, or a local one such as an unreadable file | 1 |
+
+  `status` is the HTTP status, present only when the API answered. `message`
+  and `hint` are for people. The other keys appear only when they apply:
+  `details` holds structured detail (the raw response body for `namecom api`,
+  the profile, username, endpoint and config file for a rejected
+  `auth status`), and `suggestions` the full command lines an unknown command
+  was probably meant to be (`["namecom dns delete"]`). The envelope also has
+  a top-level `hint`, a copy of `error.hint` where older versions put it.
+  **It is deprecated**, kept for this release only so scripts can move to
+  `error.hint`.
+
+`namecom api` is the one exception: it prints the API's response body exactly
+as received (`{"domains": [...]}`, not `{"data": [...]}`). It exists to reach
+endpoints namecom does not wrap and to show what the API itself says, and
+reshaping the body would hide the very thing it was asked for. Its errors use
+the envelope above, with the response body as `details`.
 
 ## Configuration
 
@@ -475,10 +553,8 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `5` | Rate limited (HTTP 429), after the CLI's own retries |
 
 With `--output json` or `yaml` — including the JSON default when piped — an
-error is written to stderr as one document, an `error` object with a
-`message` and, where there is one, a `hint`. An unknown command also lists
-the commands it was probably meant to be in `error.suggestions`, as full
-command lines (`["namecom dns delete"]`).
+error is written to stderr as one document, an `error` object whose `type`
+says which of these it is. See [JSON contract](#json-contract).
 
 ## Development
 

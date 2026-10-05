@@ -113,8 +113,8 @@ func Execute() {
 	// a did-you-mean and the usage line.
 	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
 
-	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
-		os.Exit(reportError(errorOutput(), err))
+	if code := run(); code != 0 {
+		os.Exit(code)
 	}
 
 	// Show update notification if the goroutine finished in time.
@@ -128,6 +128,19 @@ func Execute() {
 			// Check not done yet — don't block.
 		}
 	}
+}
+
+// run executes the root command and returns its exit code, having reported
+// the outcome on stderr: the error, or on success any warnings JSON and YAML
+// modes kept back (#240). Execute is this plus os.Exit, so tests call run.
+func run() int {
+	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
+		return reportError(errorOutput(), err)
+	}
+	if resolvedOut != nil {
+		resolvedOut.FlushWarnings()
+	}
+	return 0
 }
 
 // rootSuggestFor maps words typed in place of a top-level command to the
@@ -597,9 +610,83 @@ func reportError(cfg *output.Config, err error) int {
 	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
 		netErr.Timeout = gf.timeout
 	}
-	cfg.Error(err)
+	cfg.ErrorWith(err, errorInfo(err))
 	return exitCode(err)
 }
+
+// errorInfo classifies err for the structured error envelope's "type" and
+// "status" (#240), by the rules exitCode uses, so the two always agree.
+func errorInfo(err error) output.ErrorInfo {
+	err = normalizeError(err)
+	var info output.ErrorInfo
+	apiErr, isAPI := errors.AsType[*api.APIError](err)
+	if isAPI {
+		info.Status = apiErr.StatusCode
+	}
+	if _, ok := errors.AsType[*cmdutil.ConfirmationRequiredError](err); ok {
+		info.Type = output.ErrorTypeConfirmationRequired
+		return info
+	}
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); ok {
+		info.Type = output.ErrorTypeUsage
+		return info
+	}
+	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
+		info.Type = output.ErrorTypeAuth
+		return info
+	}
+	if errors.Is(err, cmdutil.ErrAborted) {
+		info.Type = output.ErrorTypeAborted
+		return info
+	}
+	if isAPI {
+		switch {
+		case apiErr.StatusCode == 401, apiErr.StatusCode == 403:
+			info.Type = output.ErrorTypeAuth
+		case apiErr.StatusCode == 404:
+			info.Type = output.ErrorTypeNotFound
+		case apiErr.StatusCode == 429:
+			info.Type = output.ErrorTypeRateLimited
+		case isConflict(apiErr):
+			info.Type = output.ErrorTypeConflict
+		default:
+			info.Type = output.ErrorTypeAPI
+		}
+		return info
+	}
+	if _, ok := errors.AsType[*api.NetworkError](err); ok {
+		info.Type = output.ErrorTypeNetwork
+		return info
+	}
+	info.Type = output.ErrorTypeAPI
+	return info
+}
+
+// isConflict reports whether e says the thing being created already exists,
+// or that an idempotency key was reused. The API answers a duplicate DNS
+// record with `400 Parameter Value Error (Record already exists)` — seen in
+// the sandbox, docs/upstream/core-api-go-withoutretries-ignored.md — not a
+// 409; a 409 is how the SDK documents an idempotency-key problem.
+func isConflict(e *api.APIError) bool {
+	if e.StatusCode == 409 {
+		return true
+	}
+	if e.StatusCode != 400 && e.StatusCode != 422 {
+		return false
+	}
+	text := strings.ToLower(e.Message + " " + e.Details)
+	return strings.Contains(text, "already exists")
+}
+
+// detailedError attaches structured fields to an error, which the JSON error
+// envelope prints as "details". The message is unchanged.
+type detailedError struct {
+	error
+	details any
+}
+
+func (e *detailedError) Unwrap() error     { return e.error }
+func (e *detailedError) ErrorDetails() any { return e.details }
 
 // exitCode maps an error to a CLI exit code following the documented table:
 //

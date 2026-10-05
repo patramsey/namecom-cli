@@ -691,16 +691,14 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// An empty zone leaves records nil, which marshals as `null`. Export `[]`,
-	// as the list commands do through their envelope.
-	if records == nil {
-		records = []*coreapigo.Record{}
-	}
+	// The {"data": [...]} envelope every list uses (#240); it was a bare
+	// array. `dns import` and `dns sync` read both. The envelope also turns an
+	// empty zone's nil into `[]` rather than `null`.
 	switch out.Format {
 	case output.FormatYAML:
-		return out.YAML(records)
+		return out.YAMLList(records, nil, 0)
 	default:
-		if err := out.JSON(records); err != nil {
+		if err := out.JSONList(records, nil, 0); err != nil {
 			return err
 		}
 	}

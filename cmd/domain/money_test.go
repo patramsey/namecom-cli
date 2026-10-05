@@ -106,7 +106,7 @@ func TestPurchaseDryRun_StatesTheCharge(t *testing.T) {
 				t.Fatalf("dry run: %v", err)
 			}
 			var doc struct {
-				DryRun bool            `json:"dry_run"`
+				DryRun bool            `json:"dryRun"`
 				Body   json.RawMessage `json:"body"`
 				Quote  *output.Quote   `json:"quote"`
 			}

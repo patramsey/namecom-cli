@@ -19,8 +19,8 @@ func twoWrites() []Write[testBody] {
 }
 
 // TestRunWrites_DryRunPreviewsEveryRequestAsOneDocument: a dry run of
-// several writes previews them all, as one JSON array, without prompting or
-// sending.
+// several writes previews them all, as one {"dryRun": true, "data": [...]}
+// document, without prompting or sending.
 func TestRunWrites_DryRunPreviewsEveryRequestAsOneDocument(t *testing.T) {
 	cmd, stdout, _ := writeCmd(t, true, false)
 	Out(cmd).Format = output.FormatJSON
@@ -30,10 +30,14 @@ func TestRunWrites_DryRunPreviewsEveryRequestAsOneDocument(t *testing.T) {
 	if err != nil || done != 0 {
 		t.Fatalf("RunWrites = %d, %v; want 0, nil", done, err)
 	}
-	var got []output.DryRunRequest
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("want one JSON array: %v\n%s", err, stdout.String())
+	var plan struct {
+		DryRun bool                   `json:"dryRun"`
+		Data   []output.DryRunRequest `json:"data"`
 	}
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil || !plan.DryRun {
+		t.Fatalf("want one dry-run plan document: %v\n%s", err, stdout.String())
+	}
+	got := plan.Data
 	if len(got) != 2 || got[0].Path != "/a" || got[1].Path != "/b" || !got[0].DryRun {
 		t.Errorf("previewed %+v, want both requests in order", got)
 	}

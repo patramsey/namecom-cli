@@ -109,6 +109,32 @@ therefore needs `--yes`. A flag the command would otherwise prompt for is
 documented with `cmdutil.PromptedRequired` and, off a terminal, refused with
 `cmdutil.RequiredFlags`, which also exits 2.
 
+## JSON output
+
+The README's [JSON contract](README.md#json-contract) is a promise to
+scripts, and `TestJSONContract` in `cmd/jsoncontract_test.go` walks a
+representative command of each shape against a stub to hold it. When you add
+or change a command's JSON:
+
+- Print a list with `out.JSONList` / `out.YAMLList`, never a bare slice, even
+  when it is not paged.
+- Give any struct you define camelCase `json` tags. Most output is the SDK's
+  own types, which already are.
+- Report a write that has no resource to print with `out.Success`, or
+  `out.Unchanged` when the target was already in the requested state and
+  nothing was sent; that is the `changed` field.
+- Say things to the user with `out.Warn`, `out.Note` or `out.Hint`, never
+  with a bare write to stderr: in JSON mode a warning is collected into the
+  `warnings` array, so stderr stays one document.
+- A new kind of failure a script would branch on gets a type in `errorInfo`
+  (`cmd/root.go`), next to its exit code in `exitCode`, and a row in the
+  README's table. Adding a type is a contract change; so is renaming a key.
+- Encode through `out.JSON`, not `encoding/json` directly: it turns HTML
+  escaping off, including for SDK types that marshal themselves.
+
+Anything that breaks one of these rules goes in the CHANGELOG under
+"Breaking for scripts", with the output before and after.
+
 ## Working with the API client
 
 The client is [`github.com/namedotcom/core-api-go`](https://github.com/namedotcom/core-api-go),

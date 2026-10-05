@@ -81,7 +81,7 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 			return err
 		}
 		if already {
-			out.Success(fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d))
+			out.Unchanged(fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d))
 			continue
 		}
 		pending = append(pending, d)

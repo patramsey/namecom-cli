@@ -52,7 +52,7 @@ func TestAuthLogout_DryRunLeavesConfig(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("dry-run output is not one JSON document: %v\n%s", err, buf.String())
 	}
-	if got["dry_run"] != true || got["action"] != "remove_profile" || got["profile"] != "staging" || got["config"] != path {
+	if got["dryRun"] != true || got["action"] != "remove_profile" || got["profile"] != "staging" || got["config"] != path {
 		t.Errorf("dry-run should describe removing staging from %s, got %v", path, got)
 	}
 	// prod stays the default, so the preview says so.
@@ -81,7 +81,7 @@ func TestAuthLogin_DryRunLeavesConfig(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("dry-run output is not one JSON document: %v\n%s", err, buf.String())
 	}
-	if got["dry_run"] != true || got["action"] != "save_profile" || got["profile"] != "work" ||
+	if got["dryRun"] != true || got["action"] != "save_profile" || got["profile"] != "work" ||
 		got["username"] != "alice" || got["default"] != "work" {
 		t.Errorf("dry-run should describe saving profile work for alice, got %v", got)
 	}

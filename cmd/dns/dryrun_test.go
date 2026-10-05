@@ -52,20 +52,24 @@ func runImportDryRun(t *testing.T, format output.Format, payload string) string 
 }
 
 // TestDNSImport_DryRunJSON pins issue #137 for `dns import`, which previews one
-// request per record: in JSON mode the plan is a single array of dry-run
+// request per record: in JSON mode the plan is a single document of dry-run
 // documents, and each body is the body the live import sends for that record.
 func TestDNSImport_DryRunJSON(t *testing.T) {
 	printed := runImportDryRun(t, output.FormatJSON, importPayload)
 
-	var docs []struct {
-		DryRun bool           `json:"dry_run"`
-		Method string         `json:"method"`
-		Path   string         `json:"path"`
-		Body   map[string]any `json:"body"`
+	var plan struct {
+		DryRun bool `json:"dryRun"`
+		Data   []struct {
+			DryRun bool           `json:"dryRun"`
+			Method string         `json:"method"`
+			Path   string         `json:"path"`
+			Body   map[string]any `json:"body"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(printed), &docs); err != nil {
-		t.Fatalf("dns import --dry-run -o json is not a JSON array: %v\n%s", err, printed)
+	if err := json.Unmarshal([]byte(printed), &plan); err != nil || !plan.DryRun {
+		t.Fatalf(`dns import --dry-run -o json is not a {"dryRun": true, "data": [...]} plan: %v\n%s`, err, printed)
 	}
+	docs := plan.Data
 
 	sent, err := runImportCapturing(t, importPayload)
 	if err != nil {
@@ -106,4 +110,24 @@ func TestDryRunMatchesRealRequest_DNSCreateJSON(t *testing.T) {
 	}
 	drifttest.AssertDryRunMatches(t, setup, runCreate, []string{"example.com"}, `{"id":1}`)
 	drifttest.AssertDryRunBodyMatches(t, setup, runCreate, []string{"example.com"}, `{"id":1}`)
+}
+
+// TestDNSImport_ReadsExportEnvelope pins #240's compatibility promise: `dns
+// export` now prints {"data": [...]}, and import reads that and the bare
+// array older exports contain, planning the same requests from each. An
+// object with neither a data nor a records array is refused rather than
+// imported as nothing.
+func TestDNSImport_ReadsExportEnvelope(t *testing.T) {
+	bare := runImportDryRun(t, output.FormatJSON, importPayload)
+	wrapped := runImportDryRun(t, output.FormatJSON, `{"data":`+importPayload+`}`)
+	if bare != wrapped {
+		t.Errorf("an enveloped export planned differently from a bare array:\nbare:\n%s\nwrapped:\n%s", bare, wrapped)
+	}
+	if !strings.Contains(bare, `"answer": "1.2.3.4"`) {
+		t.Errorf("plan is missing the first record:\n%s", bare)
+	}
+
+	if _, err := parseRecordsJSON([]byte(`{"items":[]}`)); err == nil {
+		t.Error(`an object with no "data" or "records" array should be refused`)
+	}
 }

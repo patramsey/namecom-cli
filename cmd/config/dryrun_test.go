@@ -36,7 +36,7 @@ func TestUse_DryRunLeavesConfig(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("dry-run output is not one JSON document: %v\n%s", err, buf.String())
 	}
-	if got["dry_run"] != true || got["action"] != "set_default" || got["profile"] != "helper" ||
+	if got["dryRun"] != true || got["action"] != "set_default" || got["profile"] != "helper" ||
 		got["default"] != "helper" || got["config"] != path {
 		t.Errorf("dry-run should describe making helper the default in %s, got %v", path, got)
 	}

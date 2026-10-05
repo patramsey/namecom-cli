@@ -89,6 +89,11 @@ type Config struct {
 	// DefaultConfig sets it when stdout is not a terminal, so `-o table` into
 	// a pipe gives `awk` and `cut` rows they can split, not box-drawing.
 	Plain bool
+
+	// warnings holds what Warn was given in JSON and YAML modes, for
+	// TakeWarnings. See Warn.
+	warnMu   sync.Mutex
+	warnings []string
 }
 
 // DefaultConfig returns an output config with defaults resolved from the
@@ -207,9 +212,64 @@ var (
 
 // JSON encodes v as indented JSON to the configured writer.
 func (c *Config) JSON(v any) error {
-	enc := json.NewEncoder(c.Writer)
+	return encodeJSON(c.Writer, v)
+}
+
+// encodeJSON writes v to w as indented JSON, the way every JSON document the
+// CLI prints is written.
+//
+// HTML escaping is off. encoding/json escapes <, > and & by default, for
+// embedding in a web page, so a TXT record's "a<b" printed with the "<" as
+// the escape backslash-u003c: valid JSON, but not what a person reading it or
+// a grep expects (#240).
+// SetEscapeHTML(false) is not enough on its own: the SDK's types marshal
+// themselves with json.Marshal, which escapes before the encoder sees the
+// result, so those escapes are undone afterwards.
+func encodeJSON(w io.Writer, v any) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		return err
+	}
+	_, err := w.Write(unescapeHTML(buf.Bytes()))
+	return err
+}
+
+// unescapeHTML replaces the backslash-u escapes u003c, u003e and u0026 in b,
+// a JSON document, with the characters they stand for. Escape sequences are
+// read as pairs, so an escaped backslash followed by "u003c" is left alone.
+func unescapeHTML(b []byte) []byte {
+	if !bytes.Contains(b, []byte(`\u00`)) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' || i+1 >= len(b) {
+			out = append(out, b[i])
+			continue
+		}
+		if b[i+1] == 'u' && i+5 < len(b) {
+			var r byte
+			switch string(b[i+2 : i+6]) {
+			case "003c":
+				r = '<'
+			case "003e":
+				r = '>'
+			case "0026":
+				r = '&'
+			}
+			if r != 0 {
+				out = append(out, r)
+				i += 5
+				continue
+			}
+		}
+		out = append(out, b[i], b[i+1])
+		i++
+	}
+	return out
 }
 
 // YAML encodes v as YAML to the configured writer.
@@ -772,18 +832,34 @@ func (c *Config) SandboxTag() string {
 // parse — and since DefaultConfig() selects JSON whenever stdout is not a TTY,
 // that was the default in every pipe. So structured modes get a structured
 // envelope here, matching Hint/Step/Count/Empty, which already gate on format.
-func (c *Config) Success(msg string) {
+//
+// The envelope says "changed": true. A write that found nothing to do calls
+// Unchanged instead, so a script can tell the two apart without matching
+// "already" in the message (#240).
+func (c *Config) Success(msg string) { c.result(msg, true) }
+
+// Unchanged reports that a mutating command found the target already in the
+// requested state and sent nothing: "changed": false in JSON and YAML, and
+// the same "✓" line as Success in a table.
+func (c *Config) Unchanged(msg string) { c.result(msg, false) }
+
+// writeResult is the document Success and Unchanged print in JSON and YAML.
+type writeResult struct {
+	Success bool   `json:"success"`
+	Changed bool   `json:"changed"`
+	Message string `json:"message"`
+}
+
+func (c *Config) result(msg string, changed bool) {
 	if c.QuietMode {
 		return
 	}
 	switch c.Format {
 	case FormatJSON:
-		enc := json.NewEncoder(c.Writer)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{"success": true, "message": msg})
+		_ = encodeJSON(c.Writer, writeResult{Success: true, Changed: changed, Message: msg})
 		return
 	case FormatYAML:
-		_ = writeYAML(c.Writer, map[string]any{"success": true, "message": msg})
+		_ = writeYAML(c.Writer, writeResult{Success: true, Changed: changed, Message: msg})
 		return
 	}
 	if c.ColorEnabled() {
@@ -826,12 +902,54 @@ func (c *Config) Hint(msg string) {
 }
 
 // Warn prints a warning message to stderr.
+//
+// In JSON and YAML modes it prints nothing: the warning is kept, and comes
+// out at the end of the command as the error envelope's "warnings" array, or,
+// when the command succeeded, as a {"warnings": [...]} document on stderr
+// (FlushWarnings). A plain "! …" line there made stderr two documents, one of
+// them not JSON, which a script reading the error envelope could not parse —
+// the --base-url warning did it on every run (#240).
 func (c *Config) Warn(msg string) {
+	if c.Format == FormatJSON || c.Format == FormatYAML {
+		c.warnMu.Lock()
+		c.warnings = append(c.warnings, msg)
+		c.warnMu.Unlock()
+		return
+	}
 	if c.ColorEnabled() {
 		fmt.Fprintln(c.EWriter, styleWarning.Render("!")+" "+msg)
 	} else {
 		fmt.Fprintln(c.EWriter, "! "+msg)
 	}
+}
+
+// TakeWarnings returns the warnings Warn kept back in JSON and YAML modes,
+// and forgets them.
+func (c *Config) TakeWarnings() []string {
+	c.warnMu.Lock()
+	defer c.warnMu.Unlock()
+	w := c.warnings
+	c.warnings = nil
+	return w
+}
+
+// FlushWarnings prints the warnings Warn kept back as one {"warnings": [...]}
+// document on stderr, in the configured format, and nothing when there are
+// none. The root command calls it after a command succeeds; on failure the
+// error envelope carries them instead.
+func (c *Config) FlushWarnings() {
+	w := c.TakeWarnings()
+	if len(w) == 0 {
+		return
+	}
+	doc := struct {
+		Warnings []string `json:"warnings"`
+	}{w}
+	if c.Format == FormatYAML {
+		_ = writeYAML(c.EWriter, doc)
+		return
+	}
+	_ = encodeJSON(c.EWriter, doc)
 }
 
 // hintable is implemented by errors that carry an actionable suggestion.
@@ -853,37 +971,95 @@ type suggester interface {
 	CommandSuggestions() []string
 }
 
-// Error prints a user-facing error to stderr. In JSON output mode the error is
-// emitted as a structured envelope so agents can parse failures.
-func (c *Config) Error(err error) {
+// idempotencyKeyer is implemented by the error from a write whose outcome is
+// unknown, which names the X-Idempotency-Key it was sent with (#243).
+type idempotencyKeyer interface {
+	error
+	IdempotencyKey() string
+}
+
+// Error types: the "type" field of the structured error envelope, one per
+// kind of failure a script would branch on (#240). The README's JSON contract
+// lists them; adding one is a contract change.
+const (
+	ErrorTypeNotFound             = "not_found"
+	ErrorTypeUsage                = "usage"
+	ErrorTypeAuth                 = "auth"
+	ErrorTypeRateLimited          = "rate_limited"
+	ErrorTypeConflict             = "conflict"
+	ErrorTypeConfirmationRequired = "confirmation_required"
+	ErrorTypeAborted              = "aborted"
+	ErrorTypeNetwork              = "network"
+	ErrorTypeAPI                  = "api"
+)
+
+// ErrorInfo classifies an error for the structured envelope. The root
+// command fills it in by the same rules that choose the exit code, which this
+// package cannot see.
+type ErrorInfo struct {
+	// Type is one of the ErrorType constants. Empty means ErrorTypeAPI.
+	Type string
+	// Status is the HTTP status the API answered with, or 0 when the
+	// failure was not an API response.
+	Status int
+}
+
+// errorBody is the envelope's "error" object.
+type errorBody struct {
+	Type           string   `json:"type"`
+	Status         int      `json:"status,omitempty"`
+	Message        string   `json:"message"`
+	Hint           string   `json:"hint,omitempty"`
+	Details        any      `json:"details,omitempty"`
+	Suggestions    []string `json:"suggestions,omitempty"`
+	IdempotencyKey string   `json:"idempotencyKey,omitempty"`
+}
+
+// errorEnvelope is the document an error prints in JSON and YAML modes.
+type errorEnvelope struct {
+	Error errorBody `json:"error"`
+	// Hint repeats error.hint where it used to be, beside "error" rather
+	// than in it. Deprecated: kept for one release so scripts can move to
+	// error.hint (#240).
+	Hint     string   `json:"hint,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// Error prints a user-facing error to stderr, with no classification: its
+// envelope's type is "api". The root command uses ErrorWith.
+func (c *Config) Error(err error) { c.ErrorWith(err, ErrorInfo{}) }
+
+// ErrorWith prints a user-facing error to stderr. In JSON and YAML modes it
+// is one structured document, with info's type and status, and any warnings
+// Warn kept back; otherwise a "✗" line and a "→" hint.
+func (c *Config) ErrorWith(err error, info ErrorInfo) {
 	hint := errorHint(err)
 
 	// Structured modes get a machine-readable envelope. The plain-text fallback
 	// emits "error: <msg>", which looks like YAML but stops parsing as soon as
 	// the message contains ": " — which nearly every wrapped error does.
 	if c.Format == FormatJSON || c.Format == FormatYAML {
-		e := map[string]any{"message": err.Error()}
+		e := errorBody{Type: info.Type, Status: info.Status, Message: err.Error(), Hint: hint}
+		if e.Type == "" {
+			e.Type = ErrorTypeAPI
+		}
 		if d := detailer(nil); errors.As(err, &d) {
 			if details := d.ErrorDetails(); details != nil {
-				e["details"] = details
+				e.Details = details
 			}
 		}
 		if s, ok := errors.AsType[suggester](err); ok {
-			if list := s.CommandSuggestions(); len(list) > 0 {
-				e["suggestions"] = list
-			}
+			e.Suggestions = s.CommandSuggestions()
 		}
-		env := map[string]any{"error": e}
-		if hint != "" {
-			env["hint"] = hint
+		if k, ok := errors.AsType[idempotencyKeyer](err); ok {
+			e.IdempotencyKey = k.IdempotencyKey()
 		}
+		env := errorEnvelope{Error: e, Hint: hint, Warnings: c.TakeWarnings()}
 		if c.Format == FormatYAML {
 			_ = writeYAML(c.EWriter, env)
 			return
 		}
-		enc := json.NewEncoder(c.EWriter)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(env)
+		_ = encodeJSON(c.EWriter, env)
 		return
 	}
 	// The four status symbols (#238): ✗ for the error and → for the hint, the
@@ -1424,7 +1600,7 @@ func (c *Config) StartSpinner(msg string) *Spinner {
 // DryRunRequest is one request a --dry-run would have sent, as the structured
 // output formats print it. Body is omitted when nil.
 type DryRunRequest struct {
-	DryRun bool   `json:"dry_run"`
+	DryRun bool   `json:"dryRun"`
 	Method string `json:"method"`
 	Path   string `json:"path"`
 	Body   any    `json:"body,omitempty"`
@@ -1466,7 +1642,7 @@ func (q Quote) Summary() string {
 // DryRun prints the request a --dry-run would have sent.
 // Pass a struct or map as body to pretty-print it as indented JSON; pass nil for no body.
 //
-// JSON and YAML modes get a {"dry_run": true, "method", "path", "body"}
+// JSON and YAML modes get a {"dryRun": true, "method", "path", "body"}
 // document rather than the request line: a script that asked for -o json had
 // to parse text to inspect the planned request. That includes the non-TTY
 // JSON default, as it does for Success — the text form in a pipe was the one
@@ -1506,23 +1682,34 @@ func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context st
 	return nil
 }
 
-// DryRunAll prints several previewed requests: one array in JSON and YAML
-// modes, so the plan parses as a single document, and one request line each
-// in table mode. The DryRun field of each request is set here. As with
-// DryRun, a body that cannot be encoded fails the whole preview.
+// DryRunAll prints several previewed requests: one {"dryRun": true, "data":
+// [...]} document in JSON and YAML modes, so the plan parses as a single
+// document, and one request line each in table mode. The DryRun field of each
+// request is set here. As with DryRun, a body that cannot be encoded fails the
+// whole preview.
+//
+// The document was a bare array. Every list is wrapped in {"data": …} now,
+// which is what the JSON contract promises (#240).
 func (c *Config) DryRunAll(reqs []DryRunRequest) error {
 	all := make([]DryRunRequest, len(reqs))
 	for i, r := range reqs {
 		r.DryRun = true
 		all[i] = r
 	}
+	doc := dryRunPlan{DryRun: true, Data: all}
 	switch c.Format {
 	case FormatJSON:
-		return dryRunErr(c.JSON(all))
+		return dryRunErr(c.JSON(doc))
 	case FormatYAML:
-		return dryRunErr(c.YAML(all))
+		return dryRunErr(c.YAML(doc))
 	}
 	return c.dryRunText(all)
+}
+
+// dryRunPlan is DryRunAll's document.
+type dryRunPlan struct {
+	DryRun bool            `json:"dryRun"`
+	Data   []DryRunRequest `json:"data"`
 }
 
 func dryRunErr(err error) error {
@@ -1540,11 +1727,11 @@ func (c *Config) dryRunText(reqs []DryRunRequest) error {
 		if r.Body == nil {
 			continue
 		}
-		b, err := json.MarshalIndent(r.Body, "", "  ")
-		if err != nil {
+		var buf bytes.Buffer
+		if err := encodeJSON(&buf, r.Body); err != nil {
 			return dryRunErr(err)
 		}
-		bodies[i] = b
+		bodies[i] = bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	}
 	for i, r := range reqs {
 		if c.ColorEnabled() {
@@ -1654,10 +1841,12 @@ func (c *Config) Empty(noun, hint string) {
 
 // WarnBox prints a bordered warning box to stderr. Use for important notices
 // that warrant more visual weight than a single Warn line.
+//
+// In JSON and YAML modes each line is a warning, kept back as Warn keeps them.
 func (c *Config) WarnBox(lines ...string) {
 	if c.Format != FormatTable {
 		for _, l := range lines {
-			fmt.Fprintln(c.EWriter, "WARNING: "+l)
+			c.Warn(l)
 		}
 		return
 	}

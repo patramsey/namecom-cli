@@ -387,7 +387,7 @@ func TestListProfiles_MarksActiveProfile(t *testing.T) {
 			}
 
 			var views []profileView
-			if err := json.Unmarshal(buf.Bytes(), &views); err != nil {
+			if err := unmarshalData(buf.Bytes(), &views); err != nil {
 				t.Fatalf("parsing output: %v\n%s", err, buf.String())
 			}
 			var marked []string
@@ -419,4 +419,19 @@ func TestListProfiles_EndpointIncludesScheme(t *testing.T) {
 			}
 		})
 	}
+}
+
+// unmarshalData decodes the {"data": [...]} envelope every list prints in
+// JSON mode (#240) into v.
+func unmarshalData(b []byte, v any) error {
+	var doc struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return err
+	}
+	if doc.Data == nil {
+		return errors.New(`no "data" key`)
+	}
+	return json.Unmarshal(doc.Data, v)
 }

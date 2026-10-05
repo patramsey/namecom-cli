@@ -9,6 +9,57 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Breaking for scripts
+
+JSON and YAML output now follow one documented contract — see "JSON
+contract" in the README (#240). Each change below alters output a script may
+parse; table output is unchanged.
+
+- **Lists are always `{"data": [...]}`.** `domain check`, `domain search`,
+  `config list-profiles` and `dns export` printed a bare array, so
+  `dns list | jq .data` worked and `dns export | jq .data` failed.
+  Before: `[{"domainName": "a.com", …}]`. After:
+  `{"data": [{"domainName": "a.com", …}]}`. `config list-profiles` with no
+  profiles printed nothing on stdout; it prints `{"data": []}`. `dns import`
+  reads both shapes, so files exported by older versions still import.
+- **`dns import --dry-run` wraps its plan the same way.** Before:
+  `[{"dry_run": true, "method": "POST", …}, …]`. After:
+  `{"dryRun": true, "data": [{"dryRun": true, "method": "POST", …}, …]}`.
+- **Keys are camelCase.** The dry-run document's `dry_run` is `dryRun`, in
+  every command that previews (`auth login`, `auth logout` and `config use`
+  included). `status` renames six keys: `domains_total` → `domainsTotal`,
+  `expiring_critical` → `expiringCritical`, `expiring_soon` → `expiringSoon`,
+  `pending_transfers` → `pendingTransfers`, `expiring_domains` →
+  `expiringDomains`, `pending_transfer_domains` → `pendingTransferDomains`.
+- **Writes say whether anything changed.** The `{"success", "message"}`
+  document gains `changed`. Before: `{"success": true, "message": "Transfer
+  lock is already on for a.com; nothing to change"}`. After:
+  `{"success": true, "changed": false, "message": "…"}` — and
+  `"changed": true` for every write that did something. `domain lock`,
+  `domain autorenew` and `domain privacy` report `false` when the domain was
+  already in that state.
+- **The error envelope says what kind of error it is, and the hint moved
+  into it.** Before:
+  `{"error": {"message": "Not Found"}, "hint": "check the name or ID for typos"}`.
+  After:
+  `{"error": {"type": "not_found", "status": 404, "message": "Not Found", "hint": "check the name or ID for typos"}, "hint": "check the name or ID for typos"}`.
+  `type` is one of `usage`, `confirmation_required`, `auth`, `not_found`,
+  `rate_limited`, `conflict`, `aborted`, `network` or `api`; `status` is the
+  HTTP status when the API answered. The top-level `hint` is kept for this
+  release only and is deprecated: read `error.hint`. A rejected
+  `auth status` also puts its profile, username, endpoint and config file in
+  `error.details`, which was only in the message.
+- **Warnings are part of the JSON on stderr.** In JSON and YAML modes, a
+  warning — the `--base-url` caution on every run, say — was a plain
+  `! …` line on stderr, so stderr was not one parseable document. It is now
+  in the error envelope's `warnings` array, or, when the command succeeds, a
+  `{"warnings": ["…"]}` document on stderr. Before:
+  `! --base-url is set: …` followed by the error envelope. After:
+  `{"error": {…}, "warnings": ["--base-url is set: …"]}`.
+- **Nothing is HTML-escaped.** A TXT record's `"a<b & c>d"` came out with
+  `<`, `>` and `&` as `\u` escapes; it prints as written. Both forms decode
+  to the same string, so only a script matching the raw text is affected.
+
 ### Added
 - `domain check` takes any number of names. The API answers at most 50 per
   request, so a longer list is sent 50 at a time, one batch after another,

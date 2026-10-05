@@ -426,7 +426,7 @@ func TestAPI_DryRunSendsNothing(t *testing.T) {
 // dryRunDoc is the document --dry-run prints in JSON mode, with the body kept
 // as raw JSON so tests compare it exactly.
 type dryRunDoc struct {
-	DryRun bool            `json:"dry_run"`
+	DryRun bool            `json:"dryRun"`
 	Method string          `json:"method"`
 	Path   string          `json:"path"`
 	Body   json.RawMessage `json:"body"`
@@ -440,7 +440,7 @@ func parseDryRun(t *testing.T, buf *bytes.Buffer) dryRunDoc {
 		t.Fatalf("--dry-run output is not a JSON document: %v\n%s", err, buf.String())
 	}
 	if !doc.DryRun {
-		t.Errorf(`--dry-run document lacks "dry_run": true: %s`, buf.String())
+		t.Errorf(`--dry-run document lacks "dryRun": true: %s`, buf.String())
 	}
 	if len(doc.Body) > 0 {
 		var c bytes.Buffer

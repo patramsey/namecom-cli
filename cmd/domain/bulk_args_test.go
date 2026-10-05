@@ -196,7 +196,7 @@ func TestCheck_NamesFromStdin(t *testing.T) {
 		t.Fatalf("runCheck: %v", err)
 	}
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	var names []string

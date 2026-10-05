@@ -77,8 +77,17 @@ func needsYes(msg, detail string) error {
 	if detail != "" {
 		what += " (" + detail + ")"
 	}
-	return NewUsageError(fmt.Errorf("confirmation required for %s — pass --yes to confirm when not running in a terminal", what))
+	return NewUsageError(&ConfirmationRequiredError{
+		msg: fmt.Sprintf("confirmation required for %s — pass --yes to confirm when not running in a terminal", what),
+	})
 }
+
+// ConfirmationRequiredError is the usage error needsYes returns, typed so the
+// JSON error envelope can say "confirmation_required" rather than "usage"
+// (#240): a script that sees it knows --yes is the fix.
+type ConfirmationRequiredError struct{ msg string }
+
+func (e *ConfirmationRequiredError) Error() string { return e.msg }
 
 // RequiredFlags is the usage error (exit 2) for flags a command needs and was
 // not given. prompted says a terminal would have asked for them, which the

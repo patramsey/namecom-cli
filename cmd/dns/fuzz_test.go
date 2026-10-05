@@ -300,18 +300,21 @@ func FuzzExportImportRoundTrip(f *testing.F) {
 		if err := runImport(icmd, []string{"example.com"}); err != nil {
 			t.Fatalf("import rejected its own export of %+v: %v\nexport: %s", rec, err, exported)
 		}
-		var plan []struct {
-			Body struct {
-				Type     string `json:"type"`
-				Host     string `json:"host"`
-				Answer   string `json:"answer"`
-				TTL      *int64 `json:"ttl"`
-				Priority *int64 `json:"priority"`
-			} `json:"body"`
+		var doc struct {
+			Data []struct {
+				Body struct {
+					Type     string `json:"type"`
+					Host     string `json:"host"`
+					Answer   string `json:"answer"`
+					TTL      *int64 `json:"ttl"`
+					Priority *int64 `json:"priority"`
+				} `json:"body"`
+			} `json:"data"`
 		}
-		if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
 			t.Fatalf("dry-run output is not JSON: %v\n%s", err, stdout.String())
 		}
+		plan := doc.Data
 		if len(plan) != 1 {
 			t.Fatalf("want 1 planned request, got %d", len(plan))
 		}
