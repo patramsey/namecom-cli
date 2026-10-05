@@ -137,7 +137,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
   'namecom domain list'" and then a generic "check the domain name or ID"
   hint; an error that already says what to do now has no `hint:` line (and
   no `hint` key in the JSON/YAML envelope). `order get`, `email get`,
-  `url get`, `vanity-ns get` and `dnssec get` name what was not found
+  `url get`, `vanity-ns get`, `dnssec get`, `domain lock`, `autorenew`,
+  `privacy`, `contacts get` and `update` name what was not found
   (`order 1 not found — run 'namecom order list' …`) instead of printing
   `Not Found`; they still exit **4**. Missing credentials read `no
   credentials configured`, with the fix in the hint alone, and a missing

@@ -81,9 +81,18 @@ func toggleAlreadySet(cmd *cobra.Command, domainName string, want bool, get func
 	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(),
 		&coreapigo.GetDomainRequest{DomainName: domainName})
 	if err != nil {
-		return false, api.FromSDKError(err)
+		return false, domainError(err, domainName)
 	}
 	return d != nil && get(d) == want, nil
+}
+
+// domainError names the domain when fetching it found nothing: the API's
+// own "Not Found" does not say what was missing (#234).
+func domainError(err error, domainName string) error {
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domainName))
+	}
+	return api.FromSDKError(err)
 }
 
 // onOff is a toggle state in the words its command takes.
@@ -422,7 +431,7 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 	d, err := client.SDK().Domains.GetDomain(cmd.Context(),
 		&coreapigo.GetDomainRequest{DomainName: domain})
 	if err != nil {
-		return err
+		return domainError(err, domain)
 	}
 	if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
 		return err
@@ -817,7 +826,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		current, err = client.SDK().Domains.GetDomain(cmd.Context(),
 			&coreapigo.GetDomainRequest{DomainName: domain})
 		if err != nil {
-			return api.FromSDKError(err)
+			return domainError(err, domain)
 		}
 	}
 	var prompts []string

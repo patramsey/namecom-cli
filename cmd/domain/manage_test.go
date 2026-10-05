@@ -106,6 +106,24 @@ func TestContentTypeHeader_AllToggleCommands(t *testing.T) {
 	}
 }
 
+// TestToggle_NotFoundNamesTheDomain pins #234: `domain lock on nope.com`
+// printed the API's bare "Not Found".
+func TestToggle_NotFoundNamesTheDomain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	err := runLock(cmdForToggle(t, srv), []string{"on", "nope.com"})
+	if err == nil || !strings.HasPrefix(err.Error(), `domain "nope.com" not found`) {
+		t.Fatalf("runLock = %v, want it to name the domain", err)
+	}
+	if !cmdutil.IsNotFound(err) {
+		t.Error("the named error must still be a 404, so it exits 4")
+	}
+}
+
 func TestSetNS_InvalidNameserver(t *testing.T) {
 	tests := []struct {
 		desc, ns    string
