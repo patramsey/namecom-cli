@@ -31,6 +31,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   typically 1 year), with WHOIS privacy at no charge?". It said "plus WHOIS
   privacy", which read as an extra charge. **Scripts** matching the prompt
   text need updating.
+- `transfer cancel` looks the transfer up before asking, and fails with
+  not-found (exit 4) without prompting when there is none. The prompt now
+  includes its status: "Cancel transfer of acme.io (status: pending_transfer)?".
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

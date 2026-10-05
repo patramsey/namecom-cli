@@ -89,6 +89,54 @@ func TestTransferPrompt_SaysWhatThePriceBuys(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+// TestTransferCancel_ChecksTheTransferFirst pins #235: `transfer cancel`
+// asked "Cancel transfer of X?" for any name, and only the API's reply to the
+// POST said there was no transfer. It now looks the transfer up first: a
+// missing one fails with not-found before any prompt, and a real one's status
+// is in the question.
+func TestTransferCancel_ChecksTheTransferFirst(t *testing.T) {
+	var prompts []string
+	defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
+
+	t.Run("missing", func(t *testing.T) {
+		prompts = nil
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("sent %s %s for a transfer that does not exist", r.Method, r.URL)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}))
+		t.Cleanup(srv.Close)
+		err := runCancel(cmdForTransferGet(t, srv), []string{"typo.com"})
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `no transfer found for "typo.com"`) {
+			t.Errorf("runCancel = %v, want a not-found error naming the domain", err)
+		}
+		if len(prompts) != 0 {
+			t.Errorf("prompted %q before finding there was nothing to cancel", prompts)
+		}
+	})
+
+	t.Run("present", func(t *testing.T) {
+		prompts = nil
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("declined prompt still sent %s %s", r.Method, r.URL)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"domainName":"acme.io","status":"pending_transfer"}`))
+		}))
+		t.Cleanup(srv.Close)
+		// The decline's own result is #236's to define; only the question
+		// matters here.
+		_ = runCancel(cmdForTransferGet(t, srv), []string{"acme.io"})
+		if want := "Cancel transfer of acme.io (status: pending_transfer)?"; len(prompts) != 1 || prompts[0] != want {
+			t.Errorf("prompts = %q, want [%q]", prompts, want)
+		}
+	})
+}
+
 // TestTransferDryRun_NoQuoteWithoutAPrice: when pricing fails the transfer is
 // still allowed, unpriced, so the dry run reports no charge rather than $0.00.
 func TestTransferDryRun_NoQuoteWithoutAPrice(t *testing.T) {

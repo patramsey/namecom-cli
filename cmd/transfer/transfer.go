@@ -596,12 +596,31 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Look the transfer up before asking. The prompt was shown for any name,
+	// so "Cancel transfer of typo.com?" could be answered yes before the API
+	// said there was nothing to cancel (#235); `domain lock` already checks
+	// first. Its status goes in the prompt, so the user sees what they cancel.
+	stop := out.Spin("Fetching transfer…")
+	t, err := client.SDK().Transfers.GetTransfer(cmd.Context(),
+		&coreapigo.GetTransferRequest{DomainName: domain})
+	stop()
+	if err != nil {
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.NotFound(err, fmt.Sprintf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain))
+		}
+		return err
+	}
+	prompt := fmt.Sprintf("Cancel transfer of %s?", domain)
+	if t != nil && t.Status != "" {
+		prompt = fmt.Sprintf("Cancel transfer of %s (status: %s)?", domain, t.Status)
+	}
+
 	// NoBody: the {} sent is the SDK's EmptyObject placeholder
 	// (namedotcom/core-api-go#8), not a body the user supplies.
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/transfers/%s:cancel", domain),
-		Prompt: fmt.Sprintf("Cancel transfer of %s?", domain),
+		Prompt: prompt,
 		Spin:   "Cancelling transfer…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
 		_, err := client.SDK().Transfers.CancelTransfer(ctx,
