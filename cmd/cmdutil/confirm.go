@@ -12,8 +12,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ErrAborted is the error for a declined confirmation or a form cancelled
+// with Ctrl-C or Esc. It exits 1, so a script can tell a declined delete from
+// a completed one.
+//
+// A decline used to print "! aborted" and exit 0, while Ctrl-C in some forms
+// printed "✗ aborted" and exited 1 (#236). Both now return this, and the error
+// renderer prints it like any other failure: "✗ aborted".
+var ErrAborted = errors.New("aborted")
+
+// FormError returns ErrAborted for a form the user cancelled, and err
+// otherwise. Every huh form's Run error goes through it.
+func FormError(err error) error {
+	if errors.Is(err, huh.ErrUserAborted) {
+		return ErrAborted
+	}
+	return err
+}
+
 // Confirm prompts the user for a yes/no confirmation using a styled huh form.
-// Returns true if confirmed. If yes is true, skips the prompt entirely.
+// Returns true if confirmed, and false for "No" or a cancelled prompt; callers
+// turn false into ErrAborted. If yes is true, skips the prompt entirely.
 // In non-interactive mode without --yes, returns a clear error.
 // The prompt is tagged "[sandbox]" when out targets the sandbox API, so the
 // decision point makes the environment unmistakable.

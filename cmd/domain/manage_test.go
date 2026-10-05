@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	coreapigo "github.com/namedotcom/core-api-go"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -1062,17 +1063,14 @@ func TestSetNSAndContactsSet_Confirm(t *testing.T) {
 			srv, hits := serve(t)
 			cmd := c.build(t, srv)
 			setYes(t, cmd, false)
-			if err := c.run(cmd, []string{"example.com"}); err != nil {
-				t.Fatalf("a decline must exit 0, got: %v", err)
+			if err := c.run(cmd, []string{"example.com"}); !errors.Is(err, cmdutil.ErrAborted) {
+				t.Fatalf("a decline must fail with cmdutil.ErrAborted (exit 1), got: %v", err)
 			}
 			if *hits != 0 {
 				t.Errorf("declined, but %d request(s) were sent", *hits)
 			}
 			if !strings.HasPrefix(asked, c.wantPrompt) {
 				t.Errorf("prompt %q should start %q", asked, c.wantPrompt)
-			}
-			if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(stderr, "aborted") {
-				t.Errorf("decline should report aborted, stderr: %q", stderr)
 			}
 		})
 

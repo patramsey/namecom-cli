@@ -198,14 +198,15 @@ func TestRunWrite_DeclineAborts(t *testing.T) {
 	sent, err := RunWrite(cmd, Write[testBody]{
 		Method: "POST", Path: "/core/v1/things", Body: testBody{Name: "a"}, Prompt: "Create a thing?",
 	}, failIfSent(t))
-	if err != nil || sent {
-		t.Fatalf("RunWrite = (%v, %v), want (false, nil) so the command exits 0", sent, err)
+	if !errors.Is(err, ErrAborted) || sent {
+		t.Fatalf("RunWrite = (%v, %v), want (false, ErrAborted) so the command exits 1", sent, err)
 	}
 	if asked != "Create a thing?" {
 		t.Errorf("confirm asked %q", asked)
 	}
-	if !strings.Contains(stderr.String(), "aborted") {
-		t.Errorf("stderr = %q, want an 'aborted' warning", stderr)
+	// The error renderer reports it; a warning as well would say it twice.
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing printed by RunWrite itself", stderr)
 	}
 }
 
@@ -322,8 +323,8 @@ func TestRunWrite_PromptCarriesContext(t *testing.T) {
 		prev := confirmFunc
 		confirmFunc = func(_ *output.Config, _ bool, _, d string) (bool, error) { detail = d; return false, nil }
 		t.Cleanup(func() { confirmFunc = prev })
-		if _, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t)); err != nil {
-			t.Fatal(err)
+		if _, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t)); !errors.Is(err, ErrAborted) {
+			t.Fatalf("declined: got %v, want ErrAborted", err)
 		}
 		if detail != want {
 			t.Errorf("confirm detail = %q, want %q", detail, want)

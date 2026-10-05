@@ -188,14 +188,18 @@ func TestToggles_PromptByRisk(t *testing.T) {
 				defer cmdutil.StubConfirm(func(p string) bool { asked = p; return false })()
 				srv, writes := serve(t)
 				_, run := build(srv)
-				if err := run(); err != nil {
-					t.Fatalf("want exit 0, got %v", err)
-				}
+				err := run()
 				if tc.want == "" {
+					if err != nil {
+						t.Fatalf("no prompt, so want success, got %v", err)
+					}
 					if asked != "" || *writes != 1 {
 						t.Errorf("want no prompt and one write, got prompt %q and %d write(s)", asked, *writes)
 					}
 					return
+				}
+				if !errors.Is(err, cmdutil.ErrAborted) {
+					t.Fatalf("a decline must fail with cmdutil.ErrAborted (exit 1), got %v", err)
 				}
 				if !strings.HasPrefix(asked, tc.want) {
 					t.Errorf("prompt %q should start %q", asked, tc.want)
@@ -235,8 +239,8 @@ func TestUpdate_SeveralRiskyFlagsAskOnce(t *testing.T) {
 	}
 	var prompts []string
 	defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
-	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
-		t.Fatal(err)
+	if err := runUpdate(cmd, []string{"example.com"}); !errors.Is(err, cmdutil.ErrAborted) {
+		t.Fatalf("declined: got %v, want cmdutil.ErrAborted", err)
 	}
 	if len(prompts) != 1 {
 		t.Fatalf("want one prompt, got %q", prompts)

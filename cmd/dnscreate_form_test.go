@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -198,8 +199,8 @@ func TestDNSCreate_FormReachableFromRoot(t *testing.T) {
 
 // TestDNSCreate_FormCtrlCAtEveryStep pins #230: Ctrl-C at the MX priority
 // step was ignored, and the record was created without a priority. Ctrl-C at
-// any step must send nothing, print "aborted", and exit 0, as declining a
-// confirmation does.
+// any step must send nothing and fail with "aborted" (exit 1), as declining a
+// confirmation does (#236).
 func TestDNSCreate_FormCtrlCAtEveryStep(t *testing.T) {
 	steps := map[string][]string{
 		"type":     {ctrlC},
@@ -215,12 +216,12 @@ func TestDNSCreate_FormCtrlCAtEveryStep(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			answerDNSForm(t, answers...)
-			stderr, err := runDNSCreate(t, srv, true, "example.com")
-			if err != nil {
-				t.Fatalf("Ctrl-C at %s: got error %v, want exit 0", step, err)
+			_, err := runDNSCreate(t, srv, true, "example.com")
+			if !errors.Is(err, cmdutil.ErrAborted) {
+				t.Fatalf("Ctrl-C at %s: got error %v, want cmdutil.ErrAborted", step, err)
 			}
-			if !strings.Contains(stderr, "aborted") {
-				t.Errorf("Ctrl-C at %s: stderr %q does not say aborted", step, stderr)
+			if got := exitCode(err); got != 1 {
+				t.Errorf("Ctrl-C at %s: exit %d, want 1", step, got)
 			}
 		})
 	}

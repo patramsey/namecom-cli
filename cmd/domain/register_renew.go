@@ -552,10 +552,7 @@ func registerForm(domainName, quote string) error {
 		),
 	)
 	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return fmt.Errorf("aborted")
-		}
-		return err
+		return cmdutil.FormError(err)
 	}
 	if n, err := strconv.Atoi(yearsStr); err == nil {
 		registerYears = n
@@ -760,7 +757,7 @@ func acknowledgeClaim(out *output.Config, domainName string) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("aborted: trademark claim not acknowledged")
+		return fmt.Errorf("%w: trademark claim not acknowledged", cmdutil.ErrAborted)
 	}
 	return nil
 }

@@ -80,6 +80,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   as a statement: `confirmation required for "Delete …?" (production · …) —
   pass --yes to confirm when not running in a terminal`. Flags a terminal
   prompts for say so in their help: "(required; prompted in a terminal)".
+- **Scripts — exit code:** declining a confirmation, or cancelling any prompt
+  or form with Ctrl-C, now exits 1 and prints `✗ aborted` on stderr (an error
+  envelope in JSON and YAML mode), so a declined `dns delete` can be told from
+  a completed one. A decline used to print `! aborted` and exit 0, and so did
+  Ctrl-C in the `dns create`, `url`, `email`, `transfer` and `auth login`
+  forms, while Ctrl-C in the `domain register` form exited 1. Declining
+  `auth login`'s offer to replace a profile exits 1 with
+  `aborted: profile "…" left unchanged`. The one exception is the register
+  offer after `domain check`: the check itself succeeded, so saying no exits
+  0, with a note that nothing was registered.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

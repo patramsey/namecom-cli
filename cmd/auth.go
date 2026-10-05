@@ -109,8 +109,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			return cerr
 		}
 		if !replace {
-			out.Warn(fmt.Sprintf("profile %q left unchanged", loginProfile))
-			return nil
+			return fmt.Errorf("%w: profile %q left unchanged", cmdutil.ErrAborted, loginProfile)
 		}
 	}
 
@@ -119,8 +118,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	for {
 		if err := askLogin(&a, !sandbox); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
+				return cmdutil.ErrAborted
 			}
 			return fmt.Errorf("form: %w", err)
 		}

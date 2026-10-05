@@ -295,11 +295,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 	}
 
@@ -521,11 +517,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 	}
 

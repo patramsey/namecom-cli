@@ -419,8 +419,10 @@ func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []*corea
 	if err != nil {
 		return err
 	}
+	// Declining is not a failure here, unlike every other prompt: the check
+	// the user asked for succeeded, and the offer was the CLI's idea.
 	if !ok {
-		out.Warn("aborted")
+		out.Note(r.DomainName + " was not registered")
 		return nil
 	}
 	return inlineRegister(cmd, r)

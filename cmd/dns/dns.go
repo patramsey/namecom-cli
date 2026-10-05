@@ -262,10 +262,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return cmdutil.RequiredFlags(true, missing...)
 		}
 		if err := dnsCreateForm(cmd); err != nil {
-			if errors.Is(err, errFormAborted) {
-				out.Warn("aborted")
-				return nil
-			}
 			return err
 		}
 	}
@@ -904,9 +900,9 @@ func StubFormRunner(run func(*huh.Form) error) func() {
 	return func() { runForm = prev }
 }
 
-// errFormAborted reports Ctrl-C in the guided form. runCreate prints "aborted"
-// and exits 0, as a declined confirmation does.
-var errFormAborted = errors.New("aborted")
+// errFormAborted reports Ctrl-C in the guided form. It is cmdutil.ErrAborted,
+// so the command exits 1, as a declined confirmation does (#236).
+var errFormAborted = cmdutil.ErrAborted
 
 // missingCreateFlags names the required `dns create` flags left empty.
 func missingCreateFlags() []string {

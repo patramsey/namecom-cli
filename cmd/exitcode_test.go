@@ -37,6 +37,9 @@ func TestExitCode(t *testing.T) {
 		{"nil is success", nil, 0},
 		{"generic runtime error", errors.New("boom"), 1},
 		{"api 500", &api.APIError{StatusCode: 500}, 1},
+		// #236: a declined or cancelled prompt is a failure a script can see.
+		{"declined prompt", cmdutil.ErrAborted, 1},
+		{"declined with detail", fmt.Errorf("%w: profile kept", cmdutil.ErrAborted), 1},
 		{"usage error", cmdutil.NewUsageError(errors.New("unknown flag: --bogus")), 2},
 		{"wrapped usage error", fmt.Errorf("ctx: %w", cmdutil.NewUsageError(errors.New("bad arg"))), 2},
 		{"auth error", cmdutil.NewAuthError(errors.New("no credentials configured")), 3},
