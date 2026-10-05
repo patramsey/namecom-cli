@@ -96,3 +96,33 @@ func TestRequireAcceptPremium(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckMaxPrice_DryRunWarns pins #247: under --dry-run a price above the
+// cap is a warning, so the preview still prints, as the premium gate allows.
+func TestCheckMaxPrice_DryRunWarns(t *testing.T) {
+	price := 6250.0
+	for name, p := range map[string]*float64{"above": &price, "no quote": nil} {
+		t.Run(name, func(t *testing.T) {
+			cmd, _, stderr := writeCmd(t, true, false)
+			var maxPrice float64
+			cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "")
+			if err := cmd.Flags().Set("max-price", "100"); err != nil {
+				t.Fatal(err)
+			}
+			if err := CheckMaxPrice(cmd, maxPrice, "shoes.shop", p); err != nil {
+				t.Fatalf("under --dry-run want no error, got %v", err)
+			}
+			if !strings.Contains(stderr.String(), "$100.00") || !strings.Contains(stderr.String(), "would be refused") {
+				t.Errorf("stderr = %q, want a warning that the real run would refuse", stderr)
+			}
+		})
+	}
+	// A cap that is not a price is still an error: there is nothing to preview.
+	cmd, _, _ := writeCmd(t, true, false)
+	var maxPrice float64
+	cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "")
+	_ = cmd.Flags().Set("max-price", "0")
+	if err := CheckMaxPrice(cmd, maxPrice, "shoes.shop", &price); err == nil {
+		t.Error("--max-price 0 under --dry-run: want a usage error")
+	}
+}

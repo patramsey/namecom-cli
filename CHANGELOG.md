@@ -127,6 +127,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   set: `--type` on `dns list`, `dns create`, `dns update`, `url create` and
   `url update`, `order list --status`, `domain claims --purchase-type`, and
   `domain list --sort` and `--sort-dir`. TAB completed filenames there.
+- The line under a confirmation no longer says "sandbox" twice: a sandbox
+  prompt is tagged `[sandbox]`, and the line now names only the profile and
+  account. Under `--base-url` it reads `base URL overridden: <url>` instead of
+  production or sandbox, which described only where the credentials came
+  from. The same text appears in the refusal off a terminal.
+- `--max-price` under `--dry-run` previews the request and warns that the
+  real run would refuse it, as the premium gate already did. It used to fail
+  the dry run with exit 2, so the request could not be seen.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

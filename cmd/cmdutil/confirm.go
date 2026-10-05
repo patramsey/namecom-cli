@@ -114,9 +114,19 @@ const PromptedRequired = "(required; prompted in a terminal)"
 // request is really sent with. The profile is left out when it is not in the
 // config file, or when flags or the environment supply both the username and
 // the token, since the profile then supplied neither.
+//
+// The environment is left out when the prompt is tagged "[sandbox]", which
+// said the word a second time (#247). Under --base-url it names the URL
+// instead: production or sandbox is then only where the credentials came
+// from, not where the request goes.
 func PromptContext(cmd *cobra.Command) string {
 	env := "production"
-	if IsSandbox(cmd) {
+	switch {
+	case baseURLOverride(cmd) != "":
+		env = "base URL overridden: " + baseURLOverride(cmd)
+	case Out(cmd).Sandbox:
+		env = "" // Confirm's [sandbox] tag says it
+	case IsSandbox(cmd):
 		env = "sandbox"
 	}
 	f, _ := cmd.Context().Value(KeyConfig).(*config.File)
@@ -140,14 +150,29 @@ func PromptContext(cmd *cobra.Command) string {
 		profile = ""
 	}
 
+	who := ""
 	switch {
 	case profile != "" && id.Username != "":
-		return fmt.Sprintf("%s · profile %s (%s)", env, profile, id.Username)
+		who = fmt.Sprintf("profile %s (%s)", profile, id.Username)
 	case profile != "":
-		return fmt.Sprintf("%s · profile %s", env, profile)
+		who = "profile " + profile
 	case id.Username != "":
-		return fmt.Sprintf("%s · %s", env, id.Username)
-	default:
+		who = id.Username
+	}
+	switch {
+	case env == "":
+		return who
+	case who == "":
 		return env
 	}
+	return env + " · " + who
+}
+
+// baseURLOverride returns the --base-url value, or "" when it was not set.
+func baseURLOverride(cmd *cobra.Command) string {
+	f := cmd.Root().PersistentFlags().Lookup("base-url")
+	if f == nil {
+		return ""
+	}
+	return f.Value.String()
 }

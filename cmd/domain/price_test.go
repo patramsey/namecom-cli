@@ -115,27 +115,34 @@ func setPurchaseMode(t *testing.T, cmd *cobra.Command, dryRun bool) {
 }
 
 // TestPurchase_MaxPrice covers #226: --max-price refuses, before anything is
-// bought, a price above it — exit 2, both numbers in the message — and does
-// so under --dry-run too, since that is what the real run would do.
+// bought, a price above it — exit 2, both numbers in the message. Under
+// --dry-run it warns and previews instead (#247), as the premium gate does.
 func TestPurchase_MaxPrice(t *testing.T) {
 	defer output.StubInteractive(false)()
 	for name, run := range purchaseRuns {
 		t.Run(name+" above the cap", func(t *testing.T) {
-			for _, dry := range []bool{false, true} {
-				srv, writes := purchaseServer(t, standardStub)
-				err := run(t, srv, dry, "--max-price", "20")
-				var usage *cmdutil.UsageError
-				if !errors.As(err, &usage) {
-					t.Fatalf("dry-run=%v: want a usage error (exit 2), got %T: %v", dry, err, err)
+			srv, writes := purchaseServer(t, standardStub)
+			err := run(t, srv, false, "--max-price", "20")
+			var usage *cmdutil.UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("want a usage error (exit 2), got %T: %v", err, err)
+			}
+			for _, w := range []string{"$25.00", "--max-price $20.00"} {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q lacks %q", err, w)
 				}
-				for _, w := range []string{"$25.00", "--max-price $20.00"} {
-					if !strings.Contains(err.Error(), w) {
-						t.Errorf("dry-run=%v: error %q lacks %q", dry, err, w)
-					}
-				}
-				if *writes != 0 {
-					t.Errorf("dry-run=%v: refused, but %d purchase(s) were sent", dry, *writes)
-				}
+			}
+			if *writes != 0 {
+				t.Errorf("refused, but %d purchase(s) were sent", *writes)
+			}
+		})
+		t.Run(name+" above the cap under --dry-run", func(t *testing.T) {
+			srv, writes := purchaseServer(t, standardStub)
+			if err := run(t, srv, true, "--max-price", "20"); err != nil {
+				t.Fatalf("a dry run previews rather than refuses, got %v", err)
+			}
+			if *writes != 0 {
+				t.Errorf("a dry run sent %d purchase(s)", *writes)
 			}
 		})
 		t.Run(name+" within the cap", func(t *testing.T) {
