@@ -61,7 +61,7 @@ var getCmd = &cobra.Command{
 
 var createCmd = &cobra.Command{
 	Use:   "create <domain>",
-	Short: "Initiate a transfer in from another registrar",
+	Short: "Start a transfer in from another registrar",
 	Example: `  namecom transfer create example.com --auth-code XXXXXX
   namecom transfer create example.com --auth-code XXXXXX --privacy
 
@@ -76,8 +76,9 @@ var createCmd = &cobra.Command{
 
 var internalCmd = &cobra.Command{
 	Use:   "internal-in <domain>",
-	Short: "Move a domain between name.com accounts (enterprise resellers only)",
-	Long: `Move a domain between name.com accounts without the usual EPP transfer wait.
+	Short: "Move a domain from another name.com account into this one (enterprise resellers only)",
+	Long: `Move a domain from another name.com account into this one, without the usual
+EPP transfer wait.
 
 Requires an approved enterprise reseller account: the spec states "Restricted to
 approved enterprise resellers; other callers receive 403 Forbidden." Contact
@@ -92,8 +93,11 @@ the name.com dashboard first — this command cannot do either.`,
 }
 
 var cancelCmd = &cobra.Command{
-	Use:               "cancel <domain>",
-	Short:             "Cancel an in-progress transfer",
+	Use:   "cancel <domain>",
+	Short: "Cancel a transfer in to name.com that is still in progress",
+	Long: `Cancel a transfer in to name.com started with 'transfer create' that has not
+completed. To stop a domain leaving name.com for another registrar, use
+'transfer cancel-outbound'.`,
 	Example:           `  namecom transfer cancel example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCancel,
@@ -101,8 +105,11 @@ var cancelCmd = &cobra.Command{
 }
 
 var cancelOutboundCmd = &cobra.Command{
-	Use:               "cancel-outbound <domain>",
-	Short:             "Cancel an outbound transfer-out",
+	Use:   "cancel-outbound <domain>",
+	Short: "Stop a domain transferring out to another registrar",
+	Long: `Cancel a pending transfer of a domain from name.com to another registrar, so
+the domain stays here. To cancel a transfer in to name.com, use
+'transfer cancel'.`,
 	Example:           `  namecom transfer cancel-outbound example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCancelOutbound,

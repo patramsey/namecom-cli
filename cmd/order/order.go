@@ -70,11 +70,17 @@ var getCmd = &cobra.Command{
 }
 
 var refundCmd = &cobra.Command{
-	Use:     "refund",
-	Short:   "Process a refund for order items",
-	Example: `  namecom order refund --order-id 12345 --item-ids 67890 --yes`,
-	Args:    cobra.NoArgs,
-	RunE:    runRefund,
+	Use:   "refund",
+	Short: "Refund items of an order",
+	Long: `Refund items of an order. The confirmation names what is refunded and for
+how much. A refund cannot be undone; 'order get' shows which items can be
+refunded.`,
+	Example: `  namecom order refund --order-id 12345 --item-ids 67890
+
+  # In a script, skip the confirmation:
+  namecom order refund --order-id 12345 --item-ids 67890 --yes`,
+	Args: cobra.NoArgs,
+	RunE: runRefund,
 }
 
 func init() {

@@ -71,6 +71,10 @@ var createCmd = &cobra.Command{
 	Use:     "create <domain>",
 	Aliases: []string{"add"},
 	Short:   "Create a DNS record",
+	Long: `Create a DNS record on a domain whose DNS name.com hosts. In a terminal, a
+form asks for --type and --answer when they are not passed.
+
+CAA records show in 'dns list' but cannot be created through the API.`,
 	Example: `  namecom dns create example.com --type A --answer 1.2.3.4
   namecom dns create example.com --type CNAME --host www --answer example.com.
   namecom dns create example.com --type MX --answer mail.example.com --priority 10
@@ -103,8 +107,11 @@ var deleteCmd = &cobra.Command{
 	Use:     "delete <domain> <id>",
 	Aliases: []string{"rm"},
 	Short:   "Delete a DNS record",
+	Long:    `Delete a DNS record by its ID, which 'dns list' shows.`,
 	Example: `  namecom dns delete example.com 12345
-  namecom dns list example.com --type TXT -q | xargs -I{} namecom dns delete example.com {} --yes   # every TXT record`,
+
+  # In a script, skip the confirmation; this deletes every TXT record:
+  namecom dns list example.com --type TXT -q | xargs -I{} namecom dns delete example.com {} --yes`,
 	Args: cmdutil.ExactArgs(2),
 	RunE: runDelete,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -144,7 +151,7 @@ func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "record")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
 
-	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT (required; prompted in a terminal)")
+	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT; CAA is read-only through the API (required; prompted in a terminal)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required; prompted in a terminal)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")

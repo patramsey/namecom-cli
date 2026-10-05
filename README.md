@@ -208,14 +208,14 @@ namecom transfer get acme.io                              # check status
 namecom transfer create acme.io --auth-code XXXXXX --contacts-file contacts.json
 ```
 
-**Set up email and URL forwarding:**
+**Set up email forwarding and URL redirects:**
 ```bash
 namecom email create acme.io hello --to you@gmail.com     # hello@acme.io → you@gmail.com
 namecom email list acme.io
 namecom url create acme.io --to https://new-site.com      # redirect apex to another URL
 ```
 
-**Enable DNSSEC:**
+**Publish DNSSEC DS records** (values from your DNS host, which signs the zone):
 ```bash
 namecom dnssec list acme.io
 namecom dnssec create acme.io --algorithm 13 --digest-type 2 --key-tag 12345 --digest abc123

@@ -25,8 +25,8 @@ const apiSettingsURL = "https://www.name.com/account/settings/api"
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Configure credentials interactively",
-	Long: `Asks for your name.com API username and token, checks them with the API,
-and saves them to a profile in the config file.
+	Long: `Ask for your name.com API username and token, check them with the API,
+and save them to a profile in the config file.
 
 Create a token at ` + apiSettingsURL + `.
 Sandbox credentials are separate from production ones, and the sandbox
@@ -60,8 +60,10 @@ var loginProfile string
 var logoutProfile string
 
 func init() {
-	authLoginCmd.Flags().StringVar(&loginProfile, "profile", "default", "profile name to save credentials under")
-	authLogoutCmd.Flags().StringVar(&logoutProfile, "profile", "", "profile to remove (defaults to the active profile)")
+	// Both say they replace the global --profile (#237): here it names the
+	// profile to write or remove, not the credentials to run with.
+	authLoginCmd.Flags().StringVar(&loginProfile, "profile", "default", "profile name to save credentials under (overrides the global --profile)")
+	authLogoutCmd.Flags().StringVar(&logoutProfile, "profile", "", "profile to remove, by default the active one (overrides the global --profile)")
 	// logout's local --profile shadows the global one, completion included.
 	// login's names a profile that may not exist yet, so it offers none.
 	_ = authLogoutCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)

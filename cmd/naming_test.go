@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/output"
 )
@@ -76,6 +79,56 @@ func TestRootSuggestFor(t *testing.T) {
 	u, _ := errors.AsType[*cmdutil.UsageError](err)
 	if u == nil || u.UserHint() != "did you mean 'namecom domain'?" {
 		t.Errorf("namecom domian: %v, want cobra's own suggestion of domain", err)
+	}
+}
+
+// TestHelpText pins the wording conventions #237 brought every page to.
+func TestHelpText(t *testing.T) {
+	thirdPerson := map[string]bool{
+		"Displays": true, "Opens": true, "Asks": true, "Shows": true, "Lists": true,
+		"Gets": true, "Returns": true, "Creates": true, "Deletes": true, "Updates": true,
+		"Prints": true, "Manages": true, "Sets": true, "Removes": true, "Adds": true,
+	}
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+		path := c.CommandPath()
+		// A Long that only repeats Short says nothing the command list did not.
+		if c.Long != "" && strings.TrimSuffix(c.Long, ".") == strings.TrimSuffix(c.Short, ".") {
+			t.Errorf("%s: Long only repeats Short", path)
+		}
+		if f := strings.Fields(c.Long); len(f) > 0 && thirdPerson[f[0]] {
+			t.Errorf("%s: Long starts %q; use the imperative, as every other page does", path, f[0])
+		}
+		// Examples lead with the plain form, and one that skips the
+		// confirmation is labelled, so --yes is not what a reader copies first.
+		lines := strings.Split(strings.TrimSpace(c.Example), "\n")
+		for i, line := range lines {
+			if !strings.Contains(line, "--yes") {
+				continue
+			}
+			if i == 0 {
+				t.Errorf("%s: the first example passes --yes", path)
+			} else if !strings.HasPrefix(strings.TrimSpace(lines[i-1]), "#") {
+				t.Errorf("%s: an example passes --yes without a comment line above it saying why:\n%s", path, line)
+			}
+		}
+	}
+	walk(rootCmd)
+
+	// The url pages say "redirect", and the dnssec pages "DS record", rather
+	// than the mix of terms they used.
+	for group, stale := range map[string]string{"url": "forwarding", "dnssec": "DNSSEC key"} {
+		c, _, _ := rootCmd.Find([]string{group})
+		for _, sub := range append(c.Commands(), c) {
+			text := sub.Short + " " + sub.Long
+			sub.LocalFlags().VisitAll(func(f *pflag.Flag) { text += " " + f.Usage })
+			if strings.Contains(text, stale) {
+				t.Errorf("%s help still says %q", sub.CommandPath(), stale)
+			}
+		}
 	}
 }
 

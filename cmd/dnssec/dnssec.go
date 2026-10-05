@@ -17,7 +17,12 @@ import (
 // Cmd is the `namecom dnssec` parent command.
 var Cmd = &cobra.Command{
 	Use:   "dnssec",
-	Short: "Enable DNSSEC signing to protect against DNS spoofing",
+	Short: "Manage DS records at the registry (DNSSEC)",
+	// It said "Enable DNSSEC signing". These commands publish and remove the
+	// registry's DS records; signing the zone is the DNS host's job (#237).
+	Long: `Manage the DS records the registry publishes for a domain. They point
+validating resolvers at the keys the domain's DNS host signs the zone with;
+signing the zone is done by the DNS host, not by these commands.`,
 }
 
 var (
@@ -30,7 +35,7 @@ var (
 var listCmd = &cobra.Command{
 	Use:               "list <domain>",
 	Aliases:           []string{"ls"},
-	Short:             "List DNSSEC keys for a domain",
+	Short:             "List a domain's DS records",
 	Example:           `  namecom dnssec list example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runList,
@@ -39,7 +44,7 @@ var listCmd = &cobra.Command{
 
 var getCmd = &cobra.Command{
 	Use:               "get <domain> <digest>",
-	Short:             "Get a specific DNSSEC key",
+	Short:             "Get a DS record by its digest",
 	Example:           `  namecom dnssec get example.com abc123def456`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
@@ -47,9 +52,12 @@ var getCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:               "create <domain>",
-	Aliases:           []string{"add"},
-	Short:             "Add a DNSSEC key",
+	Use:     "create <domain>",
+	Aliases: []string{"add"},
+	Short:   "Add a DS record",
+	Long: `Add a DS record at the registry. Take its values from the DNS host, which
+publishes the matching DNSKEY: a DS record that matches none of the keys the
+zone is signed with makes validating resolvers fail to resolve the domain.`,
 	Example:           `  namecom dnssec create example.com --algorithm 8 --digest-type 2 --key-tag 12345 --digest abc123`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCreate,
@@ -57,9 +65,12 @@ var createCmd = &cobra.Command{
 }
 
 var deleteCmd = &cobra.Command{
-	Use:               "delete <domain> <digest>",
-	Aliases:           []string{"rm"},
-	Short:             "Remove a DNSSEC key",
+	Use:     "delete <domain> <digest>",
+	Aliases: []string{"rm"},
+	Short:   "Remove a DS record",
+	Long: `Remove a DS record from the registry. To turn DNSSEC off, remove every DS
+record before the DNS host stops signing the zone. If others remain, at
+least one must match a key the zone is signed with.`,
 	Example:           `  namecom dnssec delete example.com abc123def456`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
