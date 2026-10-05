@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,46 @@ func TestErrorOutput_ArgCountHonoursOutputFlag(t *testing.T) {
 			}
 			if got := errorOutput().Format; got != f {
 				t.Errorf("error rendered as %q, want %q from -o", got, f)
+			}
+		})
+	}
+}
+
+// TestErrorOutput_EarlyFailureHonoursOutputFlag pins the follow-up noted on
+// #247: when cobra fails before it parses flags — an unknown top-level
+// command, or an unknown flag placed before -o — -o was ignored, so
+// `-o table` in a pipe still got the JSON envelope. The arguments are
+// scanned for it instead.
+func TestErrorOutput_EarlyFailureHonoursOutputFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want output.Format
+	}{
+		{"unknown command", []string{"bogus", "-o", "table"}, output.FormatTable},
+		{"unknown flag first", []string{"domain", "get", "--bogus", "-o", "yaml", "x"}, output.FormatYAML},
+		{"--output=", []string{"bogus", "--output=table"}, output.FormatTable},
+		{"-oyaml", []string{"bogus", "-oyaml"}, output.FormatYAML},
+		{"last one wins", []string{"bogus", "-o", "yaml", "--output", "table"}, output.FormatTable},
+		{"after -- is an argument", []string{"bogus", "--", "-o", "table"}, output.FormatJSON},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prevGF, prevOut, prevArgs := gf, resolvedOut, os.Args
+			t.Cleanup(func() { gf, resolvedOut, os.Args = prevGF, prevOut, prevArgs; rootCmd.SetArgs(nil) })
+			resolvedOut = nil
+			gf.output = ""
+			os.Args = append([]string{"namecom"}, tc.args...)
+
+			rootCmd.SetArgs(tc.args)
+			if err := rootCmd.ExecuteContext(context.Background()); err == nil {
+				t.Fatal("want an early failure")
+			}
+			if resolvedOut != nil {
+				t.Fatal("PersistentPreRunE ran; the test no longer exercises the early-failure path")
+			}
+			// A test binary's stdout is not a terminal, so the default is JSON.
+			if got := errorOutput().Format; got != tc.want {
+				t.Errorf("error rendered as %q, want %q", got, tc.want)
 			}
 		})
 	}

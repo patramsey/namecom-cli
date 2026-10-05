@@ -399,14 +399,46 @@ var resolvedClient *api.Client
 // came out in the TTY-detected default format, ignoring -o. The flags are
 // parsed by then, so they are applied here directly. Only when they cannot
 // be — a malformed flag, or a bad --output value — does the default apply.
+//
+// When cobra fails before it parses flags at all — an unknown top-level
+// command, or an unknown flag ahead of -o — gf.output is still empty, and
+// `-o table` in a pipe got the JSON envelope (#247). The arguments are
+// scanned for --output then.
 func errorOutput() *output.Config {
 	if resolvedOut != nil {
 		return resolvedOut
+	}
+	if gf.output == "" {
+		gf.output = scanOutputFlag(os.Args[1:])
 	}
 	if out, err := buildOutputConfig(); err == nil {
 		return out
 	}
 	return output.DefaultConfig()
+}
+
+// scanOutputFlag returns the value of the last -o/--output in args, in any
+// of the forms pflag accepts, or "" when there is none. Arguments after "--"
+// are not flags.
+func scanOutputFlag(args []string) string {
+	val := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return val
+		case a == "-o" || a == "--output":
+			if i+1 < len(args) {
+				val = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--output="):
+			val = strings.TrimPrefix(a, "--output=")
+		case strings.HasPrefix(a, "-o") && !strings.HasPrefix(a, "--"):
+			val = strings.TrimPrefix(strings.TrimPrefix(a, "-o"), "=")
+		}
+	}
+	return val
 }
 
 // flagOverrides collects the global credential flags as config.Overrides.

@@ -436,6 +436,11 @@ parse; table output is unchanged.
 - `auth login` without a terminal and without `--with-token` or
   `--token-cmd` now exits 2, as a usage error, and names those flags; it
   exited 1.
+- `-o table` and `-o yaml` are honoured for errors that happen before the
+  command line is parsed: an unknown top-level command
+  (`namecom bogus -o table`), or an unknown flag placed before `-o`. In a
+  pipe those printed the JSON envelope regardless. **Scripts** that pass
+  `-o table` and parsed that envelope anyway get the text form now.
 - Help honours `--color`: `--help --color=never` printed colour escapes
   wherever colour was otherwise on, and `--color=always` was ignored in a
   pipe. Help also wraps descriptions and flag help to the terminal width
