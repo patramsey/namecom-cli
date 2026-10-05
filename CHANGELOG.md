@@ -68,6 +68,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   instead of only its ID. A record that does not exist now fails with
   not-found (exit 4) before any prompt, under `--yes` and `--dry-run` too.
   **Scripts** matching the prompt text need updating.
+- `dnssec delete` warns, before asking, what removing a DS record can do: if
+  other DS records remain and none matches a key the DNS host signs the zone
+  with, validating resolvers fail to resolve the domain; with none left,
+  validation simply stops. Shown in table mode only, on stderr.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
