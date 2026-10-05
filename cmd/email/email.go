@@ -76,14 +76,16 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding")
 
-	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address (required)")
-	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address")
+	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address "+cmdutil.PromptedRequired)
+	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address "+cmdutil.PromptedRequired)
 
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
+
+var listPage, listLimit int
 
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
@@ -93,14 +95,19 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching email forwardings…")
-	page := 1
+	page := listPage
 	var all []*coreapigo.EmailForwarding
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListEmailForwardingsResponse
 	for {
 		result, err := client.SDK().EmailForwardings.ListEmailForwardings(cmd.Context(),
-			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page})
+			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -115,7 +122,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		// early would truncate silently. Page fully whenever the caller cannot
 		// be told there is more — see cmd/contact/contact.go.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -155,7 +162,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			emailRows(all),
 		)
 		if hasMore {
-			out.Count(len(all), "forwarding", "first page — pass --all for the rest")
+			out.Count(len(all), "forwarding", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(all), "forwarding")
 		}
@@ -220,7 +227,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	if createEmailTo == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--to is required")
+			return cmdutil.RequiredFlags(true, "to")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -241,11 +248,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 	}
 
@@ -306,7 +309,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	if updateEmailTo == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--to is required")
+			return cmdutil.RequiredFlags(true, "to")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -327,11 +330,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 	}
 

@@ -9,25 +9,39 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestOnOffFirst pins #234: `domain lock example.com on` said only "expected
-// 'on' or 'off', got "example.com"", without the order that works.
-func TestOnOffFirst(t *testing.T) {
-	root := &cobra.Command{Use: "namecom"}
-	lock := &cobra.Command{Use: "lock"}
-	root.AddCommand(lock)
+// TestToggleArgs pins #236: the toggles take on|off and the domain in either
+// order, and a word that is neither is named in the error.
+func TestToggleArgs(t *testing.T) {
+	for _, args := range [][]string{{"ON", "x.com"}, {"x.com", "On"}, {"X.com", "on"}} {
+		on, d, err := ToggleArgs(args)
+		if err != nil || !on || d != "x.com" {
+			t.Errorf("ToggleArgs(%q) = %v, %q, %v; want true, x.com, nil", args, on, d, err)
+		}
+	}
+	if on, d, err := ToggleArgs([]string{"x.com", "off"}); err != nil || on || d != "x.com" {
+		t.Errorf("ToggleArgs(x.com off) = %v, %q, %v; want false, x.com, nil", on, d, err)
+	}
+	for _, args := range [][]string{{"maybe", "x.com"}, {"x.com", "maybe"}} {
+		_, _, err := ToggleArgs(args)
+		if _, ok := errors.AsType[*UsageError](err); !ok || !strings.Contains(err.Error(), `got "maybe"`) {
+			t.Errorf("ToggleArgs(%q): err = %v, want a usage error naming \"maybe\"", args, err)
+		}
+	}
+	if _, _, err := ToggleArgs([]string{"on", "not a domain"}); err == nil {
+		t.Error("ToggleArgs(on, not a domain) accepted an invalid domain")
+	}
+}
 
-	if on, err := OnOffFirst(lock, []string{"ON", "x.com"}); err != nil || !on {
-		t.Errorf("OnOffFirst(ON x.com) = %v, %v; want true, nil", on, err)
+func TestCompleteToggle(t *testing.T) {
+	cmd := &cobra.Command{}
+	for _, args := range [][]string{nil, {"example.com"}} {
+		got, _ := CompleteToggle(cmd, args, "")
+		if strings.Join(got, ",") != "on,off" {
+			t.Errorf("CompleteToggle(%q) = %q, want on, off", args, got)
+		}
 	}
-	_, err := OnOffFirst(lock, []string{"x.com", "On"})
-	u, ok := errors.AsType[*UsageError](err)
-	if !ok || u.UserHint() != "run 'namecom lock on x.com'" {
-		t.Errorf("swapped: err = %v, want a usage error suggesting the right order", err)
-	}
-	_, err = OnOffFirst(lock, []string{"maybe", "x.com"})
-	if u, ok := errors.AsType[*UsageError](err); !ok || u.UserHint() != "" ||
-		!strings.Contains(err.Error(), `got "maybe"`) {
-		t.Errorf("neither on nor off: err = %v, want the plain usage error", err)
+	if got, _ := CompleteToggle(cmd, []string{"on", "example.com"}, ""); got != nil {
+		t.Errorf("CompleteToggle after both arguments = %q, want nothing", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -175,7 +176,8 @@ without acknowledgement — this command is for inspecting a domain beforehand.`
 
 func init() {
 	claimsCmd.Flags().StringVar(&claimsPurchaseType, "purchase-type", "",
-		"claims context: registration, landrush_eap, landrush_auction_a, landrush_reserve_a")
+		"claims context: "+strings.Join(cmdutil.ClaimsPurchaseTypes, ", "))
+	cmdutil.CompleteFlagValues(claimsCmd, "purchase-type", cmdutil.ClaimsPurchaseTypes)
 }
 
 func runClaims(cmd *cobra.Command, args []string) error {

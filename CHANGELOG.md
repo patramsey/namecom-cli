@@ -72,6 +72,69 @@ Releases before `0.2.0` predate this file. Their notes are on the
   other DS records remain and none matches a key the DNS host signs the zone
   with, validating resolvers fail to resolve the domain; with none left,
   validation simply stops. Shown in table mode only, on stderr.
+- **Scripts — exit code:** a missing required flag now exits 2 (usage error)
+  everywhere. `url create`, `url update`, `email create` and `email update`
+  without `--to` off a terminal exited 1, as did `vanity-ns create
+  --hostname ""`; `transfer create` already exited 2. The refusal of a write
+  that needs `--yes` off a terminal also exits 2 instead of 1, and is worded
+  as a statement: `confirmation required for "Delete …?" (production · …) —
+  pass --yes to confirm when not running in a terminal`. Flags a terminal
+  prompts for say so in their help: "(required; prompted in a terminal)".
+- **Scripts — exit code:** declining a confirmation, or cancelling any prompt
+  or form with Ctrl-C, now exits 1 and prints `✗ aborted` on stderr (an error
+  envelope in JSON and YAML mode), so a declined `dns delete` can be told from
+  a completed one. A decline used to print `! aborted` and exit 0, and so did
+  Ctrl-C in the `dns create`, `url`, `email`, `transfer` and `auth login`
+  forms, while Ctrl-C in the `domain register` form exited 1. Declining
+  `auth login`'s offer to replace a profile exits 1 with
+  `aborted: profile "…" left unchanged`. The one exception is the register
+  offer after `domain check`: the check itself succeeded, so saying no exits
+  0, with a note that nothing was registered.
+- **Scripts:** error lines use the status symbols in table mode: `✗ <message>`
+  and, when there is advice, `→ <hint>` on the next line. Without colour they
+  read `error: <message>` and `  hint: <hint>`, the only output that did not
+  use the symbols; with colour the hint was a dim `  hint:` line. Scripts
+  matching `error:` on stderr need updating. The JSON and YAML error
+  envelopes are unchanged.
+- `domain contacts set` takes the contacts file as `--contacts-file`, the name
+  `domain register` and `transfer create` already use for the same JSON.
+  `--from-file` still works but is hidden from help and prints a deprecation
+  notice on stderr.
+- `domain lock`, `domain autorenew` and `domain privacy` take the domain and
+  `on`/`off` in either order, so `namecom domain lock example.com on` works
+  like every other command that takes the domain first. Shell completion
+  offers `on`/`off` or domains to match.
+- Help shows the booleans whose `false` matters — `domain update --autorenew`,
+  `--privacy` and `--lock`, `domain register --privacy` and `--autorenew` — as
+  `--autorenew=true|false`, and `domain update` has an `=false` example.
+  `--autorenew false` sets the flag to true and leaves `false` as an argument;
+  that mistake now gets a hint naming `--autorenew=false` instead of only
+  "too many arguments".
+- **Scripts — exit code:** `domain list` rejects arguments with exit 2, like
+  the other list commands. `domain list --all false` used to ignore the
+  `false` and list everything.
+- Every paged list — `domain`, `dns`, `email`, `url`, `vanity-ns`, `transfer`
+  and `order list`, and `contact unverified` — takes `--page` (the page to
+  fetch, from 1), `--limit` (results per page) and `--all`, described the same
+  way everywhere. Only `domain list` had `--page`, and none could set the
+  page size. A list that stops early ends with
+  `--page N for more, --all for everything`, as `domain list` already did.
+  **Scripts — exit code:** `--page 0` and a negative `--limit` exit 2; `domain
+  list --page 0` exited 1.
+- `domain list --sort` lists the domain properties it can sort by in its
+  help. Any other value is still passed to the API.
+- Shell completion offers the values of every flag that takes one of a fixed
+  set: `--type` on `dns list`, `dns create`, `dns update`, `url create` and
+  `url update`, `order list --status`, `domain claims --purchase-type`, and
+  `domain list --sort` and `--sort-dir`. TAB completed filenames there.
+- The line under a confirmation no longer says "sandbox" twice: a sandbox
+  prompt is tagged `[sandbox]`, and the line now names only the profile and
+  account. Under `--base-url` it reads `base URL overridden: <url>` instead of
+  production or sandbox, which described only where the credentials came
+  from. The same text appears in the refusal off a terminal.
+- `--max-price` under `--dry-run` previews the request and warns that the
+  real run would refuse it, as the premium gate already did. It used to fail
+  the dry run with exit 2, so the request could not be seen.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

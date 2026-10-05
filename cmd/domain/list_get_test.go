@@ -149,7 +149,7 @@ func TestDomainList_PaginationStopsAtFirstPage(t *testing.T) {
 		t.Errorf("output contains domain from page 2 which should not have been fetched")
 	}
 	// One footer, on stderr: the count and how to get the rest (#233).
-	if want := "2 domains · first page — --page 2 for more, --all for everything\n"; stderr.String() != want {
+	if want := "2 domains · --page 2 for more, --all for everything\n"; stderr.String() != want {
 		t.Errorf("footer on stderr = %q, want %q", stderr.String(), want)
 	}
 	if contains(stdout.String(), "page") {

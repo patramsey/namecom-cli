@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -33,8 +34,9 @@ func ValidMaxPrice(cmd *cobra.Command, maxPrice float64) error {
 // the cap, or no price to compare, is a usage error (exit 2) naming both
 // numbers, and the caller sends nothing.
 //
-// It runs under --dry-run too: like any other check of the invocation, a
-// refusal is what the real run would do, and a dry run should say so.
+// Under --dry-run it warns instead and lets the preview print, as the premium
+// gate does (#247): a dry run that only says "refused" hides the request the
+// user asked to see. The warning says the real run would refuse.
 //
 // --price was documented as a cap but was only ever sent as purchasePrice,
 // unchecked against the quote, so nothing on the client could stop a
@@ -43,15 +45,22 @@ func CheckMaxPrice(cmd *cobra.Command, maxPrice float64, what string, price *flo
 	if err := ValidMaxPrice(cmd, maxPrice); err != nil || !cmd.Flags().Changed("max-price") {
 		return err
 	}
-	if price == nil {
-		return usagef("no price was quoted for %s, so --max-price %s cannot be checked; nothing was sent", what, output.Money(maxPrice))
-	}
+	var refusal string
+	switch {
+	case price == nil:
+		refusal = fmt.Sprintf("no price was quoted for %s, so --max-price %s cannot be checked", what, output.Money(maxPrice))
 	// Compared in cents, so a quote of 17.99 is not "above" a cap of 17.99
 	// because of how either was parsed.
-	if math.Round(*price*100) > math.Round(maxPrice*100) {
-		return usagef("%s costs %s, above --max-price %s; nothing was sent", what, output.Money(*price), output.Money(maxPrice))
+	case math.Round(*price*100) > math.Round(maxPrice*100):
+		refusal = fmt.Sprintf("%s costs %s, above --max-price %s", what, output.Money(*price), output.Money(maxPrice))
+	default:
+		return nil
 	}
-	return nil
+	if IsDryRun(cmd) {
+		Out(cmd).Warn(refusal + "; without --dry-run this would be refused and nothing sent")
+		return nil
+	}
+	return usagef("%s; nothing was sent", refusal)
 }
 
 // ChargeQuote is the Write.Quote of a purchase charging price, in USD, for a

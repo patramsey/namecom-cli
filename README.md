@@ -243,8 +243,9 @@ namecom dns delete acme.io "$ID" --yes
 ```
 
 Commands that change something ask first when run in a terminal. In a script
-or a pipe there is no one to ask, so they stop with *"pass --yes to confirm in
-non-interactive mode"* until you pass `--yes`.
+or a pipe there is no one to ask, so they stop with *"confirmation required
+for … — pass --yes to confirm when not running in a terminal"* and exit 2
+until you pass `--yes`.
 
 ## Output formats
 
@@ -377,7 +378,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | API or other runtime error |
+| `1` | API or other runtime error, or a confirmation declined or a prompt cancelled (Ctrl-C) |
 | `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value |
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |

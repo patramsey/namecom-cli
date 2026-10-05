@@ -188,14 +188,18 @@ func TestToggles_PromptByRisk(t *testing.T) {
 				defer cmdutil.StubConfirm(func(p string) bool { asked = p; return false })()
 				srv, writes := serve(t)
 				_, run := build(srv)
-				if err := run(); err != nil {
-					t.Fatalf("want exit 0, got %v", err)
-				}
+				err := run()
 				if tc.want == "" {
+					if err != nil {
+						t.Fatalf("no prompt, so want success, got %v", err)
+					}
 					if asked != "" || *writes != 1 {
 						t.Errorf("want no prompt and one write, got prompt %q and %d write(s)", asked, *writes)
 					}
 					return
+				}
+				if !errors.Is(err, cmdutil.ErrAborted) {
+					t.Fatalf("a decline must fail with cmdutil.ErrAborted (exit 1), got %v", err)
 				}
 				if !strings.HasPrefix(asked, tc.want) {
 					t.Errorf("prompt %q should start %q", asked, tc.want)
@@ -235,8 +239,8 @@ func TestUpdate_SeveralRiskyFlagsAskOnce(t *testing.T) {
 	}
 	var prompts []string
 	defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
-	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
-		t.Fatal(err)
+	if err := runUpdate(cmd, []string{"example.com"}); !errors.Is(err, cmdutil.ErrAborted) {
+		t.Fatalf("declined: got %v, want cmdutil.ErrAborted", err)
 	}
 	if len(prompts) != 1 {
 		t.Fatalf("want one prompt, got %q", prompts)
@@ -310,4 +314,30 @@ func TestPrivacyOn_NotPurchasedIsExplained(t *testing.T) {
 			t.Errorf("want the API's own error, got %v", err)
 		}
 	})
+}
+
+// TestToggles_DomainFirst pins #236: `domain lock example.com on` failed,
+// though every other command takes the domain first. Both orders send the
+// same PATCH.
+func TestToggles_DomainFirst(t *testing.T) {
+	defer output.StubInteractive(false)()
+	for _, args := range [][]string{{"on", "example.com"}, {"example.com", "on"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var patched string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPatch {
+					patched = r.URL.Path
+				}
+				_, _ = w.Write([]byte(toggleStub(true)))
+			}))
+			t.Cleanup(srv.Close)
+			if err := runLock(toggleCmd(t, srv, "yes"), args); err != nil {
+				t.Fatalf("lock %s: %v", strings.Join(args, " "), err)
+			}
+			if patched != "/core/v1/domains/example.com" {
+				t.Errorf("lock %s patched %q, want /core/v1/domains/example.com", strings.Join(args, " "), patched)
+			}
+		})
+	}
 }

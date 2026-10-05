@@ -45,7 +45,7 @@ var listCmd = &cobra.Command{
 	Short: "List transfers",
 	Example: `  namecom transfer list         # active/recent transfers (first page)
   namecom transfer list --all   # full transfer history`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runList,
 }
 
@@ -118,7 +118,7 @@ var eligibilityCmd = &cobra.Command{
 }
 
 func init() {
-	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code")
+	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
 	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "include WHOIS privacy (free) with the transfer")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
 		"which a premium domain's transfer requires; not a cap, see --max-price")
@@ -127,27 +127,34 @@ func init() {
 	createCmd.Flags().BoolVar(&createWatch, "watch", false, "poll transfer status every 5 minutes until complete or failed")
 	createCmd.Flags().StringVar(&createContactsFile, "contacts-file", "", contactsFileUsage)
 
-	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code")
+	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
 	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
 
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full transfer history)")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfer")
 
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
+var listPage, listLimit int
+
 func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching transfers…")
-	page := 1
+	page := listPage
 	var transfers []*coreapigo.Transfer
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListTransfersResponse
 	for {
 		result, err := client.SDK().Transfers.ListTransfers(cmd.Context(),
-			&coreapigo.ListTransfersRequest{Page: &page})
+			&coreapigo.ListTransfersRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return err
@@ -162,7 +169,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		// early would truncate silently. Page fully whenever the caller cannot
 		// be told there is more — see cmd/contact/contact.go.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -202,7 +209,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			transferRows(out, transfers),
 		)
 		if hasMore {
-			out.Count(len(transfers), "transfer", "first page — pass --all for full history")
+			out.Count(len(transfers), "transfer", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(transfers), "transfer")
 		}
@@ -277,7 +284,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
 		if !output.IsInteractive() {
-			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
+			return cmdutil.RequiredFlags(true, "auth-code")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -295,11 +302,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 	}
 
@@ -503,7 +506,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 
 	if internalAuthCode == "" {
 		if !output.IsInteractive() {
-			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
+			return cmdutil.RequiredFlags(true, "auth-code")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -521,11 +524,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 	}
 

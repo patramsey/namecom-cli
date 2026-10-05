@@ -488,19 +488,43 @@ func OnOffArg(s string) (bool, error) {
 	return false, usagef("expected 'on' or 'off', got %q", s)
 }
 
-// OnOffFirst parses args[0] as the toggles' on|off. When that fails but
-// args[1] is on or off — `domain lock example.com on`, the order most people
-// try first — the hint gives the command in the right order (#234).
-func OnOffFirst(cmd *cobra.Command, args []string) (bool, error) {
-	enable, err := OnOffArg(args[0])
-	if err == nil || len(args) < 2 {
-		return enable, err
+// ToggleArgs parses the two arguments of the domain toggles (lock, autorenew,
+// privacy) in either order: `lock on example.com` or `lock example.com on`.
+// The two cannot be confused, since no domain is "on" or "off".
+//
+// Only `<on|off> <domain>` used to work. Every other command takes the domain
+// first, so `domain lock example.com on` — the order most people try — failed
+// (#234 gave it a hint; #236 makes it work).
+func ToggleArgs(args []string) (enable bool, domain string, err error) {
+	if v, err := OnOffArg(args[0]); err == nil {
+		d, err := DomainArg(args, 1)
+		return v, d, err
 	}
-	if _, swapErr := OnOffArg(args[1]); swapErr != nil {
-		return false, err
+	if v, err := OnOffArg(args[1]); err == nil {
+		d, err := DomainArg(args, 0)
+		return v, d, err
 	}
-	return false, NewUsageErrorHint(fmt.Errorf("expected 'on' or 'off' before the domain, got %q", args[0]),
-		fmt.Sprintf("run '%s %s %s'", cmd.CommandPath(), strings.ToLower(args[1]), args[0]))
+	// Neither is on or off: name the one that is not the domain.
+	bad := args[0]
+	if ValidDomainName(CanonicalDomain(args[0])) == nil {
+		bad = args[1]
+	}
+	return false, "", usagef("expected 'on' or 'off', got %q", bad)
+}
+
+// CompleteToggle completes the toggles' arguments in either order: on/off
+// beside a domain, and a domain beside on/off.
+func CompleteToggle(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		if _, err := OnOffArg(args[0]); err == nil {
+			return CompleteDomains(cmd, nil, toComplete)
+		}
+		return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
 // CanonicalDomain normalizes a domain name for comparison and transmission.

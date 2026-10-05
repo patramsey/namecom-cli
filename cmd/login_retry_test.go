@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -129,8 +130,13 @@ func TestAuthLogin_AsksBeforeReplacingAProfile(t *testing.T) {
 			if tt.flag != "" {
 				cmd.PersistentFlags().Bool(tt.flag, true, "")
 			}
-			if err := runAuthLogin(cmd, nil); err != nil {
+			err := runAuthLogin(cmd, nil)
+			// Declining is an abort, which exits 1 like every other (#236).
+			if tt.wantSaved && err != nil {
 				t.Fatalf("runAuthLogin: %v", err)
+			}
+			if !tt.wantSaved && !errors.Is(err, cmdutil.ErrAborted) {
+				t.Fatalf("runAuthLogin = %v, want cmdutil.ErrAborted", err)
 			}
 			if *replace != tt.wantAsked {
 				t.Errorf("asked to replace %d times, want %d", *replace, tt.wantAsked)

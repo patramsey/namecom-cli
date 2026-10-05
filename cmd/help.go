@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -225,10 +226,17 @@ func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Styl
 			name = fmt.Sprintf("    --%s", f.Name)
 		}
 		typHint := ""
-		if f.Value.Type() != "bool" && f.Value.Type() != "stringArray" {
-			typHint = " " + f.Value.Type()
-		} else if f.Value.Type() == "stringArray" {
+		switch {
+		case f.Value.Type() == "bool":
+			// A boolean whose false means something, or whose default is
+			// true, is shown with the only spelling that sets it (#236).
+			if _, ok := f.Annotations[cmdutil.BoolValue]; ok || f.DefValue == "true" {
+				typHint = "=true|false"
+			}
+		case f.Value.Type() == "stringArray":
 			typHint = " strings"
+		default:
+			typHint = " " + f.Value.Type()
 		}
 		nameType := name + typHint
 		if len(nameType) > maxLen {

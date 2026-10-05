@@ -23,15 +23,11 @@ var lockCmd = &cobra.Command{
 	Use:   "lock <on|off> <domain>",
 	Short: "Enable or disable transfer lock",
 	Example: `  namecom domain lock on example.com
-  namecom domain lock off example.com`,
-	Args: cmdutil.ExactArgs(2),
-	RunE: runLock,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return cmdutil.CompleteDomains(cmd, args[1:], toComplete)
-	},
+  namecom domain lock off example.com
+  namecom domain lock example.com off   # the domain may come first`,
+	Args:              cmdutil.ExactArgs(2),
+	RunE:              runLock,
+	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 // applyDomainToggle performs a single-field UpdateDomain (PATCH).
@@ -188,11 +184,7 @@ func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
 
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffFirst(cmd, args)
-	if err != nil {
-		return err
-	}
-	domainName, err := cmdutil.DomainArg(args, 1)
+	enable, domainName, err := cmdutil.ToggleArgs(args)
 	if err != nil {
 		return err
 	}
@@ -226,24 +218,16 @@ var autorenewCmd = &cobra.Command{
 	Use:   "autorenew <on|off> <domain>",
 	Short: "Enable or disable automatic renewal",
 	Example: `  namecom domain autorenew on example.com
-  namecom domain autorenew off example.com`,
-	Args: cmdutil.ExactArgs(2),
-	RunE: runAutorenew,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return cmdutil.CompleteDomains(cmd, args[1:], toComplete)
-	},
+  namecom domain autorenew off example.com
+  namecom domain autorenew example.com off   # the domain may come first`,
+	Args:              cmdutil.ExactArgs(2),
+	RunE:              runAutorenew,
+	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffFirst(cmd, args)
-	if err != nil {
-		return err
-	}
-	domainName, err := cmdutil.DomainArg(args, 1)
+	enable, domainName, err := cmdutil.ToggleArgs(args)
 	if err != nil {
 		return err
 	}
@@ -275,24 +259,16 @@ var privacyCmd = &cobra.Command{
 	Use:   "privacy <on|off> <domain>",
 	Short: "Enable or disable WHOIS privacy",
 	Example: `  namecom domain privacy on example.com
-  namecom domain privacy off example.com`,
-	Args: cmdutil.ExactArgs(2),
-	RunE: runPrivacy,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return cmdutil.CompleteDomains(cmd, args[1:], toComplete)
-	},
+  namecom domain privacy off example.com
+  namecom domain privacy example.com off   # the domain may come first`,
+	Args:              cmdutil.ExactArgs(2),
+	RunE:              runPrivacy,
+	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffFirst(cmd, args)
-	if err != nil {
-		return err
-	}
-	domainName, err := cmdutil.DomainArg(args, 1)
+	enable, domainName, err := cmdutil.ToggleArgs(args)
 	if err != nil {
 		return err
 	}
@@ -412,12 +388,12 @@ var contactsGetCmd = &cobra.Command{
 }
 
 var contactsSetCmd = &cobra.Command{
-	Use:   "set <domain> --from-file contacts.json",
+	Use:   "set <domain> --contacts-file contacts.json",
 	Short: "Set contact information for a domain",
 	Example: `  namecom domain contacts get example.com -o json > contacts.json
   # edit contacts.json, then:
-  namecom domain contacts set example.com --from-file contacts.json
-  namecom domain contacts set example.com --from-file contacts.json --yes  # no prompt, for scripts`,
+  namecom domain contacts set example.com --contacts-file contacts.json
+  namecom domain contacts set example.com --contacts-file contacts.json --yes  # no prompt, for scripts`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runContactsSet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -426,8 +402,13 @@ var contactsSetCmd = &cobra.Command{
 var contactsFile string
 
 func init() {
-	contactsSetCmd.Flags().StringVar(&contactsFile, "from-file", "", "JSON file with contact data (required)")
-	_ = contactsSetCmd.MarkFlagRequired("from-file")
+	contactsSetCmd.Flags().StringVar(&contactsFile, "contacts-file", "", "JSON file with contact data, as 'contacts get -o json' writes it (required)")
+	// --from-file was this command's name for the same file that register and
+	// transfer call --contacts-file (#236). It still works, hidden, with a
+	// deprecation notice on stderr. Neither is marked required, since cobra
+	// would then demand one name specifically; runContactsSet checks instead.
+	contactsSetCmd.Flags().StringVar(&contactsFile, "from-file", "", "JSON file with contact data")
+	_ = contactsSetCmd.Flags().MarkDeprecated("from-file", "use --contacts-file")
 	cmdutil.GroupCmd(contactsCmd)
 	contactsCmd.AddCommand(contactsGetCmd, contactsSetCmd)
 }
@@ -523,6 +504,9 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if contactsFile == "" {
+		return cmdutil.RequiredFlags(false, "contacts-file")
+	}
 	// A bad file is a usage error (exit 2), like the other contacts files.
 	contacts, err := cmdutil.ReadContactsFile(contactsFile)
 	if err != nil {
@@ -828,6 +812,7 @@ var updateCmd = &cobra.Command{
 	Use:   "update <domain>",
 	Short: "Update domain settings (autorenew, privacy, lock) in one call",
 	Example: `  namecom domain update example.com --autorenew=true
+  namecom domain update example.com --autorenew=false   # =false: "--autorenew false" is not the same
   namecom domain update example.com --privacy=true --lock=true`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runUpdate,
@@ -971,4 +956,5 @@ func init() {
 	updateCmd.Flags().Bool("autorenew", false, "enable/disable auto-renewal")
 	updateCmd.Flags().Bool("privacy", false, "enable/disable WHOIS privacy")
 	updateCmd.Flags().Bool("lock", false, "enable/disable transfer lock")
+	cmdutil.MarkBoolValue(updateCmd.Flags(), "autorenew", "privacy", "lock")
 }

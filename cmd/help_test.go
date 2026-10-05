@@ -320,3 +320,25 @@ func TestRootHelp_FlagsAfterHelp(t *testing.T) {
 		})
 	}
 }
+
+// TestHelp_BoolValueFlags pins #236: a boolean whose false means something is
+// shown as --flag=true|false, the only spelling that passes false, while a
+// plain switch stays bare.
+func TestHelp_BoolValueFlags(t *testing.T) {
+	root := &cobra.Command{Use: "namecom"}
+	cmd := &cobra.Command{Use: "update <domain>", Run: func(*cobra.Command, []string) {}}
+	cmd.Flags().Bool("autorenew", false, "enable/disable auto-renewal")
+	cmd.Flags().Bool("all", false, "fetch every page")
+	cmdutil.MarkBoolValue(cmd.Flags(), "autorenew")
+	root.AddCommand(cmd)
+
+	var buf bytes.Buffer
+	printHelp(&buf, cmd, false)
+	got := buf.String()
+	if !strings.Contains(got, "--autorenew=true|false") {
+		t.Errorf("help does not show --autorenew=true|false:\n%s", got)
+	}
+	if strings.Contains(got, "--all=") {
+		t.Errorf("a plain switch was shown with a value:\n%s", got)
+	}
+}

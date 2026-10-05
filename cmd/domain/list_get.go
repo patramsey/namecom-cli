@@ -27,6 +27,9 @@ var listCmd = &cobra.Command{
   namecom domain list --expiring-before 2026-09-01
   namecom domain list --sort expireDate
   namecom domain list --all -o json | jq -r '.data[].domainName'   # JSON is wrapped in a "data" envelope`,
+	// Without it, cobra let a leaf command take any arguments and ignore
+	// them: `domain list --all false` listed every domain.
+	Args: cmdutil.NoArgs,
 	RunE: runList,
 }
 
@@ -46,6 +49,7 @@ var (
 	listSortDir        string
 	listAll            bool
 	listPage           int
+	listLimit          int
 	listExpiringAfter  string
 	listExpiringBefore string
 )
@@ -53,13 +57,21 @@ var (
 func init() {
 	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter by domain name (supports * wildcard, e.g. '*acme*')")
 	listCmd.Flags().StringVar(&listTLD, "tld", "", "filter by TLD (e.g. com, io)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "sort by a domain property (e.g. domainName, expireDate, createDate)")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "sort by a domain property: "+strings.Join(sortFields, ", ")+" (passed to the API as is)")
 	listCmd.Flags().StringVar(&listSortDir, "sort-dir", "", "sort direction: asc (default) or desc")
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (use with --output json for scripting)")
-	listCmd.Flags().IntVar(&listPage, "page", 1, "page number to fetch (use with --all to start from a specific page)")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "domain")
+	cmdutil.CompleteFlagValues(listCmd, "sort", sortFields)
+	cmdutil.CompleteFlagValues(listCmd, "sort-dir", cmdutil.SortDirs)
 }
+
+// sortFields are the domain properties --sort lists and completes: the
+// scalar fields of a domain in `domain list -o json`. The API documents sort
+// only as "which domain property to order by", with no list, so the value is
+// still sent as typed rather than checked against these.
+var sortFields = []string{"domainName", "createDate", "expireDate", "renewalPrice",
+	"autorenewEnabled", "locked", "privacyEnabled"}
 
 // isFiltered reports whether any server-side filter flag is set.
 func isFiltered(cmd *cobra.Command) bool {
@@ -71,8 +83,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 
-	if listPage < 1 {
-		return fmt.Errorf("--page must be 1 or greater (got %d)", listPage)
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
 	}
 	if err := cmdutil.ValidSortDir(listSortDir); err != nil {
 		return err
@@ -104,7 +116,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	// Build query params from flags (shared across all page requests).
 	buildParams := func(page int) *coreapigo.ListDomainsRequest {
-		p := &coreapigo.ListDomainsRequest{Page: &page}
+		p := &coreapigo.ListDomainsRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)}
 		if listSort != "" {
 			p.Sort = &listSort
 		}
@@ -252,17 +264,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 		// the help; the footer only says how to see the rest.
 		switch {
 		case hasMore && lastResult.TotalCount > 0:
-			nextPage := 2
+			nextPage := listPage + 1
 			if lastResult.NextPage != nil {
 				nextPage = *lastResult.NextPage
 			}
 			out.Footer(
 				fmt.Sprintf("Showing %s–%s of %s", output.Thousands(lastResult.From),
 					output.Thousands(lastResult.To), output.Plural(lastResult.TotalCount, "domain")),
-				fmt.Sprintf("--page %d for more, --all for everything", nextPage),
+				cmdutil.MorePages(nextPage),
 			)
 		case hasMore:
-			out.Count(len(domains), "domain", "first page — --page 2 for more, --all for everything")
+			out.Count(len(domains), "domain", cmdutil.MorePages(listPage+1))
 		default:
 			out.Count(len(domains), "domain")
 		}

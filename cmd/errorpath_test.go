@@ -40,7 +40,13 @@ func TestReportError_AuthHintOnStderrOnce(t *testing.T) {
 				if w.Len() != 0 {
 					t.Errorf("an error must write nothing to stdout, got:\n%s", w.String())
 				}
-				if n := strings.Count(ew.String(), "hint"); n != 1 {
+				// Table mode prints the hint as a "→" line (#238), the
+				// structured modes as a "hint" key.
+				marker := "hint"
+				if f == output.FormatTable {
+					marker = "→ "
+				}
+				if n := strings.Count(ew.String(), marker); n != 1 {
 					t.Errorf("want exactly one hint on stderr, got %d:\n%s", n, ew.String())
 				}
 				if !strings.Contains(ew.String(), "namecom auth") {
@@ -143,7 +149,7 @@ func TestReportError_TimeoutNamesTheBudget(t *testing.T) {
 	if code := reportError(cfg, err); code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	want := "error: getting domain: request to api.name.com timed out after 3s\n  hint: raise --timeout"
+	want := "✗ getting domain: request to api.name.com timed out after 3s\n→ raise --timeout"
 	if !strings.HasPrefix(ew.String(), want) {
 		t.Errorf("got:\n%s\nwant it to start with:\n%s", ew.String(), want)
 	}

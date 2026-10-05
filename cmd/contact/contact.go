@@ -48,7 +48,7 @@ after registering a domain does not mean there is nothing pending.`,
 	Example: `  namecom contact unverified
   namecom contact unverified --all
   namecom contact unverified -q | xargs -I{} namecom contact resend {}`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runUnverified,
 }
 
@@ -82,23 +82,30 @@ contact click the link.`,
 }
 
 func init() {
-	unverifiedCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+	cmdutil.AddPageFlags(unverifiedCmd, &listAll, &listPage, &listLimit, "unverified contact")
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(unverifiedCmd, resendCmd, verifyCmd)
 }
+
+var listPage, listLimit int
 
 func runUnverified(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching unverified contacts…")
-	page := 1
+	page := listPage
 	var contacts []*coreapigo.UnverifiedContact
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.UnverifiedContactsResponse
 	for {
 		result, err := client.SDK().ContactVerification.UnverifiedContactsList(cmd.Context(),
-			&coreapigo.UnverifiedContactsListRequest{Page: &page})
+			&coreapigo.UnverifiedContactsListRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return err
@@ -116,7 +123,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		// early here truncates silently. Page fully whenever the caller cannot
 		// be told there is more.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -156,7 +163,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			output.Essential("DOMAINS"),
 		)
 		if hasMore {
-			out.Count(len(contacts), "unverified contact", "first page — pass --all for the rest")
+			out.Count(len(contacts), "unverified contact", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(contacts), "unverified contact")
 		}

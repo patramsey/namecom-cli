@@ -536,8 +536,8 @@ func TestDNSList_HasMoreHint(t *testing.T) {
 	}
 	// The note is part of the count footer, on stderr, so it stays out of a
 	// table redirected to a file.
-	if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(stderr, "more exist — pass --all") {
-		t.Errorf("expected a 'more exist' note when hasMore=true, got: %q", stderr)
+	if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(stderr, "--page 2 for more, --all for everything") {
+		t.Errorf("expected a '--page 2 for more' note when hasMore=true, got: %q", stderr)
 	}
 	if strings.Contains(stdout.String(), "--all") {
 		t.Errorf("the note leaked onto stdout: %q", stdout.String())

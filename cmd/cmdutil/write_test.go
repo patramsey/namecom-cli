@@ -198,14 +198,15 @@ func TestRunWrite_DeclineAborts(t *testing.T) {
 	sent, err := RunWrite(cmd, Write[testBody]{
 		Method: "POST", Path: "/core/v1/things", Body: testBody{Name: "a"}, Prompt: "Create a thing?",
 	}, failIfSent(t))
-	if err != nil || sent {
-		t.Fatalf("RunWrite = (%v, %v), want (false, nil) so the command exits 0", sent, err)
+	if !errors.Is(err, ErrAborted) || sent {
+		t.Fatalf("RunWrite = (%v, %v), want (false, ErrAborted) so the command exits 1", sent, err)
 	}
 	if asked != "Create a thing?" {
 		t.Errorf("confirm asked %q", asked)
 	}
-	if !strings.Contains(stderr.String(), "aborted") {
-		t.Errorf("stderr = %q, want an 'aborted' warning", stderr)
+	// The error renderer reports it; a warning as well would say it twice.
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing printed by RunWrite itself", stderr)
 	}
 }
 
@@ -295,10 +296,12 @@ func TestPromptContext(t *testing.T) {
 		want    string
 	}{
 		{"default profile", two, config.Overrides{}, false, "production · profile work (acme-corp)"},
-		{"--profile", two, config.Overrides{Profile: "personal"}, true, "sandbox · profile personal (me)"},
+		// #247: the prompt's [sandbox] tag names the environment already.
+		{"--profile", two, config.Overrides{Profile: "personal"}, true, "profile personal (me)"},
 		{"flags supply everything", two, config.Overrides{Username: "bob", Token: "x"}, false, "production · bob"},
 		{"no config file", nil, config.Overrides{Username: "bob", Token: "x"}, false, "production · bob"},
-		{"nothing known", nil, config.Overrides{}, true, "sandbox"},
+		{"nothing known", nil, config.Overrides{}, true, ""},
+		{"nothing known, production", nil, config.Overrides{}, false, "production"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -322,8 +325,8 @@ func TestRunWrite_PromptCarriesContext(t *testing.T) {
 		prev := confirmFunc
 		confirmFunc = func(_ *output.Config, _ bool, _, d string) (bool, error) { detail = d; return false, nil }
 		t.Cleanup(func() { confirmFunc = prev })
-		if _, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t)); err != nil {
-			t.Fatal(err)
+		if _, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t)); !errors.Is(err, ErrAborted) {
+			t.Fatalf("declined: got %v, want ErrAborted", err)
 		}
 		if detail != want {
 			t.Errorf("confirm detail = %q, want %q", detail, want)
@@ -337,4 +340,24 @@ func TestRunWrite_PromptCarriesContext(t *testing.T) {
 			t.Errorf("error = %v, want it to carry %q and name --yes", err, want)
 		}
 	})
+}
+
+// TestPromptContext_BaseURL pins #247: under --base-url the context line said
+// production or sandbox, from the credentials, though the request goes to the
+// URL given.
+func TestPromptContext_BaseURL(t *testing.T) {
+	clearCredentialEnv(t)
+	f := &config.File{Profiles: map[string]config.Profile{"work": {Username: "acme-corp", Token: "t"}}}
+	for _, sandbox := range []bool{false, true} {
+		cmd := contextCmd(t, f, config.Overrides{}, sandbox)
+		var base string
+		cmd.Root().PersistentFlags().StringVar(&base, "base-url", "", "")
+		if err := cmd.Root().PersistentFlags().Set("base-url", "http://127.0.0.1:8080"); err != nil {
+			t.Fatal(err)
+		}
+		want := "base URL overridden: http://127.0.0.1:8080 · profile work (acme-corp)"
+		if got := PromptContext(cmd); got != want {
+			t.Errorf("sandbox=%v: PromptContext = %q, want %q", sandbox, got, want)
+		}
+	}
 }

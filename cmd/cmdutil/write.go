@@ -62,8 +62,7 @@ var confirmFunc = Confirm
 //     approve something that will not happen is noise — and never calls send.
 //     A body the preview cannot encode is returned as the error.
 //  2. Otherwise, when Prompt is set, it confirms (honouring --yes). A decline
-//     prints "aborted" and returns sent=false with a nil error, so the
-//     command exits 0 as it always has.
+//     returns sent=false and ErrAborted, so the command exits 1 (#236).
 //  3. It calls send with w.Body, under the spinner if Spin is set.
 //
 // sent reports whether send was called. When it was, err is send's error.
@@ -74,7 +73,7 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	if IsDryRun(cmd) {
 		ctx := ""
 		if w.Quote != nil {
-			ctx = PromptContext(cmd)
+			ctx = AccountContext(cmd)
 		}
 		return false, out.DryRunQuote(w.Method, w.Path, previewOf(w), w.Quote, ctx)
 	}
@@ -85,8 +84,7 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 			return false, err
 		}
 		if !ok {
-			out.Warn("aborted")
-			return false, nil
+			return false, ErrAborted
 		}
 	}
 

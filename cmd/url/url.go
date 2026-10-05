@@ -87,10 +87,10 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding")
 
 	createCmd.Flags().StringVar(&createHost, "host", "@", "subdomain host (@ for apex); a forwarding on a subdomain replaces its existing A records")
-	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL")
+	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL "+cmdutil.PromptedRequired)
 	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: redirect, 302, masked")
 	createCmd.Flags().StringVar(&createTitle, "title", "", "page title (masked only)")
 	createCmd.Flags().StringVar(&createMeta, "meta", "", "meta tags (masked only)")
@@ -102,10 +102,14 @@ func init() {
 	updateCmd.Flags().StringVar(&updateType, "type", "", "forwarding type: redirect, 302, masked (default: keep the current type)")
 	updateCmd.Flags().StringVar(&updateTitle, "title", "", "page title (masked only)")
 	updateCmd.Flags().StringVar(&updateMeta, "meta", "", "meta tags (masked only)")
+	cmdutil.CompleteFlagValues(createCmd, "type", cmdutil.URLForwardingTypes)
+	cmdutil.CompleteFlagValues(updateCmd, "type", cmdutil.URLForwardingTypes)
 
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
+
+var listPage, listLimit int
 
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
@@ -115,14 +119,19 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching URL forwardings…")
-	page := 1
+	page := listPage
 	var all []*coreapigo.URLForwardingResponse
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListURLForwardingsResponse
 	for {
 		result, err := client.SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
-			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page})
+			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -137,7 +146,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		// early would truncate silently. Page fully whenever the caller cannot
 		// be told there is more — see cmd/contact/contact.go.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -179,7 +188,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			urlRows(all),
 		)
 		if hasMore {
-			out.Count(len(all), "URL forwarding", "first page — pass --all for the rest")
+			out.Count(len(all), "URL forwarding", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(all), "URL forwarding")
 		}
@@ -252,7 +261,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	if createForwardsTo == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--to is required")
+			return cmdutil.RequiredFlags(true, "to")
 		}
 		typeOptions := []huh.Option[string]{
 			huh.NewOption("redirect (301 permanent)", "redirect"),
@@ -274,11 +283,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 		createForwardsTo = strings.TrimSpace(createForwardsTo)
 	}
@@ -380,14 +385,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("type") || cmd.Flags().Changed("title") || cmd.Flags().Changed("meta") {
 			updateForwardsTo = current.ForwardsTo
 		} else if !output.IsInteractive() {
-			return fmt.Errorf("--to is required (or pass --type/--title/--meta to change those instead)")
+			return cmdutil.NewUsageErrorHint(errors.New("--to is required unless --type, --title or --meta is passed"),
+				"pass --to, or --type/--title/--meta to change only those; a terminal prompts for --to")
 		}
 	}
 
 	formRan := false
 	if updateForwardsTo == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--to is required")
+			return cmdutil.RequiredFlags(true, "to")
 		}
 		formRan = true
 		typeOptions := []huh.Option[string]{
@@ -409,11 +415,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			),
 		)
 		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				out.Warn("aborted")
-				return nil
-			}
-			return err
+			return cmdutil.FormError(err)
 		}
 		updateForwardsTo = strings.TrimSpace(updateForwardsTo)
 	}

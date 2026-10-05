@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	coreapigo "github.com/namedotcom/core-api-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	coreapigo "github.com/namedotcom/core-api-go"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -901,7 +902,7 @@ func cmdForContactsSet(t *testing.T, srv *httptest.Server, contactsJSON string) 
 	t.Cleanup(func() { contactsFile = "" })
 
 	cmd := baseCmd(t, srv)
-	cmd.Flags().StringVar(&contactsFile, "from-file", f, "")
+	cmd.Flags().StringVar(&contactsFile, "contacts-file", f, "")
 	return cmd
 }
 
@@ -941,7 +942,7 @@ func TestContactsSet_BadFile(t *testing.T) {
 	cmd := baseCmd(t, srv)
 	contactsFile = "/nonexistent/path/contacts.json"
 	t.Cleanup(func() { contactsFile = "" })
-	cmd.Flags().StringVar(&contactsFile, "from-file", contactsFile, "")
+	cmd.Flags().StringVar(&contactsFile, "contacts-file", contactsFile, "")
 
 	err := runContactsSet(cmd, []string{"example.com"})
 	if err == nil {
@@ -1062,17 +1063,14 @@ func TestSetNSAndContactsSet_Confirm(t *testing.T) {
 			srv, hits := serve(t)
 			cmd := c.build(t, srv)
 			setYes(t, cmd, false)
-			if err := c.run(cmd, []string{"example.com"}); err != nil {
-				t.Fatalf("a decline must exit 0, got: %v", err)
+			if err := c.run(cmd, []string{"example.com"}); !errors.Is(err, cmdutil.ErrAborted) {
+				t.Fatalf("a decline must fail with cmdutil.ErrAborted (exit 1), got: %v", err)
 			}
 			if *hits != 0 {
 				t.Errorf("declined, but %d request(s) were sent", *hits)
 			}
 			if !strings.HasPrefix(asked, c.wantPrompt) {
 				t.Errorf("prompt %q should start %q", asked, c.wantPrompt)
-			}
-			if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(stderr, "aborted") {
-				t.Errorf("decline should report aborted, stderr: %q", stderr)
 			}
 		})
 
@@ -2705,7 +2703,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 }
 
 // TestContactFiles_BadFileIsUsageError pins that `domain register
-// --contacts-file` and `domain contacts set --from-file` reject a missing or
+// --contacts-file` and `domain contacts set --contacts-file` reject a missing or
 // invalid file before any request or prompt, with exit 2, as `transfer create`
 // does. Register used to read the file only after the availability check,
 // the guided form and the pricing lookup, and both exited 1.
@@ -2733,7 +2731,7 @@ func TestContactFiles_BadFileIsUsageError(t *testing.T) {
 		"contacts set": func(t *testing.T, path string) error {
 			cmd := baseCmd(t, neverCalledServer(t))
 			t.Cleanup(func() { contactsFile = "" })
-			cmd.Flags().StringVar(&contactsFile, "from-file", path, "")
+			cmd.Flags().StringVar(&contactsFile, "contacts-file", path, "")
 			return runContactsSet(cmd, []string{"example.com"})
 		},
 	}
@@ -2750,5 +2748,32 @@ func TestContactFiles_BadFileIsUsageError(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestContactsSet_FromFileIsADeprecatedAlias pins #236: the contacts file is
+// --contacts-file everywhere, and contacts set's old --from-file still fills
+// the same variable, hidden from help.
+func TestContactsSet_FromFileIsADeprecatedAlias(t *testing.T) {
+	t.Cleanup(func() {
+		contactsFile = ""
+		for _, name := range []string{"contacts-file", "from-file"} {
+			if f := contactsSetCmd.Flags().Lookup(name); f != nil {
+				f.Changed = false
+			}
+		}
+	})
+	if err := contactsSetCmd.Flags().Set("from-file", "old.json"); err != nil {
+		t.Fatalf("setting --from-file: %v", err)
+	}
+	if contactsFile != "old.json" {
+		t.Errorf("--from-file set contactsFile to %q, want old.json", contactsFile)
+	}
+	f := contactsSetCmd.Flags().Lookup("from-file")
+	if !f.Hidden || f.Deprecated == "" {
+		t.Errorf("--from-file hidden=%v deprecated=%q, want hidden and deprecated", f.Hidden, f.Deprecated)
+	}
+	if contactsSetCmd.Flags().Lookup("contacts-file") == nil {
+		t.Error("contacts set has no --contacts-file")
 	}
 }

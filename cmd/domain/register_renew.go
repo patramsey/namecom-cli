@@ -57,6 +57,8 @@ func init() {
 	registerCmd.Flags().IntVar(&registerYears, "years", 1, "number of years to register")
 	registerCmd.Flags().BoolVar(&registerPrivacy, "privacy", false, "enable WHOIS privacy")
 	registerCmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "enable auto-renewal")
+	// Passing either, even =false, answers the guided form's question.
+	cmdutil.MarkBoolValue(registerCmd.Flags(), "privacy", "autorenew")
 	registerCmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "JSON file with contact data")
 	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "purchase price in USD to send as purchasePrice instead of the quoted one "+
 		"(premium and aftermarket prices are filled in automatically); not a cap, see --max-price")
@@ -552,10 +554,7 @@ func registerForm(domainName, quote string) error {
 		),
 	)
 	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return fmt.Errorf("aborted")
-		}
-		return err
+		return cmdutil.FormError(err)
 	}
 	if n, err := strconv.Atoi(yearsStr); err == nil {
 		registerYears = n
@@ -760,7 +759,7 @@ func acknowledgeClaim(out *output.Config, domainName string) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("aborted: trademark claim not acknowledged")
+		return fmt.Errorf("%w: trademark claim not acknowledged", cmdutil.ErrAborted)
 	}
 	return nil
 }
