@@ -293,7 +293,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 
 	// One domain named on the command line keeps the single-object output
 	// scripts already parse. Several, or "-" — however many lines it turns
-	// out to hold — are a list, so their output is always an array (#244).
+	// out to hold — are a list (#244), so their output is the {"data": [...]}
+	// every list prints (#240).
 	list := len(args) != 1 || args[0] == cmdutil.StdinArg
 	domains, err := cmdutil.DomainArgs(cmd, args)
 	if err != nil {
@@ -330,12 +331,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	switch out.Format {
 	case output.FormatJSON:
 		if list {
-			return out.JSON(fetched)
+			return out.JSONList(fetched, nil, 0)
 		}
 		return out.JSON(fetched[0])
 	case output.FormatYAML:
 		if list {
-			return out.YAML(fetched)
+			return out.YAMLList(fetched, nil, 0)
 		}
 		return out.YAML(fetched[0])
 	default:

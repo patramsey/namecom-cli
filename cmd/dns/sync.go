@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -70,16 +71,22 @@ type syncChange struct {
 	planRecord
 }
 
-// syncFailure is the write a sync stopped at.
+// syncFailure is the write a sync stopped at. OutcomeUnknown is set when it
+// failed in a way that may have gone through — a 5xx, or a connection lost
+// after sending — so it may be applied although it is not in "applied".
 type syncFailure struct {
 	syncChange
-	Error string `json:"error"`
+	Error          string `json:"error"`
+	OutcomeUnknown bool   `json:"outcomeUnknown,omitempty"`
 }
 
 // syncResult is what a sync did: every write applied, in order, and — when it
-// stopped early — the one that failed and those never attempted.
+// stopped early — the one that failed and those never attempted. Changed is
+// whether anything was applied, as every write without a resource of its own
+// reports it (#240).
 type syncResult struct {
 	Domain       string       `json:"domain"`
+	Changed      bool         `json:"changed"`
 	Applied      []syncChange `json:"applied"`
 	Failed       *syncFailure `json:"failed,omitempty"`
 	NotAttempted []syncChange `json:"notAttempted,omitempty"`
@@ -165,7 +172,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			stop()
 			err = api.MarkWrite(err)
+			res.Changed = len(res.Applied) > 0
 			res.Failed = &syncFailure{syncChange: syncChange{Action: o.action, planRecord: o.record}, Error: err.Error()}
+			// Decided here, while the failed write is the client's last
+			// request, rather than by the root command (#243).
+			if unknown, ok := errors.AsType[*api.OutcomeUnknownError](client.OutcomeUnknown(err)); ok {
+				res.Failed.OutcomeUnknown = true
+				err = &syncOutcomeUnknownError{unknown}
+			}
 			for _, rest := range plan.ops[i+1:] {
 				res.NotAttempted = append(res.NotAttempted, syncChange{Action: rest.action, planRecord: rest.record})
 			}
@@ -174,6 +188,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		res.Applied = append(res.Applied, syncChange{Action: o.action, planRecord: rec})
 	}
 	stop()
+	res.Changed = len(res.Applied) > 0
 
 	if out.Quiet() {
 		return nil
@@ -243,6 +258,20 @@ func syncFailed(out *output.Config, res *syncResult, err error) error {
 	total := len(res.Applied) + 1 + len(res.NotAttempted)
 	return fmt.Errorf("%s (change %d of %d; %d applied before it): %w",
 		changeLine(res.Failed.Action, res.Failed.planRecord), len(res.Applied)+1, total, len(res.Applied), err)
+}
+
+// syncOutcomeUnknownError is a sync stopped by a write whose outcome is
+// unknown. It keeps the *api.OutcomeUnknownError, so the exit code is 6 and
+// the envelope names the idempotency key, but replaces its hint: a sync is not
+// retried by pinning one request's key — the next run sends other requests —
+// but by running it again, which plans from the live zone and so does not
+// repeat a change that landed.
+type syncOutcomeUnknownError struct{ error }
+
+func (e *syncOutcomeUnknownError) Unwrap() error { return e.error }
+
+func (e *syncOutcomeUnknownError) UserHint() string {
+	return "outcome unknown: that change may or may not have been made — run sync again; it plans from the live zone, so a change that landed is not repeated"
 }
 
 func printResult(out *output.Config, res *syncResult) error {

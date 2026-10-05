@@ -222,10 +222,10 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	return "", ""
 }
 
-// structuredDryRun decodes the {"dry_run": true, …} document out.DryRun prints
+// structuredDryRun decodes the {"dryRun": true, …} document out.DryRun prints
 // in JSON mode, reporting false when out does not start with one.
 func structuredDryRun(out string) (doc struct {
-	DryRun bool            `json:"dry_run"`
+	DryRun bool            `json:"dryRun"`
 	Method string          `json:"method"`
 	Path   string          `json:"path"`
 	Body   json.RawMessage `json:"body"`

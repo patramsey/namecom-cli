@@ -776,14 +776,16 @@ func TestPlural(t *testing.T) {
 	}
 }
 
-// WarnBox degrades to plain prefixed lines outside table mode rather than
-// drawing a box into a pipe — but it must not go silent, because the warnings
-// it carries are the ones that warrant extra weight.
+// WarnBox degrades to warnings outside table mode rather than drawing a box
+// into a pipe — but it must not go silent, because the warnings it carries
+// are the ones that warrant extra weight. They come out in the "warnings"
+// document FlushWarnings prints (#240).
 func TestWarnBox_DegradesButStaysVisible(t *testing.T) {
 	for _, f := range []Format{FormatJSON, FormatYAML} {
 		var errBuf bytes.Buffer
 		c := &Config{Format: f, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &errBuf}
 		c.WarnBox("first line", "second line")
+		c.FlushWarnings()
 		got := errBuf.String()
 		for _, want := range []string{"first line", "second line"} {
 			if !strings.Contains(got, want) {

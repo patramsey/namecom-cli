@@ -16,7 +16,7 @@ import (
 //
 // Never put a token here: a dry run in CI writes this to a log.
 type Change struct {
-	DryRun bool `json:"dry_run"`
+	DryRun bool `json:"dryRun"`
 	// Config is the file that would be written.
 	Config string `json:"config"`
 	// Action is one of save_profile, remove_profile, set_default.

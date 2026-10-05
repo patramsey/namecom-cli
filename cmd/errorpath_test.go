@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -41,13 +42,14 @@ func TestReportError_AuthHintOnStderrOnce(t *testing.T) {
 					t.Errorf("an error must write nothing to stdout, got:\n%s", w.String())
 				}
 				// Table mode prints the hint as a "→" line (#238), the
-				// structured modes as a "hint" key.
-				marker := "hint"
+				// structured modes as error.hint, and — deprecated, for one
+				// release — again as a top-level "hint" key (#240).
+				marker, want := "hint", 2
 				if f == output.FormatTable {
-					marker = "→ "
+					marker, want = "→ ", 1
 				}
-				if n := strings.Count(ew.String(), marker); n != 1 {
-					t.Errorf("want exactly one hint on stderr, got %d:\n%s", n, ew.String())
+				if n := strings.Count(ew.String(), marker); n != want {
+					t.Errorf("want the hint %d time(s) on stderr, got %d:\n%s", want, n, ew.String())
 				}
 				if !strings.Contains(ew.String(), "namecom auth") {
 					t.Errorf("hint should point at the auth commands, got:\n%s", ew.String())
@@ -239,6 +241,46 @@ func TestErrorOutput_ArgCountHonoursOutputFlag(t *testing.T) {
 			}
 			if got := errorOutput().Format; got != f {
 				t.Errorf("error rendered as %q, want %q from -o", got, f)
+			}
+		})
+	}
+}
+
+// TestErrorOutput_EarlyFailureHonoursOutputFlag pins the follow-up noted on
+// #247: when cobra fails before it parses flags — an unknown top-level
+// command, or an unknown flag placed before -o — -o was ignored, so
+// `-o table` in a pipe still got the JSON envelope. The arguments are
+// scanned for it instead.
+func TestErrorOutput_EarlyFailureHonoursOutputFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want output.Format
+	}{
+		{"unknown command", []string{"bogus", "-o", "table"}, output.FormatTable},
+		{"unknown flag first", []string{"domain", "get", "--bogus", "-o", "yaml", "x"}, output.FormatYAML},
+		{"--output=", []string{"bogus", "--output=table"}, output.FormatTable},
+		{"-oyaml", []string{"bogus", "-oyaml"}, output.FormatYAML},
+		{"last one wins", []string{"bogus", "-o", "yaml", "--output", "table"}, output.FormatTable},
+		{"after -- is an argument", []string{"bogus", "--", "-o", "table"}, output.FormatJSON},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prevGF, prevOut, prevArgs := gf, resolvedOut, os.Args
+			t.Cleanup(func() { gf, resolvedOut, os.Args = prevGF, prevOut, prevArgs; rootCmd.SetArgs(nil) })
+			resolvedOut = nil
+			gf.output = ""
+			os.Args = append([]string{"namecom"}, tc.args...)
+
+			rootCmd.SetArgs(tc.args)
+			if err := rootCmd.ExecuteContext(context.Background()); err == nil {
+				t.Fatal("want an early failure")
+			}
+			if resolvedOut != nil {
+				t.Fatal("PersistentPreRunE ran; the test no longer exercises the early-failure path")
+			}
+			// A test binary's stdout is not a terminal, so the default is JSON.
+			if got := errorOutput().Format; got != tc.want {
+				t.Errorf("error rendered as %q, want %q", got, tc.want)
 			}
 		})
 	}

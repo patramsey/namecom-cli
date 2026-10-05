@@ -142,7 +142,7 @@ func TestToggle_DomainsFromStdin(t *testing.T) {
 
 // TestGet_SeveralDomains covers `domain get` with several domains (#244): one
 // named domain keeps the single JSON object; several, or "-" even when stdin
-// holds one, are an array in the order given.
+// holds one, are a {"data": [...]} list in the order given (#240).
 func TestGet_SeveralDomains(t *testing.T) {
 	srv, _ := toggleServer(t, map[string]bool{"a.com": true, "b.com": false}, "")
 	for _, tc := range []struct {
@@ -163,8 +163,8 @@ func TestGet_SeveralDomains(t *testing.T) {
 			var got []string
 			if tc.array {
 				var ds []coreapigo.DomainResponsePayload
-				if err := json.Unmarshal(buf.Bytes(), &ds); err != nil {
-					t.Fatalf("want a JSON array: %v\n%s", err, buf.String())
+				if err := unmarshalData(buf.Bytes(), &ds); err != nil {
+					t.Fatalf("want a data list: %v\n%s", err, buf.String())
 				}
 				for _, d := range ds {
 					got = append(got, d.DomainName)
@@ -196,7 +196,7 @@ func TestCheck_NamesFromStdin(t *testing.T) {
 		t.Fatalf("runCheck: %v", err)
 	}
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	var names []string

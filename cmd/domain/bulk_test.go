@@ -115,7 +115,7 @@ func TestCheck_ChunksLongLists(t *testing.T) {
 			}
 
 			var got []*coreapigo.SearchResult
-			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			if err := unmarshalData(buf.Bytes(), &got); err != nil {
 				t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 			}
 			if len(got) != len(names) {
@@ -151,7 +151,7 @@ func TestCheck_ChunksKeepTheSafetyNet(t *testing.T) {
 				t.Fatalf("runCheck = %v, want an error naming name107.com", err)
 			}
 			var got []*coreapigo.SearchResult
-			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+			if err := unmarshalData(buf.Bytes(), &got); err != nil {
 				t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 			}
 			if len(got) != len(names) || got[107].DomainName != "name107.com" || got[107].Purchasable {
@@ -200,7 +200,7 @@ func TestCheck_ExitStatus(t *testing.T) {
 				}
 			}
 			var got []*coreapigo.SearchResult
-			if err := json.Unmarshal(buf.Bytes(), &got); err != nil || len(got) != len(tc.names) {
+			if err := unmarshalData(buf.Bytes(), &got); err != nil || len(got) != len(tc.names) {
 				t.Errorf("the results must still be printed: %v\n%s", err, buf.String())
 			}
 		})

@@ -441,8 +441,9 @@ func TestBaseURLEnv(t *testing.T) {
 		if got := cmdutil.APIClient(cmd).BaseURL(); got != srv.URL {
 			t.Errorf("client base URL = %q, want NAMECOM_BASE_URL's %q", got, srv.URL)
 		}
-		if ew := cmdutil.Out(cmd).EWriter.(interface{ String() string }).String(); !strings.Contains(ew, "NAMECOM_BASE_URL is set") {
-			t.Errorf("no warning naming NAMECOM_BASE_URL:\n%s", ew)
+		// In JSON mode the warning is kept for the end of the command (#240).
+		if w := strings.Join(cmdutil.Out(cmd).TakeWarnings(), "\n"); !strings.Contains(w, "NAMECOM_BASE_URL is set") {
+			t.Errorf("no warning naming NAMECOM_BASE_URL:\n%s", w)
 		}
 	})
 

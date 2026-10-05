@@ -31,22 +31,22 @@ func init() {
 type statusSummary struct {
 	Profile          string `json:"profile"`
 	Endpoint         string `json:"endpoint"`
-	DomainsTotal     int    `json:"domains_total"`
+	DomainsTotal     int    `json:"domainsTotal"`
 	Expired          int    `json:"expired"`
-	ExpiringCritical int    `json:"expiring_critical"` // <7 days
-	ExpiringSoon     int    `json:"expiring_soon"`     // 7-30 days
+	ExpiringCritical int    `json:"expiringCritical"` // <7 days
+	ExpiringSoon     int    `json:"expiringSoon"`     // 7-30 days
 	Unlocked         int    `json:"unlocked"`
 	// PendingTransfers is nil when the lookup failed, for the same reason as
 	// Balance: reporting 0 asserts "no transfers are pending" on the basis of a
 	// request that never succeeded, and a script gating on that acts on a fact
 	// the CLI never established.
-	PendingTransfers *int `json:"pending_transfers,omitempty"`
+	PendingTransfers *int `json:"pendingTransfers,omitempty"`
 	// Balance is nil when the lookup failed. It must not default to 0:
 	// rendering a failed balance as $0.00 tells the user their account is
 	// empty, which is worse than telling them nothing.
 	Balance         *float64     `json:"balance,omitempty"`
-	ExpiringDomains []expiryItem `json:"expiring_domains,omitempty"`
-	PendingDomains  []string     `json:"pending_transfer_domains,omitempty"`
+	ExpiringDomains []expiryItem `json:"expiringDomains,omitempty"`
+	PendingDomains  []string     `json:"pendingTransferDomains,omitempty"`
 }
 
 type expiryItem struct {

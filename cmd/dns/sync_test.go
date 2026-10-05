@@ -96,8 +96,9 @@ func TestDNSSync_AppliesThenIsIdempotent(t *testing.T) {
 }
 
 // TestDNSSync_DryRunJSON pins the --dry-run document: the plan, in camelCase,
-// with the requests a real run sends — and that those are the requests a real
-// run does send, body for body.
+// with the requests a real run sends under "data", as every multi-request dry
+// run has them — and that those are the requests a real run does send, body
+// for body.
 func TestDNSSync_DryRunJSON(t *testing.T) {
 	z, srv, file := syncFixture(t)
 	stdout, _, err := runSyncFile(t, srv, runOpts{format: output.FormatJSON, dryRun: true}, file, true, false)
@@ -112,7 +113,7 @@ func TestDNSSync_DryRunJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		t.Fatalf("dry run output is not one JSON document: %v\n%s", err, stdout)
 	}
-	for _, k := range []string{"domain", "dryRun", "prune", "pruneAll", "creates", "updates", "deletes", "unchanged", "kept", "requests"} {
+	for _, k := range []string{"domain", "dryRun", "prune", "pruneAll", "creates", "updates", "deletes", "unchanged", "kept", "data"} {
 		if _, ok := doc[k]; !ok {
 			t.Errorf("plan document lacks %q: %s", k, stdout)
 		}
@@ -130,7 +131,7 @@ func TestDNSSync_DryRunJSON(t *testing.T) {
 	}
 
 	var previewed []string
-	for _, r := range doc["requests"].([]any) {
+	for _, r := range doc["data"].([]any) {
 		m := r.(map[string]any)
 		line := m["method"].(string) + " " + m["path"].(string)
 		if b, ok := m["body"]; ok {

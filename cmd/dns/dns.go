@@ -421,10 +421,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(record)
-	case output.FormatYAML:
-		return out.YAML(record)
+	case output.FormatJSON, output.FormatYAML:
+		return printCreated(out, record, true)
 	default:
 		out.Success(fmt.Sprintf("Created %s %s → %s (id %d)",
 			strings.ToUpper(createType), recordName(host, domain), answer, derefInt(record.ID)))
@@ -638,9 +636,25 @@ func runDelete(cmd *cobra.Command, args []string) error {
 			ID:         id,
 		}))
 	})
-	for _, id := range ids[:done] {
-		out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
+	if cmdutil.IsDryRun(cmd) {
+		return err
 	}
+	// One document in JSON and YAML (#240), with each record's outcome; an
+	// absent one skipped under --if-exists is "changed": false there.
+	res := out.Results()
+	for _, id := range ids[:done] {
+		res.Add(output.ResultItem{Domain: domain, ID: id, Changed: true, Message: fmt.Sprintf("Deleted record %d from %s", id, domain)})
+	}
+	if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
+		for _, id := range absent {
+			res.Add(output.ResultItem{Domain: domain, ID: id, Message: fmt.Sprintf("Record %d is not on %s: nothing to delete", id, domain)})
+		}
+	}
+	summary := fmt.Sprintf("Deleted %s from %s", output.Plural(done, "record"), domain)
+	if len(absent) > 0 {
+		summary += fmt.Sprintf("; %d not there", len(absent))
+	}
+	res.Print(summary)
 	if err != nil && done > 0 {
 		return fmt.Errorf("deleting record %d: %w — stopped after deleting %d of %d records", ids[done], err, done, len(ids))
 	}
@@ -691,16 +705,14 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// An empty zone leaves records nil, which marshals as `null`. Export `[]`,
-	// as the list commands do through their envelope.
-	if records == nil {
-		records = []*coreapigo.Record{}
-	}
+	// The {"data": [...]} envelope every list uses (#240); it was a bare
+	// array. `dns import` and `dns sync` read both. The envelope also turns an
+	// empty zone's nil into `[]` rather than `null`.
 	switch out.Format {
 	case output.FormatYAML:
-		return out.YAML(records)
+		return out.YAMLList(records, nil, 0)
 	default:
-		if err := out.JSON(records); err != nil {
+		if err := out.JSONList(records, nil, 0); err != nil {
 			return err
 		}
 	}
@@ -813,6 +825,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 	msg := fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain)
 	if skipped > 0 {
 		msg += fmt.Sprintf(" (%d already present, skipped)", skipped)
+	}
+	// "changed": false when every record was already there (#240).
+	if created == 0 {
+		out.Unchanged(msg)
+		return nil
 	}
 	out.Success(msg)
 	return nil

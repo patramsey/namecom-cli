@@ -74,7 +74,8 @@ Exit codes:
   2  usage error: a bad command, flag, argument or value
   3  authentication: credentials missing, failing or rejected, or access denied
   4  not found
-  5  rate limited`
+  5  rate limited
+  6  write outcome unknown: a change failed in a way that may have gone through`
 
 // rootCmd is the top-level `namecom` command. It configures the API client and
 // output renderer and stashes them on the context for every subcommand.
@@ -113,8 +114,8 @@ func Execute() {
 	// a did-you-mean and the usage line.
 	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
 
-	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
-		os.Exit(reportError(errorOutput(), err))
+	if code := run(); code != 0 {
+		os.Exit(code)
 	}
 
 	// Show update notification if the goroutine finished in time.
@@ -128,6 +129,19 @@ func Execute() {
 			// Check not done yet — don't block.
 		}
 	}
+}
+
+// run executes the root command and returns its exit code, having reported
+// the outcome on stderr: the error, or on success any warnings JSON and YAML
+// modes kept back (#240). Execute is this plus os.Exit, so tests call run.
+func run() int {
+	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
+		return reportError(errorOutput(), err)
+	}
+	if resolvedOut != nil {
+		resolvedOut.FlushWarnings()
+	}
+	return 0
 }
 
 // rootSuggestFor maps words typed in place of a top-level command to the
@@ -337,6 +351,8 @@ func initOutputContext(cmd *cobra.Command) error {
 	// error instead of the documented JSON envelope, and `-o table` in a pipe
 	// printed the envelope anyway. --color was ignored for errors entirely.
 	resolvedOut = out
+	// No client yet for this command; initClient sets it if one is built.
+	resolvedClient = nil
 	return nil
 }
 
@@ -371,6 +387,11 @@ func buildOutputConfig() (*output.Config, error) {
 // failed before PersistentPreRunE ran; see errorOutput.
 var resolvedOut *output.Config
 
+// resolvedClient is the API client initClient built, retained so the error
+// handler can ask whether the failure was a write whose outcome is unknown
+// (#243). Nil when the command built none.
+var resolvedClient *api.Client
+
 // errorOutput returns the config the top-level error handler renders with.
 //
 // Cobra validates the argument count before PersistentPreRunE, so for
@@ -378,14 +399,46 @@ var resolvedOut *output.Config
 // came out in the TTY-detected default format, ignoring -o. The flags are
 // parsed by then, so they are applied here directly. Only when they cannot
 // be — a malformed flag, or a bad --output value — does the default apply.
+//
+// When cobra fails before it parses flags at all — an unknown top-level
+// command, or an unknown flag ahead of -o — gf.output is still empty, and
+// `-o table` in a pipe got the JSON envelope (#247). The arguments are
+// scanned for --output then.
 func errorOutput() *output.Config {
 	if resolvedOut != nil {
 		return resolvedOut
+	}
+	if gf.output == "" {
+		gf.output = scanOutputFlag(os.Args[1:])
 	}
 	if out, err := buildOutputConfig(); err == nil {
 		return out
 	}
 	return output.DefaultConfig()
+}
+
+// scanOutputFlag returns the value of the last -o/--output in args, in any
+// of the forms pflag accepts, or "" when there is none. Arguments after "--"
+// are not flags.
+func scanOutputFlag(args []string) string {
+	val := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return val
+		case a == "-o" || a == "--output":
+			if i+1 < len(args) {
+				val = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--output="):
+			val = strings.TrimPrefix(a, "--output=")
+		case strings.HasPrefix(a, "-o") && !strings.HasPrefix(a, "--"):
+			val = strings.TrimPrefix(strings.TrimPrefix(a, "-o"), "=")
+		}
+	}
+	return val
 }
 
 // flagOverrides collects the global credential flags as config.Overrides.
@@ -503,6 +556,9 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	if err != nil {
 		return fmt.Errorf("initializing API client: %w", err)
 	}
+	if !forCompletion {
+		resolvedClient = apiClient
+	}
 
 	// Stash everything on the context so subcommands can retrieve them via
 	// the helpers below without threading parameters through every call.
@@ -587,6 +643,11 @@ func skipClientInit(cmd *cobra.Command) bool {
 // cmdutil.AuthError now carries its own.
 func reportError(cfg *output.Config, err error) int {
 	err = normalizeError(err)
+	// A write that answered 5xx, or failed after it was sent, may have gone
+	// through: name the idempotency key it carried, and exit 6 (#243). The
+	// client decides from the request method, not from whether the command
+	// marked the write (#247).
+	err = resolvedClient.OutcomeUnknown(err)
 	// The 401 hint mentions the sandbox's separate token only when the
 	// request went there; cfg.Sandbox is set from the resolved credentials.
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
@@ -597,13 +658,88 @@ func reportError(cfg *output.Config, err error) int {
 	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
 		netErr.Timeout = gf.timeout
 	}
-	cfg.Error(err)
+	cfg.ErrorWith(err, errorInfo(err))
 	return exitCode(err)
 }
 
+// errorInfo classifies err for the structured error envelope's "type" and
+// "status" (#240), by the rules exitCode uses, so the two always agree.
+func errorInfo(err error) output.ErrorInfo {
+	err = normalizeError(err)
+	var info output.ErrorInfo
+	apiErr, isAPI := errors.AsType[*api.APIError](err)
+	if isAPI {
+		info.Status = apiErr.StatusCode
+	}
+	if _, ok := errors.AsType[*cmdutil.ConfirmationRequiredError](err); ok {
+		info.Type = output.ErrorTypeConfirmationRequired
+		return info
+	}
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); ok {
+		info.Type = output.ErrorTypeUsage
+		return info
+	}
+	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
+		info.Type = output.ErrorTypeAuth
+		return info
+	}
+	if errors.Is(err, cmdutil.ErrAborted) {
+		info.Type = output.ErrorTypeAborted
+		return info
+	}
+	if isAPI {
+		switch {
+		case apiErr.StatusCode == 401, apiErr.StatusCode == 403:
+			info.Type = output.ErrorTypeAuth
+		case apiErr.StatusCode == 404:
+			info.Type = output.ErrorTypeNotFound
+		case apiErr.StatusCode == 429:
+			info.Type = output.ErrorTypeRateLimited
+		case isConflict(apiErr):
+			info.Type = output.ErrorTypeConflict
+		default:
+			info.Type = output.ErrorTypeAPI
+		}
+		return info
+	}
+	if _, ok := errors.AsType[*api.NetworkError](err); ok {
+		info.Type = output.ErrorTypeNetwork
+		return info
+	}
+	info.Type = output.ErrorTypeAPI
+	return info
+}
+
+// isConflict reports whether e says the thing being created already exists,
+// or that an idempotency key was reused. The API answers a duplicate DNS
+// record with `400 Parameter Value Error (Record already exists)` — seen in
+// the sandbox, docs/upstream/core-api-go-withoutretries-ignored.md — not a
+// 409; a 409 is how the SDK documents an idempotency-key problem.
+func isConflict(e *api.APIError) bool {
+	if e.StatusCode == 409 {
+		return true
+	}
+	if e.StatusCode != 400 && e.StatusCode != 422 {
+		return false
+	}
+	text := strings.ToLower(e.Message + " " + e.Details)
+	return strings.Contains(text, "already exists")
+}
+
+// detailedError attaches structured fields to an error, which the JSON error
+// envelope prints as "details". The message is unchanged.
+type detailedError struct {
+	error
+	details any
+}
+
+func (e *detailedError) Unwrap() error     { return e.error }
+func (e *detailedError) ErrorDetails() any { return e.details }
+
 // exitCode maps an error to a CLI exit code following the documented table:
 //
-//	0 success, 1 API/runtime, 2 usage, 3 auth, 4 not-found, 5 rate-limited
+//	0 success, 1 API/runtime, 2 usage, 3 auth, 4 not-found, 5 rate-limited,
+//	6 write outcome unknown
 func exitCode(err error) int {
 	if err == nil {
 		return 0
@@ -618,6 +754,10 @@ func exitCode(err error) int {
 	}
 	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
 		return 3
+	}
+	// Ahead of the status: a 5xx write is 6, not 1. reportError wraps it.
+	if _, ok := errors.AsType[*api.OutcomeUnknownError](err); ok {
+		return 6
 	}
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		switch apiErr.StatusCode {

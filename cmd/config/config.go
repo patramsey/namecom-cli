@@ -119,6 +119,14 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 
 	if len(cfgFile.Profiles) == 0 {
 		out.Warn("no profiles configured — run 'namecom auth login' to set one up")
+		// An empty list is still a list: a script reading .data gets [],
+		// not an empty stdout it cannot parse (#240).
+		switch out.Format {
+		case output.FormatJSON:
+			return out.JSONList([]profileView{}, nil, 0)
+		case output.FormatYAML:
+			return out.YAMLList([]profileView{}, nil, 0)
+		}
 		return nil
 	}
 
@@ -139,11 +147,13 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// In the {"data": [...]} envelope every list uses; it was a bare array
+	// (#240).
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(redactProfiles(cfgFile, names, active))
+		return out.JSONList(redactProfiles(cfgFile, names, active), nil, 0)
 	case output.FormatYAML:
-		return out.YAML(redactProfiles(cfgFile, names, active))
+		return out.YAMLList(redactProfiles(cfgFile, names, active), nil, 0)
 	default:
 		rows := make([][]string, 0, len(names))
 		for _, name := range names {

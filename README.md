@@ -53,10 +53,12 @@ line, ready for `xargs`.
 - [Commands](#commands)
 - [Workflows](#workflows)
 - [Output formats](#output-formats)
+- [JSON contract](#json-contract)
 - [Configuration](#configuration)
 - [Shell completion](#shell-completion)
 - [Global flags](#global-flags)
 - [Exit codes](#exit-codes)
+- [Idempotency keys](#idempotency-keys)
 - [Development](#development)
 - [Contributing](#contributing)
 - [Changelog](CHANGELOG.md)
@@ -320,8 +322,107 @@ they hid; `--wide` keeps them all.
 
 `--dry-run` prints the request a write would send, and sends nothing. In JSON
 mode — including the default when piped — that is a JSON document with
-`dry_run`, `method`, `path` and `body` keys; `-o table` prints
+`dryRun`, `method`, `path` and `body` keys; `-o table` prints
 `METHOD /path` and the body instead.
+
+## JSON contract
+
+With `-o json` — the default when output is piped — and with `-o yaml`,
+which carries the same keys, output follows the rules below. A change to any
+of them is a breaking change and is called out in the
+[CHANGELOG](CHANGELOG.md).
+
+- **One document per stream.** The result goes to stdout. stderr carries at
+  most one document: the error envelope when the command fails, or
+  `{"warnings": [...]}` when it succeeded with something to say.
+- **Lists are `{"data": [...]}`**, with `nextPage` and `total` added when the
+  list is paged. `data` is `[]`, never `null`, when there is nothing in it.
+  This covers every `list`, and `domain check`, `domain search`,
+  `config list-profiles` and `dns export` too (`dns import` and `dns sync`
+  read both that and the bare array older versions exported), and
+  `domain get` given several domains or `-`.
+- **One resource is the object itself**, as the API returns it: `domain get`
+  with one domain, `dns create`, `email update`. With `--if-not-exists`,
+  `dns create` adds `"changed"` to the record: `false` when it was already
+  there, `true` when it was created.
+- **Keys are camelCase** everywhere: `domainsTotal`, `dryRun`,
+  `idempotencyKey`. Values that name a kind of thing, such as error types
+  (`not_found`) or dry-run actions (`save_profile`), are snake_case.
+- **A write with no resource to return** prints
+  `{"success": true, "changed": true, "message": "…"}`. `changed` is `false`
+  when the target was already in the requested state and nothing was sent —
+  `domain lock on` for a locked domain, `dns delete --if-exists` for a record
+  that is gone, `dns import --skip-existing` with nothing new. `message` is
+  for people; branch on `changed`, not on its wording.
+- **A write over several targets** — a toggle given several domains,
+  `dns delete` with several IDs — is still one document: the same three
+  keys, with `changed` true when any target changed, and one
+  `{"domain", "id", "changed", "message"}` item per target under `data`
+  (`domain` or `id` as applies). One target prints the plain document
+  above, so `.changed` reads either.
+- **A dry run** prints `{"dryRun": true, "method": …, "path": …, "body": …}`,
+  with a `quote` object for a write that costs money. A dry run that plans
+  several requests — `dns import`, a toggle or `dns delete` over several
+  targets — prints `{"dryRun": true, "data": [ … ]}`; `dns sync --dry-run`
+  adds its plan (`creates`, `updates`, `deletes`, `kept`, `unchanged`)
+  beside that `data`.
+- **`dns sync`** prints what it did: `{"domain", "changed", "applied": [ … ],
+  "unchanged"}`. When a change fails, that document still goes to stdout,
+  with `failed` (and `outcomeUnknown: true` when it may have gone through)
+  and `notAttempted`, and the error envelope goes to stderr.
+- **Warnings** — a `--base-url` or `NAMECOM_BASE_URL` that is not
+  name.com, duplicate IDs dropped from `order refund`, records created before
+  a `dns import` failed, an existing record's different TTL under
+  `dns create --if-not-exists` — are
+  not printed as text. They come out at the end, in the error envelope's
+  `warnings`, or as `{"warnings": [...]}` on stderr when the command
+  succeeded.
+- **Nothing is HTML-escaped.** `<`, `>` and `&` print as themselves.
+- **Errors** are one document on stderr:
+
+  ```json
+  {
+    "error": {
+      "type": "not_found",
+      "status": 404,
+      "message": "Not Found",
+      "hint": "check the name or ID for typos"
+    }
+  }
+  ```
+
+  `type` is always there, and is one of:
+
+  | `type` | Meaning | Exit code |
+  |---|---|---|
+  | `usage` | The command line is wrong: an unknown command or flag, a bad argument or value | 2 |
+  | `confirmation_required` | A write needs `--yes`, because there is no terminal to ask | 2 |
+  | `auth` | Credentials missing, failing or rejected, or access denied (HTTP 401/403) | 3 |
+  | `not_found` | HTTP 404 | 4 |
+  | `rate_limited` | HTTP 429, after the CLI's own retries | 5 |
+  | `conflict` | The thing already exists (the API answers a duplicate DNS record with a 400 that says so), or HTTP 409, which the API uses for a reused idempotency key | 1 |
+  | `aborted` | A confirmation was declined or a prompt cancelled | 1 |
+  | `network` | No HTTP response: a timeout, or a connection that failed | 1 |
+  | `api` | Any other failure: another API error, or a local one such as an unreadable file | 1 |
+
+  `status` is the HTTP status, present only when the API answered. `message`
+  and `hint` are for people. The other keys appear only when they apply:
+  `details` holds structured detail (the raw response body for `namecom api`,
+  the profile, username, endpoint and config file for a rejected
+  `auth status`, with where each came from as `usernameSource`,
+  `tokenSource` and so on), and `suggestions` the full command lines an unknown command
+  was probably meant to be (`["namecom dns delete"]`). `idempotencyKey` is
+  set when a write's outcome is unknown (exit 6): the `X-Idempotency-Key`
+  the request carried. The envelope also has
+  a top-level `hint`, a copy of `error.hint` where older versions put it.
+  **It is deprecated**, kept for this release only so scripts can move to
+  `error.hint`.
+
+`namecom api` is the one exception: it prints the API's response body exactly
+as received (`{"domains": [...]}`, not `{"data": [...]}`). It exists to reach
+endpoints namecom does not wrap and to show what the API itself says, and
+reshaping the body would hide the very thing it was asked for. Its errors use
+the envelope above, with the response body as `details`.
 
 ## Configuration
 
@@ -459,7 +560,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `--debug` | | Log HTTP requests/responses to stderr (token and auth codes redacted) |
 | `--debug-file` | | Log HTTP requests/responses to a file (appends; useful as an audit log) |
 | `--no-header` | | Omit the header row from table output |
-| `--idempotency-key` | a fresh key per write | Pin every write in this invocation to one key, so re-running the same command after a failure can be recognized as a retry by endpoints that honor idempotency keys |
+| `--idempotency-key` | a fresh key per write | Pin every write in this invocation to one key, so re-running the same command after a failure can be recognized as a retry by endpoints that honor idempotency keys — see [Idempotency keys](#idempotency-keys) |
 | `--username` | | API username (overrides config and `NAMECOM_USERNAME`) |
 | `--token` | | API token (overrides config and `NAMECOM_TOKEN`) |
 
@@ -473,12 +574,50 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |
 | `5` | Rate limited (HTTP 429), after the CLI's own retries |
+| `6` | Write outcome unknown: a request that changes something got a 5xx, or timed out or lost its connection after it was sent, so it may or may not have been carried out — see [Idempotency keys](#idempotency-keys) |
 
 With `--output json` or `yaml` — including the JSON default when piped — an
-error is written to stderr as one document, an `error` object with a
-`message` and, where there is one, a `hint`. An unknown command also lists
-the commands it was probably meant to be in `error.suggestions`, as full
-command lines (`["namecom dns delete"]`).
+error is written to stderr as one document, an `error` object whose `type`
+says which of these it is. See [JSON contract](#json-contract).
+
+## Idempotency keys
+
+Every `POST`, `PUT` and `DELETE` namecom sends carries an `X-Idempotency-Key`
+header: a fresh key per request, or, with `--idempotency-key`, the key you
+name for every write in that invocation. `PATCH` (`domain update`) carries
+none.
+
+When a write fails in a way that leaves its outcome unknown — the API
+answered 5xx, or the request timed out or lost its connection after it was
+sent — namecom exits `6` and names the key it used: in the hint
+(`outcome unknown; re-run with --idempotency-key <key>`) and, in JSON mode,
+as `error.idempotencyKey`. A `POST` is never retried on a 5xx, because the
+server may already have done the work. Check whether the change was made;
+if it was not, re-run the same command with `--idempotency-key <key>`.
+
+`dns sync` is the exception: it is not re-run with the key, since the next
+run sends different requests, but simply run again. It plans from the live
+zone, so a change that did land is not repeated. Its result document marks
+the failed change `outcomeUnknown`, and its hint says to run sync again.
+
+Whether the key prevents a duplicate depends on the endpoint. The Core API
+declares the header on five operations:
+
+| API operation | namecom command |
+|---|---|
+| `CreateDomain` | `domain register`, and the register `domain check` offers |
+| `ProcessRefund` | `order refund` |
+| `VerifyContact` | `contact verify` |
+| `ResendContactVerificationEmail` | `contact resend` |
+| `PurchasePrivacy` | none (`domain privacy on` uses a different endpoint) |
+
+The API reference describes what a reused key does only for refunds: the
+same key returns the original response instead of refunding again. For the
+other four the header is declared but what the API does with it is not
+documented. Every other write — DNS records, email and URL forwarding,
+vanity nameservers, DNSSEC, transfers, renewals, nameserver and contact
+changes — ignores it. Two `dns create` requests under one key made two
+records in the sandbox. For those, check before you retry.
 
 ## Development
 

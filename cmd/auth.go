@@ -555,7 +555,25 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 			"token from "+id.Sources.Token,
 			"endpoint "+client.BaseURL(),
 			"config "+cfgPath)
-		return fmt.Errorf("%w (%s)", api.FromSDKError(err), strings.Join(which, ", "))
+		// The same values as fields of the envelope's "details", so a script
+		// need not parse them out of the message (#240). Sources are sibling
+		// keys, as in the successful output.
+		details := map[string]string{
+			"profile":        id.Profile,
+			"username":       id.Username,
+			"usernameSource": id.Sources.Username,
+			"tokenSource":    id.Sources.Token,
+			"endpoint":       client.BaseURL(),
+			"endpointSource": id.Sources.Endpoint(),
+			"config":         cfgPath,
+		}
+		if id.Sources.Profile != "" {
+			details["profileSource"] = id.Sources.Profile
+		}
+		return &detailedError{
+			error:   fmt.Errorf("%w (%s)", api.FromSDKError(err), strings.Join(which, ", ")),
+			details: details,
+		}
 	}
 
 	env := "production"

@@ -166,7 +166,7 @@ func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
 	}
 
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
 	}
 	if len(got) != 2 {
@@ -342,7 +342,7 @@ func TestRenderSearchResults_JSONOutput(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var decoded []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+	if err := unmarshalData(buf.Bytes(), &decoded); err != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
 	}
 	if len(decoded) != 2 {
@@ -698,7 +698,7 @@ func TestCheck_NormalizesDomainArgs(t *testing.T) {
 	}
 
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	if len(got) != 1 {
@@ -744,7 +744,7 @@ func TestCheck_MatchesPunycodeResponse(t *testing.T) {
 	}
 
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	if len(got) != 1 {
@@ -967,7 +967,7 @@ func TestCheck_UnverifiedDomainIsNotReportedAsTaken(t *testing.T) {
 	}
 
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	for i, r := range got {
@@ -1098,7 +1098,7 @@ func TestCheck_RegistryPathAccountsForEveryArgument(t *testing.T) {
 	}
 
 	var got []*coreapigo.SearchResult
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	if len(got) != 2 || got[0].DomainName != "example.com" || got[1].DomainName != "foo.zzzz" {
@@ -1170,4 +1170,19 @@ func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// unmarshalData decodes the {"data": [...]} envelope every list prints in
+// JSON mode (#240) into v.
+func unmarshalData(b []byte, v any) error {
+	var doc struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return err
+	}
+	if doc.Data == nil {
+		return errors.New(`no "data" key`)
+	}
+	return json.Unmarshal(doc.Data, v)
 }

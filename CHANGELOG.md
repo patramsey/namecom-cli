@@ -9,17 +9,99 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Breaking for scripts
+
+JSON and YAML output now follow one documented contract — see "JSON
+contract" in the README (#240). Each change below alters output a script may
+parse; table output is unchanged.
+
+- **Lists are always `{"data": [...]}`.** `domain check`, `domain search`,
+  `config list-profiles` and `dns export` printed a bare array, so
+  `dns list | jq .data` worked and `dns export | jq .data` failed.
+  Before: `[{"domainName": "a.com", …}]`. After:
+  `{"data": [{"domainName": "a.com", …}]}`. `config list-profiles` with no
+  profiles printed nothing on stdout; it prints `{"data": []}`. `dns import`
+  reads both shapes, so files exported by older versions still import.
+- **`dns import --dry-run` wraps its plan the same way.** Before:
+  `[{"dry_run": true, "method": "POST", …}, …]`. After:
+  `{"dryRun": true, "data": [{"dryRun": true, "method": "POST", …}, …]}`.
+- **Keys are camelCase.** The dry-run document's `dry_run` is `dryRun`, in
+  every command that previews (`auth login`, `auth logout` and `config use`
+  included). `status` renames six keys: `domains_total` → `domainsTotal`,
+  `expiring_critical` → `expiringCritical`, `expiring_soon` → `expiringSoon`,
+  `pending_transfers` → `pendingTransfers`, `expiring_domains` →
+  `expiringDomains`, `pending_transfer_domains` → `pendingTransferDomains`.
+- **Writes say whether anything changed.** The `{"success", "message"}`
+  document gains `changed`. Before: `{"success": true, "message": "Transfer
+  lock is already on for a.com; nothing to change"}`. After:
+  `{"success": true, "changed": false, "message": "…"}` — and
+  `"changed": true` for every write that did something. `domain lock`,
+  `domain autorenew` and `domain privacy` report `false` when the domain was
+  already in that state.
+- **The error envelope says what kind of error it is, and the hint moved
+  into it.** Before:
+  `{"error": {"message": "Not Found"}, "hint": "check the name or ID for typos"}`.
+  After:
+  `{"error": {"type": "not_found", "status": 404, "message": "Not Found", "hint": "check the name or ID for typos"}, "hint": "check the name or ID for typos"}`.
+  `type` is one of `usage`, `confirmation_required`, `auth`, `not_found`,
+  `rate_limited`, `conflict`, `aborted`, `network` or `api`; `status` is the
+  HTTP status when the API answered. The top-level `hint` is kept for this
+  release only and is deprecated: read `error.hint`. A rejected
+  `auth status` also puts its profile, username, endpoint and config file in
+  `error.details`, which was only in the message.
+- **The commands added in this release follow the same rules** (they never
+  shipped in another shape, but their pull requests described one).
+  `domain get` with several domains or `-` prints `{"data": [...]}`, not a
+  bare array. A toggle over several domains, and `dns delete` with several
+  IDs, print one `{"success", "changed", "message", "data": [...]}` document
+  rather than one document per target. `dns sync --dry-run` lists its
+  requests under `data`, not `requests`, as every multi-request dry run
+  does; its result gains `changed`. `dns create --if-not-exists` adds
+  `changed` to the record, and `dns delete --if-exists` and
+  `dns import --skip-existing` report `"changed": false` when there was
+  nothing to do. A rejected `auth status` puts where each credential came
+  from in `error.details` (`usernameSource`, `tokenSource`, …), as the
+  successful output does. The `NAMECOM_BASE_URL` notice and the TTL warning
+  of `dns create --if-not-exists` are collected warnings, like any other.
+- **Warnings are part of the JSON on stderr.** In JSON and YAML modes, a
+  warning — the `--base-url` caution on every run, say — was a plain
+  `! …` line on stderr, so stderr was not one parseable document. It is now
+  in the error envelope's `warnings` array, or, when the command succeeds, a
+  `{"warnings": ["…"]}` document on stderr. Before:
+  `! --base-url is set: …` followed by the error envelope. After:
+  `{"error": {…}, "warnings": ["--base-url is set: …"]}`.
+- **Nothing is HTML-escaped.** A TXT record's `"a<b & c>d"` came out with
+  `<`, `>` and `&` as `\u` escapes; it prints as written. Both forms decode
+  to the same string, so only a script matching the raw text is affected.
+- **A write whose outcome is unknown exits 6, and names its idempotency
+  key** (#243). When a request that changes something got a 5xx, or timed
+  out or lost its connection after it was sent, the CLI exited 1 with
+  `Internal Error`, and the `X-Idempotency-Key` it had sent was never shown,
+  so `--idempotency-key` helped only if it had been pinned in advance.
+  Before: exit 1, `{"error": {"message": "Internal Error"}, "hint": "name.com
+  failed while handling this change, …"}`. After: exit 6,
+  `{"error": {"type": "api", "status": 500, "message": "Internal Error", "hint": "outcome unknown; re-run with --idempotency-key 1d5973ca-… — but check first whether the change was made, since most endpoints ignore the key", "idempotencyKey": "1d5973ca-…"}, …}`.
+  Table mode shows the same hint. A script that treated every non-zero exit
+  other than 2–5 as 1 should handle 6. This applies whether or not the
+  command marked the request as a write: it is decided from the HTTP
+  method, so a read's 5xx still says it is safe to retry and a write's
+  never does. The README's new "Idempotency keys" section lists which
+  endpoints honour the key — five declare it, and the API documents its
+  effect only for `order refund` — and says that the rest ignore it.
+
 ### Added
 - `domain check` takes any number of names. The API answers at most 50 per
   request, so a longer list is sent 50 at a time, one batch after another,
-  and the results come back as one table (or one JSON array) in the order
-  the names were given. 120 names used to fail with "number of items must
+  and the results come back as one table (or one `{"data": [...]}` list)
+  in the order the names were given. 120 names used to fail with "number of items must
   be less than or equal to 50".
 - `dns delete <domain> <id>...` takes several record IDs. Every record is
   fetched first (a missing one fails before anything is deleted), one
   confirmation lists them all, and they are deleted in order; the first
   failure stops the rest, and the error says how many were deleted before
-  it. Each deleted record still gets its own `Deleted record …` line.
+  it. Each deleted record still gets its own `Deleted record …` line; in
+  JSON and YAML they are one document, with one item per record under
+  `data`.
 - `domain check --exit-status` exits 1 when any name checked is not
   available, after printing the results as usual, so
   `namecom domain check --exit-status x.com && …` needs no output parsing.
@@ -38,9 +120,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   each domain first, skips any already in the requested state, and asks
   once, listing every domain it will change; it stops at the first failure
   and says how many were changed before it. **Scripts**: `domain get` with
-  more than one domain, or with `-`, prints a JSON (or YAML) array; with
+  more than one domain, or with `-`, prints a `{"data": [...]}` list; with
   one domain named on the command line it prints the same single object
-  as before.
+  as before. A toggle over several domains prints one document, with
+  `changed` true when any domain changed and one item per domain under
+  `data`.
 - `namecom dns sync <domain> --file <file>` makes a domain's records match a
   file — the JSON `dns export` writes, or a BIND zone file such as
   `dns export --zone` writes. It prints a plan of creates, updates (a TTL or
@@ -48,18 +132,26 @@ Releases before `0.2.0` predate this file. Their notes are on the
   Deleting needs `--prune`, and `--prune` never touches NS records at the apex
   or CAA records; `--prune-all` does. An empty file is refused with either.
   `--dry-run` prints the plan, as one
-  document with `-o json`. A failure stops the run and reports what was
-  applied and what was not; running sync again picks up from the live zone,
-  and a run with nothing to change sends nothing.
+  document with `-o json`, with the requests it would send under `data`. A
+  failure stops the run and reports what was applied and what was not;
+  running sync again picks up from the live zone, and a run with nothing to
+  change sends nothing. The result document's `changed` says whether
+  anything was applied. A change that failed with a 5xx, or lost its
+  connection after it was sent, is marked `outcomeUnknown` and exits 6, with
+  a hint to run sync again.
 - `dns import` reads BIND zone files as well as JSON, and `--skip-existing`
   skips records already in the zone instead of stopping at the first one, so
   a partly applied import can be run again. With it, `--dry-run` previews
   only the records that would be created.
 - `dns create --if-not-exists` exits 0 and prints the existing record's ID
-  when a record with the same host, type and answer is already there.
+  when a record with the same host, type and answer is already there. In
+  JSON and YAML the record carries `"changed": false` then, and
+  `"changed": true` when it was created.
   `dns delete --if-exists` exits 0 when the record is already gone (a missing
-  domain still exits 4). With several IDs it skips the ones already gone,
-  with a note, and deletes the rest.
+  domain still exits 4), reporting `"changed": false`. With several IDs it
+  skips the ones already gone, with a note, and deletes the rest.
+  `dns import --skip-existing` reports `"changed": false` when every record
+  was already there.
 - `dns list --host <host>` lists only the records at that host; `@` or the
   domain itself means the apex.
 - A dry run of `domain register`, `domain renew` or `transfer create` now
@@ -370,6 +462,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `auth login` without a terminal and without `--with-token` or
   `--token-cmd` now exits 2, as a usage error, and names those flags; it
   exited 1.
+- `-o table` and `-o yaml` are honoured for errors that happen before the
+  command line is parsed: an unknown top-level command
+  (`namecom bogus -o table`), or an unknown flag placed before `-o`. In a
+  pipe those printed the JSON envelope regardless. **Scripts** that pass
+  `-o table` and parsed that envelope anyway get the text form now.
 - Help honours `--color`: `--help --color=never` printed colour escapes
   wherever colour was otherwise on, and `--color=always` was ignored in a
   pipe. Help also wraps descriptions and flag help to the terminal width

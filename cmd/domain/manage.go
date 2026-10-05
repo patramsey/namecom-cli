@@ -62,7 +62,9 @@ type toggle struct {
 // Several domains, or "-" for a list on stdin, are read first, skipping any
 // already in the requested state, and then changed in order after a single
 // confirmation that lists them all (#244). The first failure stops the rest;
-// the domains already changed have been reported by then.
+// the domains already changed are reported before the error. In JSON and YAML
+// the report is one document (output.Results), with "changed" false for a
+// domain that was already in the requested state.
 //
 // DomainName is tagged `json:"-"`, so previewing the request previews the body
 // alone.
@@ -74,6 +76,7 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 		return err
 	}
 
+	res := out.Results()
 	var pending []string
 	for _, d := range domains {
 		already, err := toggleAlreadySet(cmd, d, enable, tg.get)
@@ -81,12 +84,13 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 			return err
 		}
 		if already {
-			out.Success(fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d))
+			res.Add(output.ResultItem{Domain: d, Message: fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d)})
 			continue
 		}
 		pending = append(pending, d)
 	}
 	if len(pending) == 0 {
+		res.Print(fmt.Sprintf("%s is already %s for all %s; nothing to change", tg.label, onOff(enable), output.Plural(len(domains), "domain")))
 		return nil
 	}
 
@@ -105,13 +109,23 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 			_, err := client.SDK().Domains.UpdateDomain(ctx, req)
 			return api.FromSDKError(err)
 		})
+	// A dry run's document is the preview; the domains it would leave alone
+	// were reported above in table mode only.
+	if cmdutil.IsDryRun(cmd) {
+		return err
+	}
 	verb := "disabled"
 	if enable {
 		verb = "enabled"
 	}
 	for _, d := range pending[:done] {
-		out.Success(fmt.Sprintf("%s %s for %s", tg.label, verb, d))
+		res.Add(output.ResultItem{Domain: d, Changed: true, Message: fmt.Sprintf("%s %s for %s", tg.label, verb, d)})
 	}
+	summary := fmt.Sprintf("%s %s for %s", tg.label, verb, output.Plural(done, "domain"))
+	if already := len(domains) - len(pending); already > 0 {
+		summary += fmt.Sprintf("; already %s for %d", onOff(enable), already)
+	}
+	res.Print(summary)
 	if err != nil {
 		if done < len(writes) {
 			err = explainUpdateError(err, writes[done].Body)

@@ -43,7 +43,7 @@ func TestEnvEndpointNotice(t *testing.T) {
 			t.Cleanup(func() { gf = prev })
 
 			var stderr bytes.Buffer
-			out := &output.Config{Format: output.FormatJSON, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &stderr}
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &stderr}
 			cmd := &cobra.Command{}
 			cmd.Flags().Bool("sandbox", false, "")
 			if tt.flag {

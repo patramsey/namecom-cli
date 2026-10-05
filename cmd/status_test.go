@@ -108,7 +108,7 @@ func TestStatus_OmitsBalanceWhenUnavailable(t *testing.T) {
 }
 
 // TestStatus_YAMLKeysMatchJSON pins #111 for the one struct this package
-// defines itself. Its json tags are snake_case, so YAML encoded from the Go
+// defines itself. Its json tags were snake_case then, so YAML encoded from the Go
 // value said `domainstotal` where JSON said `domains_total`, and the omitted
 // balance came out as `balance: null`.
 func TestStatus_YAMLKeysMatchJSON(t *testing.T) {
@@ -132,7 +132,7 @@ func TestStatus_YAMLKeysMatchJSON(t *testing.T) {
 	if !slices.Equal(keys[output.FormatJSON], keys[output.FormatYAML]) {
 		t.Errorf("YAML keys differ from JSON keys\njson: %v\nyaml: %v", keys[output.FormatJSON], keys[output.FormatYAML])
 	}
-	if !slices.Contains(keys[output.FormatYAML], "domains_total") || slices.Contains(keys[output.FormatYAML], "balance") {
+	if !slices.Contains(keys[output.FormatYAML], "domainsTotal") || slices.Contains(keys[output.FormatYAML], "balance") {
 		t.Errorf("YAML should use json tag names and omit the unavailable balance, got %v", keys[output.FormatYAML])
 	}
 }
@@ -142,7 +142,7 @@ func TestStatus_YAMLKeysMatchJSON(t *testing.T) {
 // swallowed its error and left PendingTransfers at 0.
 //
 // In table output that is merely invisible, but `status -o json` emitted
-// "pending_transfers": 0 — a positive claim that no transfers are pending, made
+// "pendingTransfers": 0 — a positive claim that no transfers are pending, made
 // on the basis of a request that failed. A script gating on that value acts on
 // a fact the CLI never established.
 func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
@@ -158,7 +158,7 @@ func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
 		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 			t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 		}
-		v, present := got["pending_transfers"]
+		v, present := got["pendingTransfers"]
 		if !present {
 			t.Fatalf("a successful fetch of zero transfers must report 0, got: %s", buf.String())
 		}
@@ -179,7 +179,7 @@ func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
 		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 			t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
 		}
-		if v, present := got["pending_transfers"]; present {
+		if v, present := got["pendingTransfers"]; present {
 			t.Errorf("a failed transfers lookup must not claim a count, got %#v", v)
 		}
 	})

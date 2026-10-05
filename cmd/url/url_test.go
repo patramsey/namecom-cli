@@ -1091,7 +1091,7 @@ func TestURLWrite_DryRunJSONIsOneDocument(t *testing.T) {
 			if err := dec.Decode(&doc); err != nil {
 				t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
 			}
-			if doc["dry_run"] != true {
+			if doc["dryRun"] != true {
 				t.Errorf("expected a dry-run document, got %v", doc)
 			}
 			if rest, _ := io.ReadAll(dec.Buffered()); len(bytes.TrimSpace(rest)) > 0 {

@@ -109,6 +109,34 @@ therefore needs `--yes`. A flag the command would otherwise prompt for is
 documented with `cmdutil.PromptedRequired` and, off a terminal, refused with
 `cmdutil.RequiredFlags`, which also exits 2.
 
+## JSON output
+
+The README's [JSON contract](README.md#json-contract) is a promise to
+scripts, and `TestJSONContract` in `cmd/jsoncontract_test.go` walks a
+representative command of each shape against a stub to hold it. When you add
+or change a command's JSON:
+
+- Print a list with `out.JSONList` / `out.YAMLList`, never a bare slice, even
+  when it is not paged.
+- Give any struct you define camelCase `json` tags. Most output is the SDK's
+  own types, which already are.
+- Report a write that has no resource to print with `out.Success`, or
+  `out.Unchanged` when the target was already in the requested state and
+  nothing was sent; that is the `changed` field. A write over several
+  targets reports through `out.Results()`, so it prints one document, not
+  one per target.
+- Say things to the user with `out.Warn`, `out.Note` or `out.Hint`, never
+  with a bare write to stderr: in JSON mode a warning is collected into the
+  `warnings` array, so stderr stays one document.
+- A new kind of failure a script would branch on gets a type in `errorInfo`
+  (`cmd/root.go`), next to its exit code in `exitCode`, and a row in the
+  README's table. Adding a type is a contract change; so is renaming a key.
+- Encode through `out.JSON`, not `encoding/json` directly: it turns HTML
+  escaping off, including for SDK types that marshal themselves.
+
+Anything that breaks one of these rules goes in the CHANGELOG under
+"Breaking for scripts", with the output before and after.
+
 ## Working with the API client
 
 The client is [`github.com/namedotcom/core-api-go`](https://github.com/namedotcom/core-api-go),
@@ -178,6 +206,11 @@ Two behaviors are load-bearing and easy to break by accident:
   A wait that would outlast the request deadline is not taken: the response
   is returned at once, so a 429 stays a 429 (exit 5). Nothing sleeps after
   the final attempt either — not the transport, and not the SDK (see above).
+  Instead, a write that ends in a 5xx, or fails after it was sent, exits 6
+  with its idempotency key in the error (`api.OutcomeUnknownError`). What
+  counts as a write there is decided by `retryTransport` from the request
+  method, so a new write command gets it without going through `RunWrite`
+  or `api.MarkWrite` — those still matter for a write's other hints.
 - **Partial updates.** `dns update` is a read-modify-write: it fetches the
   record, merges only the flags that were explicitly changed, and sends the
   full body, because that endpoint is a full `PUT` replacement and a partial

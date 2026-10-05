@@ -1380,7 +1380,7 @@ func TestDNSExport_RespectsYAMLFormat(t *testing.T) {
 // TestDNSExport_EmptyZoneIsEmptyList guards an empty zone exporting as `null`.
 // fetchAllRecords appends each page to a nil slice, so a zone with no records
 // handed out.JSON / out.YAML a nil slice. #112 fixed this for list commands
-// through the list envelope, which `dns export` does not use.
+// through the list envelope, which `dns export` now uses too.
 func TestDNSExport_EmptyZoneIsEmptyList(t *testing.T) {
 	// The API's empty-list shape, as the sandbox returns it for other lists.
 	const empty = `{"totalCount":0,"from":0,"to":0,"records":[]}`
@@ -1396,8 +1396,10 @@ func TestDNSExport_EmptyZoneIsEmptyList(t *testing.T) {
 			if err := runExport(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("runExport: %v", err)
 			}
-			if got := strings.TrimSpace(buf.String()); got != "[]" {
-				t.Errorf("an empty zone must export as [], got %q", got)
+			// In the {"data": [...]} envelope every list uses now (#240).
+			got := strings.TrimSpace(buf.String())
+			if got != "{\n  \"data\": []\n}" && got != "data: []" {
+				t.Errorf("an empty zone must export as an empty data list, got %q", got)
 			}
 		})
 	}
