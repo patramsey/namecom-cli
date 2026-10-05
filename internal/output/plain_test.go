@@ -2,7 +2,10 @@ package output
 
 import (
 	"bytes"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TestPlainTable: with stdout piped, `-o table` kept its box drawing, so
@@ -47,6 +50,25 @@ func TestDefaultConfig_PlainWhenPiped(t *testing.T) {
 	}
 	if c := DefaultConfig(); !c.Plain {
 		t.Error("DefaultConfig().Plain = false with stdout not a terminal")
+	}
+}
+
+// TestWarnBox_WrapsToWidth: the `contact unverified` callout was 86 columns
+// wide at 60 and 80, so the terminal wrapped it and the border came apart
+// (#238).
+func TestWarnBox_WrapsToWidth(t *testing.T) {
+	var ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorAlways, Writer: &bytes.Buffer{}, EWriter: &ebuf, MaxWidth: 60}
+	c.WarnBox("Verification deadline passed — the registry may suspend these domains at any time.",
+		"Run 'namecom contact resend <id>' to send the verification email again.")
+	got := ebuf.String()
+	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+		if w := lipgloss.Width(line); w > 60 {
+			t.Errorf("line is %d wide, want <= 60: %q", w, line)
+		}
+	}
+	if !strings.Contains(got, "╭") || !strings.Contains(got, "resend") {
+		t.Errorf("want a box holding the whole text:\n%s", got)
 	}
 }
 

@@ -68,6 +68,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   gone. `domain get` suggests renewing an expired domain, or one expiring
   within 30 days without auto-renew, instead of always suggesting `dns list`.
   **Scripts** matching the old success text need updating.
+- Warning boxes wrap to the terminal width instead of overflowing it; the
+  `contact unverified` box was 86 columns wide and broke apart at 80. Its
+  wording follows the deadlines: "Verification deadline passed — the registry
+  may suspend or lock these domains at any time" when they have passed,
+  rather than "may be LOCKED … after the deadline". `transfer eligibility`
+  shows REGISTERED AT (`another registrar` or `name.com (an account)`) instead
+  of "AT NAME.COM no" beside "SUPPORTS INTERNAL yes", and shows the TLD's
+  internal-transfer support only for a domain already at name.com.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

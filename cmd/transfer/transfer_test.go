@@ -797,7 +797,9 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			body:       `{"domainName":"example.com","atName":false,"supportsInternalTransfer":false}`,
 			wantCmd:    "transfer create example.com",
 			wantAbsent: "internal-in",
-			wantBadges: []string{"no"},
+			// Not "AT NAME.COM no" beside "SUPPORTS INTERNAL yes" (#238): the
+			// TLD flag is irrelevant here, so its column is not shown.
+			wantBadges: []string{"REGISTERED AT", "another registrar"},
 		},
 		{
 			name:       "at name.com recommends internal-in, with the approval caveat",
@@ -805,7 +807,7 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			wantCmd:    "transfer internal-in example.com",
 			wantAbsent: "transfer create",
 			wantCaveat: true,
-			wantBadges: []string{"yes"},
+			wantBadges: []string{"name.com (an account)", "TLD ALLOWS INTERNAL TRANSFER", "yes"},
 		},
 		{
 			// atName drives the recommendation; supportsInternalTransfer is a

@@ -1595,13 +1595,19 @@ func (c *Config) WarnBox(lines ...string) {
 	}
 	body := strings.Join(lines, "\n")
 	if c.ColorEnabled() {
-		box := lipgloss.NewStyle().
+		style := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(acAmber).
 			Foreground(acAmber).
-			Padding(0, 1).
-			Render(body)
-		fmt.Fprintln(c.EWriter, box)
+			Padding(0, 1)
+		// Wrap to the terminal, as KVTable does. The `contact unverified` box
+		// was 86 columns at 60 and 80, so it wrapped and its border came
+		// apart (#238). Width counts the padding but not the border, and is
+		// set only when needed, since lipgloss pads a narrower box out to it.
+		if c.MaxWidth > 4 && lipgloss.Width(body)+4 > c.MaxWidth {
+			style = style.Width(c.MaxWidth - 2)
+		}
+		fmt.Fprintln(c.EWriter, style.Render(body))
 	} else {
 		fmt.Fprintln(c.EWriter, "WARNING: "+body)
 	}

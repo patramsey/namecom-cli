@@ -682,9 +682,7 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Table([]string{"DOMAIN", "AT NAME.COM", "SUPPORTS INTERNAL"}, [][]string{
-			{result.DomainName, out.BoolBadge(result.AtName), out.BoolBadge(result.SupportsInternalTransfer)},
-		})
+		out.Table(eligibilityTable(result))
 		if result.AtName {
 			// supportsInternalTransfer is a TLD-level flag. The spec is explicit
 			// that it "does not reflect per-account allowlist eligibility" — so
@@ -697,6 +695,23 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// eligibilityTable lays out an eligibility result. It showed "AT NAME.COM no"
+// beside "SUPPORTS INTERNAL yes", which read as a contradiction (#238): the
+// second is a TLD-level flag that matters only for a domain already at
+// name.com. REGISTERED AT says where the domain is, and the TLD column
+// appears only when it applies.
+func eligibilityTable(r *coreapigo.TransferEligibilityResponse) ([]string, [][]string) {
+	if !r.AtName {
+		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "another registrar"}}
+	}
+	internal := "yes"
+	if !r.SupportsInternalTransfer {
+		internal = "no"
+	}
+	return []string{"DOMAIN", "REGISTERED AT", "TLD ALLOWS INTERNAL TRANSFER"},
+		[][]string{{r.DomainName, "name.com (an account)", internal}}
 }
 
 func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]string {
