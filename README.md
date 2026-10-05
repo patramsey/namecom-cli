@@ -305,7 +305,7 @@ separate from your production one. Omit `--profile` to use your default
 ```bash
 export NAMECOM_USERNAME=yourname
 export NAMECOM_TOKEN=yourtoken
-export NAMECOM_SANDBOX=true        # target sandbox API
+export NAMECOM_SANDBOX=true        # target sandbox API (true/false, yes/no, on/off, 1/0)
 export NAMECOM_PROFILE=staging     # select a profile
 export NAMECOM_CONFIG=~/namecom-ci.yaml    # use this file instead of the default
 namecom domain list

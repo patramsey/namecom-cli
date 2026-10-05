@@ -185,7 +185,9 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	stop()
 
 	// Report the identity the Hello call just used, resolved the same way.
-	id := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
+	// initContext already resolved it, so an invalid NAMECOM_SANDBOX cannot
+	// reach here; ignoring the error keeps the API error below intact.
+	id, _ := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
 	if err != nil {
 		// The error hints send users here to see which credentials are in
 		// use, so a rejection says which ones were rejected rather than only

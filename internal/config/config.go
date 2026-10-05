@@ -219,7 +219,10 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 		f = &File{Profiles: map[string]Profile{}}
 	}
 
-	creds := Identity(f, ov)
+	creds, err := Identity(f, ov)
+	if err != nil {
+		return Credentials{}, err
+	}
 	profileName := creds.Profile
 	prof := f.Profiles[profileName] // zero Profile if absent
 
@@ -271,10 +274,11 @@ func ActiveProfile(f *File, flagProfile string) string {
 
 // Identity resolves everything Resolve does except the token: the profile
 // name, the username, and the sandbox setting, with the same precedence. It
-// never runs token_cmd and never fails, so a command that only describes the
-// credentials reports what an API command would use without unlocking a vault
-// or requiring a token to exist.
-func Identity(f *File, ov Overrides) Credentials {
+// never runs token_cmd, so a command that only describes the credentials
+// reports what an API command would use without unlocking a vault or requiring
+// a token to exist. It fails only on a malformed NAMECOM_SANDBOX (*EnvError):
+// guessing an endpoint there is how #225 sent sandbox runs to production.
+func Identity(f *File, ov Overrides) (Credentials, error) {
 	if f == nil {
 		f = &File{}
 	}
@@ -286,16 +290,17 @@ func Identity(f *File, ov Overrides) Credentials {
 	// Username: flag > env > profile.
 	creds.Username = firstNonEmpty(ov.Username, os.Getenv("NAMECOM_USERNAME"), prof.Username)
 
-	// Sandbox: explicit flag > env > profile.
-	switch {
-	case ov.SandboxSet:
+	// Sandbox: explicit flag > env > profile. The variable is not read when
+	// the flag decides, so --sandbox still works in a shell exporting junk.
+	creds.Sandbox = prof.Sandbox
+	if ov.SandboxSet {
 		creds.Sandbox = ov.Sandbox
-	case os.Getenv("NAMECOM_SANDBOX") != "":
-		creds.Sandbox = truthy(os.Getenv("NAMECOM_SANDBOX"))
-	default:
-		creds.Sandbox = prof.Sandbox
+	} else if v, set, err := EnvBool("NAMECOM_SANDBOX"); err != nil {
+		return Credentials{}, err
+	} else if set {
+		creds.Sandbox = v
 	}
-	return creds
+	return creds, nil
 }
 
 // impliedDefault names the profile to use when nothing selected one: no
@@ -425,9 +430,46 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func truthy(s string) bool {
-	b, err := strconv.ParseBool(strings.TrimSpace(s))
-	return err == nil && b
+// ParseBool parses a boolean environment value: Go's strconv spellings (1, t,
+// true, 0, f, false, …) plus yes/no, on/off and y/n, in any case, ignoring
+// surrounding space. ok is false for anything else.
+func ParseBool(s string) (value, ok bool) {
+	s = strings.TrimSpace(s)
+	switch strings.ToLower(s) {
+	case "yes", "y", "on":
+		return true, true
+	case "no", "n", "off":
+		return false, true
+	}
+	b, err := strconv.ParseBool(s)
+	return b, err == nil
+}
+
+// EnvError reports an environment variable whose value cannot be used. The
+// CLI treats it as a usage error (exit 2).
+type EnvError struct {
+	Name, Value string
+}
+
+func (e *EnvError) Error() string {
+	return fmt.Sprintf("%s=%q is not a boolean; use true or false", e.Name, e.Value)
+}
+
+// EnvBool reads a boolean NAMECOM_* variable through ParseBool; set is false
+// when it is unset or empty. Every boolean variable goes through here.
+// NAMECOM_SANDBOX used to read any value it did not recognize — "yes", "on" —
+// as false, which is production (#225), so an unrecognized value is now an
+// error rather than either answer.
+func EnvBool(name string) (value, set bool, err error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return false, false, nil
+	}
+	v, ok := ParseBool(raw)
+	if !ok {
+		return false, false, &EnvError{Name: name, Value: raw}
+	}
+	return v, true, nil
 }
 
 // encodeConfig serializes f, preserving anything already in the file that the

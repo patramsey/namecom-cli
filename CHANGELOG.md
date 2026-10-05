@@ -65,6 +65,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--yes` does not cover it, as with `--acknowledge-claim`. In a terminal
   without `--yes`, the purchase prompt, which quotes the price, still counts
   as acceptance. `--dry-run` shows a hint instead of failing.
+- `NAMECOM_SANDBOX` accepts `yes`/`no`, `on`/`off` and `y`/`n` in any case,
+  as well as `true`/`false` and `1`/`0`. Any other value used to count as
+  false, so `NAMECOM_SANDBOX=yes` sent requests to **production**, even over a
+  profile saved with `sandbox: true`. An unrecognized value is now a usage
+  error (exit **2**) naming the variable and value, and nothing is sent.
+  `config show` reports the same error.
 
 ## [0.4.9] - 2026-10-03
 

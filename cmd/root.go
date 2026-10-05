@@ -380,6 +380,11 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 
 	creds, err := config.Resolve(cfgFile, ov)
 	if err != nil {
+		// A malformed NAMECOM_SANDBOX is how the command was invoked, not a
+		// credential problem (#225).
+		if _, ok := errors.AsType[*config.EnvError](err); ok {
+			return cmdutil.NewUsageError(err)
+		}
 		if errors.Is(err, config.ErrNoCredentials) {
 			// Resolve adds context to this error when it can say something more
 			// specific than "nothing is configured" — several profiles exist

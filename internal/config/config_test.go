@@ -731,7 +731,7 @@ func TestIdentity_AgreesWithResolve(t *testing.T) {
 				t.Fatalf("Resolve: %v", err)
 			}
 			want.Token = ""
-			if got := Identity(tt.f, tt.ov); got != want {
+			if got, _ := Identity(tt.f, tt.ov); got != want {
 				t.Errorf("Identity = %+v, Resolve = %+v", got, want)
 			}
 			if got := ActiveProfile(tt.f, tt.ov.Profile); got != want.Profile {
@@ -753,7 +753,10 @@ func TestIdentity_NeverRunsTokenCmd(t *testing.T) {
 			"touch '"+marker+"'; printf tok",
 			`type nul > "`+marker+`"& echo tok`)},
 	}}
-	got := Identity(f, Overrides{})
+	got, err := Identity(f, Overrides{})
+	if err != nil {
+		t.Fatalf("Identity: %v", err)
+	}
 	if got.Profile != "work" || got.Username != "w" || got.Token != "" {
 		t.Errorf("Identity = %+v, want profile work, username w, no token", got)
 	}

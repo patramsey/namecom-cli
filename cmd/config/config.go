@@ -197,7 +197,10 @@ func runShow(cmd *cobra.Command, _ []string) error {
 	// file's default, the implied default), the username and the endpoint. A
 	// chain of its own here reported the wrong profile or endpoint, and told a
 	// user with one working profile to run `auth login`, which overwrites.
-	id := config.Identity(cfgFile, cmdutil.Overrides(cmd))
+	id, err := config.Identity(cfgFile, cmdutil.Overrides(cmd))
+	if err != nil {
+		return cmdutil.NewUsageError(err)
+	}
 	profileName := id.Profile
 	p, ok := cfgFile.Profiles[profileName]
 	if !ok {
