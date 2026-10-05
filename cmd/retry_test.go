@@ -117,10 +117,15 @@ func TestRetry_CancelledStatusRequestsAreSilent(t *testing.T) {
 	if err == nil {
 		t.Fatal("status succeeded; want the 401")
 	}
-	// The two cancelled requests each log a failed attempt. Their error is
-	// the 401, errgroup's cancellation cause, not "context canceled".
-	if n := strings.Count(stderr, "← error:"); n != 2 {
-		t.Fatalf("want 2 cancelled requests in the debug log, got %d; stderr:\n%s", n, stderr)
+	// The two blocked domain lists are always cancelled, and each logs a
+	// failed attempt whose error is the 401 (errgroup's cancellation cause),
+	// not "context canceled". The balance and transfers requests answer at
+	// once but can still be in flight when the 401 cancels the group — seen
+	// on the Windows runner — so they may add to the count. Only "at least
+	// two" is deterministic; what matters is below: none is resent or
+	// announced.
+	if n := strings.Count(stderr, "← error:"); n < 2 {
+		t.Fatalf("want at least 2 cancelled requests in the debug log, got %d; stderr:\n%s", n, stderr)
 	}
 	if strings.Contains(stderr, "(retry") {
 		t.Errorf("a cancelled request was resent:\n%s", stderr)
