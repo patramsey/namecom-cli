@@ -241,6 +241,10 @@ func (e *UnknownCommandError) Error() string {
 	return fmt.Sprintf("unknown command %q for %q", e.Word, e.Path)
 }
 
+// CommandSuggestions is what the structured error envelope lists as
+// `error.suggestions`.
+func (e *UnknownCommandError) CommandSuggestions() []string { return e.Suggestions }
+
 // UnknownCommand is a usage error for an unknown subcommand word of path.
 // suggestions are subcommands relative to path, one word or several ("auth
 // login"). The hint names them, or points at the help when there are none:

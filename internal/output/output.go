@@ -845,6 +845,14 @@ type detailer interface {
 	ErrorDetails() any
 }
 
+// suggester is implemented by errors that name the commands the user probably
+// meant, such as an unknown subcommand. The JSON/YAML envelope lists them in
+// `error.suggestions`, so a script need not parse them out of the hint (#237).
+type suggester interface {
+	error
+	CommandSuggestions() []string
+}
+
 // Error prints a user-facing error to stderr. In JSON output mode the error is
 // emitted as a structured envelope so agents can parse failures.
 func (c *Config) Error(err error) {
@@ -858,6 +866,11 @@ func (c *Config) Error(err error) {
 		if d := detailer(nil); errors.As(err, &d) {
 			if details := d.ErrorDetails(); details != nil {
 				e["details"] = details
+			}
+		}
+		if s, ok := errors.AsType[suggester](err); ok {
+			if list := s.CommandSuggestions(); len(list) > 0 {
+				e["suggestions"] = list
 			}
 		}
 		env := map[string]any{"error": e}

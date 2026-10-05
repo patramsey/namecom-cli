@@ -389,7 +389,9 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 
 With `--output json` or `yaml` — including the JSON default when piped — an
 error is written to stderr as one document, an `error` object with a
-`message` and, where there is one, a `hint`.
+`message` and, where there is one, a `hint`. An unknown command also lists
+the commands it was probably meant to be in `error.suggestions`, as full
+command lines (`["namecom dns delete"]`).
 
 ## Development
 

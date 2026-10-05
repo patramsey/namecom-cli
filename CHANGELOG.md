@@ -26,6 +26,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   suggest `namecom url`, `login` and `logout` suggest `namecom auth login`
   and `auth logout`, and `whoami` suggests `namecom auth status`. They used
   to fail with no suggestion.
+- With `-o json` or `-o yaml`, an unknown-command error lists the commands
+  it was probably meant to be in `error.suggestions`, as full command lines
+  (`["namecom dns delete"]`). **Scripts** get one new key; `message` and
+  `hint` are unchanged.
 
 ### Changed
 - The `domain register` prompt reads as one sentence and states the choices

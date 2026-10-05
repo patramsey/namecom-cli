@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/output"
 )
 
 // TestAliases pins #237: `dns rm`, `email add` and `domain ls` were unknown
@@ -72,5 +76,41 @@ func TestRootSuggestFor(t *testing.T) {
 	u, _ := errors.AsType[*cmdutil.UsageError](err)
 	if u == nil || u.UserHint() != "did you mean 'namecom domain'?" {
 		t.Errorf("namecom domian: %v, want cobra's own suggestion of domain", err)
+	}
+}
+
+// TestUnknownCommandSuggestionsField pins #237: in JSON mode the commands an
+// unknown one was probably meant to be are listed in error.suggestions, beside
+// the unchanged message and hint, so a script need not parse the hint.
+func TestUnknownCommandSuggestionsField(t *testing.T) {
+	for args, want := range map[string][]string{
+		"dns delet": {"namecom dns delete"},
+		"whoami":    {"namecom auth status"},
+		"frob":      nil,
+	} {
+		t.Run(args, func(t *testing.T) {
+			err := suggestFor(cmdutil.ClassifyCobraUsage(executeRoot(t, strings.Fields(args)...)))
+			var ew bytes.Buffer
+			cfg := &output.Config{Format: output.FormatJSON, Writer: &bytes.Buffer{}, EWriter: &ew}
+			if code := reportError(cfg, err); code != 2 {
+				t.Fatalf("exit %d, want 2", code)
+			}
+			var env struct {
+				Error struct {
+					Message     string   `json:"message"`
+					Suggestions []string `json:"suggestions"`
+				} `json:"error"`
+				Hint string `json:"hint"`
+			}
+			if err := json.Unmarshal(ew.Bytes(), &env); err != nil {
+				t.Fatalf("envelope does not parse: %v\n%s", err, ew.String())
+			}
+			if !slices.Equal(env.Error.Suggestions, want) {
+				t.Errorf("suggestions = %q, want %q\n%s", env.Error.Suggestions, want, ew.String())
+			}
+			if !strings.HasPrefix(env.Error.Message, "unknown command ") || strings.Contains(env.Error.Message, "\n") || env.Hint == "" {
+				t.Errorf("message and hint should be unchanged:\n%s", ew.String())
+			}
+		})
 	}
 }
