@@ -395,10 +395,7 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 			if err != config.ErrNoCredentials {
 				return cmdutil.NewAuthError(err)
 			}
-			if output.IsInteractive() {
-				return cmdutil.NewAuthError(fmt.Errorf("no credentials configured — run 'namecom auth login' to set them up"))
-			}
-			return cmdutil.NewAuthError(fmt.Errorf("no credentials configured (set NAMECOM_USERNAME and NAMECOM_TOKEN, or run 'namecom auth login')"))
+			return cmdutil.NotLoggedIn()
 		}
 		// A credential helper that failed is also an auth problem, not a
 		// generic runtime one.

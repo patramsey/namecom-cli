@@ -314,6 +314,10 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	// auth status needs the client; init it explicitly since PersistentPreRunE
 	// is skipped for the auth group.
 	if err := initContext(cmd); err != nil {
+		// The generic auth hint suggests 'namecom auth status' — this command.
+		if ae, ok := errors.AsType[*cmdutil.AuthError](err); ok && ae.Hint == "" {
+			ae.Hint = "run 'namecom config list-profiles' to see your profiles, or 'namecom auth login' to add one"
+		}
 		return err
 	}
 	client := cmdutil.APIClient(cmd)

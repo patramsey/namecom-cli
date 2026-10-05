@@ -13,6 +13,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.
+- With no credentials configured, every command — `auth status`, `status`,
+  `config show` and API commands alike — now says `Not logged in. Looked in
+  <path>.`, naming the config file it searched, and exits **3**. The hint
+  says how to log in instead of suggesting `namecom auth status`, which on
+  `auth status` pointed at itself. `config show` exited **1** for this and
+  for a missing or ambiguous profile; it now exits **3** like the rest, so a
+  script branching on its exit code sees a change. The old text was `no
+  credentials configured — run 'namecom auth login' …`.
+- A bare `namecom` with no credentials prints a short getting-started banner
+  (`namecom auth login`, and where to create a token) instead of the full
+  command list. `namecom --help` still prints the full help.
 
 ### Fixed
 - `dns create` in a terminal opens its guided form again when `--type` or
