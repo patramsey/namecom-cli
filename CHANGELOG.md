@@ -33,6 +33,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a profile that is not the one commands use, the hint says `namecom status
   --profile <name>` or `namecom config use <name>`, rather than a bare
   `namecom status` that showed a different account.
+- When `NAMECOM_SANDBOX` sends a profile's requests to the other endpoint — a
+  leftover `NAMECOM_SANDBOX=1` turning a production profile into a sandbox
+  one, or the reverse — a one-line notice on stderr says so and names the
+  endpoint in use. It appears only when stderr is a terminal, so scripts and
+  JSON error output are unaffected, and not when `--sandbox` was passed.
 
 ### Fixed
 - `dns create` in a terminal opens its guided form again when `--type` or

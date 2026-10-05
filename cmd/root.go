@@ -403,6 +403,11 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	}
 
 	out.Sandbox = creds.Sandbox
+	if !forCompletion && gf.baseURL == "" && envNoticeTTY() {
+		if note := envEndpointNotice(cfgFile, creds, ov); note != "" {
+			out.Warn(note)
+		}
+	}
 
 	// --- API client ---
 	apiOpts := api.Options{
@@ -478,6 +483,30 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	ctx = context.WithValue(ctx, cmdutil.KeyOverrides, ov)
 	cmd.SetContext(ctx)
 	return nil
+}
+
+// envNoticeTTY gates envEndpointNotice. Replaceable in tests.
+var envNoticeTTY = output.IsStderrTTY
+
+// envEndpointNotice says when NAMECOM_SANDBOX sends a profile's requests to
+// the other endpoint, or returns "" when it does not. A `NAMECOM_SANDBOX=1`
+// left exported in a shell silently pointed a production profile at the
+// sandbox, and the reverse sent sandbox work to production (#225, #239).
+//
+// Only for a person watching (stderr a terminal): raw text ahead of the JSON
+// error envelope would corrupt stderr for a script, and a script that sets the
+// variable means it. Not when --sandbox decides, since that was typed on the
+// line, or when the profile is not in the config file.
+func envEndpointNotice(f *config.File, creds config.Credentials, ov config.Overrides) string {
+	if ov.SandboxSet || f == nil {
+		return ""
+	}
+	prof, ok := f.Profiles[creds.Profile]
+	if !ok || prof.Sandbox == creds.Sandbox {
+		return ""
+	}
+	return fmt.Sprintf("NAMECOM_SANDBOX=%s overrides profile %q (%s): requests go to %s",
+		os.Getenv("NAMECOM_SANDBOX"), creds.Profile, loginEnv(prof.Sandbox), api.DefaultBaseURL(creds.Sandbox))
 }
 
 // debugLogFile is the open --debug-file, if any. closeDebugLog runs as a cobra
