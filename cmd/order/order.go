@@ -195,10 +195,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			out.Empty("order", "")
 			return nil
 		}
-		out.Table(
-			[]string{"ID", "STATUS", "DATE", "TOTAL"},
-			orderRows(out, orders),
-		)
+		orderTable(out, orders)
 		if hasMore {
 			out.Count(len(orders), "order", "newest first — narrow with --since, --domain or --status, or pass --all")
 		} else {
@@ -243,10 +240,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(o)
 	default:
-		out.Table(
-			[]string{"ID", "STATUS", "DATE", "TOTAL"},
-			orderRows(out, []*coreapigo.Order{o}),
-		)
+		orderTable(out, []*coreapigo.Order{o})
 		// Show the line items. Their IDs are the required input to
 		// `order refund --item-ids`, and sharing list's renderer meant a single
 		// order rendered exactly like a list row — leaving no way to discover
@@ -257,8 +251,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 				orderItemRows(out, o.OrderItems, o.Currency),
 				output.Essential("NAME"),
 			)
-			out.Hint("Run 'namecom order refund --order-id " +
-				strconv.Itoa(derefInt(o.ID)) + " --item-ids <ITEM ID>' to refund a refundable item")
+			// Suggested only when there is something to refund: it was shown
+			// for an order whose only item could not be refunded (#235).
+			if ids := refundableIDs(o.OrderItems); len(ids) > 0 {
+				out.Hint("Run 'namecom order refund --order-id " +
+					strconv.Itoa(derefInt(o.ID)) + " --item-ids " + strings.Join(ids, ",") + "' to refund the refundable " +
+					output.PluralNoun(len(ids), "item"))
+			}
 		}
 	}
 	return nil
@@ -416,6 +415,17 @@ func formatAmount(amount float64, currency *string) string {
 	return output.Decimal(amount) + " " + strings.ToUpper(*currency)
 }
 
+// refundableIDs lists the IDs of the items a refund can be requested for.
+func refundableIDs(items []*coreapigo.OrderItem) []string {
+	var ids []string
+	for _, it := range items {
+		if it != nil && it.IsRefundable {
+			ids = append(ids, strconv.Itoa(it.ID))
+		}
+	}
+	return ids
+}
+
 func derefInt(n *int) int {
 	if n == nil {
 		return 0
@@ -444,6 +454,20 @@ func orderItemRows(out *output.Config, items []*coreapigo.OrderItem, currency *s
 	return rows
 }
 
+// orderHeaders are the columns orderRows fills, most important first so a
+// narrow terminal drops the ID before what was bought.
+var orderHeaders = []string{"DATE", "DOMAIN(S)", "TYPE", "TOTAL", "STATUS", "ID"}
+
+// orderTable renders orders with orderHeaders. DOMAIN(S) is never dropped:
+// it is the column that says what each order was for.
+func orderTable(out *output.Config, orders []*coreapigo.Order) {
+	out.Table(orderHeaders, orderRows(out, orders), output.Essential("DOMAIN(S)"))
+}
+
+// orderRows lays out orders under orderHeaders. The table showed only ID,
+// STATUS, DATE and TOTAL, though every order carries its items' names and
+// types, so a history read as a list of amounts with nothing to say what
+// they bought (#235).
 func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 	rows := make([][]string, 0, len(orders))
 	for _, o := range orders {
@@ -463,9 +487,36 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 		if o.FinalAmount != nil {
 			total = formatAmount(*o.FinalAmount, o.Currency)
 		}
-		rows = append(rows, []string{id, status, date, total})
+		names, types := orderSummary(o.OrderItems)
+		rows = append(rows, []string{date, names, types, total, status, id})
 	}
 	return rows
+}
+
+// orderSummary describes an order's items in two cells: the first item's
+// name with a count of the other names ("acme.io +2"), and the distinct item
+// types ("registration, whois_privacy"). A name or type repeated across items
+// — a registration and its privacy for one domain — is counted once.
+func orderSummary(items []*coreapigo.OrderItem) (names, types string) {
+	var ns, ts []string
+	for _, it := range items {
+		if it == nil {
+			continue
+		}
+		if it.Name != nil && *it.Name != "" && !slices.Contains(ns, *it.Name) {
+			ns = append(ns, *it.Name)
+		}
+		if it.Type != "" && !slices.Contains(ts, it.Type) {
+			ts = append(ts, it.Type)
+		}
+	}
+	if len(ns) > 0 {
+		names = ns[0]
+		if len(ns) > 1 {
+			names += fmt.Sprintf(" +%d", len(ns)-1)
+		}
+	}
+	return names, strings.Join(ts, ", ")
 }
 
 func parseID(s string) (int32, error) {

@@ -953,7 +953,7 @@ func TestOrderRows_DateMatchesOtherCommands(t *testing.T) {
 	id, status, created := 1, "success", "2026-04-06T11:39:11Z"
 	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
 	rows := orderRows(out, []*coreapigo.Order{{ID: &id, Status: &status, CreateDate: &created}})
-	if got := rows[0][2]; got != "2026-04-06" {
+	if got := rows[0][0]; got != "2026-04-06" {
 		t.Errorf("DATE = %q, want %q", got, "2026-04-06")
 	}
 }
