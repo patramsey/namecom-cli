@@ -138,7 +138,7 @@ func init() {
 	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
 	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
 
-	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfer")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfers")
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, internalCmd, cancelCmd, cancelOutboundCmd)

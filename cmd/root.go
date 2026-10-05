@@ -61,7 +61,7 @@ var gf globalFlags
 
 // rootLongBody is the root help below its title line, which Execute rebuilds
 // with the resolved version. The exit codes are the table exitCode implements.
-const rootLongBody = `Manage domains, DNS records, email forwarding, URL redirects, transfers, and more.
+const rootLongBody = `Manage domains, DNS records, email forwarding, URL forwarding, transfers, and more.
 
 Quick start:
   namecom auth login              # configure credentials

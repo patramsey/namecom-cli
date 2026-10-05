@@ -13,11 +13,11 @@ const AllUsage = "fetch every page, starting at --page"
 // AddPageFlags gives a list command --all, --page and --limit, the same on
 // every paged list (#236). --page existed only on `domain list`, so
 // `order list --page 2` was an unknown flag, and --all was described four
-// ways. noun names one result, for --limit's help.
-func AddPageFlags(cmd *cobra.Command, all *bool, page, limit *int, noun string) {
+// ways. plural names the results, for --limit's help.
+func AddPageFlags(cmd *cobra.Command, all *bool, page, limit *int, plural string) {
 	cmd.Flags().BoolVar(all, "all", false, AllUsage)
 	cmd.Flags().IntVar(page, "page", 1, "page to fetch, from 1")
-	cmd.Flags().IntVar(limit, "limit", 0, noun+"s per page (default: the API's page size)")
+	cmd.Flags().IntVar(limit, "limit", 0, plural+" per page (default: the API's page size)")
 	MarkList(cmd)
 }
 

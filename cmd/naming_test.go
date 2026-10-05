@@ -118,9 +118,10 @@ func TestHelpText(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	// The url pages say "redirect", and the dnssec pages "DS record", rather
-	// than the mix of terms they used.
-	for group, stale := range map[string]string{"url": "forwarding", "dnssec": "DNSSEC key"} {
+	// The url pages call the feature "URL forwarding" (name.com's name for it,
+	// and the API path), using "redirect" only for the 301/302 types; the
+	// dnssec pages say "DS record". Both used a mix of terms.
+	for group, stale := range map[string]string{"url": "URL redirect", "dnssec": "DNSSEC key"} {
 		c, _, _ := rootCmd.Find([]string{group})
 		for _, sub := range append(c.Commands(), c) {
 			text := sub.Short + " " + sub.Long

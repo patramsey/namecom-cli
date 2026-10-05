@@ -166,7 +166,7 @@ partway can be run again.`,
 }
 
 func init() {
-	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "record")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "records")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
 	listCmd.Flags().StringVar(&listHost, "host", "", "filter by host (@ for the apex; www or www.example.com)")
 

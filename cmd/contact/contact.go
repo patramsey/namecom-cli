@@ -87,7 +87,7 @@ contact click the link.`,
 }
 
 func init() {
-	cmdutil.AddPageFlags(unverifiedCmd, &listAll, &listPage, &listLimit, "unverified contact")
+	cmdutil.AddPageFlags(unverifiedCmd, &listAll, &listPage, &listLimit, "unverified contacts")
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(resendCmd, verifyCmd)
 	Cmd.AddCommand(unverifiedCmd, resendCmd, verifyCmd)
