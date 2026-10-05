@@ -18,6 +18,8 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -368,21 +371,55 @@ func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
 	return c.YAML(newListEnvelope(data, nextPage, total))
 }
 
-// Table renders rows as a styled table. headers is the column header row.
-// Table renders headers and rows as a bordered table, dropping trailing
-// columns that do not fit the terminal.
+// TableOption adjusts how one Table call fits the terminal.
+type TableOption func(*tableOpts)
+
+type tableOpts struct {
+	essential map[string]bool
+}
+
+// Essential marks columns, named by header, that are never dropped to fit
+// the terminal. They can still be shortened with "…". It is for the column
+// that carries the point of the table — the DNS answer, the domains an
+// unverified contact puts at risk — which, being the widest, used to be the
+// first to go.
+func Essential(headers ...string) TableOption {
+	return func(o *tableOpts) {
+		if o.essential == nil {
+			o.essential = map[string]bool{}
+		}
+		for _, h := range headers {
+			o.essential[h] = true
+		}
+	}
+}
+
+// minColWidth is how narrow fitColumns shortens a column before it starts
+// dropping columns instead. Twenty characters keeps enough of a hostname, a
+// TXT value or a domain name to tell rows apart.
+const minColWidth = 20
+
+// Table renders headers and rows as a bordered table that fits the terminal.
 //
 // Tables were rendered at their natural width with no regard for the terminal:
 // `domain list` came to 113 columns, `order list` 99, `dns list` 87. In an
-// 80-column terminal — an SSH session, a split pane — every one of them wrapped
-// and the rounded borders came apart into unreadable fragments. Columns are
-// ordered most- to least-important by their callers, so the ones that go are
-// the ones from the right, and a footer names them rather than letting them
-// vanish. --wide opts out; so does any non-terminal writer, since a pipe has no
-// width to fit and its consumer wants the whole row.
-func (c *Config) Table(headers []string, rows [][]string) {
+// 80-column terminal every one of them wrapped and the rounded borders came
+// apart. Trailing columns were then dropped to fit — but one long value was
+// enough to drop everything after it: an SPF record left `dns list` showing
+// only ID and HOST, the answer itself gone, even at 120 columns (#233).
+//
+// So the widest cells are shortened with "…" first, down to minColWidth, and
+// only then are columns dropped: from the right, never the first column, and
+// never one marked Essential. A footer says what was hidden or shortened.
+// --wide opts out; so does any non-terminal writer, since a pipe has no width
+// to fit and its consumer wants the whole row.
+func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
+	var o tableOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
 	color := c.ColorEnabled()
-	headers, rows, dropped := c.fitColumns(headers, rows)
+	headers, rows, dropped, truncated := c.fitColumns(headers, rows, o.essential)
 
 	cell := lipgloss.NewStyle().Padding(0, 1)
 	header := cell.Bold(color)
@@ -415,57 +452,136 @@ func (c *Config) Table(headers []string, rows [][]string) {
 
 	fmt.Fprintln(c.Writer, t.Render())
 
+	var notes []string
 	if len(dropped) > 0 {
-		fmt.Fprintln(c.Writer, c.Dim(fmt.Sprintf(
-			"%d column%s hidden (%s) — widen the terminal, pass --wide, or use -o json",
-			len(dropped), plural("", len(dropped)), strings.Join(dropped, ", "))))
+		notes = append(notes, fmt.Sprintf("%s hidden (%s)",
+			Plural(len(dropped), "column"), strings.Join(dropped, ", ")))
+	}
+	if truncated {
+		notes = append(notes, "long values cut short with …")
+	}
+	if len(notes) > 0 {
+		fmt.Fprintln(c.Writer, c.Dim(strings.Join(notes, "; ")+
+			" — widen the terminal, pass --wide, or use -o json"))
 	}
 }
 
-// fitColumns drops trailing columns until the rendered table fits MaxWidth,
-// returning the surviving headers and rows plus the names of what went.
+// fitColumns makes a table fit MaxWidth. It shortens the widest columns, and
+// if that is not enough, drops trailing columns that are not essential. It
+// returns the surviving headers and rows, the names of the columns dropped,
+// and whether any cell was shortened.
 //
 // The first column is never dropped: a table of nothing but a row count is
 // worse than one that overflows, and callers put the identifying column first.
-func (c *Config) fitColumns(headers []string, rows [][]string) ([]string, [][]string, []string) {
+func (c *Config) fitColumns(headers []string, rows [][]string, essential map[string]bool) ([]string, [][]string, []string, bool) {
 	if c.Wide || c.MaxWidth <= 0 || len(headers) == 0 {
-		return headers, rows, nil
+		return headers, rows, nil, false
 	}
 
-	keep := len(headers)
-	for keep > 1 && tableWidth(colWidths(headers, rows, keep)) > c.MaxWidth {
-		keep--
+	keep := make([]int, len(headers)) // indexes of the surviving columns
+	for i := range keep {
+		keep[i] = i
 	}
-	if keep == len(headers) {
-		return headers, rows, nil
-	}
-
-	dropped := make([]string, 0, len(headers)-keep)
-	for _, h := range headers[keep:] {
-		dropped = append(dropped, strings.ToLower(h))
-	}
-	trimmed := make([][]string, 0, len(rows))
-	for _, r := range rows {
-		if len(r) > keep {
-			r = r[:keep]
+	var natural, widths []int
+	for {
+		natural = colWidths(headers, rows, keep)
+		var fits bool
+		widths, fits = shrinkToFit(headers, keep, natural, c.MaxWidth)
+		if fits {
+			break
 		}
-		trimmed = append(trimmed, r)
+		drop := -1
+		for k := len(keep) - 1; k > 0; k-- {
+			if !essential[headers[keep[k]]] {
+				drop = k
+				break
+			}
+		}
+		if drop < 0 {
+			break // nothing left to drop: overflow at the narrowest widths
+		}
+		keep = append(keep[:drop:drop], keep[drop+1:]...)
 	}
-	return headers[:keep], trimmed, dropped
+	if len(keep) == len(headers) && slices.Equal(widths, natural) {
+		return headers, rows, nil, false
+	}
+
+	kept := make(map[int]bool, len(keep))
+	for _, i := range keep {
+		kept[i] = true
+	}
+	var dropped []string
+	for i, h := range headers {
+		if !kept[i] {
+			dropped = append(dropped, strings.ToLower(h))
+		}
+	}
+
+	outHeaders := make([]string, len(keep))
+	for k, i := range keep {
+		outHeaders[k] = headers[i]
+	}
+	truncated := false
+	outRows := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		nr := make([]string, 0, len(keep))
+		for k, i := range keep {
+			if i >= len(r) {
+				break
+			}
+			v := r[i]
+			if lipgloss.Width(v) > widths[k] {
+				v = ansi.Truncate(v, widths[k], "…")
+				truncated = true
+			}
+			nr = append(nr, v)
+		}
+		outRows = append(outRows, nr)
+	}
+	return outHeaders, outRows, dropped, truncated
 }
 
-// colWidths measures the first n columns at their natural (widest-cell) width.
-// lipgloss.Width is used rather than len because cells arrive pre-styled —
-// ExpiryDate returns ANSI escapes — and because a domain may hold wide runes.
-func colWidths(headers []string, rows [][]string, n int) []int {
-	w := make([]int, n)
-	for i := 0; i < n && i < len(headers); i++ {
-		w[i] = lipgloss.Width(headers[i])
+// shrinkToFit narrows the widest column a character at a time until the table
+// fits maxWidth, taking no column below minColWidth or its header's width. It
+// returns the widths and whether they fit.
+func shrinkToFit(headers []string, keep, natural []int, maxWidth int) ([]int, bool) {
+	widths := append([]int(nil), natural...)
+	floor := make([]int, len(widths))
+	for k, i := range keep {
+		floor[k] = min(natural[k], max(minColWidth, lipgloss.Width(headers[i])))
+	}
+	for tableWidth(widths) > maxWidth {
+		widest := -1
+		for k, w := range widths {
+			if w > floor[k] && (widest < 0 || w > widths[widest]) {
+				widest = k
+			}
+		}
+		if widest < 0 {
+			return widths, false
+		}
+		widths[widest]--
+	}
+	return widths, true
+}
+
+// colWidths measures the columns at the given indexes at their natural
+// (widest-cell) width. lipgloss.Width is used rather than len because cells
+// arrive pre-styled — ExpiryDate returns ANSI escapes — and because a domain
+// may hold wide runes.
+func colWidths(headers []string, rows [][]string, cols []int) []int {
+	w := make([]int, len(cols))
+	for k, i := range cols {
+		if i < len(headers) {
+			w[k] = lipgloss.Width(headers[i])
+		}
 	}
 	for _, r := range rows {
-		for i := 0; i < n && i < len(r); i++ {
-			if cw := lipgloss.Width(r[i]); cw > w[i] {
-				w[i] = cw
+		for k, i := range cols {
+			if i < len(r) {
+				if cw := lipgloss.Width(r[i]); cw > w[k] {
+					w[k] = cw
+				}
 			}
 		}
 	}
@@ -526,7 +642,7 @@ func (c *Config) KVTable(rows [][]string) {
 	// edge and the borders came apart. Width is set only when the table is too
 	// wide, because lipgloss also stretches a narrower table to fill it.
 	// --wide and a non-terminal writer keep the natural width.
-	if !c.Wide && c.MaxWidth > 0 && tableWidth(colWidths(nil, rows, 2)) > c.MaxWidth {
+	if !c.Wide && c.MaxWidth > 0 && tableWidth(colWidths(nil, rows, []int{0, 1})) > c.MaxWidth {
 		t = t.Width(c.MaxWidth)
 	}
 
@@ -858,6 +974,47 @@ func plural(unit string, n int) string {
 		return unit
 	}
 	return unit + "s"
+}
+
+// Plural returns n and noun together, with thousands separators and the noun
+// pluralised: "1 year", "2 years", "6,522 domains". A noun ending in a
+// consonant and y takes "ies" ("2 entries"); one ending in s, x, sh or ch
+// takes "es"; anything else takes "s".
+func Plural(n int, noun string) string {
+	return Thousands(n) + " " + PluralNoun(n, noun)
+}
+
+// PluralNoun returns noun pluralised for n, without the number.
+func PluralNoun(n int, noun string) string {
+	if n == 1 || n == -1 || noun == "" {
+		return noun
+	}
+	if len(noun) > 1 && strings.HasSuffix(noun, "y") && !strings.ContainsRune("aeiou", rune(noun[len(noun)-2])) {
+		return noun[:len(noun)-1] + "ies"
+	}
+	for _, suf := range []string{"s", "x", "sh", "ch"} {
+		if strings.HasSuffix(noun, suf) {
+			return noun + "es"
+		}
+	}
+	return noun + "s"
+}
+
+// Thousands formats n with comma thousands separators: 6522 → "6,522".
+func Thousands(n int) string {
+	s := strconv.Itoa(n)
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(r)
+	}
+	return sign + b.String()
 }
 
 // spinFrames are the animation frames for the spinner.

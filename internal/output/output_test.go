@@ -825,7 +825,7 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 
 	t.Run("drops columns to fit", func(t *testing.T) {
 		var buf bytes.Buffer
-		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 80}
+		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 50}
 		c.Table(headers, rows)
 		got := buf.String()
 
@@ -836,14 +836,39 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 				tableLines = append(tableLines, line)
 			}
 		}
-		if w := widest(strings.Join(tableLines, "\n")); w > 80 {
-			t.Errorf("table rendered %d columns wide, want <= 80:\n%s", w, got)
+		if w := widest(strings.Join(tableLines, "\n")); w > 50 {
+			t.Errorf("table rendered %d columns wide, want <= 50:\n%s", w, got)
 		}
 		if !strings.Contains(got, "hidden") {
 			t.Errorf("dropped columns without telling the reader:\n%s", got)
 		}
 		if !strings.Contains(got, "DOMAIN") {
 			t.Errorf("dropped the identifying column:\n%s", got)
+		}
+	})
+
+	// One 49-character domain dropped auto-renew, locked and privacy at 80
+	// columns (#233). Shortening the name keeps all five.
+	t.Run("shortens long cells before dropping columns", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &buf, MaxWidth: 80}
+		c.Table(headers, rows)
+		got := buf.String()
+		for _, h := range headers {
+			if !strings.Contains(got, h) {
+				t.Errorf("dropped %q although shortening would have fit:\n%s", h, got)
+			}
+		}
+		if !strings.Contains(got, "loadtest-ff7fb52b") || !strings.Contains(got, "…") {
+			t.Errorf("want the long domain cut short with …:\n%s", got)
+		}
+		if strings.Contains(got, "hidden") {
+			t.Errorf("nothing was hidden, but the footer says so:\n%s", got)
+		}
+		for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+			if w := lipgloss.Width(line); w > 80 {
+				t.Errorf("line %d wide, want <= 80: %q", w, line)
+			}
 		}
 	})
 
@@ -882,6 +907,33 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 			t.Errorf("dropped columns that fit:\n%s", got)
 		}
 	})
+}
+
+// TestTableEssentialColumns: a DNS answer, the widest column, was the first
+// dropped, leaving `dns list` showing ID and HOST only (#233). An essential
+// column survives, cut short, and the columns after it go instead.
+func TestTableEssentialColumns(t *testing.T) {
+	headers := []string{"ID", "HOST", "ANSWER", "TTL"}
+	spf := "v=spf1 include:_spf.google.com include:mailgun.org include:sendgrid.net ~all"
+	rows := [][]string{{"12345", "@", spf, "300"}}
+
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &buf, MaxWidth: 36}
+	c.Table(headers, rows, Essential("ANSWER"))
+	got := buf.String()
+	if !strings.Contains(got, "ANSWER") || !strings.Contains(got, "v=spf1") {
+		t.Errorf("essential ANSWER column was dropped:\n%s", got)
+	}
+	if !strings.Contains(got, "2 columns hidden (host, ttl)") {
+		t.Errorf("want the other columns dropped in its place, and named:\n%s", got)
+	}
+
+	// Without the mark, the same table drops ANSWER first.
+	buf.Reset()
+	c.Table(headers, rows)
+	if strings.Contains(buf.String(), "v=spf1") {
+		t.Errorf("unmarked ANSWER kept at 36 columns; the test no longer shows the difference:\n%s", buf.String())
+	}
 }
 
 // TestKVTableFitsTerminalWidth: KVTable (`domain get`, `auth status`) was

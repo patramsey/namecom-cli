@@ -254,6 +254,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 			out.Table(
 				[]string{"ITEM ID", "NAME", "TYPE", "PRICE", "REFUNDABLE"},
 				orderItemRows(out, o.OrderItems, o.Currency),
+				output.Essential("NAME"),
 			)
 			out.Hint("Run 'namecom order refund --order-id " +
 				strconv.Itoa(derefInt(o.ID)) + " --item-ids <ITEM ID>' to refund a refundable item")

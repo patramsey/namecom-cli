@@ -153,6 +153,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		out.Table(
 			[]string{"ID", "EMAIL", "DEADLINE", "DOMAINS"},
 			unverifiedRows(out, contacts),
+			output.Essential("DOMAINS"),
 		)
 		out.Count(len(contacts), "unverified contact")
 		out.WarnBox(

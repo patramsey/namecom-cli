@@ -10,6 +10,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Changed
+- Tables that are too wide for the terminal now cut their longest values
+  short with `…` (to no less than 20 characters) before hiding any column, and
+  never hide the column that carries the point of the table: the DNS answer in
+  `dns list`, the domains in `contact unverified`, the item name in
+  `order get`. `dns list` with an SPF or DKIM record used to show only ID and
+  HOST; `domain list` at 80 columns lost locked, privacy and auto-renew to one
+  long domain name. The footer says when values were cut. `--wide` and piped
+  output are unchanged: every column, every character.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

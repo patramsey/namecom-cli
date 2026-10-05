@@ -232,6 +232,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			out.Table(
 				[]string{"ID", "TYPE", "HOST", "ANSWER", "TTL", "PRIORITY"},
 				recordRows(out, records),
+				output.Essential("ANSWER"),
 			)
 		} else {
 			// Unfiltered: group by type with section headers.
@@ -773,6 +774,7 @@ func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 		out.Table(
 			[]string{"ID", "HOST", "ANSWER", "TTL", "PRIORITY"},
 			recordRowsNoType(out, groups[t]),
+			output.Essential("ANSWER"),
 		)
 	}
 	for _, t := range dnsTypeOrder {

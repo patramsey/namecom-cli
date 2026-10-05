@@ -191,7 +191,7 @@ func FuzzTableFits(f *testing.F) {
 		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &buf, MaxWidth: width}
 		headers := []string{h1, h2, h3}
 		rows := [][]string{{c1, c2, c3}}
-		kept, _, dropped := c.fitColumns(headers, rows)
+		kept, _, dropped, _ := c.fitColumns(headers, rows, nil)
 		if len(kept)+len(dropped) != len(headers) {
 			t.Fatalf("kept %d + dropped %d != %d", len(kept), len(dropped), len(headers))
 		}
@@ -200,7 +200,7 @@ func FuzzTableFits(f *testing.F) {
 			return // the first column is never dropped, so it may overflow
 		}
 		table := buf.String()
-		if i := strings.LastIndex(table, "column"); len(dropped) > 0 && i >= 0 {
+		if i := strings.LastIndex(table, "pass --wide"); i >= 0 {
 			table = table[:strings.LastIndex(table[:i], "\n")+1]
 		}
 		for line := range strings.SplitSeq(strings.TrimRight(table, "\n"), "\n") {
