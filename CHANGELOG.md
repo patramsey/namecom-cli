@@ -51,6 +51,20 @@ Releases before `0.2.0` predate this file. Their notes are on the
   sends nothing and does not ask. `domain update --autorenew`,
   `--privacy=false` and `--lock=false` read the domain first to decide whether
   to ask.
+- `domain register`, `domain renew` and `transfer create` take
+  `--max-price <amount>`. It refuses, before anything is bought, a price
+  above the amount (the total for the term), exiting **2** with both figures
+  in the message. It refuses too when no price could be quoted, and under
+  `--dry-run`. `--price` was described as a way to cap what you pay, but it
+  is only sent as `purchasePrice`; its help now says so and points at
+  `--max-price`.
+- Premium, aftermarket, expiring and backorder purchases, premium renewals
+  and premium transfers now need `--accept-premium` when there is no
+  interactive prompt to answer. **`--yes` alone no longer buys at one of
+  these prices**: a script gets exit **2** and a message with the price.
+  `--yes` does not cover it, as with `--acknowledge-claim`. In a terminal
+  without `--yes`, the purchase prompt, which quotes the price, still counts
+  as acceptance. `--dry-run` shows a hint instead of failing.
 
 ## [0.4.9] - 2026-10-03
 

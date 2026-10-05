@@ -58,7 +58,9 @@ func cmdForTransferCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().BoolVar(&createPrivacy, "privacy", false, "")
 	cmd.Flags().Float64Var(&createPrice, "price", 0, "")
 	cmd.Flags().StringVar(&createContactsFile, "contacts-file", "", "")
-	t.Cleanup(func() { createContactsFile = "" })
+	cmd.Flags().Float64Var(&createMaxPrice, "max-price", 0, "")
+	cmd.Flags().BoolVar(&createAccept, "accept-premium", false, "")
+	t.Cleanup(func() { createContactsFile, createMaxPrice, createAccept = "", 0, false })
 	return cmd
 }
 
@@ -1173,6 +1175,94 @@ func TestTransferCreate_RejectsNonPositivePrice(t *testing.T) {
 				t.Errorf("want a usage error, got %T: %v", err, err)
 			}
 		})
+	}
+}
+
+// ---- spending gates (#226) --------------------------------------------------
+
+// transferGateRun runs `transfer create --yes` non-interactively against a
+// server quoting pricing, and reports how many transfers it sent.
+func transferGateRun(t *testing.T, pricing string, flags ...string) (int, error) {
+	t.Helper()
+	var writes int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/core/v1/transfers" {
+			writes++
+			_, _ = w.Write([]byte(`{"order":1,"totalPaid":1}`))
+			return
+		}
+		_, _ = w.Write([]byte(pricing))
+	}))
+	t.Cleanup(srv.Close)
+	cmd := cmdForTransferCreate(t, srv)
+	t.Cleanup(func() { createAuthCode, createPrice = "", 0 })
+	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.ParseFlags(append([]string{"--auth-code", "validcode123"}, flags...)); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	err := runCreate(cmd, []string{"example.com"})
+	return writes, err
+}
+
+// TestTransferCreate_MaxPrice: --max-price refuses a transfer quoted above it
+// (exit 2, both numbers), and one with no quote to compare.
+func TestTransferCreate_MaxPrice(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	const standard = `{"premium":false,"transferPrice":12.99}`
+	for _, tc := range []struct {
+		name, pricing string
+		flags         []string
+		want          []string // nil: the transfer is sent
+	}{
+		{"above", standard, []string{"--max-price", "10"}, []string{"$12.99", "--max-price $10.00"}},
+		{"within", standard, []string{"--max-price", "12.99"}, nil},
+		{"--price above", standard, []string{"--price", "50", "--max-price", "20"}, []string{"$50.00", "$20.00"}},
+		{"no quote", `{}`, []string{"--max-price", "20"}, []string{"no price was quoted"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writes, err := transferGateRun(t, tc.pricing, tc.flags...)
+			if tc.want == nil {
+				if err != nil || writes != 1 {
+					t.Errorf("want one transfer and no error, got %d and %v", writes, err)
+				}
+				return
+			}
+			var usage *cmdutil.UsageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("want a usage error (exit 2), got %T: %v", err, err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q lacks %q", err, w)
+				}
+			}
+			if writes != 0 {
+				t.Errorf("refused, but %d transfer(s) were sent", writes)
+			}
+		})
+	}
+}
+
+// TestTransferCreate_PremiumNeedsAcceptPremium: --yes alone does not transfer
+// a premium domain; --accept-premium does.
+func TestTransferCreate_PremiumNeedsAcceptPremium(t *testing.T) {
+	t.Cleanup(output.StubInteractive(false))
+	const premium = `{"premium":true,"transferPrice":900}`
+
+	writes, err := transferGateRun(t, premium, "--price", "900")
+	var usage *cmdutil.UsageError
+	if !errors.As(err, &usage) || !strings.Contains(err.Error(), "--accept-premium") || !strings.Contains(err.Error(), "$900.00") {
+		t.Errorf("want a usage error quoting $900.00 and naming --accept-premium, got %T: %v", err, err)
+	}
+	if writes != 0 {
+		t.Errorf("refused, but %d transfer(s) were sent", writes)
+	}
+
+	if writes, err := transferGateRun(t, premium, "--price", "900", "--accept-premium"); err != nil || writes != 1 {
+		t.Errorf("with --accept-premium want one transfer and no error, got %d and %v", writes, err)
 	}
 }
 

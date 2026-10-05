@@ -232,7 +232,11 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().Float64Var(&registerPrice, "price", 0, "")
 	cmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false, "")
 	cmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil, "")
-	t.Cleanup(func() { registerAckClaim = false; registerTLDReqs = nil })
+	cmd.Flags().Float64Var(&registerMaxPrice, "max-price", 0, "")
+	cmd.Flags().BoolVar(&registerAccept, "accept-premium", false, "")
+	t.Cleanup(func() {
+		registerAckClaim, registerTLDReqs, registerMaxPrice, registerAccept = false, nil, 0, false
+	})
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	return cmd
@@ -499,12 +503,14 @@ func cmdForRenew(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd := baseCmd(t, srv)
 	cmd.Flags().IntVar(&renewYears, "years", 1, "")
 	cmd.Flags().Float64Var(&renewPrice, "price", 0, "")
+	cmd.Flags().Float64Var(&renewMaxPrice, "max-price", 0, "")
+	cmd.Flags().BoolVar(&renewAccept, "accept-premium", false, "")
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
-	t.Cleanup(func() { renewYears = 1; renewPrice = 0 })
+	t.Cleanup(func() { renewYears, renewPrice, renewMaxPrice, renewAccept = 1, 0, 0, false })
 	return cmd
 }
 
@@ -568,6 +574,7 @@ func TestRenew_PremiumSendsPurchasePrice(t *testing.T) {
 	srv := renewServer(t, coreapigo.PricingResponse{Premium: true, RenewalPrice: &renewal}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
+	renewAccept = true // a premium renewal needs --accept-premium (#226)
 	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
 		t.Fatalf("runRenew: %v", err)
 	}
@@ -612,7 +619,7 @@ func TestRenew_ExplicitPriceOverridesQuote(t *testing.T) {
 	srv := renewServer(t, coreapigo.PricingResponse{Premium: true, RenewalPrice: &quoted}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
-	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--price", "1800", "--accept-premium"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
@@ -646,7 +653,7 @@ func TestRenew_PromptQuotesThePriceSent(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "false"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--price", "1800", "--accept-premium"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	err := runRenew(cmd, []string{"premium.io"})
@@ -1230,6 +1237,7 @@ func TestRegister_ForwardsPurchaseTypeAndPrice(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
+	registerAccept = true // a non-standard price needs --accept-premium (#226)
 	if err := runRegister(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runRegister: %v", err)
 	}
@@ -2409,6 +2417,7 @@ func TestRegister_ClaimsCheckedForTheActualPurchaseType(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
+	registerAccept = true // a non-standard price needs --accept-premium (#226)
 	if err := runRegister(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runRegister: %v", err)
 	}
@@ -2632,6 +2641,8 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			if err := cmd.Flags().Set("years", tt.years); err != nil {
 				t.Fatal(err)
 			}
+			// Past the premium gate, so the refusal is the purchase prompt's.
+			registerAccept = true
 			err := runRegister(cmd, []string{"shoe.luxe"})
 			if err == nil {
 				t.Fatal("expected the non-interactive confirm error")
