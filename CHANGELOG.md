@@ -10,6 +10,37 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Added
+- `domain check` takes any number of names. The API answers at most 50 per
+  request, so a longer list is sent 50 at a time, one batch after another,
+  and the results come back as one table (or one JSON array) in the order
+  the names were given. 120 names used to fail with "number of items must
+  be less than or equal to 50".
+- `dns delete <domain> <id>...` takes several record IDs. Every record is
+  fetched first (a missing one fails before anything is deleted), one
+  confirmation lists them all, and they are deleted in order; the first
+  failure stops the rest, and the error says how many were deleted before
+  it. Each deleted record still gets its own `Deleted record …` line.
+- `domain check --exit-status` exits 1 when any name checked is not
+  available, after printing the results as usual, so
+  `namecom domain check --exit-status x.com && …` needs no output parsing.
+  Without the flag, `check` still exits 0 whatever it finds — including
+  with `-q`, which prints only the available names.
+- The README explains that the 10 requests/second limit is per process, so
+  `xargs -P` multiplies it past the API's own limit, and shows the
+  one-process alternatives.
+- `-` as an argument reads domain names from stdin, one per line, for
+  `domain check`, `domain get`, `domain lock`, `domain autorenew` and
+  `domain privacy`; blank lines and `#` comments are skipped. So
+  `namecom domain list -q | namecom domain check -` works, where `-` used
+  to be rejected as a domain name.
+- `domain get`, `domain lock`, `domain autorenew` and `domain privacy` take
+  several domains: `namecom domain lock on a.com b.com`. A toggle reads
+  each domain first, skips any already in the requested state, and asks
+  once, listing every domain it will change; it stops at the first failure
+  and says how many were changed before it. **Scripts**: `domain get` with
+  more than one domain, or with `-`, prints a JSON (or YAML) array; with
+  one domain named on the command line it prints the same single object
+  as before.
 - A dry run of `domain register`, `domain renew` or `transfer create` now
   says what the real run would charge. Table mode ends with a line on stderr,
   `Would charge: $39.98 (2 years) · sandbox · profile default`; JSON and YAML

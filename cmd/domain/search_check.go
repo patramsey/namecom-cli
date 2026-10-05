@@ -155,13 +155,19 @@ var searchCmd = &cobra.Command{
 	RunE:              runSearch,
 }
 
-var checkAuthoritative bool
+var checkAuthoritative, checkExitStatus bool
 
 var checkCmd = &cobra.Command{
 	Use:   "check <domain> [<domain>...]",
 	Short: "Check exact availability and price for one or more domains",
+	Long: `Check exact availability and price for one or more domains. Any number
+of names may be given; the API answers 50 per request, so a longer list is
+sent 50 at a time. '-' reads names from stdin, one per line; blank lines and
+# comments are skipped.`,
 	Example: `  namecom domain check example.com
   namecom domain check example.com myidea.io coolname.dev
+  namecom domain check - < names.txt                # one name per line
+  namecom domain check --exit-status example.com && echo "it's free"
   namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly
   namecom domain check --sandbox example.com        # sandbox: registry check used automatically`,
 	Args: cmdutil.MinimumNArgs(1),
@@ -172,6 +178,7 @@ var checkCmd = &cobra.Command{
 
 func init() {
 	checkCmd.Flags().BoolVar(&checkAuthoritative, "authoritative", false, "use registry check instead of DNS zone check (slower but authoritative)")
+	checkCmd.Flags().BoolVar(&checkExitStatus, "exit-status", false, "exit 1 if any name checked is not available")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -193,9 +200,19 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	return renderSearchResults(out, cmdutil.NonNil(result.Results))
 }
 
+// maxCheckNames is the most names the API accepts in one ZoneCheck or
+// CheckAvailability request. More used to fail with the SDK's "number of
+// items must be less than or equal to 50" (#244); runCheck now splits them.
+const maxCheckNames = 50
+
 func runCheck(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	client := cmdutil.APIClient(cmd)
+
+	// Not DomainArgs: a name given twice is checked, and shown, twice.
+	args, err := cmdutil.ExpandStdinArgs(cmd, args)
+	if err != nil {
+		return err
+	}
 
 	// Normalize (and validate) every argument up front. This was the only
 	// command that skipped cmdutil.DomainArg, and the results below are keyed by
@@ -220,39 +237,71 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	// --authoritative (or sandbox mode) skips ZoneCheck and hits the registry directly.
+	check, warning := checkZone, "could not determine availability for %[1]s — run "+
+		"'namecom domain check --authoritative %[1]s' to query the registry directly"
 	if checkAuthoritative || cmdutil.IsSandbox(cmd) {
-		stop := out.Spin("Checking availability…")
-		result, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
-			&coreapigo.AvailabilityRequest{DomainNames: args})
-		stop()
+		check, warning = checkRegistry, "the registry returned no result for %s — check the name and its TLD"
+	}
+
+	// One chunk at a time, each finished — pricing included — before the next
+	// starts. Every request still goes through the client's rate limiter; this
+	// bounds how many wait on it at once, since the pricing lookups for 500
+	// names started together would queue for 50 seconds, past the per-request
+	// timeout. Each chunk has its own argMatcher, and finishCheck sees the
+	// whole list, so a name no reply answered is caught in any chunk.
+	results := make([]*coreapigo.SearchResult, len(args))
+	for start := 0; start < len(args); start += maxCheckNames {
+		end := min(start+maxCheckNames, len(args))
+		chunk, err := check(cmd, args[start:end])
 		if err != nil {
 			return err
 		}
-		// Key the replies to the arguments as the ZoneCheck path does, so a
-		// name the registry left out (an unknown TLD, say) still gets a row and
-		// fails the command instead of vanishing (#170).
-		results := make([]*coreapigo.SearchResult, len(args))
-		matcher := newArgMatcher(args)
-		if result != nil {
-			for _, r := range cmdutil.NonNil(result.Results) {
-				if idx, ok := matcher.match(r.DomainName); ok {
-					results[idx] = r
-				}
+		copy(results[start:end], chunk)
+	}
+	return finishCheck(cmd, out, args, results, warning)
+}
+
+// checkRegistry answers at most maxCheckNames names with one
+// CheckAvailability request: a result slot per name, in order, left nil
+// for a name no reply was matched to.
+func checkRegistry(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, error) {
+	client := cmdutil.APIClient(cmd)
+	stop := cmdutil.Out(cmd).Spin("Checking availability…")
+	result, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
+		&coreapigo.AvailabilityRequest{DomainNames: args})
+	stop()
+	if err != nil {
+		return nil, err
+	}
+	// Key the replies to the arguments as the ZoneCheck path does, so a
+	// name the registry left out (an unknown TLD, say) still gets a row and
+	// fails the command instead of vanishing (#170).
+	results := make([]*coreapigo.SearchResult, len(args))
+	matcher := newArgMatcher(args)
+	if result != nil {
+		for _, r := range cmdutil.NonNil(result.Results) {
+			if idx, ok := matcher.match(r.DomainName); ok {
+				results[idx] = r
 			}
 		}
-		return finishCheck(cmd, out, args, matcher, results,
-			"the registry returned no result for %s — check the name and its TLD")
 	}
+	return results, nil
+}
+
+// checkZone is checkRegistry by way of ZoneCheck, a pricing lookup for each
+// available name, and CheckAvailability for the TLDs ZoneCheck does not cover.
+func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, error) {
+	client := cmdutil.APIClient(cmd)
 
 	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
 	// Available==true: available; Available==false: taken; Available==nil: TLD
 	// not supported by ZoneCheck, fall back to CheckAvailability for those.
-	stop := out.Spin("Checking availability…")
+	stop := cmdutil.Out(cmd).Spin("Checking availability…")
 	zoneResult, err := client.SDK().Domains.ZoneCheck(cmd.Context(),
 		&coreapigo.ZoneCheckRequest{DomainNames: args})
 	stop()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	zoneResult.Results = cmdutil.NonNil(zoneResult.Results)
 
@@ -330,7 +379,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 	wg.Wait()
 	if pricingErr != nil {
-		return fmt.Errorf("fetching pricing: %w", pricingErr)
+		return nil, fmt.Errorf("fetching pricing: %w", pricingErr)
 	}
 
 	// Step 3: CheckAvailability for TLDs ZoneCheck returned null for.
@@ -338,7 +387,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
 			&coreapigo.AvailabilityRequest{DomainNames: unsupported})
 		if err != nil {
-			return fmt.Errorf("checking availability: %w", api.FromSDKError(err))
+			return nil, fmt.Errorf("checking availability: %w", api.FromSDKError(err))
 		}
 		if checkResult.Results != nil {
 			for _, r := range cmdutil.NonNil(checkResult.Results) {
@@ -348,10 +397,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
-
-	return finishCheck(cmd, out, args, matcher, finalResults,
-		"could not determine availability for %[1]s — run "+
-			"'namecom domain check --authoritative %[1]s' to query the registry directly")
+	return finalResults, nil
 }
 
 // finishCheck renders one row per argument and fails the command when any
@@ -364,10 +410,14 @@ func runCheck(cmd *cobra.Command, args []string) error {
 // the domain the user asked about and leave it explicitly unpurchasable
 // rather than silently asserting it is gone. warning is a format taking the
 // domain name.
-func finishCheck(cmd *cobra.Command, out *output.Config, args []string, matcher *argMatcher,
+//
+// Every slot is checked, not only the arguments argMatcher left unclaimed: a
+// claimed name can still be unanswered, as when ZoneCheck defers it to
+// CheckAvailability and that reply leaves it out.
+func finishCheck(cmd *cobra.Command, out *output.Config, args []string,
 	results []*coreapigo.SearchResult, warning string) error {
 	var unknown []string
-	for _, i := range matcher.unclaimed() {
+	for i := range results {
 		// nil, not just zero-valued: the SDK returns []*SearchResult, so a slot
 		// no reply filled is a nil pointer rather than an empty struct. Reading
 		// through it panics, which would take out the very safety net this loop
@@ -388,7 +438,35 @@ func finishCheck(cmd *cobra.Command, out *output.Config, args []string, matcher 
 	if len(unknown) > 0 {
 		return fmt.Errorf("availability unknown for %s", strings.Join(unknown, ", "))
 	}
+	if checkExitStatus {
+		if err := unavailableError(results); err != nil {
+			return err
+		}
+	}
 	return maybeOfferRegister(cmd, out, results)
+}
+
+// unavailableError is --exit-status's failure: an error naming the names that
+// are not available, or nil when every one is. It exits 1 like any runtime
+// error, so `check --exit-status x.com && register` needs no output parsing;
+// without the flag, check exits 0 whatever it found — including under -q,
+// which prints only the available names (#244).
+func unavailableError(results []*coreapigo.SearchResult) error {
+	var taken []string
+	for _, r := range results {
+		if !r.Purchasable {
+			taken = append(taken, r.DomainName)
+		}
+	}
+	if len(taken) == 0 {
+		return nil
+	}
+	const shown = 5
+	list := strings.Join(taken[:min(shown, len(taken))], ", ")
+	if len(taken) > shown {
+		list += fmt.Sprintf(", and %d more", len(taken)-shown)
+	}
+	return fmt.Errorf("%d of %d names not available: %s", len(taken), len(results), list)
 }
 
 // maybeOfferRegister offers to register a domain that `check` just found

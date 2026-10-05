@@ -99,6 +99,67 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	return true, api.MarkWrite(err)
 }
 
+// RunWrites is RunWrite for one command acting on several targets, such as
+// `dns delete D 1 2 3`. It keeps RunWrite's order, once for the whole set:
+//
+//  1. Under --dry-run it previews every request — one array in JSON and YAML
+//     — and returns 0 without prompting or sending.
+//  2. Otherwise, when prompt is set, it confirms once. The prompt should list
+//     every target, since one yes approves them all. The writes' own Prompt
+//     fields are not used.
+//  3. It sends each write's Body in order and stops at the first failure.
+//
+// done is how many writes were sent successfully, so the caller can report
+// writes[:done] as made; on a failure, writes[done] is the one that failed.
+// A dry run or a decline returns 0, with ErrAborted for the decline. A single
+// write is handed to RunWrite with prompt as its Prompt.
+func RunWrites[B any](cmd *cobra.Command, prompt string, writes []Write[B], send func(ctx context.Context, body B) error) (done int, err error) {
+	// One target is RunWrite exactly, so a list that came down to one name
+	// previews a request object, not an array of one.
+	if len(writes) == 1 {
+		w := writes[0]
+		w.Prompt = prompt
+		sent, err := RunWrite(cmd, w, send)
+		if sent && err == nil {
+			return 1, nil
+		}
+		return 0, err
+	}
+
+	out := Out(cmd)
+
+	if IsDryRun(cmd) {
+		reqs := make([]output.DryRunRequest, len(writes))
+		for i, w := range writes {
+			reqs[i] = output.DryRunRequest{Method: w.Method, Path: w.Path, Body: previewOf(w)}
+		}
+		return 0, out.DryRunAll(reqs)
+	}
+
+	if prompt != "" {
+		ok, err := confirmFunc(out, IsYes(cmd), prompt, PromptContext(cmd))
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, ErrAborted
+		}
+	}
+
+	for i, w := range writes {
+		stop := func() {}
+		if w.Spin != "" {
+			stop = out.Spin(w.Spin)
+		}
+		err := send(cmd.Context(), w.Body)
+		stop()
+		if err != nil {
+			return i, api.MarkWrite(err)
+		}
+	}
+	return len(writes), nil
+}
+
 // previewOf returns the value --dry-run prints for w: nothing for NoBody, the
 // redacted form when Preview is set, and Body itself otherwise.
 func previewOf[B any](w Write[B]) any {

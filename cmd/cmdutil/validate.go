@@ -488,28 +488,55 @@ func OnOffArg(s string) (bool, error) {
 	return false, usagef("expected 'on' or 'off', got %q", s)
 }
 
-// ToggleArgs parses the two arguments of the domain toggles (lock, autorenew,
-// privacy) in either order: `lock on example.com` or `lock example.com on`.
-// The two cannot be confused, since no domain is "on" or "off".
+// ToggleArgs parses the arguments of the domain toggles (lock, autorenew,
+// privacy): on|off and one or more domains, the on|off first or last —
+// `lock on example.com` or `lock example.com on`. The two cannot be confused,
+// since no domain is "on" or "off". The domains go through DomainArgs, so "-"
+// reads them from stdin (#244).
 //
 // Only `<on|off> <domain>` used to work. Every other command takes the domain
 // first, so `domain lock example.com on` — the order most people try — failed
 // (#234 gave it a hint; #236 makes it work).
-func ToggleArgs(args []string) (enable bool, domain string, err error) {
+func ToggleArgs(cmd *cobra.Command, args []string) (enable bool, domains []string, err error) {
+	var rest []string
 	if v, err := OnOffArg(args[0]); err == nil {
-		d, err := DomainArg(args, 1)
-		return v, d, err
+		enable, rest = v, args[1:]
+	} else if v, err := OnOffArg(args[len(args)-1]); err == nil {
+		enable, rest = v, args[:len(args)-1]
+	} else {
+		// Neither end is on or off: name the end that is not a domain.
+		bad := args[0]
+		if args[0] == StdinArg || ValidDomainName(CanonicalDomain(args[0])) == nil {
+			bad = args[len(args)-1]
+		}
+		return false, nil, usagef("expected 'on' or 'off', got %q", bad)
 	}
-	if v, err := OnOffArg(args[1]); err == nil {
-		d, err := DomainArg(args, 0)
-		return v, d, err
+	domains, err = DomainArgs(cmd, rest)
+	return enable, domains, err
+}
+
+// DomainArgs is DomainArg for a command that takes several domains: "-"
+// expanded from stdin (ExpandStdinArgs), then every name normalized and
+// validated. A name given twice is kept once, at its first position, so a
+// write is not sent twice to the same domain.
+func DomainArgs(cmd *cobra.Command, args []string) ([]string, error) {
+	names, err := ExpandStdinArgs(cmd, args)
+	if err != nil {
+		return nil, err
 	}
-	// Neither is on or off: name the one that is not the domain.
-	bad := args[0]
-	if ValidDomainName(CanonicalDomain(args[0])) == nil {
-		bad = args[1]
+	seen := make(map[string]bool, len(names))
+	domains := make([]string, 0, len(names))
+	for i := range names {
+		d, err := DomainArg(names, i)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[d] {
+			seen[d] = true
+			domains = append(domains, d)
+		}
 	}
-	return false, "", usagef("expected 'on' or 'off', got %q", bad)
+	return domains, nil
 }
 
 // CompleteToggle completes the toggles' arguments in either order: on/off
@@ -523,6 +550,10 @@ func CompleteToggle(cmd *cobra.Command, args []string, toComplete string) ([]str
 			return CompleteDomains(cmd, nil, toComplete)
 		}
 		return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
+	}
+	// More domains after a leading on|off.
+	if _, err := OnOffArg(args[0]); err == nil {
+		return CompleteDomains(cmd, nil, toComplete)
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
 }

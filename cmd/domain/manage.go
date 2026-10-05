@@ -20,17 +20,31 @@ import (
 // -- lock --
 
 var lockCmd = &cobra.Command{
-	Use:   "lock <on|off> <domain>",
+	Use:   "lock <on|off> <domain> [<domain>...]",
 	Short: "Enable or disable transfer lock",
 	Example: `  namecom domain lock on example.com
   namecom domain lock off example.com
-  namecom domain lock example.com off   # the domain may come first`,
-	Args:              cmdutil.ExactArgs(2),
+  namecom domain lock example.com off   # the domain may come first
+  namecom domain lock on example.com example.net
+  namecom domain list -q | namecom domain lock on -   # every domain, read from stdin`,
+	Args:              cmdutil.MinimumNArgs(2),
 	RunE:              runLock,
 	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
-// applyDomainToggle performs a single-field UpdateDomain (PATCH).
+// toggle is one of the domain toggles (lock, autorenew, privacy), as
+// runToggle needs it.
+type toggle struct {
+	field string // its name in togglePrompt
+	label string // the setting, as success lines name it: "Transfer lock"
+	get   func(*coreapigo.DomainResponsePayload) bool
+	set   func(req *coreapigo.UpdateDomainRequest, v *bool)
+	// after, when set, runs once after every change was made: a warning or
+	// hint about the new state.
+	after func(out *output.Config, domains []string, enable bool)
+}
+
+// runToggle sets one field with UpdateDomain (PATCH) on each domain given.
 //
 // It replaces the deprecated :lock, :unlock, :enableAutorenew,
 // :disableAutorenew, :enableWhoisPrivacy and :disableWhoisPrivacy endpoints,
@@ -45,21 +59,72 @@ var lockCmd = &cobra.Command{
 // describes it as "a billable action" that purchases and enables, whereas
 // UpdateDomain is the documented successor to the deprecated toggle.
 //
+// Several domains, or "-" for a list on stdin, are read first, skipping any
+// already in the requested state, and then changed in order after a single
+// confirmation that lists them all (#244). The first failure stops the rest;
+// the domains already changed have been reported by then.
+//
 // DomainName is tagged `json:"-"`, so previewing the request previews the body
-// alone. prompt is the confirmation question, or "" for none. sent is false
-// under --dry-run or when the user declines.
-func applyDomainToggle(cmd *cobra.Command, req *coreapigo.UpdateDomainRequest, prompt string) (sent bool, err error) {
+// alone.
+func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
+	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	sent, err = cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
-		Method: "PATCH",
-		Path:   fmt.Sprintf("/core/v1/domains/%s", req.DomainName),
-		Body:   req,
-		Prompt: prompt,
-	}, func(ctx context.Context, req *coreapigo.UpdateDomainRequest) error {
-		_, err := client.SDK().Domains.UpdateDomain(ctx, req)
-		return api.FromSDKError(err)
-	})
-	return sent, explainUpdateError(err, req)
+	enable, domains, err := cmdutil.ToggleArgs(cmd, args)
+	if err != nil {
+		return err
+	}
+
+	var pending []string
+	for _, d := range domains {
+		already, err := toggleAlreadySet(cmd, d, enable, tg.get)
+		if err != nil {
+			return err
+		}
+		if already {
+			out.Success(fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d))
+			continue
+		}
+		pending = append(pending, d)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	writes := make([]cmdutil.Write[*coreapigo.UpdateDomainRequest], len(pending))
+	for i, d := range pending {
+		req := &coreapigo.UpdateDomainRequest{DomainName: d}
+		tg.set(req, &enable)
+		writes[i] = cmdutil.Write[*coreapigo.UpdateDomainRequest]{
+			Method: "PATCH",
+			Path:   fmt.Sprintf("/core/v1/domains/%s", d),
+			Body:   req,
+		}
+	}
+	done, err := cmdutil.RunWrites(cmd, togglePrompts(pending, tg.field, enable), writes,
+		func(ctx context.Context, req *coreapigo.UpdateDomainRequest) error {
+			_, err := client.SDK().Domains.UpdateDomain(ctx, req)
+			return api.FromSDKError(err)
+		})
+	verb := "disabled"
+	if enable {
+		verb = "enabled"
+	}
+	for _, d := range pending[:done] {
+		out.Success(fmt.Sprintf("%s %s for %s", tg.label, verb, d))
+	}
+	if err != nil {
+		if done < len(writes) {
+			err = explainUpdateError(err, writes[done].Body)
+		}
+		if done > 0 {
+			err = fmt.Errorf("%w — stopped after changing %d of %d domains", err, done, len(writes))
+		}
+		return err
+	}
+	if done > 0 && tg.after != nil {
+		tg.after(out, pending, enable)
+	}
+	return nil
 }
 
 // toggleAlreadySet reads the domain and reports whether the setting get
@@ -183,116 +248,73 @@ func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
 }
 
 func runLock(cmd *cobra.Command, args []string) error {
-	out := cmdutil.Out(cmd)
-	enable, domainName, err := cmdutil.ToggleArgs(args)
-	if err != nil {
-		return err
-	}
-
-	already, err := toggleAlreadySet(cmd, domainName, enable,
-		func(d *coreapigo.DomainResponsePayload) bool { return d.Locked })
-	if err != nil {
-		return err
-	}
-	if already {
-		out.Success(fmt.Sprintf("Transfer lock is already %s for %s; nothing to change", onOff(enable), domainName))
-		return nil
-	}
-
-	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, Locked: &enable}
-	if sent, err := applyDomainToggle(cmd, req, togglePrompt(domainName, "lock", enable)); err != nil || !sent {
-		return err
-	}
-	if enable {
-		out.Success(fmt.Sprintf("Transfer lock enabled for %s", domainName))
-	} else {
-		out.Success(fmt.Sprintf("Transfer lock disabled for %s", domainName))
-		out.WarnBox("Lock removed — re-enable after transfers are complete to protect against unauthorized outbound transfers")
-	}
-	return nil
+	return runToggle(cmd, args, toggle{
+		field: "lock",
+		label: "Transfer lock",
+		get:   func(d *coreapigo.DomainResponsePayload) bool { return d.Locked },
+		set:   func(req *coreapigo.UpdateDomainRequest, v *bool) { req.Locked = v },
+		after: func(out *output.Config, _ []string, enable bool) {
+			if !enable {
+				out.WarnBox("Lock removed — re-enable after transfers are complete to protect against unauthorized outbound transfers")
+			}
+		},
+	})
 }
 
 // -- autorenew --
 
 var autorenewCmd = &cobra.Command{
-	Use:   "autorenew <on|off> <domain>",
+	Use:   "autorenew <on|off> <domain> [<domain>...]",
 	Short: "Enable or disable automatic renewal",
 	Example: `  namecom domain autorenew on example.com
   namecom domain autorenew off example.com
-  namecom domain autorenew example.com off   # the domain may come first`,
-	Args:              cmdutil.ExactArgs(2),
+  namecom domain autorenew example.com off   # the domain may come first
+  namecom domain autorenew on - < domains.txt   # one domain per line`,
+	Args:              cmdutil.MinimumNArgs(2),
 	RunE:              runAutorenew,
 	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
-	out := cmdutil.Out(cmd)
-	enable, domainName, err := cmdutil.ToggleArgs(args)
-	if err != nil {
-		return err
-	}
-	already, err := toggleAlreadySet(cmd, domainName, enable,
-		func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled })
-	if err != nil {
-		return err
-	}
-	if already {
-		out.Success(fmt.Sprintf("Auto-renewal is already %s for %s; nothing to change", onOff(enable), domainName))
-		return nil
-	}
-	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, AutorenewEnabled: &enable}
-	if sent, err := applyDomainToggle(cmd, req, togglePrompt(domainName, "autorenew", enable)); err != nil || !sent {
-		return err
-	}
-	if enable {
-		out.Success(fmt.Sprintf("Auto-renewal enabled for %s", domainName))
-	} else {
-		out.Success(fmt.Sprintf("Auto-renewal disabled for %s", domainName))
-		out.Hint(fmt.Sprintf("Remember to renew manually before expiry — run 'namecom domain get %s' to check the expiry date", domainName))
-	}
-	return nil
+	return runToggle(cmd, args, toggle{
+		field: "autorenew",
+		label: "Auto-renewal",
+		get:   func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled },
+		set:   func(req *coreapigo.UpdateDomainRequest, v *bool) { req.AutorenewEnabled = v },
+		after: func(out *output.Config, domains []string, enable bool) {
+			if enable {
+				return
+			}
+			target := "<domain>"
+			if len(domains) == 1 {
+				target = domains[0]
+			}
+			out.Hint(fmt.Sprintf("Remember to renew manually before expiry — run 'namecom domain get %s' to check the expiry date", target))
+		},
+	})
 }
 
 // -- privacy --
 
 var privacyCmd = &cobra.Command{
-	Use:   "privacy <on|off> <domain>",
+	Use:   "privacy <on|off> <domain> [<domain>...]",
 	Short: "Enable or disable WHOIS privacy",
 	Example: `  namecom domain privacy on example.com
   namecom domain privacy off example.com
-  namecom domain privacy example.com off   # the domain may come first`,
-	Args:              cmdutil.ExactArgs(2),
+  namecom domain privacy example.com off   # the domain may come first
+  namecom domain privacy on example.com example.net`,
+	Args:              cmdutil.MinimumNArgs(2),
 	RunE:              runPrivacy,
 	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
-	out := cmdutil.Out(cmd)
-	enable, domainName, err := cmdutil.ToggleArgs(args)
-	if err != nil {
-		return err
-	}
-
-	already, err := toggleAlreadySet(cmd, domainName, enable,
-		func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled })
-	if err != nil {
-		return err
-	}
-	if already {
-		out.Success(fmt.Sprintf("WHOIS privacy is already %s for %s; nothing to change", onOff(enable), domainName))
-		return nil
-	}
-
-	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
-	if sent, err := applyDomainToggle(cmd, req, togglePrompt(domainName, "privacy", enable)); err != nil || !sent {
-		return err
-	}
-	if enable {
-		out.Success(fmt.Sprintf("WHOIS privacy enabled for %s", domainName))
-	} else {
-		out.Success(fmt.Sprintf("WHOIS privacy disabled for %s", domainName))
-	}
-	return nil
+	return runToggle(cmd, args, toggle{
+		field: "privacy",
+		label: "WHOIS privacy",
+		get:   func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled },
+		set:   func(req *coreapigo.UpdateDomainRequest, v *bool) { req.PrivacyEnabled = v },
+	})
 }
 
 // -- set-ns --
@@ -963,6 +985,29 @@ func togglePrompt(domain, field string, on bool) string {
 		return fmt.Sprintf("Turn on auto-renewal for %s? name.com will renew it before each expiry and charge the renewal price to the account.", domain)
 	}
 	return ""
+}
+
+// togglePrompts is togglePrompt for the domains one toggle command changes:
+// for one, its question exactly; for several, the same question asked once,
+// followed by every domain it approves, one per line. "" when the change is
+// one that does not confirm.
+func togglePrompts(domains []string, field string, on bool) string {
+	if len(domains) == 1 || togglePrompt(domains[0], field, on) == "" {
+		return togglePrompt(domains[0], field, on)
+	}
+	these := fmt.Sprintf("these %d domains", len(domains))
+	var q string
+	switch {
+	case field == "lock" && !on:
+		q = fmt.Sprintf("Remove the transfer lock on %s? Anyone with a domain's auth code can then transfer it away.", these)
+	case field == "privacy" && !on:
+		q = fmt.Sprintf("Turn off WHOIS privacy for %s? Their registrant contact details may then be shown publicly in WHOIS.", these)
+	case field == "autorenew" && !on:
+		q = fmt.Sprintf("Turn off auto-renewal for %s? Each expires on its expiry date unless renewed manually.", these)
+	case field == "autorenew" && on:
+		q = fmt.Sprintf("Turn on auto-renewal for %s? name.com will renew each before its expiry and charge the renewal price to the account.", these)
+	}
+	return q + "\n  " + strings.Join(domains, "\n  ")
 }
 
 func init() {

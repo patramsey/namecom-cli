@@ -236,6 +236,10 @@ namecom domain list --all --expiring-before "$(date -d '+60 days' +%F)" -q
 # Bulk-create an A record across all domains
 namecom domain list --all -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4
 
+# '-' reads names from stdin, one per line (blank lines and # comments skipped)
+namecom domain check - < names.txt
+namecom domain list --all -q | namecom domain autorenew on - --yes   # one request per domain, one confirmation
+
 # Dry-run first, then apply
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --dry-run
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --yes
@@ -244,6 +248,23 @@ namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all
 ID=$(namecom dns create acme.io --type A --host api --answer 1.2.3.4 -q)
 namecom dns delete acme.io "$ID" --yes
 ```
+
+**Rate limit.** namecom paces itself to 10 requests a second (bursts of 5)
+and retries a 429 with backoff, which leaves headroom under the API's limit
+of 20 a second for the account. The limiter is per process: `xargs -P 8`
+runs eight processes with eight limiters, which together send up to 80
+requests a second, so the excess comes back as 429s and, once retries run
+out, exit code 5. Prefer one process with many arguments, which is paced as
+a whole:
+
+```bash
+namecom domain list --all -q | namecom domain check -                 # not xargs -P
+namecom dns delete acme.io $(namecom dns list acme.io --type TXT -q) --yes
+```
+
+For commands that take one domain, run `xargs` without `-P` (one process
+at a time); `-P 2` already reaches the account's limit, and anything else
+using the same account shares it.
 
 Commands that change something ask first when run in a terminal. In a script
 or a pipe there is no one to ask, so they stop with *"confirmation required
@@ -421,7 +442,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | API or other runtime error, or a confirmation declined or a prompt cancelled (Ctrl-C) |
+| `1` | API or other runtime error, a confirmation declined or a prompt cancelled (Ctrl-C), or — with `domain check --exit-status` — a name that is not available |
 | `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value |
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |
