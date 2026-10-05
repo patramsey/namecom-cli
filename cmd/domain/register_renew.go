@@ -291,6 +291,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		Path:   "/core/v1/domains",
 		Body:   body,
 		Prompt: registerPrompt(domainName, body, pricing),
+		Quote:  registerChargeQuote(body, pricing, charged),
 	}, func(ctx context.Context, body coreapigo.CreateDomainRequest) error {
 		if claim != nil {
 			renderClaimsNotice(out, claim)
@@ -357,6 +358,29 @@ func registerPremiumKind(body coreapigo.CreateDomainRequest, pricing *coreapigo.
 	case body.PurchaseType != nil && *body.PurchaseType != "":
 		return *body.PurchaseType
 	case pricing.GetPremium():
+		return "premium"
+	}
+	return ""
+}
+
+// registerChargeQuote is what a register dry run reports it would charge:
+// charged, the price the body carries or the quote the API applies when it
+// carries none. An acquisition price is a flat fee with no guaranteed term,
+// so it states no years, as registerPrompt does.
+func registerChargeQuote(body coreapigo.CreateDomainRequest, pricing *coreapigo.PricingResponse, charged *float64) *output.Quote {
+	if body.PurchasePrice != nil && body.PurchaseType != nil {
+		return cmdutil.ChargeQuote(charged, 0, *body.PurchaseType+", flat price")
+	}
+	years := 1
+	if body.Years != nil {
+		years = *body.Years
+	}
+	return cmdutil.ChargeQuote(charged, years, premiumNote(pricing.GetPremium()))
+}
+
+// premiumNote is the quote note for a registry premium price, or "".
+func premiumNote(premium bool) string {
+	if premium {
 		return "premium"
 	}
 	return ""
@@ -575,6 +599,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		Path:   fmt.Sprintf("/core/v1/domains/%s:renew", domainName),
 		Body:   body,
 		Prompt: renewPrompt(domainName, body, pricing.RenewalPrice),
+		Quote:  cmdutil.ChargeQuote(charged, years, premiumNote(pricing.GetPremium())),
 	}, func(ctx context.Context, body coreapigo.DomainsRenewDomainBody) error {
 		var err error
 		renewed, err = client.SDK().Domains.RenewDomain(ctx, &body)

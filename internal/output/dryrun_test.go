@@ -168,6 +168,49 @@ func TestDryRun_UnmarshalableBodyIsAnError(t *testing.T) {
 	}
 }
 
+// TestDryRunQuote pins #235's dry-run cost: JSON gains a "quote" field beside
+// the unchanged request, and table mode one stderr line after it. A nil quote
+// is plain DryRun, with no "quote" key at all.
+func TestDryRunQuote(t *testing.T) {
+	q := &Quote{Total: 39.98, Currency: "USD", Years: 2}
+
+	t.Run("json", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w}
+		must(t, c.DryRunQuote("POST", "/core/v1/domains/a.io:renew", map[string]any{"years": 2}, q, "sandbox"))
+		var got map[string]any
+		if err := json.Unmarshal(w.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		assertEqualJSON(t, got, map[string]any{
+			"dry_run": true, "method": "POST", "path": "/core/v1/domains/a.io:renew",
+			"body":  map[string]any{"years": float64(2)},
+			"quote": map[string]any{"total": 39.98, "currency": "USD", "years": float64(2)},
+		})
+	})
+
+	t.Run("table", func(t *testing.T) {
+		var w, e bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &w, EWriter: &e}
+		must(t, c.DryRunQuote("POST", "/core/v1/domains/a.io:renew", nil, q, "sandbox · profile default"))
+		if got, want := e.String(), "Would charge: $39.98 (2 years) · sandbox · profile default\n"; got != want {
+			t.Errorf("stderr = %q, want %q", got, want)
+		}
+		if strings.Contains(w.String(), "charge") {
+			t.Errorf("stdout carries the charge line:\n%s", w.String())
+		}
+	})
+
+	t.Run("nil quote", func(t *testing.T) {
+		var w, e bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w, EWriter: &e}
+		must(t, c.DryRunQuote("DELETE", "/x", nil, nil, "sandbox"))
+		if strings.Contains(w.String(), "quote") || e.Len() != 0 {
+			t.Errorf("want no quote, got stdout %q stderr %q", w.String(), e.String())
+		}
+	})
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

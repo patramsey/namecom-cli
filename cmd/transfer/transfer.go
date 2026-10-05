@@ -364,6 +364,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Body:    body,
 		Preview: redactTransferAuthCode,
 		Prompt:  transferPrompt(domain, body, quoted),
+		Quote:   cmdutil.ChargeQuote(charged, 0, transferQuoteNote(premium)),
 		Spin:    "Initiating transfer…",
 	}, func(ctx context.Context, body coreapigo.CreateTransferRequest) error {
 		var err error
@@ -742,6 +743,20 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 		}
 	}
 	return fmt.Sprintf("Initiate transfer of %s%s%s?", domain, priceMsg, contactsPromptNote(body.Contacts))
+}
+
+// transferTerm says what a transfer price covers, as PricingResponse
+// documents transferPrice: the TLD's minimum transfer/registration term,
+// "typically 1 year". The API does not promise how that term combines with
+// the current expiry, so neither does the CLI.
+const transferTerm = "the TLD's minimum term, typically 1 year"
+
+// transferQuoteNote is the quote note for a transfer's price.
+func transferQuoteNote(premium bool) string {
+	if premium {
+		return "premium; covers " + transferTerm
+	}
+	return "covers " + transferTerm
 }
 
 // contactsFileUsage is the --contacts-file help for both transfer writes.

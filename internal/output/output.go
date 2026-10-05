@@ -1412,6 +1412,39 @@ type DryRunRequest struct {
 	Method string `json:"method"`
 	Path   string `json:"path"`
 	Body   any    `json:"body,omitempty"`
+	// Quote is what the request would charge, for a write that buys
+	// something. Omitted for every other write.
+	Quote *Quote `json:"quote,omitempty"`
+}
+
+// Quote is the amount a billable request would charge, as a --dry-run of it
+// reports. A register or renew body states a year count and, for a standard
+// name, no price at all, so the preview never said what the real run would
+// cost (#235).
+type Quote struct {
+	// Total is the amount charged for the whole order, in Currency.
+	Total    float64 `json:"total"`
+	Currency string  `json:"currency"`
+	// Years is the term the total covers, when the purchase states one.
+	Years int `json:"years,omitempty"`
+	// Note qualifies the total: "premium", "aftermarket_b, flat price".
+	Note string `json:"note,omitempty"`
+}
+
+// Summary is the quote as one phrase: "$39.98 (2 years)".
+func (q Quote) Summary() string {
+	var parts []string
+	if q.Years > 0 {
+		parts = append(parts, Plural(q.Years, "year"))
+	}
+	if q.Note != "" {
+		parts = append(parts, q.Note)
+	}
+	s := Money(q.Total)
+	if len(parts) > 0 {
+		s += " (" + strings.Join(parts, "; ") + ")"
+	}
+	return s
 }
 
 // DryRun prints the request a --dry-run would have sent.
@@ -1428,14 +1461,33 @@ type DryRunRequest struct {
 // JSON and YAML, and as a request line with no body in table mode — and the
 // command exited 0 as though the preview had worked.
 func (c *Config) DryRun(method, path string, body any) error {
-	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body}
+	return c.DryRunQuote(method, path, body, nil, "")
+}
+
+// DryRunQuote is DryRun for a request that charges money. JSON and YAML carry
+// q as the document's "quote" field. Table mode follows the request with one
+// line on stderr — "Would charge: $39.98 (2 years) · sandbox · profile
+// default" — where context says who would pay (cmdutil.PromptContext). A nil
+// q is DryRun exactly.
+func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context string) error {
+	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body, Quote: q}
 	switch c.Format {
 	case FormatJSON:
 		return dryRunErr(c.JSON(req))
 	case FormatYAML:
 		return dryRunErr(c.YAML(req))
 	}
-	return c.dryRunText([]DryRunRequest{req})
+	if err := c.dryRunText([]DryRunRequest{req}); err != nil {
+		return err
+	}
+	if q != nil && !c.QuietMode {
+		line := "Would charge: " + q.Summary()
+		if context != "" {
+			line += " · " + context
+		}
+		fmt.Fprintln(c.EWriter, line)
+	}
+	return nil
 }
 
 // DryRunAll prints several previewed requests: one array in JSON and YAML

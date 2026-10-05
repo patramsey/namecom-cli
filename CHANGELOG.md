@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Added
+- A dry run of `domain register`, `domain renew` or `transfer create` now
+  says what the real run would charge. Table mode ends with a line on stderr,
+  `Would charge: $39.98 (2 years) · sandbox · profile default`; JSON and YAML
+  add a `quote` object (`total`, `currency`, and `years` or `note` where they
+  apply) beside the unchanged `body`. A renewal's body carried only
+  `{"years": 2}`, and a standard registration's no price at all. **Scripts**
+  reading the dry-run document get one new key; nothing else in it changed.
+
 ### Changed
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
