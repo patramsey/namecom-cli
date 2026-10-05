@@ -207,7 +207,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// in the same check produces contradictory results in sandbox mode. Skip
 	// ZoneCheck and go straight to the EPP registry when --sandbox is active.
 	if cmdutil.IsSandbox(cmd) && !checkAuthoritative {
-		out.Hint("Sandbox mode: using registry check (ZoneCheck is production-only)")
+		out.Note("Sandbox mode: using registry check (ZoneCheck is production-only)")
 	}
 
 	// --authoritative (or sandbox mode) skips ZoneCheck and hits the registry directly.

@@ -74,14 +74,54 @@ func TestBoolBadge_NoColor(t *testing.T) {
 	}
 }
 
-func TestBoolBadge_Color(t *testing.T) {
+// A 250-row domain list was a column of bold green "✓ yes" and red "✗ no",
+// with red on harmless values (#238). BoolBadge is plain text even with
+// colour on; BoolAlert is the one that may colour, and only the value asked.
+func TestBoolBadge_PlainEvenWithColor(t *testing.T) {
 	c := &Config{Color: ColorAlways}
-	// Color output should contain the text and the indicator symbol.
-	if got := c.BoolBadge(true); !strings.Contains(got, "yes") || !strings.Contains(got, "✓") {
-		t.Errorf("BoolBadge(true) = %q, want ✓ and 'yes'", got)
+	if got := c.BoolBadge(true); got != "yes" {
+		t.Errorf("BoolBadge(true) = %q, want plain %q", got, "yes")
 	}
-	if got := c.BoolBadge(false); !strings.Contains(got, "no") || !strings.Contains(got, "✗") {
-		t.Errorf("BoolBadge(false) = %q, want ✗ and 'no'", got)
+	if got := c.BoolBadge(false); got != "no" {
+		t.Errorf("BoolBadge(false) = %q, want plain %q", got, "no")
+	}
+	if got := c.BoolAlert(true, false); got != "yes" {
+		t.Errorf("BoolAlert(true, false) = %q, want plain %q", got, "yes")
+	}
+	if got := noColor().BoolAlert(false, false); got != "no" {
+		t.Errorf("BoolAlert(false, false) without colour = %q, want %q", got, "no")
+	}
+}
+
+// Only statuses that need attention are coloured. Asserted on statusColor,
+// because off a TTY lipgloss renders every style as plain text.
+func TestStatusColor_OnlyActionable(t *testing.T) {
+	for _, s := range []string{"active", "completed", "canceled", "ok"} {
+		if _, ok := statusColor(s); ok {
+			t.Errorf("status %q is coloured; it needs no action", s)
+		}
+	}
+	for _, s := range []string{"expired", "failed", "pending_transfer", "Suspended"} {
+		if _, ok := statusColor(s); !ok {
+			t.Errorf("status %q is not coloured", s)
+		}
+	}
+}
+
+// Note is information, so it carries none of the four symbols and goes to
+// stderr, in table mode only.
+func TestNote(t *testing.T) {
+	var buf, ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
+	c.Note("Sandbox mode: using registry check")
+	if ebuf.String() != "Sandbox mode: using registry check\n" || buf.Len() != 0 {
+		t.Errorf("stdout %q, stderr %q", buf.String(), ebuf.String())
+	}
+	ebuf.Reset()
+	c.Format = FormatJSON
+	c.Note("x")
+	if ebuf.Len() != 0 {
+		t.Errorf("Note printed in JSON mode: %q", ebuf.String())
 	}
 }
 
@@ -92,7 +132,8 @@ func TestAvailabilityBadge_NoColor(t *testing.T) {
 	if got := c.AvailabilityBadge(true); got != "✓ available" {
 		t.Errorf("AvailabilityBadge(true) = %q", got)
 	}
-	if got := c.AvailabilityBadge(false); got != "✗ taken" {
+	// Taken is not an error, so no ✗ (#238).
+	if got := c.AvailabilityBadge(false); got != "taken" {
 		t.Errorf("AvailabilityBadge(false) = %q", got)
 	}
 }

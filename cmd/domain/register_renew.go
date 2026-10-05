@@ -191,10 +191,11 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// 1-year price and then sends it alongside years:N, which CreateDomainRequest
 	// explicitly warns against ("If passing purchasePrice make sure to adjust it
 	// accordingly").
-	out.Step("Checking pricing for " + domainName + "…")
+	stop := out.Spin("Checking pricing for " + domainName + "…")
 	pricingYears := registerYears
 	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domainName, Years: &pricingYears})
+	stop()
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}
@@ -297,7 +298,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
-		out.Step("Registering " + domainName + "…")
+		stop := out.Spin("Registering " + domainName + "…")
+		defer stop()
 		// The root --idempotency-key (or an auto-generated one) is applied by
 		// the client request editor; no per-command flag is needed or wanted
 		// here.
@@ -526,10 +528,11 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	// Fetch pricing to show renewal cost before charging. Quote the same term
 	// the request body will carry, so the price we show and the price we send
 	// can't diverge on multi-year renewals.
-	out.Step("Checking renewal pricing for " + domainName + "…")
+	stop := out.Spin("Checking renewal pricing for " + domainName + "…")
 	pricingYears := renewYears
 	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domainName, Years: &pricingYears})
+	stop()
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}

@@ -36,6 +36,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   where a non-refundable item used to show `—`. **Scripts** splitting a plain
   table on whitespace no longer see later fields shift left when a value is
   missing.
+- Less colour, and four status symbols. Yes/no values are plain `yes` and
+  `no` rather than a bold green `✓ yes` or red `✗ no`, so a long domain list is
+  no longer a column of green and harmless values (Premium no, Privacy no) are
+  no longer red. Colour is kept for what needs action: expired and
+  soon-expiring dates, `Locked: no`, failed and pending statuses. DNS record
+  types are no longer drawn on coloured backgrounds, and `domain check` shows
+  a taken name as `taken` rather than a red `✗ taken`. `✓` means success, `!`
+  a warning, `✗` an error and `→` a next step; the sandbox note in
+  `domain check` is dim text instead of a `→` line, and the `==>` lines in
+  `domain register` and `domain renew` are now spinner text. The insecure
+  config-permissions warning starts with `!` instead of `warning:`.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

@@ -163,7 +163,7 @@ func Load() (*File, error) {
 	// pipe corrupts stderr for anything parsing it. A human sees it; a script
 	// gets clean output. (Save() now repairs the mode on the next write.)
 	if exposedMode(runtime.GOOS, info.Mode()) && term.IsTerminal(int(os.Stderr.Fd())) {
-		fmt.Fprintf(os.Stderr, "warning: %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
+		fmt.Fprintf(os.Stderr, "! %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
 			path, info.Mode().Perm(), path)
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is this tool's own config location (XDG, legacy, or NAMECOM_CONFIG), never an API response

@@ -243,7 +243,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 				d.DomainName,
 				out.ExpiryDate(d.ExpireDate),
 				out.BoolBadge(d.AutorenewEnabled),
-				out.BoolBadge(d.Locked),
+				out.BoolAlert(d.Locked, false),
 				out.BoolBadge(d.PrivacyEnabled),
 			})
 		}
@@ -310,7 +310,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 			{"Created", out.Dim(formatTime(d.CreateDate))},
 			{"Expires", out.ExpiryDate(d.ExpireDate)},
 			{"Auto-Renew", out.BoolBadge(d.AutorenewEnabled)},
-			{"Locked", out.BoolBadge(d.Locked)},
+			{"Locked", out.BoolAlert(d.Locked, false)},
 			{"Privacy", out.BoolBadge(d.PrivacyEnabled)},
 			{"Nameservers", out.Dim(formatNS(d.Nameservers))},
 		}

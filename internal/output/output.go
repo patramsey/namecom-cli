@@ -178,20 +178,11 @@ func (c *Config) ApplyColorProfile() {
 // Adaptive color tokens — Dark values are vivid for dark terminals; Light
 // values are darker variants that stay readable on cream/white backgrounds.
 // ANSI 1–8 are terminal-theme-defined and adapt automatically; these cover
-// the 256-color palette entries we use for badges and status dots.
+// the 256-color palette entries we use for the states that need attention.
 var (
-	acGreen  = lipgloss.AdaptiveColor{Dark: "82", Light: "28"}
-	acRed    = lipgloss.AdaptiveColor{Dark: "196", Light: "160"}
-	acAmber  = lipgloss.AdaptiveColor{Dark: "220", Light: "136"}
-	acGray   = lipgloss.AdaptiveColor{Dark: "8", Light: "244"}
-	acBlue   = lipgloss.AdaptiveColor{Dark: "75", Light: "26"}
-	acPurple = lipgloss.AdaptiveColor{Dark: "141", Light: "90"}
-	acPink   = lipgloss.AdaptiveColor{Dark: "213", Light: "125"}
-	acOrange = lipgloss.AdaptiveColor{Dark: "208", Light: "166"}
-	acSky    = lipgloss.AdaptiveColor{Dark: "39", Light: "25"}
-	acSpring = lipgloss.AdaptiveColor{Dark: "48", Light: "29"}
-	acSalmon = lipgloss.AdaptiveColor{Dark: "203", Light: "160"}
-	acCyan   = lipgloss.AdaptiveColor{Dark: "6", Light: "6"} // ANSI — terminal-theme safe
+	acGreen = lipgloss.AdaptiveColor{Dark: "82", Light: "28"}
+	acRed   = lipgloss.AdaptiveColor{Dark: "196", Light: "160"}
+	acAmber = lipgloss.AdaptiveColor{Dark: "220", Light: "136"}
 
 	// Lip Gloss styles. Initialized once; use .Render() (not .String()) so
 	// color is applied lazily and tests can disable it via NO_COLOR.
@@ -200,33 +191,17 @@ var (
 	styleWarning = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleBorder  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleStep    = lipgloss.NewStyle().Bold(true).Foreground(acCyan)
 	styleTitle   = lipgloss.NewStyle().Bold(true)
 
-	// DNS record type badge colors — background with black foreground.
-	dnsTypeColors = map[string]lipgloss.AdaptiveColor{
-		"A":     acGreen,
-		"AAAA":  acSky,
-		"CNAME": acPink,
-		"MX":    acAmber,
-		"TXT":   acPurple,
-		"NS":    acBlue,
-		"SRV":   acOrange,
-		"ANAME": acSpring,
-		"CAA":   acSalmon,
-	}
-
-	// Domain / transfer status dot colors — foreground only.
+	// Status colors, for the statuses that ask something of the reader: a
+	// failure to look into, or something still in progress. Every other
+	// status — active, completed, canceled — is plain text (#238).
 	statusColors = map[string]lipgloss.AdaptiveColor{
-		"active":    acGreen,
-		"locked":    acSalmon,
 		"expired":   acRed,
 		"suspended": acRed,
-		"pending":   acAmber,
-		"completed": acGreen,
 		"failed":    acRed,
-		"canceled":  acGray,
 		"rejected":  acRed,
+		"pending":   acAmber,
 	}
 )
 
@@ -711,7 +686,7 @@ func (c *Config) KVTable(rows [][]string) {
 	valueStyle := lipgloss.NewStyle().Padding(0, 1)
 	fieldStyle := lipgloss.NewStyle().Padding(0, 1)
 	if color {
-		fieldStyle = fieldStyle.Foreground(lipgloss.Color("111")).Bold(true)
+		fieldStyle = fieldStyle.Bold(true) // bold, not blue: colour is for what needs action
 	}
 
 	styleFunc := func(_, col int) lipgloss.Style {
@@ -816,6 +791,20 @@ func (c *Config) Success(msg string) {
 	} else {
 		fmt.Fprintln(c.Writer, "✓ "+c.SandboxTag()+msg)
 	}
+}
+
+// Note prints a dim line of information to stderr — something worth knowing
+// that is neither a warning nor a next step, such as which check sandbox mode
+// uses. Shown only in table mode, and never in quiet mode.
+//
+// The CLI has four status symbols: ✓ success, ! warning, ✗ error and → next
+// step (#238). A note used to borrow →, as in "→ Sandbox mode: …", which made
+// it read as an instruction; it carries no symbol now.
+func (c *Config) Note(msg string) {
+	if c.Format != FormatTable || c.QuietMode {
+		return
+	}
+	fmt.Fprintln(c.EWriter, c.Dim(msg))
 }
 
 // Hint prints a dimmed next-step suggestion to stderr — shown only in table
@@ -930,71 +919,77 @@ func errorHint(err error) string {
 	return ""
 }
 
-// StatusBadge returns a styled label for domain/transfer status values.
-func (c *Config) StatusBadge(status string) string {
-	if !c.ColorEnabled() {
-		return status
-	}
+// statusColor returns the colour for status, and whether it has one. A
+// prefix matches, for compound statuses like "pending_transfer".
+func statusColor(status string) (lipgloss.AdaptiveColor, bool) {
 	key := strings.ToLower(status)
-	// Match prefix for compound statuses like "pending_transfer".
-	color := lipgloss.AdaptiveColor{Dark: "7", Light: "245"} // default: gray
 	for k, v := range statusColors {
 		if key == k || strings.HasPrefix(key, k) {
-			color = v
-			break
+			return v, true
 		}
+	}
+	return lipgloss.AdaptiveColor{}, false
+}
+
+// StatusBadge returns a domain, transfer or order status, coloured only when
+// it needs attention: red for a failure, amber for pending. Every status had
+// a coloured dot, so a list of healthy domains was a column of green (#238).
+func (c *Config) StatusBadge(status string) string {
+	color, ok := statusColor(status)
+	if !c.ColorEnabled() || !ok {
+		return status
 	}
 	dot := lipgloss.NewStyle().Foreground(color).Render("●")
 	text := lipgloss.NewStyle().Bold(true).Foreground(color).Render(status)
 	return dot + " " + text
 }
 
-// TypeBadge returns a styled, colored label for DNS record types and similar
-// short categorical values. Falls back to StatusBadge color logic if the type
-// isn't in the DNS palette.
+// TypeBadge returns a DNS record type, upper-cased and bold. It was drawn on a
+// coloured background, one colour per type, which put nine colours on a
+// `dns list` that asked nothing of the reader (#238).
 func (c *Config) TypeBadge(typ string) string {
-	if !c.ColorEnabled() {
-		return typ
-	}
 	upper := strings.ToUpper(typ)
-	color, ok := dnsTypeColors[upper]
-	if !ok {
-		return c.StatusBadge(typ)
+	if !c.ColorEnabled() {
+		return upper
 	}
-	return lipgloss.NewStyle().
-		Background(color).
-		Foreground(lipgloss.Color("0")).
-		Padding(0, 1).
-		Bold(true).
-		Render(upper)
+	return styleTitle.Render(upper)
 }
 
-// AvailabilityBadge returns a visually distinct ✓ available / ✗ taken badge.
+// AvailabilityBadge returns "✓ available" or "taken". A taken name is not an
+// error, so it no longer carries ✗ or red; an available one is what the
+// reader can act on, and keeps the check and the colour.
 func (c *Config) AvailabilityBadge(purchasable bool) string {
+	if !purchasable {
+		return "taken"
+	}
 	if !c.ColorEnabled() {
-		if purchasable {
-			return "✓ available"
-		}
-		return "✗ taken"
+		return "✓ available"
 	}
-	if purchasable {
-		return styleSuccess.Render("✓") + " " + lipgloss.NewStyle().Foreground(acGreen).Render("available")
-	}
-	return styleError.Render("✗") + " " + lipgloss.NewStyle().Foreground(acRed).Render("taken")
+	return styleSuccess.Render("✓") + " " + lipgloss.NewStyle().Foreground(acGreen).Render("available")
 }
 
-// BoolBadge returns a styled ✓ yes (true) or ✗ no (false).
+// BoolBadge returns "yes" or "no", in plain text.
+//
+// It returned a bold green "✓ yes" or red "✗ no", so a 250-row domain list
+// was mostly green, and red landed on harmless values — Premium "no", Privacy
+// "no", a TLD without DNSSEC (#238). Colour is for values that need action;
+// use BoolAlert for those.
 func (c *Config) BoolBadge(b bool) string {
-	if !c.ColorEnabled() {
-		if b {
-			return "yes"
-		}
-		return "no"
-	}
 	if b {
-		return styleSuccess.Render("✓ yes")
+		return "yes"
 	}
-	return styleError.Render("✗ no")
+	return "no"
+}
+
+// BoolAlert returns "yes" or "no" like BoolBadge, in amber when b equals
+// alertOn: the value that needs the reader's attention, such as a domain that
+// is not locked against transfer.
+func (c *Config) BoolAlert(b, alertOn bool) string {
+	s := c.BoolBadge(b)
+	if b == alertOn {
+		return c.Amber(s)
+	}
+	return s
 }
 
 // ExpiryDate formats a domain expiry date with color urgency indicators and a
@@ -1519,19 +1514,6 @@ func ParseColorMode(s string) (ColorMode, error) {
 		return ColorNever, nil
 	}
 	return "", fmt.Errorf("unknown color mode %q; choose auto, always, or never", s)
-}
-
-// Step prints a flyctl-style phase header ("==> Checking availability…") to
-// stdout. Only emitted in table/interactive mode, skipped when quiet or piped.
-func (c *Config) Step(msg string) {
-	if c.Format != FormatTable || c.QuietMode {
-		return
-	}
-	if c.ColorEnabled() {
-		fmt.Fprintln(c.Writer, styleStep.Render("==>")+" "+msg)
-	} else {
-		fmt.Fprintln(c.Writer, "==> "+msg)
-	}
 }
 
 // Title prints a bold resource-name header above a detail view. Only emitted
