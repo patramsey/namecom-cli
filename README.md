@@ -236,6 +236,10 @@ namecom domain list --all --expiring-before "$(date -d '+60 days' +%F)" -q
 # Bulk-create an A record across all domains
 namecom domain list --all -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4
 
+# '-' reads names from stdin, one per line (blank lines and # comments skipped)
+namecom domain check - < names.txt
+namecom domain list --all -q | namecom domain autorenew on - --yes   # one request per domain, one confirmation
+
 # Dry-run first, then apply
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --dry-run
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --yes

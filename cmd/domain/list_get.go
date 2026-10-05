@@ -35,10 +35,14 @@ var listCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:               "get <domain>",
-	Short:             "Get details for a single domain",
-	Example:           `  namecom domain get example.com`,
-	Args:              cmdutil.ExactArgs(1),
+	Use:   "get <domain> [<domain>...]",
+	Short: "Get details for one or more domains",
+	Long: `Get details for one or more domains. With more than one, or with '-'
+(read domains from stdin, one per line), JSON and YAML output is an array.`,
+	Example: `  namecom domain get example.com
+  namecom domain get example.com example.net
+  namecom domain list -q | namecom domain get - -o json`,
+	Args:              cmdutil.MinimumNArgs(1),
 	RunE:              runGet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
@@ -287,39 +291,65 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	domain, err := cmdutil.DomainArg(args, 0)
+	// One domain named on the command line keeps the single-object output
+	// scripts already parse. Several, or "-" — however many lines it turns
+	// out to hold — are a list, so their output is always an array (#244).
+	list := len(args) != 1 || args[0] == cmdutil.StdinArg
+	domains, err := cmdutil.DomainArgs(cmd, args)
 	if err != nil {
 		return err
 	}
-	stop := out.Spin("Fetching domain…")
-	d, err := client.SDK().Domains.GetDomain(cmd.Context(),
-		&coreapigo.GetDomainRequest{DomainName: domain})
-	stop()
-	if err != nil {
-		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", args[0]))
+	fetched := make([]*coreapigo.DomainResponsePayload, 0, len(domains))
+	for _, domain := range domains {
+		stop := out.Spin("Fetching domain…")
+		d, err := client.SDK().Domains.GetDomain(cmd.Context(),
+			&coreapigo.GetDomainRequest{DomainName: domain})
+		stop()
+		if err != nil {
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+			}
+			return err
 		}
-		return err
-	}
-	if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
-		return err
+		if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
+			return err
+		}
+		fetched = append(fetched, d)
 	}
 
 	// --quiet prints the identifying value only, matching list commands.
 	if out.QuietMode {
-		out.PrintQuiet([]string{d.DomainName})
+		names := make([]string, len(fetched))
+		for i, d := range fetched {
+			names[i] = d.DomainName
+		}
+		out.PrintQuiet(names)
 		return nil
 	}
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(d)
+		if list {
+			return out.JSON(fetched)
+		}
+		return out.JSON(fetched[0])
 	case output.FormatYAML:
-		return out.YAML(d)
+		if list {
+			return out.YAML(fetched)
+		}
+		return out.YAML(fetched[0])
 	default:
-		out.Title(d.DomainName)
-		out.KVTable(domainRows(out, d, time.Now()))
-		out.Hint(domainHint(d, time.Now()))
+		for i, d := range fetched {
+			if i > 0 {
+				fmt.Fprintln(out.Writer)
+			}
+			out.Title(d.DomainName)
+			out.KVTable(domainRows(out, d, time.Now()))
+		}
+		// The next step is about one domain; for several it would repeat.
+		if len(fetched) == 1 {
+			out.Hint(domainHint(fetched[0], time.Now()))
+		}
 	}
 	return nil
 }

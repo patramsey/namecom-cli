@@ -12,22 +12,23 @@ import (
 // TestToggleArgs pins #236: the toggles take on|off and the domain in either
 // order, and a word that is neither is named in the error.
 func TestToggleArgs(t *testing.T) {
+	cmd := &cobra.Command{}
 	for _, args := range [][]string{{"ON", "x.com"}, {"x.com", "On"}, {"X.com", "on"}} {
-		on, d, err := ToggleArgs(args)
-		if err != nil || !on || d != "x.com" {
-			t.Errorf("ToggleArgs(%q) = %v, %q, %v; want true, x.com, nil", args, on, d, err)
+		on, d, err := ToggleArgs(cmd, args)
+		if err != nil || !on || strings.Join(d, ",") != "x.com" {
+			t.Errorf("ToggleArgs(%q) = %v, %q, %v; want true, [x.com], nil", args, on, d, err)
 		}
 	}
-	if on, d, err := ToggleArgs([]string{"x.com", "off"}); err != nil || on || d != "x.com" {
-		t.Errorf("ToggleArgs(x.com off) = %v, %q, %v; want false, x.com, nil", on, d, err)
+	if on, d, err := ToggleArgs(cmd, []string{"x.com", "off"}); err != nil || on || strings.Join(d, ",") != "x.com" {
+		t.Errorf("ToggleArgs(x.com off) = %v, %q, %v; want false, [x.com], nil", on, d, err)
 	}
 	for _, args := range [][]string{{"maybe", "x.com"}, {"x.com", "maybe"}} {
-		_, _, err := ToggleArgs(args)
+		_, _, err := ToggleArgs(cmd, args)
 		if _, ok := errors.AsType[*UsageError](err); !ok || !strings.Contains(err.Error(), `got "maybe"`) {
 			t.Errorf("ToggleArgs(%q): err = %v, want a usage error naming \"maybe\"", args, err)
 		}
 	}
-	if _, _, err := ToggleArgs([]string{"on", "not a domain"}); err == nil {
+	if _, _, err := ToggleArgs(cmd, []string{"on", "not a domain"}); err == nil {
 		t.Error("ToggleArgs(on, not a domain) accepted an invalid domain")
 	}
 }
@@ -40,8 +41,10 @@ func TestCompleteToggle(t *testing.T) {
 			t.Errorf("CompleteToggle(%q) = %q, want on, off", args, got)
 		}
 	}
-	if got, _ := CompleteToggle(cmd, []string{"on", "example.com"}, ""); got != nil {
-		t.Errorf("CompleteToggle after both arguments = %q, want nothing", got)
+	// After a leading on|off more domains may follow (#244); after a trailing
+	// one, nothing does.
+	if got, _ := CompleteToggle(cmd, []string{"example.com", "on"}, ""); got != nil {
+		t.Errorf("CompleteToggle after a trailing on = %q, want nothing", got)
 	}
 }
 

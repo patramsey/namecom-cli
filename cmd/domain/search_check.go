@@ -160,8 +160,13 @@ var checkAuthoritative bool
 var checkCmd = &cobra.Command{
 	Use:   "check <domain> [<domain>...]",
 	Short: "Check exact availability and price for one or more domains",
+	Long: `Check exact availability and price for one or more domains. Any number
+of names may be given; the API answers 50 per request, so a longer list is
+sent 50 at a time. '-' reads names from stdin, one per line; blank lines and
+# comments are skipped.`,
 	Example: `  namecom domain check example.com
   namecom domain check example.com myidea.io coolname.dev
+  namecom domain check - < names.txt                # one name per line
   namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly
   namecom domain check --sandbox example.com        # sandbox: registry check used automatically`,
 	Args: cmdutil.MinimumNArgs(1),
@@ -200,6 +205,12 @@ const maxCheckNames = 50
 
 func runCheck(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
+
+	// Not DomainArgs: a name given twice is checked, and shown, twice.
+	args, err := cmdutil.ExpandStdinArgs(cmd, args)
+	if err != nil {
+		return err
+	}
 
 	// Normalize (and validate) every argument up front. This was the only
 	// command that skipped cmdutil.DomainArg, and the results below are keyed by
