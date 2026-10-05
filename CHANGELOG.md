@@ -268,6 +268,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the notice off, and with it the daily release check.
 
 ### Fixed
+- Help honours `--color`: `--help --color=never` printed colour escapes
+  wherever colour was otherwise on, and `--color=always` was ignored in a
+  pipe. Help also wraps descriptions and flag help to the terminal width
+  (or `$COLUMNS` when not a terminal) instead of running past the edge;
+  examples stay one line each so they can be copied.
 - The `url create` and `url update` forms check the destination as you type
   it: it must be an `http://` or `https://` URL with a host. Anything else
   used to get through the form and then fail with an error naming `--to`, a

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -147,7 +148,7 @@ func TestPrintFlags_RendersNamesShorthandsAndUsage(t *testing.T) {
 	_ = fs.MarkHidden("secret")
 
 	var buf bytes.Buffer
-	printFlags(&buf, fs, false, noStyle)
+	printFlags(&buf, fs, 0, noStyle)
 	got := buf.String()
 
 	for _, want := range []string{"--output", "-o", "output format", "--yes", "skip confirmation prompts"} {
@@ -342,7 +343,7 @@ func TestHelpLayout(t *testing.T) {
 		fs.Duration("timeout", 30*time.Second, "per-request timeout")
 
 		var buf bytes.Buffer
-		printFlags(&buf, fs, false, noStyle)
+		printFlags(&buf, fs, 0, noStyle)
 		got := buf.String()
 
 		for _, want := range []string{`(default "@")`, `(default 300)`, `(default 30s)`} {
@@ -418,5 +419,79 @@ func TestHelp_BoolValueFlags(t *testing.T) {
 	}
 	if strings.Contains(got, "--all=") {
 		t.Errorf("a plain switch was shown with a value:\n%s", got)
+	}
+}
+
+// TestHelp_HonoursColorFlag pins #237: help ran without PersistentPreRunE, so
+// `--help --color=never` still printed escapes where colour was otherwise on,
+// and --color=always did nothing in a pipe.
+func TestHelp_HonoursColorFlag(t *testing.T) {
+	prof := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(prof) })
+	for _, tc := range []struct {
+		color, force string
+		escapes      bool
+	}{
+		{"never", "1", false}, // CLICOLOR_FORCE would turn it on
+		{"always", "", true},  // a test's stdout is not a terminal
+	} {
+		t.Run(tc.color, func(t *testing.T) {
+			t.Setenv("CLICOLOR_FORCE", tc.force)
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			t.Cleanup(func() {
+				rootCmd.SetOut(nil)
+				_ = urlHelpFlag(t).Set("help", "false")
+			})
+			if err := executeRoot(t, "url", "list", "--help", "--color", tc.color); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.ContainsRune(buf.String(), '\x1b'); got != tc.escapes {
+				t.Errorf("--color %s: escapes = %v, want %v:\n%q", tc.color, got, tc.escapes, buf.String())
+			}
+		})
+	}
+}
+
+func urlHelpFlag(t *testing.T) *pflag.FlagSet {
+	t.Helper()
+	c, _, err := rootCmd.Find([]string{"url", "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Flags()
+}
+
+// TestHelp_WrapsToWidth pins #237: at 70 columns, long flag help and the
+// `api` description ran past the edge. Everything but the examples and the
+// usage line, which must stay one copyable line each, fits.
+func TestHelp_WrapsToWidth(t *testing.T) {
+	const width = 70
+	for _, path := range []string{"", "api", "dns create", "environment", "dns"} {
+		c, _, err := rootCmd.Find(strings.Fields(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		printHelpWidth(&buf, c, false, width)
+		got := buf.String()
+		for _, line := range strings.Split(got, "\n") {
+			if utf8.RuneCountInString(line) > width && !strings.Contains(c.Example, line) && !strings.Contains(line, c.UseLine()) {
+				t.Errorf("namecom %s: line runs past %d columns:\n%s", path, width, line)
+			}
+		}
+		// Nothing is lost: the unwrapped page has the same words.
+		var plain bytes.Buffer
+		printHelp(&plain, c, false)
+		if strings.Join(strings.Fields(got), " ") != strings.Join(strings.Fields(plain.String()), " ") {
+			t.Errorf("namecom %s: wrapping changed the text", path)
+		}
+	}
+
+	// A two-column row continues under its second column.
+	got := wrapBlock("  NAMECOM_TOKEN   the API token, which --token overrides when both are set", 50)
+	want := "  NAMECOM_TOKEN   the API token, which --token\n                  overrides when both are set"
+	if got != want {
+		t.Errorf("wrapBlock row:\n%s\nwant:\n%s", got, want)
 	}
 }

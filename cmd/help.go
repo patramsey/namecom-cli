@@ -3,7 +3,10 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -34,11 +37,39 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 		printGettingStarted(w)
 		return
 	}
-	color := output.DefaultConfig().ColorEnabled()
-	printHelp(w, cmd, color)
+	// Help runs without PersistentPreRunE, so it used to take the TTY default
+	// and ignore --color: `--help --color=never` still printed escapes (#237).
+	// The flags are parsed by now; a bad value falls back to the default here
+	// and is reported by any real command.
+	out, err := buildOutputConfig()
+	if err != nil {
+		out = output.DefaultConfig()
+	}
+	printHelpWidth(w, cmd, out.ColorEnabled(), helpWidth(out))
 }
 
+// helpWidth is the width help wraps to: the terminal's, or $COLUMNS when
+// stdout is not a terminal and it is set. Zero means no wrapping.
+func helpWidth(out *output.Config) int {
+	if out.MaxWidth > 0 {
+		return out.MaxWidth
+	}
+	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
+		return n
+	}
+	return 0
+}
+
+// printHelp is printHelpWidth with no wrapping.
 func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
+	printHelpWidth(w, cmd, color, 0)
+}
+
+// printHelpWidth renders cmd's help, wrapping its description, command and
+// flag descriptions, and footer to width columns (#237): at 70 columns long
+// flag help and the `api` description ran past the edge. Examples are left as
+// written, so each stays one line that can be copied.
+func printHelpWidth(w io.Writer, cmd *cobra.Command, color bool, width int) {
 	style := func(s lipgloss.Style, text string) string {
 		if color {
 			return s.Render(text)
@@ -53,6 +84,7 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 	if desc == "" {
 		desc = cmd.Short
 	}
+	desc = wrapBlock(desc, width)
 	// Bold the binary name in the long description.
 	if color && isRoot {
 		desc = strings.Replace(desc, "namecom", style(helpBrand, "namecom"), 1)
@@ -98,11 +130,16 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 	}
 	printCmdLine := func(c *cobra.Command) {
 		padding := strings.Repeat(" ", maxLen-len(c.Name()))
+		col := 2 + maxLen + 3
+		lines := wrapWords(c.Short, descWidth(width, col))
 		fmt.Fprintf(w, "  %s%s   %s\n",
 			style(helpCmd, c.Name()),
 			padding,
-			style(helpCmdDesc, c.Short),
+			style(helpCmdDesc, lines[0]),
 		)
+		for _, l := range lines[1:] {
+			fmt.Fprintln(w, strings.Repeat(" ", col)+style(helpCmdDesc, l))
+		}
 	}
 	if len(available) > 0 {
 		groups := cmd.Groups()
@@ -167,12 +204,12 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 				heading = section + " Flags:"
 			}
 			fmt.Fprintln(w, style(helpHeading, heading))
-			printFlags(w, fs, color, style)
+			printFlags(w, fs, width, style)
 			fmt.Fprintln(w)
 		}
 	} else if local := withoutHelp(cmd.LocalFlags()); hasVisibleFlags(local) {
 		fmt.Fprintln(w, style(helpHeading, "Flags:"))
-		printFlags(w, local, color, style)
+		printFlags(w, local, width, style)
 		fmt.Fprintln(w)
 	}
 
@@ -183,7 +220,7 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 		fs := pickFlags(cmd.InheritedFlags(), globalFlagNames(cmd))
 		if hasVisibleFlags(fs) {
 			fmt.Fprintln(w, style(helpHeading, "Global Flags:"))
-			printFlags(w, fs, color, style)
+			printFlags(w, fs, width, style)
 			fmt.Fprintln(w)
 		}
 	}
@@ -203,9 +240,113 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 	}
 	fmt.Fprintln(w, style(helpHeading, "Learn More:"))
 	for _, line := range more {
-		fmt.Fprintln(w, "  "+style(helpCmdDesc, line))
+		for _, l := range wrapWords(line, descWidth(width, 2)) {
+			fmt.Fprintln(w, "  "+style(helpCmdDesc, l))
+		}
 	}
 	fmt.Fprintln(w)
+}
+
+// minWrap is the narrowest column help wraps text into. Below it, a
+// description wrapped beside a long flag name would be a word per line, and
+// running past the edge reads better.
+const minWrap = 24
+
+// descWidth is the room left for text starting at column col of a width-wide
+// terminal, or 0 (no wrapping) when width is unknown or too narrow.
+func descWidth(width, col int) int {
+	if width <= 0 || width-col < minWrap {
+		return 0
+	}
+	return width - col
+}
+
+// wrapWords splits s into lines of at most width columns, breaking at spaces.
+// A word longer than width gets a line of its own. Width 0 returns s whole.
+func wrapWords(s string, width int) []string {
+	if width <= 0 || utf8.RuneCountInString(s) <= width {
+		return []string{s}
+	}
+	var lines []string
+	cur, n := "", 0
+	for _, word := range strings.Fields(s) {
+		wl := utf8.RuneCountInString(word)
+		if n > 0 && n+1+wl > width {
+			lines = append(lines, cur)
+			cur, n = "", 0
+		}
+		if n > 0 {
+			cur += " "
+			n++
+		}
+		cur += word
+		n += wl
+	}
+	return append(lines, cur)
+}
+
+// wrapBlock wraps a description to width. Descriptions are written wrapped
+// near 80 columns, so wrapping each line alone left every other line a word
+// long; instead each paragraph is reflowed, and only when one of its lines
+// does not fit, so a wide terminal shows the text as written.
+//
+// A paragraph is a run of unindented lines, or an indented line with its
+// continuations. An indented two-column row ("  NAMECOM_TOKEN   API
+// token.") continues under its second column, and any other indented line
+// at its own indentation.
+func wrapBlock(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	type para struct {
+		lead string   // first-line prefix: indentation, plus the first column of a row
+		hang int      // indentation of continuation lines
+		row  bool     // an indented two-column row
+		text string   // the words to wrap
+		raw  []string // the lines as written
+	}
+	var paras []*para
+	for _, line := range strings.Split(s, "\n") {
+		body := strings.TrimLeft(line, " ")
+		indent := len(line) - len(body)
+		if n := len(paras); n > 0 && body != "" {
+			p := paras[n-1]
+			prose := !p.row && p.hang == 0 && indent == 0
+			if p.text != "" && (prose || (p.row && indent == p.hang)) {
+				p.text += " " + body
+				p.raw = append(p.raw, line)
+				continue
+			}
+		}
+		p := &para{lead: line[:indent], text: body, raw: []string{line}}
+		if gap := strings.Index(body, "  "); indent > 0 && gap > 0 {
+			p.text = strings.TrimLeft(body[gap:], " ")
+			p.lead += body[:len(body)-len(p.text)]
+			p.row = true
+		}
+		p.hang = utf8.RuneCountInString(p.lead)
+		paras = append(paras, p)
+	}
+
+	var out []string
+	for _, p := range paras {
+		fits := true
+		for _, l := range p.raw {
+			fits = fits && utf8.RuneCountInString(l) <= width
+		}
+		if fits {
+			out = append(out, p.raw...)
+			continue
+		}
+		for i, l := range wrapWords(p.text, descWidth(width, p.hang)) {
+			if i == 0 {
+				out = append(out, p.lead+l)
+			} else {
+				out = append(out, strings.Repeat(" ", p.hang)+l)
+			}
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // usageLine renders the usage line, correcting it for command groups.
@@ -274,7 +415,9 @@ func hasVisibleFlags(fs *pflag.FlagSet) bool {
 	return visible
 }
 
-func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Style, string) string) {
+// printFlags lists fs with aligned descriptions, wrapped to width columns
+// (0: no wrapping) under the description column.
+func printFlags(w io.Writer, fs *pflag.FlagSet, width int, style func(lipgloss.Style, string) string) {
 	// First pass: measure the longest name+type string for alignment.
 	type flagEntry struct {
 		nameType string
@@ -325,13 +468,23 @@ func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Styl
 	})
 
 	// Second pass: print with aligned descriptions.
+	col := 2 + maxLen + 3
 	for _, e := range entries {
 		pad := strings.Repeat(" ", maxLen-len(e.nameType))
-		fmt.Fprintf(w, "  %s%s   %s%s\n",
-			style(helpFlag, e.nameType),
-			pad,
-			style(helpFlagDesc, e.usage),
-			style(helpUsage, e.defVal),
-		)
+		lines := wrapWords(e.usage+e.defVal, descWidth(width, col))
+		// The default keeps its own style when it ends up whole on the last
+		// line, as it does unwrapped.
+		last := len(lines) - 1
+		def := strings.TrimSpace(e.defVal)
+		desc := func(i int) string {
+			if i == last && def != "" && strings.HasSuffix(lines[i], def) {
+				return style(helpFlagDesc, strings.TrimSuffix(lines[i], def)) + style(helpUsage, def)
+			}
+			return style(helpFlagDesc, lines[i])
+		}
+		fmt.Fprintf(w, "  %s%s   %s\n", style(helpFlag, e.nameType), pad, desc(0))
+		for i := 1; i < len(lines); i++ {
+			fmt.Fprintln(w, strings.Repeat(" ", col)+desc(i))
+		}
 	}
 }
