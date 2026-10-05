@@ -111,6 +111,35 @@ func TestRegister_GuidedFormNeverBlocksScriptsOrPreviews(t *testing.T) {
 	})
 }
 
+// TestRegister_GuidedFormDefaultsToPrivacyAndAutorenew: the form opens with
+// both choices on, and declining nothing sends them in the body.
+func TestRegister_GuidedFormDefaultsToPrivacyAndAutorenew(t *testing.T) {
+	t.Cleanup(output.StubInteractive(true))
+	var privacy, autorenew bool
+	prev := askRegister
+	askRegister = func(_, _ string) error {
+		privacy, autorenew = registerPrivacy, registerAutorenew
+		return nil
+	}
+	t.Cleanup(func() { askRegister = prev })
+	registerPrivacy, registerAutorenew = false, false
+	t.Cleanup(func() { registerPrivacy, registerAutorenew = false, false })
+
+	var gotCreate map[string]any
+	var claims bool
+	cmd := cmdForRegister(t, claimsServer(t, unclaimedResponse, &gotCreate, &claims))
+	cmd.PersistentFlags().Bool("dry-run", false, "")
+	var prompt string
+	t.Cleanup(cmdutil.StubConfirm(func(p string) bool { prompt = p; return false }))
+	_ = runRegister(cmd, []string{"tiktok.page"})
+	if !privacy || !autorenew {
+		t.Errorf("form opened with privacy=%v autorenew=%v, want both on", privacy, autorenew)
+	}
+	if !strings.Contains(prompt, "with WHOIS privacy and auto-renew") {
+		t.Errorf("confirmation %q does not state both choices", prompt)
+	}
+}
+
 // TestRegisterQuote: the price line for each kind of purchase.
 func TestRegisterQuote(t *testing.T) {
 	p := func(f float64) *float64 { return &f }

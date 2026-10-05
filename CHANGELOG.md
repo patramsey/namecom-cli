@@ -223,6 +223,10 @@ parse; table output is unchanged.
 - The README has a CI section with a GitHub Actions example.
 
 ### Changed
+- The `domain register` guided form now starts with WHOIS privacy and
+  auto-renew turned on. Privacy is free at name.com, and a lapsed domain is
+  the costlier mistake. The `--privacy` and `--autorenew` flags still default
+  to off, so `--yes` and scripts register exactly what they ask for.
 - Help pages show the global flags that apply to the command:
   `--dry-run` and `--yes` on writes, `--quiet`, `--wide` and `--no-header`
   on lists, and `--output` everywhere. Read-only `domain get` listed
