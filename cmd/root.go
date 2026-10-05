@@ -111,10 +111,9 @@ func Execute() {
 
 	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
 	// usage errors so they exit 2 rather than collapsing into the generic 1.
-	// Applies to every subcommand, not just root.
-	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return cmdutil.NewUsageError(err)
-	})
+	// Applies to every subcommand, not just root. An unknown flag also gets
+	// a did-you-mean and the usage line.
+	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
 
 	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
 		os.Exit(reportError(errorOutput(), err))

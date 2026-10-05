@@ -167,6 +167,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   refused`, and an unknown host `could not look up <host>: no such host`.
   When `--base-url` points away from name.com the hint says to check it.
   These still exit **1**; a script matching the old text needs updating.
+- Usage errors suggest the fix. `domain set-ns D ns1 ns2` gives the command
+  rewritten with `--ns ns1,ns2`; `domain lock example.com on` gives the
+  right order, `domain lock on example.com`; an unknown flag names the
+  nearest flags (`--nameservers` → `--ns`, `--sandbx` → `--sandbox`) and the
+  usage line; an unknown command with no near miss, such as `dns rm`,
+  points at `namecom dns --help`; and too many arguments shows the usage
+  line. An unknown command's "Did you mean this?" list moves from the
+  message, where it took three more lines, into the hint: `did you mean
+  'namecom domain'?`. All still exit **2**.
 
 ## [0.4.9] - 2026-10-03
 

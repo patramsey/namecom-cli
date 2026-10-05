@@ -134,6 +134,27 @@ func TestSetNS_InvalidNameserver(t *testing.T) {
 	}
 }
 
+// TestSetNS_PositionalNameserversSuggestNS pins #234: `set-ns D ns1 ns2` said
+// only "too many arguments", without mentioning --ns.
+func TestSetNS_PositionalNameserversSuggestNS(t *testing.T) {
+	prev := setNSList
+	t.Cleanup(func() { setNSList = prev })
+	setNSList = ""
+
+	err := setNSArgs(setNSCmd, []string{"example.com", "ns1.a.com", "ns2.a.com"})
+	u, ok := errors.AsType[*cmdutil.UsageError](err)
+	if !ok {
+		t.Fatalf("setNSArgs = %v, want a usage error", err)
+	}
+	// The package's command tree has no root here, so the path starts at "domain".
+	if want := "run '" + setNSCmd.CommandPath() + " example.com --ns ns1.a.com,ns2.a.com'"; u.UserHint() != want {
+		t.Errorf("hint = %q, want %q", u.UserHint(), want)
+	}
+	if err := setNSArgs(setNSCmd, []string{"example.com"}); err != nil {
+		t.Errorf("one domain rejected: %v", err)
+	}
+}
+
 func TestSetNS_BadDomainArg(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForSetNS(t, srv)

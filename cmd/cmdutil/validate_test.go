@@ -5,7 +5,31 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+// TestOnOffFirst pins #234: `domain lock example.com on` said only "expected
+// 'on' or 'off', got "example.com"", without the order that works.
+func TestOnOffFirst(t *testing.T) {
+	root := &cobra.Command{Use: "namecom"}
+	lock := &cobra.Command{Use: "lock"}
+	root.AddCommand(lock)
+
+	if on, err := OnOffFirst(lock, []string{"ON", "x.com"}); err != nil || !on {
+		t.Errorf("OnOffFirst(ON x.com) = %v, %v; want true, nil", on, err)
+	}
+	_, err := OnOffFirst(lock, []string{"x.com", "On"})
+	u, ok := errors.AsType[*UsageError](err)
+	if !ok || u.UserHint() != "run 'namecom lock on x.com'" {
+		t.Errorf("swapped: err = %v, want a usage error suggesting the right order", err)
+	}
+	_, err = OnOffFirst(lock, []string{"maybe", "x.com"})
+	if u, ok := errors.AsType[*UsageError](err); !ok || u.UserHint() != "" ||
+		!strings.Contains(err.Error(), `got "maybe"`) {
+		t.Errorf("neither on nor off: err = %v, want the plain usage error", err)
+	}
+}
 
 func TestValidDate(t *testing.T) {
 	ok := []string{"2024-01-01", "2099-12-31", "2000-02-29"}

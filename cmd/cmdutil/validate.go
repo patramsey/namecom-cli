@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/net/idna"
 )
 
@@ -485,6 +486,21 @@ func OnOffArg(s string) (bool, error) {
 		return false, nil
 	}
 	return false, usagef("expected 'on' or 'off', got %q", s)
+}
+
+// OnOffFirst parses args[0] as the toggles' on|off. When that fails but
+// args[1] is on or off — `domain lock example.com on`, the order most people
+// try first — the hint gives the command in the right order (#234).
+func OnOffFirst(cmd *cobra.Command, args []string) (bool, error) {
+	enable, err := OnOffArg(args[0])
+	if err == nil || len(args) < 2 {
+		return enable, err
+	}
+	if _, swapErr := OnOffArg(args[1]); swapErr != nil {
+		return false, err
+	}
+	return false, NewUsageErrorHint(fmt.Errorf("expected 'on' or 'off' before the domain, got %q", args[0]),
+		fmt.Sprintf("run '%s %s %s'", cmd.CommandPath(), strings.ToLower(args[1]), args[0]))
 }
 
 // CanonicalDomain normalizes a domain name for comparison and transmission.

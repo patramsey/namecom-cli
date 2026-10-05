@@ -164,7 +164,7 @@ func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
 
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffArg(args[0])
+	enable, err := cmdutil.OnOffFirst(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ var autorenewCmd = &cobra.Command{
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffArg(args[0])
+	enable, err := cmdutil.OnOffFirst(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -266,7 +266,7 @@ var privacyCmd = &cobra.Command{
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffArg(args[0])
+	enable, err := cmdutil.OnOffFirst(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ var setNSCmd = &cobra.Command{
 	Example: `  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com
   namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers
   namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com --yes  # no prompt, for scripts`,
-	Args:              cmdutil.ExactArgs(1),
+	Args:              setNSArgs,
 	RunE:              runSetNS,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
@@ -316,6 +316,17 @@ var setNSList string
 func init() {
 	setNSCmd.Flags().StringVar(&setNSList, "ns", "", "comma-separated nameservers (required)")
 	_ = setNSCmd.MarkFlagRequired("ns")
+	_ = setNSCmd.Flags().SetAnnotation("ns", cmdutil.SuggestFlagFor, []string{"nameservers", "nameserver"})
+}
+
+// setNSArgs is ExactArgs(1), except that nameservers passed as arguments get
+// the command rewritten with --ns as the hint (#234).
+func setNSArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 1 && setNSList == "" {
+		return cmdutil.NewUsageErrorHint(fmt.Errorf("too many arguments — set-ns takes the nameservers in --ns, not as arguments"),
+			fmt.Sprintf("run '%s %s --ns %s'", cmd.CommandPath(), args[0], strings.Join(args[1:], ",")))
+	}
+	return cmdutil.ExactArgs(1)(cmd, args)
 }
 
 func runSetNS(cmd *cobra.Command, args []string) error {

@@ -2,9 +2,12 @@ package cmdutil
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // ExactArgs is a drop-in for cobra.ExactArgs that produces a human-readable
@@ -20,7 +23,10 @@ func ExactArgs(n int) cobra.PositionalArgs {
 		}
 		names := argNames(cmd.Use)
 		if len(args) > n {
-			return NewUsageError(fmt.Errorf("too many arguments — expected: %s", joinNames(names)))
+			// The usage line shows where the rest belongs: `set-ns D ns1 ns2`
+			// is answered with "… set-ns <domain> --ns ns1…,ns2…" (#234).
+			return NewUsageErrorHint(fmt.Errorf("too many arguments — expected: %s", joinNames(names)),
+				"usage: "+cmd.UseLine())
 		}
 		// One or more missing — name only the ones still needed.
 		missing := names
@@ -104,8 +110,8 @@ func GroupCmd(cmd *cobra.Command) *cobra.Command {
 		if len(args) == 0 {
 			return nil
 		}
-		return NewUsageError(fmt.Errorf("unknown command %q for %q%s",
-			args[0], c.CommandPath(), suggestionHint(c.SuggestionsFor(args[0]))))
+		return unknownCommandError(fmt.Sprintf("unknown command %q for %q", args[0], c.CommandPath()),
+			c.CommandPath(), c.SuggestionsFor(args[0]))
 	}
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
 		return c.Help()
@@ -113,18 +119,73 @@ func GroupCmd(cmd *cobra.Command) *cobra.Command {
 	return cmd
 }
 
-// suggestionHint renders cobra's near-miss list the way cobra renders it on the
-// root command, so a typo reads the same wherever in the tree it happens.
-func suggestionHint(suggestions []string) string {
-	if len(suggestions) == 0 {
-		return ""
+// SuggestFlagFor is a flag annotation listing other names users type for it,
+// so an unknown flag can be answered with the right one when the spelling is
+// nothing alike: `--nameservers` for set-ns's `--ns`.
+const SuggestFlagFor = "namecom_suggest_for"
+
+// FlagError is the root command's flag-error function. Every flag-parse
+// failure is a usage error (exit 2); an unknown flag also gets a hint with the
+// nearest flags the command has and its usage line (#234). It used to be a
+// bare "unknown flag: --nameservers".
+func FlagError(cmd *cobra.Command, err error) error {
+	msg := err.Error()
+	name, ok := strings.CutPrefix(msg, "unknown flag: --")
+	if !ok {
+		return NewUsageError(err)
 	}
-	var b strings.Builder
-	b.WriteString("\n\nDid you mean this?\n")
-	for _, s := range suggestions {
-		fmt.Fprintf(&b, "\t%s\n", s)
+	usage := "usage: " + cmd.UseLine()
+	if s := flagSuggestions(cmd, name); len(s) > 0 {
+		return NewUsageErrorHint(err, "did you mean "+strings.Join(s, " or ")+"? "+usage)
 	}
-	return b.String()
+	return NewUsageErrorHint(err, usage+" — run '"+cmd.CommandPath()+" --help' for its flags")
+}
+
+// flagSuggestions returns cmd's visible flags that name was probably meant to
+// be: within cobra's suggestion distance, a prefix of the flag, or listed in
+// its SuggestFlagFor annotation.
+func flagSuggestions(cmd *cobra.Command, name string) []string {
+	dist := cmd.SuggestionsMinimumDistance
+	if dist <= 0 {
+		dist = 2
+	}
+	name = strings.ToLower(name)
+	var out []string
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Hidden {
+			return
+		}
+		match := levenshtein(name, f.Name) <= dist ||
+			(len(name) >= 2 && strings.HasPrefix(f.Name, name)) ||
+			slices.Contains(f.Annotations[SuggestFlagFor], name)
+		if match {
+			out = append(out, "--"+f.Name)
+		}
+	})
+	sort.Strings(out)
+	return out
+}
+
+// levenshtein is the edit distance between a and b, as cobra computes it for
+// command suggestions (its own is unexported).
+func levenshtein(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
 // pageNumber is the set of types the two API clients use for page numbers.
