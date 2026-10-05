@@ -46,6 +46,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   flag that had not been typed, losing the input. The create form asks where
   `example.com` (or `www.example.com`) should forward to, instead of
   `example.com/@`.
+- `domain register`'s guided form shows the quoted price — first year and
+  renewal, or the flat price of an aftermarket purchase — before asking for
+  the options; it showed none until after the form. The form no longer opens
+  under `--dry-run`, which previews the flag defaults, or with `-o json`,
+  `-o yaml` or `--quiet` in a terminal, which now fail at once with a usage
+  error (exit **2**) saying to pass `--years` (with `--privacy` and
+  `--autorenew` as wanted) or `--yes`, before any request is sent.
 - `dns create` in a terminal opens its guided form again when `--type` or
   `--answer` is left out. The form had been unreachable: both flags were
   marked required, so the command failed with `required flag(s) "answer",

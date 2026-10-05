@@ -119,6 +119,18 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The guided form runs in a terminal when no option flag was passed. It
+	// used to open under --dry-run and with -o json or yaml too, stopping a
+	// preview or a script at a form (#239). A preview uses the flag defaults
+	// instead; structured output fails here, before any request, saying how
+	// to pass the options.
+	guided := output.IsInteractive() && !yes &&
+		!cmd.Flags().Changed("years") && !cmd.Flags().Changed("privacy") && !cmd.Flags().Changed("autorenew")
+	if guided && !dryRun && (out.QuietMode || out.Format == output.FormatJSON || out.Format == output.FormatYAML) {
+		return cmdutil.NewUsageError(errors.New("domain register asks for its options in a form only with table output; " +
+			"pass --years (and --privacy, --autorenew as wanted), or --yes to accept the defaults"))
+	}
+
 	// Read --contacts-file up front too, for the same reason: it used to be
 	// read after the availability check, the guided form and the pricing
 	// lookup, so a typo in the path cost all three.
@@ -139,6 +151,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// purchase type — which can differ from standard registration pricing.
 	var checkPurchaseType *string
 	var checkPrice *float64
+	var quote string
 
 	{
 		stop := out.Spin("Checking availability of " + domainName + "…")
@@ -161,12 +174,14 @@ func runRegister(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("%s", msg)
 		}
 		checkPurchaseType, checkPrice = nonDefaultPurchaseType(r)
+		quote = registerQuote(r)
 	}
 
-	// Guided form when interactive and no customization flags supplied.
-	noFlags := !cmd.Flags().Changed("years") && !cmd.Flags().Changed("privacy") && !cmd.Flags().Changed("autorenew")
-	if output.IsInteractive() && noFlags && !yes {
-		if err := registerForm(); err != nil {
+	switch {
+	case guided && dryRun:
+		out.Hint("The guided form does not run under --dry-run; pass --years, --privacy or --autorenew to preview other options")
+	case guided:
+		if err := askRegister(domainName, quote); err != nil {
 			return err
 		}
 	}
@@ -421,10 +436,41 @@ func renewPrompt(domainName string, body coreapigo.DomainsRenewDomainBody, stand
 	return fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, years, price)
 }
 
-func registerForm() error {
+// registerQuote is the price line the guided form shows, from the
+// availability check, or "" when the check quoted none. The form used to show
+// no price at all; the exact total for the chosen term is still confirmed
+// after it, from the pricing lookup.
+func registerQuote(r *coreapigo.SearchResult) string {
+	if r == nil || r.PurchasePrice == nil {
+		return ""
+	}
+	if pt, _ := nonDefaultPurchaseType(r); pt != nil {
+		return fmt.Sprintf("%s purchase: $%.2f (a flat price; more years do not change it)", *pt, *r.PurchasePrice)
+	}
+	q := fmt.Sprintf("$%.2f for the first year", *r.PurchasePrice)
+	if r.Premium != nil && *r.Premium {
+		q = "Premium: " + q
+	}
+	if r.RenewalPrice != nil {
+		q += fmt.Sprintf(", renews at $%.2f/yr", *r.RenewalPrice)
+	}
+	return q
+}
+
+// askRegister runs the guided register form. Replaceable in tests.
+var askRegister = registerForm
+
+func registerForm(domainName, quote string) error {
 	yearsStr := "1"
+	desc := "The total for the term is confirmed before anything is charged."
+	if quote != "" {
+		desc = quote + ". " + desc
+	}
 	form := huh.NewForm(
 		huh.NewGroup(
+			huh.NewNote().
+				Title("Register "+domainName).
+				Description(desc),
 			huh.NewInput().
 				Title("Years to register").
 				Value(&yearsStr).
