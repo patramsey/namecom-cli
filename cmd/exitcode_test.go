@@ -471,7 +471,7 @@ func TestPagedLists_PageAndLimit(t *testing.T) {
 // TestPagedLists_BadPageIsUsage pins #236: `--page 0` exited 1.
 func TestPagedLists_BadPageIsUsage(t *testing.T) {
 	withConfig(t, loneProfile)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
 	}))
 	t.Cleanup(srv.Close)
