@@ -143,3 +143,25 @@ func TestRegisterDryRun_FlatPriceQuotesNoTerm(t *testing.T) {
 		t.Errorf("no price must mean no quote, got %+v", q)
 	}
 }
+
+// TestRegisterPrompt_StatesTermRenewalAndChoices pins #235's register prompt:
+// it read "for 2 year(s) at $35.98 total for 2 years" and said nothing of the
+// privacy and auto-renew settings the body carries.
+func TestRegisterPrompt_StatesTermRenewalAndChoices(t *testing.T) {
+	pricing := &coreapigo.PricingResponse{PurchasePrice: ptr(35.98), RenewalPrice: ptr(35.98)}
+	for _, tc := range []struct {
+		privacy, autorenew bool
+		want               string
+	}{
+		{true, false, "Register acme.io for 2 years: $35.98 total (renews at $17.99/yr), with WHOIS privacy, without auto-renew?"},
+		{true, true, "Register acme.io for 2 years: $35.98 total (renews at $17.99/yr), with WHOIS privacy and auto-renew?"},
+		{false, true, "Register acme.io for 2 years: $35.98 total (renews at $17.99/yr), with auto-renew, without WHOIS privacy?"},
+		{false, false, "Register acme.io for 2 years: $35.98 total (renews at $17.99/yr), without WHOIS privacy or auto-renew?"},
+	} {
+		body := registerBody(2, "", 0)
+		body.Domain = &coreapigo.DomainCreatePayload{PrivacyEnabled: &tc.privacy, AutorenewEnabled: &tc.autorenew}
+		if got := registerPrompt("acme.io", body, pricing); got != tc.want {
+			t.Errorf("prompt = %q\nwant     %q", got, tc.want)
+		}
+	}
+}

@@ -1131,7 +1131,7 @@ func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
 			result: coreapigo.SearchResult{DomainName: "example.org", Purchasable: true,
 				PurchasePrice: new(8625.0), RenewalPrice: new(21.99), PurchaseType: &aftermarket},
 			wantCell:       "$8,625.00 flat (aftermarket_b)",
-			wantPrompt:     "Register example.org at $8,625.00 flat (aftermarket_b, not per year)?",
+			wantPrompt:     "Register example.org at $8,625.00 flat (aftermarket_b, not per year), without WHOIS privacy or auto-renew?",
 			notWantInPrice: "/yr",
 		},
 		{
@@ -1139,7 +1139,7 @@ func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
 			result: coreapigo.SearchResult{DomainName: "shoe.luxe", Purchasable: true,
 				PurchasePrice: new(1000.0), RenewalPrice: new(24.99), Premium: &yes, PurchaseType: &registration},
 			wantCell:       "$1,000.00 (renews $24.99/yr)",
-			wantPrompt:     "Register shoe.luxe for 1 year at $1,000.00 (premium; renews at $24.99/yr)?",
+			wantPrompt:     "Register shoe.luxe for 1 year: $1,000.00 (premium; renews at $24.99/yr), without WHOIS privacy or auto-renew?",
 			notWantInPrice: "$1,000.00/yr",
 		},
 		{
@@ -1147,7 +1147,7 @@ func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
 			result: coreapigo.SearchResult{DomainName: "free.com", Purchasable: true,
 				PurchasePrice: new(12.99), RenewalPrice: new(12.99)},
 			wantCell:   "$12.99/yr",
-			wantPrompt: "Register free.com for 1 year at $12.99/yr?",
+			wantPrompt: "Register free.com for 1 year: $12.99 (renews at $12.99/yr), without WHOIS privacy or auto-renew?",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

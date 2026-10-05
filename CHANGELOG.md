@@ -19,6 +19,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   reading the dry-run document get one new key; nothing else in it changed.
 
 ### Changed
+- The `domain register` prompt reads as one sentence and states the choices
+  it is sent with: "Register acme.io for 2 years: $35.98 total (renews at
+  $17.99/yr), with WHOIS privacy, without auto-renew?". It read "for 2 years at
+  $35.98 total for 2 years" and never mentioned privacy or auto-renew. The
+  register offer in `domain check` uses the same wording. **Scripts** matching
+  the prompt text (it appears in the non-interactive "pass --yes" error) need
+  updating.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

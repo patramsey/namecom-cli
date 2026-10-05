@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -394,20 +395,26 @@ func priceOrUnquoted(p *float64) string {
 	return output.Money(*p)
 }
 
-// registerPrompt is the purchase confirmation for body. The price it quotes
-// is the one body carries, so the user approves the amount actually
-// submitted; quoting GetPricingForDomain unconditionally meant an aftermarket
-// name or a --price override confirmed one amount and submitted another
-// (#83). pricing's registration price is quoted only when the body carries
-// none — the API then charges exactly that.
+// registerPrompt is the purchase confirmation for body: "Register acme.io for
+// 2 years: $35.98 total (renews at $17.99/yr), with WHOIS privacy, without
+// auto-renew?".
+//
+// The price it quotes is the one body carries, so the user approves the amount
+// actually submitted; quoting GetPricingForDomain unconditionally meant an
+// aftermarket name or a --price override confirmed one amount and submitted
+// another (#83). pricing's registration price is quoted only when the body
+// carries none — the API then charges exactly that.
+//
+// It read "for 2 year(s) at $35.98 total for 2 years", and said nothing of the
+// privacy and auto-renew choices the body carries (#235). Auto-renew commits
+// to future charges, so the renewal price is stated per year beside it.
 func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, pricing *coreapigo.PricingResponse) string {
 	years := 1
 	if body.Years != nil {
 		years = *body.Years
 	}
-	price := ""
-	switch {
-	case body.PurchasePrice != nil && body.PurchaseType != nil:
+	choices := registerChoices(body.Domain)
+	if body.PurchasePrice != nil && body.PurchaseType != nil {
 		// An acquisition price is a flat fee: the API documents that years on
 		// create does not multiply it, so "/yr" or "total for N years" would
 		// both misstate it. Nor does it guarantee the term for these purchase
@@ -417,29 +424,58 @@ func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, prici
 		if years != 1 {
 			note = fmt.Sprintf("; --years %d may not apply", years)
 		}
-		return fmt.Sprintf("Register %s at %s flat (%s, not per year%s)?",
-			domainName, output.Money(*body.PurchasePrice), *body.PurchaseType, note)
-	case body.PurchasePrice != nil && pricing.GetPremium():
-		// A registry premium is charged on this purchase, and the renewal price
-		// is often far lower — shoe.luxe is $1000.00 to register and $24.99 to
-		// renew. "/yr" on the purchase price read as $1000 every year (#132).
-		// Both figures are totals for the requested term (PricingResponse), so
-		// a multi-year term reuses formatTermPrice's "total for N years".
-		price = output.Money(*body.PurchasePrice)
-		if years > 1 {
-			price += fmt.Sprintf(" total for %d years", years)
-		}
-		price += " (premium"
-		if pricing.RenewalPrice != nil {
-			price += "; renews at " + formatTermPrice(*pricing.RenewalPrice, years)
-		}
-		price += ")"
-	case body.PurchasePrice != nil:
-		price = formatTermPrice(*body.PurchasePrice, years)
-	case pricing.GetPurchasePrice() != nil:
-		price = formatTermPrice(*pricing.PurchasePrice, years)
+		return fmt.Sprintf("Register %s at %s flat (%s, not per year%s), %s?",
+			domainName, output.Money(*body.PurchasePrice), *body.PurchaseType, note, choices)
 	}
-	return fmt.Sprintf("Register %s for %s at %s?", domainName, output.Plural(years, "year"), price)
+
+	price := body.PurchasePrice
+	if price == nil {
+		price = pricing.GetPurchasePrice()
+	}
+	if price == nil {
+		return fmt.Sprintf("Register %s for %s, %s?", domainName, output.Plural(years, "year"), choices)
+	}
+	amount := output.Money(*price)
+	if years > 1 {
+		// PricingResponse figures are totals for the requested term.
+		amount += " total"
+	}
+
+	// A registry premium is charged on this purchase, and the renewal price is
+	// often far lower — shoe.luxe is $1000.00 to register and $24.99 to renew.
+	// "/yr" on the purchase price read as $1000 every year (#132).
+	var notes []string
+	if body.PurchasePrice != nil && pricing.GetPremium() {
+		notes = append(notes, "premium")
+	}
+	if r := pricing.GetRenewalPrice(); r != nil {
+		// RenewalPrice is "the total renewal cost for the requested years";
+		// the spec prices N years as N times one, so this is the yearly rate.
+		notes = append(notes, "renews at "+output.Money(math.Round(*r/float64(years)*100)/100)+"/yr")
+	}
+	if len(notes) > 0 {
+		amount += " (" + strings.Join(notes, "; ") + ")"
+	}
+	return fmt.Sprintf("Register %s for %s: %s, %s?", domainName, output.Plural(years, "year"), amount, choices)
+}
+
+// registerChoices states the privacy and auto-renew settings a registration
+// is sent with, for its prompt.
+func registerChoices(d *coreapigo.DomainCreatePayload) string {
+	var privacy, autorenew bool
+	if d != nil {
+		privacy = d.PrivacyEnabled != nil && *d.PrivacyEnabled
+		autorenew = d.AutorenewEnabled != nil && *d.AutorenewEnabled
+	}
+	switch {
+	case privacy && autorenew:
+		return "with WHOIS privacy and auto-renew"
+	case privacy:
+		return "with WHOIS privacy, without auto-renew"
+	case autorenew:
+		return "with auto-renew, without WHOIS privacy"
+	}
+	return "without WHOIS privacy or auto-renew"
 }
 
 // renewPrompt is the renewal confirmation for body, quoting the price body
