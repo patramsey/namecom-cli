@@ -198,35 +198,38 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Describe exactly what API commands would use: config.Identity applies
-	// Resolve's precedence for the profile (--profile, NAMECOM_PROFILE, the
-	// file's default, the implied default), the username and the endpoint. A
-	// chain of its own here reported the wrong profile or endpoint, and told a
-	// user with one working profile to run `auth login`, which overwrites.
-	id, err := config.Identity(cfgFile, cmdutil.Overrides(cmd))
+	// Describe exactly what API commands would use, and fail exactly when they
+	// would: the same profile check, then config.Identity, which applies
+	// Resolve's precedence without running token_cmd, then the same test for a
+	// usable pair. A chain of its own here reported the wrong profile or
+	// endpoint, told a user with one working profile to run `auth login`,
+	// which overwrites, and reported a missing profile when the credentials
+	// came from the environment and no config file existed (#246).
+	ov := cmdutil.Overrides(cmd)
+	if err := cmdutil.RequireProfile(cfgFile, ov); err != nil {
+		return err
+	}
+	id, err := config.Identity(cfgFile, ov)
+	if err == nil {
+		err = config.CheckComplete(cfgFile, id)
+	}
 	if err != nil {
-		return cmdutil.NewUsageError(err)
+		if classified := cmdutil.CredentialsError(err, ov); classified != nil {
+			return classified
+		}
+		return cmdutil.NewAuthError(err)
 	}
 	profileName := id.Profile
-	p, ok := cfgFile.Profiles[profileName]
-	if !ok {
-		// Exit 3 like every other command with no usable credentials; these
-		// exited 1, so the same config gave different codes depending on
-		// which command found it (#239).
-		switch {
-		case len(cfgFile.Profiles) == 0:
-			return cmdutil.NotLoggedIn()
-		case profileName == "":
-			return cmdutil.NewAuthError(fmt.Errorf("%d profiles exist but none is the default — pass --profile or run 'namecom config use <profile>'", len(cfgFile.Profiles)))
-		}
-		return cmdutil.NewAuthError(fmt.Errorf("no profile %q configured — run 'namecom auth login --profile %s' to set it up", profileName, profileName))
-	}
+	p := cfgFile.Profiles[profileName]
 
 	// The base URL, scheme included, as auth status prints it. A bare host here
 	// put the same value in two forms across the two commands.
-	endpoint := api.DefaultBaseURL(id.Sandbox)
+	endpoint := id.BaseURL
+	if endpoint == "" {
+		endpoint = api.DefaultBaseURL(id.Sandbox)
+	}
 	tokenDisplay := "••••••••" //nolint:gosec // G101 false positive: a mask shown in place of the token, not a credential
-	if p.TokenCmd != "" {
+	if id.Sources.Token == config.SourceTokenCmd {
 		tokenDisplay = out.Dim(fmt.Sprintf("(from token_cmd: %s)", tokenCmdSummary(p.TokenCmd)))
 	}
 
@@ -237,29 +240,48 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// Each value's source is a sibling key rather than an object in place of
+	// the value, so scripts reading "username" as a string keep working.
+	fields := map[string]string{
+		"profile":        profileName,
+		"profileSource":  id.Sources.Profile,
+		"username":       id.Username,
+		"usernameSource": id.Sources.Username,
+		"tokenSource":    id.Sources.Token,
+		"endpoint":       endpoint,
+		"endpointSource": id.Sources.Endpoint(),
+		"config":         path,
+	}
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(map[string]string{
-			"profile":  profileName,
-			"username": id.Username,
-			"endpoint": endpoint,
-			"config":   path,
-		})
+		return out.JSON(fields)
 	case output.FormatYAML:
-		return out.YAML(map[string]string{
-			"profile":  profileName,
-			"username": id.Username,
-			"endpoint": endpoint,
-			"config":   path,
-		})
+		return out.YAML(fields)
 	default:
+		profileDisplay := profileName
+		if profileDisplay == "" {
+			profileDisplay = out.Dim("(none)")
+		}
+		tokenSource := id.Sources.Token
+		if tokenSource == config.SourceTokenCmd {
+			tokenSource = "" // the display already says so
+		}
 		out.KVTable([][]string{
-			{"Profile", profileName},
-			{"Username", id.Username},
-			{"Token", tokenDisplay},
-			{"Endpoint", endpoint},
+			{"Profile", WithSource(out, profileDisplay, id.Sources.Profile)},
+			{"Username", WithSource(out, id.Username, id.Sources.Username)},
+			{"Token", WithSource(out, tokenDisplay, tokenSource)},
+			{"Endpoint", WithSource(out, endpoint, id.Sources.Endpoint())},
 			{"Config file", out.Dim(path)},
 		})
 	}
 	return nil
+}
+
+// WithSource appends where a value came from, dimmed, for the table views of
+// config show and auth status.
+func WithSource(out *output.Config, value, source string) string {
+	if source == "" {
+		return value
+	}
+	return value + "  " + out.Dim("("+source+")")
 }

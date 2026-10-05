@@ -26,7 +26,15 @@ beats the config file.
                               on/off and 1/0; anything else is an error.
   NAMECOM_CONFIG              Config file to use instead of the default location.
                               When it is set, no other location is read.
+  NAMECOM_BASE_URL            API base URL, for a local stub or a proxy.
+                              --base-url overrides it. Your credentials are sent
+                              to whatever it names, and a warning says so when
+                              that is not name.com.
   NAMECOM_NO_UPDATE_NOTIFIER  Set to 1 to never print the new-release notice.
+
+NAMECOM_USERNAME and NAMECOM_TOKEN are enough on their own: no config file or
+profile is needed, which suits CI. 'namecom config show' and 'namecom auth
+status' say where each value came from.
 
 Other variables:
 
@@ -36,7 +44,9 @@ Other variables:
                               terminal. --color overrides it.
   BROWSER                     The browser 'namecom open' starts.
 
-Run 'namecom auth status' to see which config file and profile are in use.`,
+Run 'namecom auth status' to see which config file and profile are in use.
+To save a profile without a terminal, pipe the token to 'namecom auth login
+--username <name> --with-token'.`,
 }
 
 func init() {

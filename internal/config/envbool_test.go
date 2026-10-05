@@ -121,7 +121,7 @@ func checkEnvErr(t *testing.T, err error, value string) {
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 		t.Setenv(k, "")
 	}
 }

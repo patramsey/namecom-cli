@@ -74,7 +74,7 @@ func (e *NetworkError) UserHint() string {
 		return ""
 	}
 	if !isNameComHost(e.Host) {
-		return "could not reach the API — check --base-url and your network connection"
+		return "could not reach the API — check --base-url (or NAMECOM_BASE_URL) and your network connection"
 	}
 	return "could not reach the API — check your network connection"
 }

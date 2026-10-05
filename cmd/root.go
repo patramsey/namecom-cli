@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -244,7 +243,7 @@ func init() {
 	pf.BoolVarP(&gf.yes, "yes", "y", false, "skip confirmation prompts")
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "for write operations, print the request instead of sending it (reads are unaffected)")
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "pin every write in this invocation to one idempotency key (default: a fresh key per write)")
-	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
+	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name) (env: NAMECOM_BASE_URL)")
 
 	// Root help lists these under headings, not as one block of 19 (#237).
 	// Unlisted flags, the ones nearly every write uses, come first.
@@ -396,6 +395,7 @@ func flagOverrides(cmd *cobra.Command) config.Overrides {
 		Token:      gf.token,
 		Sandbox:    gf.sandbox,
 		SandboxSet: cmd.Flags().Changed("sandbox"),
+		BaseURL:    gf.baseURL,
 	}
 }
 
@@ -417,48 +417,14 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Check that an explicitly requested profile actually exists. A missing
-	// one leaves no usable credentials, so it is an auth error (exit 3), like
-	// every other way of having none (#210).
-	profileReq := gf.profile
-	if profileReq == "" {
-		profileReq = os.Getenv("NAMECOM_PROFILE")
-	}
-	if profileReq != "" && cfgFile != nil {
-		if _, ok := cfgFile.Profiles[profileReq]; !ok {
-			cfgPath, _ := config.ActivePath()
-			names := make([]string, 0, len(cfgFile.Profiles))
-			for k := range cfgFile.Profiles {
-				names = append(names, k)
-			}
-			sort.Strings(names)
-			available := "no profiles configured"
-			if len(names) > 0 {
-				available = "available: " + strings.Join(names, ", ")
-			}
-			return cmdutil.NewAuthErrorHint(fmt.Errorf("profile %q not found in %s (%s)", profileReq, cfgPath, available),
-				fmt.Sprintf("run 'namecom auth login --profile %s' to create it", profileReq))
-		}
+	if err := cmdutil.RequireProfile(cfgFile, ov); err != nil {
+		return err
 	}
 
 	creds, err := config.Resolve(cfgFile, ov)
 	if err != nil {
-		// A malformed NAMECOM_SANDBOX is how the command was invoked, not a
-		// credential problem (#225).
-		if _, ok := errors.AsType[*config.EnvError](err); ok {
-			return cmdutil.NewUsageError(err)
-		}
-		if errors.Is(err, config.ErrNoCredentials) {
-			// Resolve adds context to this error when it can say something more
-			// specific than "nothing is configured" — several profiles exist
-			// but none is the default, say. Substituting the generic text threw
-			// that away and pointed the user at `auth login`, which overwrites.
-			//nolint:errorlint // identity, not chain: the bare sentinel means
-			// Resolve had nothing to add, so the friendlier text below applies.
-			if err != config.ErrNoCredentials {
-				return cmdutil.NewAuthErrorHint(err, "") // its message says what to do
-			}
-			return cmdutil.NotLoggedIn()
+		if classified := cmdutil.CredentialsError(err, ov); classified != nil {
+			return classified
 		}
 		// A credential helper that failed is also an auth problem, not a
 		// generic runtime one. The default hint suggests `auth status`, which
@@ -470,7 +436,7 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	}
 
 	out.Sandbox = creds.Sandbox
-	if !forCompletion && gf.baseURL == "" && envNoticeTTY() {
+	if !forCompletion && creds.BaseURL == "" && envNoticeTTY() {
 		if note := envEndpointNotice(cfgFile, creds, ov); note != "" {
 			out.Warn(note)
 		}
@@ -490,13 +456,15 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 		}
 		apiOpts.MaxRetries = -1
 	}
-	if gf.baseURL != "" {
-		if err := validateBaseURL(gf.baseURL); err != nil {
+	// --base-url, else NAMECOM_BASE_URL (#246), with the same checks.
+	if creds.BaseURL != "" {
+		name := config.SourceName(creds.Sources.BaseURL)
+		if err := checkBaseURL(name, creds.BaseURL); err != nil {
 			return cmdutil.NewUsageError(err)
 		}
-		apiOpts.BaseURL = gf.baseURL
+		apiOpts.BaseURL = creds.BaseURL
 		// Not during completion: anything printed there lands mid-prompt.
-		if warn := baseURLWarning(gf.baseURL); warn != "" && !forCompletion {
+		if warn := baseURLWarningFor(name, creds.BaseURL); warn != "" && !forCompletion {
 			out.Warn(warn)
 		}
 	}
@@ -622,6 +590,7 @@ func reportError(cfg *output.Config, err error) int {
 	// request went there; cfg.Sandbox is set from the resolved credentials.
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		apiErr.Sandbox = cfg.Sandbox
+		apiErr.CredentialSource = credentialSource()
 	}
 	// A timeout says how long it waited, which is the --timeout budget.
 	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
@@ -663,18 +632,40 @@ func exitCode(err error) int {
 	return 1
 }
 
+// credentialSource names the flags or variables the credentials came from,
+// for a 401's hint, or returns "" when the token came from a profile, where
+// `auth login` is the fix. A CI job that set NAMECOM_TOKEN was told to run
+// `auth login`, which it cannot (#246).
+func credentialSource() string {
+	id, err := config.Identity(nil, config.Overrides{Username: gf.username, Token: gf.token})
+	if err != nil || id.Sources.Token == "" {
+		return ""
+	}
+	var names []string
+	for _, src := range []string{id.Sources.Username, id.Sources.Token} {
+		if src != "" {
+			names = append(names, config.SourceName(src))
+		}
+	}
+	return strings.Join(names, " and ")
+}
+
 // validateBaseURL checks a --base-url value before it is used, so a typo fails
 // with an explanation rather than an opaque transport error mid-request.
-func validateBaseURL(raw string) error {
+func validateBaseURL(raw string) error { return checkBaseURL("--base-url", raw) }
+
+// checkBaseURL is validateBaseURL for a value from name, the flag or the
+// NAMECOM_BASE_URL variable.
+func checkBaseURL(name, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid --base-url %q: %w", raw, err)
+		return fmt.Errorf("invalid %s %q: %w", name, raw, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("invalid --base-url %q: must be an absolute http:// or https:// URL", raw)
+		return fmt.Errorf("invalid %s %q: must be an absolute http:// or https:// URL", name, raw)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("invalid --base-url %q: missing host", raw)
+		return fmt.Errorf("invalid %s %q: missing host", name, raw)
 	}
 	return nil
 }
@@ -686,7 +677,11 @@ func validateBaseURL(raw string) error {
 // goes to whatever host is named. That is exactly what makes it useful against
 // a local stub, and exactly what makes it worth saying out loud — a typo'd or
 // pasted value sends a live credential to a third party.
-func baseURLWarning(raw string) string {
+func baseURLWarning(raw string) string { return baseURLWarningFor("--base-url", raw) }
+
+// baseURLWarningFor is baseURLWarning for a value from name, the flag or the
+// NAMECOM_BASE_URL variable.
+func baseURLWarningFor(name, raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
@@ -695,7 +690,7 @@ func baseURLWarning(raw string) string {
 	case "api.name.com", "api.dev.name.com":
 		return ""
 	}
-	return fmt.Sprintf("--base-url is set: requests and your API credentials are being sent to %s, not name.com", u.Host)
+	return fmt.Sprintf("%s is set: requests and your API credentials are being sent to %s, not name.com", name, u.Host)
 }
 
 // normalizeError converts a Core SDK error into the CLI's *api.APIError before

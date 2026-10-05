@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -39,9 +38,7 @@ func hasCredentials(cmd *cobra.Command) bool {
 	if err != nil {
 		return true
 	}
-	p := f.Profiles[id.Profile]
-	return id.Username != "" &&
-		(gf.token != "" || os.Getenv("NAMECOM_TOKEN") != "" || p.Token != "" || p.TokenCmd != "")
+	return id.Username != "" && id.Sources.Token != ""
 }
 
 // printGettingStarted writes the banner showGettingStarted asks for.

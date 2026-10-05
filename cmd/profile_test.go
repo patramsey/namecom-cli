@@ -42,7 +42,7 @@ func withConfig(t *testing.T, contents string) string {
 		t.Fatalf("writing config: %v", err)
 	}
 	t.Setenv("NAMECOM_CONFIG", path)
-	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 		t.Setenv(k, "")
 	}
 	return path
