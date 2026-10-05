@@ -223,7 +223,7 @@ func TestWritesAreMarked(t *testing.T) {
 		"renew": true, "lock": true, "autorenew": true, "privacy": true, "set-ns": true,
 		"set": true, "refund": true, "cancel": true, "cancel-outbound": true,
 		"internal-in": true, "resend": true, "verify": true, "login": true, "logout": true,
-		"use": true, "api": true,
+		"use": true, "api": true, "sync": true,
 	}
 	var walk func(*cobra.Command)
 	walk = func(c *cobra.Command) {

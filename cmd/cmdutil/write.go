@@ -79,12 +79,8 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	}
 
 	if w.Prompt != "" {
-		ok, err := confirmFunc(out, IsYes(cmd), w.Prompt, PromptContext(cmd))
-		if err != nil {
+		if err := ConfirmWrite(cmd, w.Prompt); err != nil {
 			return false, err
-		}
-		if !ok {
-			return false, ErrAborted
 		}
 	}
 
@@ -137,12 +133,8 @@ func RunWrites[B any](cmd *cobra.Command, prompt string, writes []Write[B], send
 	}
 
 	if prompt != "" {
-		ok, err := confirmFunc(out, IsYes(cmd), prompt, PromptContext(cmd))
-		if err != nil {
+		if err := ConfirmWrite(cmd, prompt); err != nil {
 			return 0, err
-		}
-		if !ok {
-			return 0, ErrAborted
 		}
 	}
 
@@ -160,6 +152,23 @@ func RunWrites[B any](cmd *cobra.Command, prompt string, writes []Write[B], send
 	return len(writes), nil
 }
 
+// ConfirmWrite is RunWrite's confirmation step on its own, shared by RunWrite
+// and RunWrites, and for a command whose writes are not a plain list —
+// `dns sync` confirms its whole plan once. It honours --yes, adds the
+// PromptContext line, and returns ErrAborted for a decline. StubConfirm stubs
+// it, so it stubs RunWrite's and RunWrites' prompts too.
+// A command calling it must handle --dry-run first: a dry run never prompts.
+func ConfirmWrite(cmd *cobra.Command, prompt string) error {
+	ok, err := confirmFunc(Out(cmd), IsYes(cmd), prompt, PromptContext(cmd))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrAborted
+	}
+	return nil
+}
+
 // previewOf returns the value --dry-run prints for w: nothing for NoBody, the
 // redacted form when Preview is set, and Body itself otherwise.
 func previewOf[B any](w Write[B]) any {
@@ -172,7 +181,8 @@ func previewOf[B any](w Write[B]) any {
 	return w.Body
 }
 
-// StubConfirm makes every RunWrite confirmation call answer with the question
+// StubConfirm makes every confirmation — RunWrite, RunWrites, ConfirmWrite —
+// answer with the question
 // it would have asked, and returns a function that restores the real prompt.
 // The stub ignores --yes. It is for tests outside this package, which cannot
 // otherwise reach the decline path without a terminal:

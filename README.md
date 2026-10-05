@@ -153,7 +153,7 @@ namecom open mycoolstartup.com
 | Group | Commands |
 |---|---|
 | `domain` | `list` `get` `search` `check` `register` `renew` `lock` `autorenew` `privacy` `set-ns` `contacts` `auth-code` `pricing` `update` `claims` `requirements` |
-| `dns` | `list` `create` `update` `delete` `export` `import` |
+| `dns` | `list` `create` `update` `delete` `export` `import` `sync` |
 | `dnssec` | `list` `get` `create` `delete` |
 | `transfer` | `list` `get` `create` `cancel` `eligibility` `internal-in` `cancel-outbound` |
 | `email` | `list` `get` `create` `update` `delete` |
@@ -196,7 +196,33 @@ namecom dns list acme.io
 namecom dns create acme.io --type CNAME --host www --answer acme.io.
 namecom dns update acme.io 12345 --answer 5.6.7.8
 namecom dns export acme.io --zone > acme.io.zone           # export as BIND zone file
+namecom dns list acme.io --host www                       # only the records at www
 ```
+
+**Keep DNS in a file and sync it** (re-runnable: a second run changes nothing):
+```bash
+namecom dns export acme.io --zone > acme.io.zone           # 1. snapshot the live zone
+$EDITOR acme.io.zone                                       # 2. edit it, or keep it in git
+namecom dns sync acme.io --file acme.io.zone --dry-run     # 3. see the plan; nothing is sent
+namecom dns sync acme.io --file acme.io.zone               # 4. apply it, after a confirmation
+namecom dns sync acme.io --file acme.io.zone --prune       #    ...also deleting what the file dropped
+```
+
+`dns sync` matches records on host, type and answer: a TTL or priority change
+is an update, and a changed answer is a new record (the old one is deleted
+only with `--prune`; a CNAME's target is updated in place, since a name holds
+one CNAME). Without `--prune` nothing is deleted. `--prune` never touches NS
+records at the apex — the domain's delegation — or CAA records, which the API
+cannot recreate; `--prune-all` does. A file with no records is refused with
+either, so a wrong path cannot empty the zone. Changes are applied creates first, then
+updates, then deletes. If one fails, sync stops, reports what was applied, and
+exits non-zero; fix the cause and run it again. The file can also be the JSON
+`dns export` writes. In CI, `--dry-run -o json` gives the plan as one
+document, and `--yes` skips the confirmation.
+
+For scripts that add or remove single records, `dns create --if-not-exists`,
+`dns delete --if-exists` and `dns import --skip-existing` succeed when the
+work is already done, so a retry does not fail.
 
 **Transfer a domain in:**
 ```bash

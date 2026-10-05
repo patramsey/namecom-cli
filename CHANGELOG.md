@@ -41,6 +41,27 @@ Releases before `0.2.0` predate this file. Their notes are on the
   more than one domain, or with `-`, prints a JSON (or YAML) array; with
   one domain named on the command line it prints the same single object
   as before.
+- `namecom dns sync <domain> --file <file>` makes a domain's records match a
+  file — the JSON `dns export` writes, or a BIND zone file such as
+  `dns export --zone` writes. It prints a plan of creates, updates (a TTL or
+  priority change) and deletes, asks once, and applies it creates first.
+  Deleting needs `--prune`, and `--prune` never touches NS records at the apex
+  or CAA records; `--prune-all` does. An empty file is refused with either.
+  `--dry-run` prints the plan, as one
+  document with `-o json`. A failure stops the run and reports what was
+  applied and what was not; running sync again picks up from the live zone,
+  and a run with nothing to change sends nothing.
+- `dns import` reads BIND zone files as well as JSON, and `--skip-existing`
+  skips records already in the zone instead of stopping at the first one, so
+  a partly applied import can be run again. With it, `--dry-run` previews
+  only the records that would be created.
+- `dns create --if-not-exists` exits 0 and prints the existing record's ID
+  when a record with the same host, type and answer is already there.
+  `dns delete --if-exists` exits 0 when the record is already gone (a missing
+  domain still exits 4). With several IDs it skips the ones already gone,
+  with a note, and deletes the rest.
+- `dns list --host <host>` lists only the records at that host; `@` or the
+  domain itself means the apex.
 - A dry run of `domain register`, `domain renew` or `transfer create` now
   says what the real run would charge. Table mode ends with a line on stderr,
   `Would charge: $39.98 (2 years) · sandbox · profile default`; JSON and YAML
