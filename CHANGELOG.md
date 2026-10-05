@@ -24,6 +24,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - A bare `namecom` with no credentials prints a short getting-started banner
   (`namecom auth login`, and where to create a token) instead of the full
   command list. `namecom --help` still prints the full help.
+- When name.com rejects the credentials typed into `auth login` (HTTP 401 or
+  403), it explains why and asks "Try again?", reopening the form with the
+  username kept, instead of exiting. Declining, `--yes` and `--dry-run` exit
+  **3** as before, and nothing is saved until a check succeeds.
 
 ### Fixed
 - `dns create` in a terminal opens its guided form again when `--type` or

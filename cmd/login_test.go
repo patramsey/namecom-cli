@@ -39,6 +39,7 @@ func stubLoginAnswers(t *testing.T, username, token string, sandboxAnswer bool) 
 	}
 	t.Cleanup(func() { askLogin = prev })
 	t.Cleanup(output.StubInteractive(true))
+	stubRetryLogin(t, false)
 	prevGF := gf
 	gf = globalFlags{baseURL: helloServer(t).URL}
 	t.Cleanup(func() { gf = prevGF })
@@ -101,6 +102,20 @@ func stubSaveUnverified(t *testing.T, answer bool) *bool {
 		return answer || yes, nil
 	}
 	t.Cleanup(func() { confirmSaveUnverified = prev })
+	return asked
+}
+
+// stubRetryLogin answers "try again?" after a rejection and counts how often
+// it was asked.
+func stubRetryLogin(t *testing.T, answer bool) *int {
+	t.Helper()
+	asked := new(int)
+	prev := confirmRetryLogin
+	confirmRetryLogin = func(_ *output.Config, _ bool, _, _ string) (bool, error) {
+		*asked++
+		return answer, nil
+	}
+	t.Cleanup(func() { confirmRetryLogin = prev })
 	return asked
 }
 

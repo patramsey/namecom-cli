@@ -90,27 +90,49 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	// production profile unless the user also said Yes at the prompt.
 	sandbox := cmdutil.IsSandbox(cmd)
 	a := loginAnswers{Sandbox: sandbox}
-	if err := askLogin(&a, !sandbox); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			out.Warn("aborted")
-			return nil
+	var verifiedAs string
+	var err error
+	for {
+		if err := askLogin(&a, !sandbox); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				out.Warn("aborted")
+				return nil
+			}
+			return fmt.Errorf("form: %w", err)
 		}
-		return fmt.Errorf("form: %w", err)
-	}
-	// A token pasted with a trailing space or newline was saved with it, and
-	// every request then failed with a 401 (#229).
-	a.Username = strings.TrimSpace(a.Username)
-	a.Token = strings.TrimSpace(a.Token)
+		// A token pasted with a trailing space or newline was saved with it,
+		// and every request then failed with a 401 (#229).
+		a.Username = strings.TrimSpace(a.Username)
+		a.Token = strings.TrimSpace(a.Token)
 
-	// Check the credentials before saving them (#229). This runs under
-	// --dry-run too: Hello is a read that changes nothing, as the reads
-	// behind other commands' previews are, and it lets the preview say
-	// whether the save would go ahead. Only the write below is skipped.
-	verifiedAs, err := verifyLogin(cmd, a)
+		// Check the credentials before saving them (#229). This runs under
+		// --dry-run too: Hello is a read that changes nothing, as the reads
+		// behind other commands' previews are, and it lets the preview say
+		// whether the save would go ahead. Only the write below is skipped.
+		verifiedAs, err = verifyLogin(cmd, a)
+		if err == nil || !isRejected(err) {
+			break
+		}
+		rejected := rejectedLoginError(err, a)
+		// A rejection used to end the command, and the user retyped
+		// everything from the start (#239). Offer the form again, with the
+		// username and sandbox answer kept. Not under --yes or --dry-run,
+		// which promise not to ask.
+		if cmdutil.IsYes(cmd) || cmdutil.IsDryRun(cmd) {
+			return rejected
+		}
+		out.Warn(rejected.Error())
+		again, cerr := confirmRetryLogin(out, false, "Try again?", "")
+		if cerr != nil {
+			return cerr
+		}
+		if !again {
+			return rejected
+		}
+		a.Token = ""
+	}
 	switch {
 	case err == nil:
-	case isRejected(err):
-		return rejectedLoginError(err, a)
 	case cmdutil.IsDryRun(cmd):
 		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
 	case cmdutil.IsYes(cmd):
@@ -179,6 +201,10 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 // confirmSaveUnverified asks whether to save credentials the API could not be
 // reached to check. Replaceable in tests.
 var confirmSaveUnverified = cmdutil.Confirm
+
+// confirmRetryLogin asks whether to try again after the API rejected the
+// credentials. Replaceable in tests.
+var confirmRetryLogin = cmdutil.Confirm
 
 // verifyLogin checks a's credentials with the API's Hello endpoint, against
 // the endpoint the saved profile will use, and returns the username the API
