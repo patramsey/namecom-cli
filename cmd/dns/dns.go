@@ -495,10 +495,24 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Fetch the record so the prompt can show it. "Delete DNS record 12345
+	// from D?" named only an ID, and was asked even for a record that did not
+	// exist (#235). A missing one now fails here, before any prompt.
+	stop := out.Spin("Fetching record…")
+	current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+	stop()
+	if err != nil {
+		err = api.FromSDKError(err)
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
+		}
+		return err
+	}
+
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
 		Path:   fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id),
-		Prompt: fmt.Sprintf("Delete DNS record %d from %s?", id, domain),
+		Prompt: fmt.Sprintf("Delete %s from %s?", recordSummary(current), domain),
 		Spin:   "Deleting record…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
 		return api.FromSDKError(client.SDK().DNS.DeleteRecord(ctx, &coreapigo.DeleteRecordRequest{
@@ -729,6 +743,20 @@ func recordName(host, domain string) string {
 		return domain
 	}
 	return host + "." + domain
+}
+
+// recordSummary describes r in one line, "A www → 1.2.3.4 (TTL 300)", with
+// the priority for a record that has one: "MX @ → mail.example.com
+// (priority 10, TTL 300)".
+func recordSummary(r *coreapigo.Record) string {
+	if r == nil {
+		return "the record"
+	}
+	detail := fmt.Sprintf("TTL %d", r.TTL)
+	if r.Priority != nil {
+		detail = fmt.Sprintf("priority %d, %s", *r.Priority, detail)
+	}
+	return fmt.Sprintf("%s %s → %s (%s)", derefStr(r.Type), displayHost(r.Host), derefStr(r.Answer), detail)
 }
 
 // recordChanges describes what an update changes, "answer 192.0.2.1 →

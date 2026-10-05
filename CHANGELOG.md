@@ -62,6 +62,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the post-registration or post-transfer lock is in force) and Registrant
   (name, company, and whether its email is verified). **Scripts** reading the
   `Key  value` lines by position need updating; JSON and YAML are unchanged.
+- `dns delete` and `url delete` fetch the record first and show it in the
+  prompt — "Delete A www → 1.2.3.4 (TTL 300) from example.com?", "Delete URL
+  forwarding go.example.com → https://acme.io (redirect) from example.com?" —
+  instead of only its ID. A record that does not exist now fails with
+  not-found (exit 4) before any prompt, under `--yes` and `--dry-run` too.
+  **Scripts** matching the prompt text need updating.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

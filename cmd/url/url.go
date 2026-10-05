@@ -515,10 +515,29 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Fetch the forwarding so the prompt can show it. "Delete URL forwarding
+	// 7 from D?" named only an ID, and was asked even for one that did not
+	// exist (#235). A missing one now fails here, before any prompt.
+	stop := out.Spin("Fetching URL forwarding…")
+	current, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
+		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
+	stop()
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s — run 'namecom url list %s' to see forwarding IDs", id, domain, domain))
+	}
+	if err != nil {
+		return err
+	}
+	prompt := fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain)
+	if current != nil {
+		prompt = fmt.Sprintf("Delete URL forwarding %s → %s (%s) from %s?",
+			displayHost(current.Host), current.ForwardsTo, current.Type, domain)
+	}
+
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
 		Path:   fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id),
-		Prompt: fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain),
+		Prompt: prompt,
 		Spin:   "Deleting URL forwarding…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
 		return client.SDK().URLForwardings.DeleteURLForwardingByID(ctx,
