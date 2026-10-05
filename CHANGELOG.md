@@ -10,6 +10,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Added
+- `domain check` takes any number of names. The API answers at most 50 per
+  request, so a longer list is sent 50 at a time, one batch after another,
+  and the results come back as one table (or one JSON array) in the order
+  the names were given. 120 names used to fail with "number of items must
+  be less than or equal to 50".
 - A dry run of `domain register`, `domain renew` or `transfer create` now
   says what the real run would charge. Table mode ends with a line on stderr,
   `Would charge: $39.98 (2 years) · sandbox · profile default`; JSON and YAML
