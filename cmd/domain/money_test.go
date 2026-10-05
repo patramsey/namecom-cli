@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -121,6 +122,52 @@ func TestPurchaseDryRun_StatesTheCharge(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// TestDomainRows_RenewalLockAndRegistrant pins #235: `domain get` left out
+// renewalPrice, transferLockExpiresAt and the registrant, all in the JSON.
+// Each row appears only when the response carries it; a lock that has
+// already lifted is not shown.
+func TestDomainRows_RenewalLockAndRegistrant(t *testing.T) {
+	now := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+	labels := func(rows [][]string) map[string]string {
+		m := map[string]string{}
+		for _, r := range rows {
+			m[r[0]] = r[1]
+		}
+		return m
+	}
+
+	bare := labels(domainRows(out, &coreapigo.DomainResponsePayload{DomainName: "acme.io"}, now))
+	for _, k := range []string{"Renews at", "Transfer lock", "Registrant"} {
+		if _, ok := bare[k]; ok {
+			t.Errorf("%s shown for a response without it", k)
+		}
+	}
+
+	lock := time.Now().AddDate(0, 0, 90)
+	full := labels(domainRows(out, &coreapigo.DomainResponsePayload{
+		DomainName:            "acme.io",
+		RenewalPrice:          ptr(17.99),
+		TransferLockExpiresAt: &lock,
+		Contacts: &coreapigo.Contacts{Registrant: &coreapigo.RegistrantContact{
+			FirstName: ptr("Jane"), LastName: ptr("Doe"), CompanyName: ptr("Acme Inc"), IsVerified: ptr(false)}},
+	}, now))
+	if got := full["Renews at"]; got != "$17.99" {
+		t.Errorf("Renews at = %q", got)
+	}
+	if got, want := full["Transfer lock"], "until "+lock.Format("2006-01-02")+" (in 3 months)"; got != want {
+		t.Errorf("Transfer lock = %q, want %q", got, want)
+	}
+	if got := full["Registrant"]; got != "Jane Doe (Acme Inc) · email not verified" {
+		t.Errorf("Registrant = %q", got)
+	}
+
+	past := now.AddDate(0, 0, -1)
+	if _, ok := labels(domainRows(out, &coreapigo.DomainResponsePayload{DomainName: "acme.io", TransferLockExpiresAt: &past}, now))["Transfer lock"]; ok {
+		t.Error("a lock that has lifted is still shown")
+	}
+}
 
 // TestPricing_HeadedAndNoPremiumRow pins #235: `domain pricing` printed an
 // unheaded table with "Premium: no" as a row of the PRICE column. The heading

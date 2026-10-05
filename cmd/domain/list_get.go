@@ -305,19 +305,75 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return out.YAML(d)
 	default:
 		out.Title(d.DomainName)
-		rows := [][]string{
-			{"Domain", d.DomainName},
-			{"Created", out.Dim(formatTime(d.CreateDate))},
-			{"Expires", out.ExpiryDate(d.ExpireDate)},
-			{"Auto-Renew", out.BoolBadge(d.AutorenewEnabled)},
-			{"Locked", out.BoolAlert(d.Locked, false)},
-			{"Privacy", out.BoolBadge(d.PrivacyEnabled)},
-			{"Nameservers", out.Dim(formatNS(d.Nameservers))},
-		}
-		out.KVTable(rows)
+		out.KVTable(domainRows(out, d, time.Now()))
 		out.Hint(domainHint(d, time.Now()))
 	}
 	return nil
+}
+
+// domainRows is the detail view of d. Renews at, Transfer lock and Registrant
+// appear only when the response carries them: the JSON had all three while
+// the table showed none, so the renewal price, the date an unlock becomes
+// possible, and whose name the domain is in were a `-o json` away (#235).
+func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time.Time) [][]string {
+	rows := [][]string{
+		{"Domain", d.DomainName},
+		{"Created", out.Dim(formatTime(d.CreateDate))},
+		{"Expires", out.ExpiryDate(d.ExpireDate)},
+	}
+	if d.RenewalPrice != nil {
+		rows = append(rows, []string{"Renews at", output.Money(*d.RenewalPrice)})
+	}
+	rows = append(rows,
+		[]string{"Auto-Renew", out.BoolBadge(d.AutorenewEnabled)},
+		[]string{"Locked", out.BoolAlert(d.Locked, false)},
+	)
+	// An expiry in the past is a lock that has already lifted.
+	if t := d.TransferLockExpiresAt; t != nil && t.After(now) {
+		rows = append(rows, []string{"Transfer lock", "until " + t.Format("2006-01-02") + " (" + output.Relative(*t) + ")"})
+	}
+	rows = append(rows, []string{"Privacy", out.BoolBadge(d.PrivacyEnabled)})
+	if d.Contacts != nil {
+		if r := registrantLabel(d.Contacts.Registrant); r != "" {
+			rows = append(rows, []string{"Registrant", r})
+		}
+	}
+	return append(rows, []string{"Nameservers", out.Dim(formatNS(d.Nameservers))})
+}
+
+// registrantLabel names a registrant — "Jane Doe (Acme Inc)" — and says
+// whether its email is verified, which ICANN requires and an unverified
+// contact can get the domain suspended for. "" when there is no name.
+func registrantLabel(r *coreapigo.RegistrantContact) string {
+	if r == nil {
+		return ""
+	}
+	var name []string
+	for _, p := range []*string{r.FirstName, r.LastName} {
+		if p != nil && strings.TrimSpace(*p) != "" {
+			name = append(name, strings.TrimSpace(*p))
+		}
+	}
+	label := strings.Join(name, " ")
+	if r.CompanyName != nil && strings.TrimSpace(*r.CompanyName) != "" {
+		company := strings.TrimSpace(*r.CompanyName)
+		if label == "" {
+			label = company
+		} else {
+			label += " (" + company + ")"
+		}
+	}
+	if label == "" {
+		return ""
+	}
+	if r.IsVerified != nil {
+		if *r.IsVerified {
+			label += " · email verified"
+		} else {
+			label += " · email not verified"
+		}
+	}
+	return label
 }
 
 // domainHint picks the next step for the domain's state. It always suggested

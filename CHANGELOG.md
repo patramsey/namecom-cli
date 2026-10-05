@@ -57,6 +57,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   TLDs)`, with `(premium)` after the name for a premium domain. The PRICE
   column no longer has a `Premium  no` row. **Scripts** reading the table
   need updating; JSON, YAML and `-q` are unchanged.
+- `domain get` shows three more rows when the API returns them: Renews at
+  (the renewal price), Transfer lock (`until 2026-11-28 (in 2 months)`, while
+  the post-registration or post-transfer lock is in force) and Registrant
+  (name, company, and whether its email is verified). **Scripts** reading the
+  `Key  value` lines by position need updating; JSON and YAML are unchanged.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
