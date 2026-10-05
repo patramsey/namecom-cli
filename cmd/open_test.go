@@ -248,12 +248,13 @@ func TestRenderOpen(t *testing.T) {
 	})
 
 	t.Run("table when opened", func(t *testing.T) {
-		out, stdout, _ := openOut(output.FormatTable)
+		out, stdout, stderr := openOut(output.FormatTable)
 		if err := renderOpen(out, target, nil); err != nil {
 			t.Fatalf("renderOpen: %v", err)
 		}
-		if !strings.Contains(stdout.String(), "Opening "+target) {
-			t.Errorf("stdout = %q", stdout)
+		// Commentary, so stderr; stdout stays empty.
+		if !strings.Contains(stderr.String(), "Opening "+target) || stdout.Len() != 0 {
+			t.Errorf("stdout = %q, stderr = %q", stdout, stderr)
 		}
 	})
 }

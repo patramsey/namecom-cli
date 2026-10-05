@@ -129,7 +129,8 @@ func TestDomainRequirements_TableRendersCapabilities(t *testing.T) {
 	if err := runRequirements(cmd, []string{"fr"}); err != nil {
 		t.Fatalf("runRequirements: %v", err)
 	}
-	got := stdout.String()
+	// The pointers below are hints, which go to stderr.
+	got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 
 	for _, want := range []string{
 		"1, 2, 5", // allowedRegistrationYears, via joinYears
@@ -326,7 +327,7 @@ func TestDomainClaims_ClaimedVsUnclaimed(t *testing.T) {
 			if err := runClaims(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("runClaims: %v", err)
 			}
-			got := stdout.String()
+			got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 			if !strings.Contains(got, tt.wantText) {
 				t.Errorf("output should contain %q, got:\n%s", tt.wantText, got)
 			}
@@ -348,8 +349,8 @@ func TestDomainClaims_InactiveClaimsProcessIsCalledOut(t *testing.T) {
 	if err := runClaims(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runClaims: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "not currently running a claims process") {
-		t.Errorf("an inactive claims process should be stated, got:\n%s", stdout.String())
+	if got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(got, "not currently running a claims process") {
+		t.Errorf("an inactive claims process should be stated, got:\n%s", got)
 	}
 }
 
@@ -396,7 +397,7 @@ func TestDomainClaims_StructuredOutput(t *testing.T) {
 			if err := runClaims(cmd, []string{"tiktok.page"}); err != nil {
 				t.Fatalf("runClaims: %v", err)
 			}
-			got := stdout.String()
+			got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 			if !strings.Contains(got, "ABC-123") {
 				t.Errorf("%s output should carry the claim id, got:\n%s", format, got)
 			}

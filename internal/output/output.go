@@ -474,7 +474,7 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 		notes = append(notes, "long values cut short with …")
 	}
 	if len(notes) > 0 {
-		fmt.Fprintln(c.Writer, c.Dim(strings.Join(notes, "; ")+
+		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(notes, "; ")+
 			" — widen the terminal, pass --wide, or use -o json"))
 	}
 }
@@ -783,18 +783,21 @@ func (c *Config) Success(msg string) {
 	}
 }
 
-// Hint prints a dimmed suggestion line to stdout — shown only in table mode,
-// and never in quiet mode, where stdout is reserved for the values a script
-// captures: `ID=$(namecom dns create … -q)` received the hint instead.
+// Hint prints a dimmed next-step suggestion to stderr — shown only in table
+// mode, and never in quiet mode.
+//
+// It went to stdout, so `domain list -o table > domains.txt` saved the
+// "→ Run …" lines with the table (#233). stdout is for the result; anything
+// said about the result goes to stderr, as gh does.
 func (c *Config) Hint(msg string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
 	if c.ColorEnabled() {
 		arrow := styleDim.Render("→")
-		fmt.Fprintln(c.Writer, arrow+" "+styleDim.Render(msg))
+		fmt.Fprintln(c.EWriter, arrow+" "+styleDim.Render(msg))
 	} else {
-		fmt.Fprintln(c.Writer, "→ "+msg)
+		fmt.Fprintln(c.EWriter, "→ "+msg)
 	}
 }
 
@@ -1420,16 +1423,33 @@ func (c *Config) dryRunText(reqs []DryRunRequest) error {
 	return nil
 }
 
-// Count prints a dim result count footer — only in table mode, skipped in quiet mode.
-func (c *Config) Count(n int, noun string) {
+// Count prints the footer under a list — "3 domains" — with any notes after
+// it on the same line: "25 transfers · first page — pass --all for the rest".
+//
+// A paginated list used to print two footers, "(250 domains)" and then
+// "Showing 1–250 of 6522 — …" as a hint, saying the count twice and wrapping
+// at 80 columns (#233). A list that has more to say passes it as a note.
+func (c *Config) Count(n int, noun string, notes ...string) {
+	c.Footer(append([]string{Plural(n, noun)}, notes...)...)
+}
+
+// Footer prints parts as one dim line on stderr, joined with " · ". Only in
+// table mode, and not in quiet mode. Count is the usual caller; a list whose
+// count reads differently ("Showing 1–250 of 6,522 domains") calls it
+// directly. It goes to stderr for the reason Hint does.
+func (c *Config) Footer(parts ...string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
-	label := noun + "s"
-	if n == 1 {
-		label = noun
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
 	}
-	fmt.Fprintln(c.Writer, c.Dim(fmt.Sprintf("(%d %s)", n, label)))
+	if len(kept) > 0 {
+		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(kept, " · ")))
+	}
 }
 
 // Dim returns text rendered in a muted/gray style.
@@ -1492,13 +1512,14 @@ func (c *Config) Title(name string) {
 	}
 }
 
-// Empty prints an empty-state message when a list returns zero results.
-// noun should be singular ("domain", "record"). hint is shown as a dim hint.
+// Empty prints an empty-state message to stderr when a list returns zero
+// results, so an empty list leaves stdout empty. noun should be singular
+// ("domain", "record"). hint is shown as a dim hint.
 func (c *Config) Empty(noun, hint string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
-	fmt.Fprintln(c.Writer, c.Dim("No "+noun+"s found."))
+	fmt.Fprintln(c.EWriter, c.Dim("No "+PluralNoun(2, noun)+" found."))
 	if hint != "" {
 		c.Hint(hint)
 	}

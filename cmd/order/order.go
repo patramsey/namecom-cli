@@ -199,9 +199,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 			[]string{"ID", "STATUS", "DATE", "TOTAL"},
 			orderRows(out, orders),
 		)
-		out.Count(len(orders), "order")
 		if hasMore {
-			out.Hint("Showing the newest orders — use --since, --domain, or --status to narrow results; --all for full history")
+			out.Count(len(orders), "order", "newest first — narrow with --since, --domain or --status, or pass --all")
+		} else {
+			out.Count(len(orders), "order")
 		}
 	}
 	return nil
@@ -371,7 +372,6 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		for _, p := range problems {
 			out.Warn(p)
 		}
-		out.Hint("Run 'namecom order list' to see updated order status")
 	}
 	if failed > 0 {
 		// Exit 1: the request was valid and authorized, the API declined part

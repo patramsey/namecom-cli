@@ -201,9 +201,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 			[]string{"DOMAIN", "STATUS"},
 			transferRows(out, transfers),
 		)
-		out.Count(len(transfers), "transfer")
 		if hasMore {
-			out.Hint("Showing first page — pass --all for full transfer history")
+			out.Count(len(transfers), "transfer", "first page — pass --all for full history")
+		} else {
+			out.Count(len(transfers), "transfer")
 		}
 	}
 	return nil

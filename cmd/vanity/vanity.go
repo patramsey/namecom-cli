@@ -160,9 +160,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			[]string{"HOSTNAME", "IPS"},
 			vanityRows(all),
 		)
-		out.Count(len(all), "vanity nameserver")
 		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
+			out.Count(len(all), "vanity nameserver", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(all), "vanity nameserver")
 		}
 	}
 	return nil

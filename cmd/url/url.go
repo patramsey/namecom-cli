@@ -178,9 +178,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			[]string{"ID", "HOST", "FORWARDS TO", "TYPE"},
 			urlRows(all),
 		)
-		out.Count(len(all), "URL forwarding")
 		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
+			out.Count(len(all), "URL forwarding", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(all), "URL forwarding")
 		}
 	}
 	return nil

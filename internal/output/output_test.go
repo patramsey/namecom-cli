@@ -668,21 +668,69 @@ func int32Ptr(i int32) *int32 { return &i }
 // ---- Hint / WarnBox suppression --------------------------------------------
 
 // Hint is commentary. Emitting it in JSON or YAML mode would corrupt the
-// document that a caller is about to parse.
+// document that a caller is about to parse. In table mode it goes to stderr,
+// so a table redirected to a file holds only the table (#233).
 func TestHint_OnlyInTableMode(t *testing.T) {
 	for _, f := range []Format{FormatJSON, FormatYAML} {
-		var buf bytes.Buffer
-		c := &Config{Format: f, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+		var buf, ebuf bytes.Buffer
+		c := &Config{Format: f, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
 		c.Hint("run something else")
-		if buf.Len() != 0 {
-			t.Errorf("Hint must be silent in %s mode, got: %q", f, buf.String())
+		if buf.Len() != 0 || ebuf.Len() != 0 {
+			t.Errorf("Hint must be silent in %s mode, got: %q %q", f, buf.String(), ebuf.String())
 		}
 	}
-	var buf bytes.Buffer
-	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	var buf, ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
 	c.Hint("run something else")
-	if !strings.Contains(buf.String(), "run something else") {
-		t.Errorf("Hint should print in table mode, got: %q", buf.String())
+	if ebuf.String() != "→ run something else\n" || buf.Len() != 0 {
+		t.Errorf("Hint should print to stderr in table mode, got stdout %q, stderr %q", buf.String(), ebuf.String())
+	}
+}
+
+// Count, Footer and Empty describe a list rather than being part of it, so
+// they go to stderr too, and Count formats its number (#233, #238).
+func TestCountFooterEmpty_GoToStderr(t *testing.T) {
+	var buf, ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
+	c.Count(6522, "domain")
+	c.Count(1, "entry", "first page — pass --all for the rest")
+	c.Footer("Showing 1–2 of 3", "", "--page 2")
+	c.Empty("DNS record", "")
+	want := "6,522 domains\n" +
+		"1 entry · first page — pass --all for the rest\n" +
+		"Showing 1–2 of 3 · --page 2\n" +
+		"No DNS records found.\n"
+	if ebuf.String() != want || buf.Len() != 0 {
+		t.Errorf("stdout %q, stderr %q; want stderr %q", buf.String(), ebuf.String(), want)
+	}
+
+	c.QuietMode = true
+	ebuf.Reset()
+	c.Count(2, "domain")
+	if ebuf.Len() != 0 {
+		t.Errorf("Count printed in quiet mode: %q", ebuf.String())
+	}
+}
+
+func TestPlural(t *testing.T) {
+	for _, tt := range []struct {
+		n    int
+		noun string
+		want string
+	}{
+		{1, "year", "1 year"},
+		{2, "year", "2 years"},
+		{0, "domain", "0 domains"},
+		{6522, "domain", "6,522 domains"},
+		{2, "entry", "2 entries"},
+		{2, "key", "2 keys"},
+		{2, "address", "2 addresses"},
+		{1000000, "record", "1,000,000 records"},
+		{-1234, "day", "-1,234 days"},
+	} {
+		if got := Plural(tt.n, tt.noun); got != tt.want {
+			t.Errorf("Plural(%d, %q) = %q, want %q", tt.n, tt.noun, got, tt.want)
+		}
 	}
 }
 

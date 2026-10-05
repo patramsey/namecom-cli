@@ -238,10 +238,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			// Unfiltered: group by type with section headers.
 			renderGroupedRecords(out, records)
 		}
-		out.Count(len(records), "record")
 		if hasMore {
-			out.Hint("More records exist — pass --all to fetch all pages")
+			out.Count(len(records), "record", "more exist — pass --all for the rest")
 		} else {
+			out.Count(len(records), "record")
 			out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to view domain details", domain))
 		}
 	}

@@ -155,14 +155,15 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			unverifiedRows(out, contacts),
 			output.Essential("DOMAINS"),
 		)
-		out.Count(len(contacts), "unverified contact")
+		if hasMore {
+			out.Count(len(contacts), "unverified contact", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(contacts), "unverified contact")
+		}
 		out.WarnBox(
 			"Domains with unverified contacts may be LOCKED by the registry after the deadline.",
 			"Run 'namecom contact resend <id>' to send the verification email again.",
 		)
-		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
-		}
 	}
 	return nil
 }

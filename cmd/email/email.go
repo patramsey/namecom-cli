@@ -154,9 +154,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			[]string{"MAILBOX", "FORWARDS TO"},
 			emailRows(all),
 		)
-		out.Count(len(all), "forwarding")
 		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
+			out.Count(len(all), "forwarding", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(all), "forwarding")
 		}
 	}
 	return nil

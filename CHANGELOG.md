@@ -22,6 +22,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   table — columns aligned with spaces, no borders — like `gh` does, so `awk`
   and `cut` can split it. Detail views (`domain get`, `auth status`) print
   `Key  value` lines the same way. In a terminal tables keep their borders.
+- **Scripts:** in table mode, hints (`→ Run …`), list counts, "No … found"
+  messages and the hidden-columns footer now go to stderr, so
+  `namecom domain list -o table > domains.txt` saves only the table. The count
+  reads `2 domains` rather than `(2 domains)`, and a paginated list prints one
+  footer instead of two: `Showing 1–250 of 6,522 domains · --page 2 for more,
+  --all for everything`, short enough for 80 columns. JSON and YAML output is
+  unchanged.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

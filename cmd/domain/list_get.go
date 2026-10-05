@@ -248,19 +248,23 @@ func runList(cmd *cobra.Command, _ []string) error {
 			})
 		}
 		out.Table(headers, rows)
-		out.Count(len(domains), "domain")
-		if hasMore && lastResult.TotalCount > 0 {
-			nextPage := 0
+		// One footer, short enough for 80 columns. --filter and --tld are in
+		// the help; the footer only says how to see the rest.
+		switch {
+		case hasMore && lastResult.TotalCount > 0:
+			nextPage := 2
 			if lastResult.NextPage != nil {
 				nextPage = *lastResult.NextPage
 			}
-			hint := fmt.Sprintf(
-				"Showing %d–%d of %d — use --page %d for next page, or --filter/--tld to narrow results, --all for everything",
-				lastResult.From, lastResult.To, lastResult.TotalCount, nextPage,
+			out.Footer(
+				fmt.Sprintf("Showing %s–%s of %s", output.Thousands(lastResult.From),
+					output.Thousands(lastResult.To), output.Plural(lastResult.TotalCount, "domain")),
+				fmt.Sprintf("--page %d for more, --all for everything", nextPage),
 			)
-			out.Hint(hint)
-		} else if hasMore {
-			out.Hint("Showing first page — use --page 2 for next, --filter/--tld to narrow results, --all for everything")
+		case hasMore:
+			out.Count(len(domains), "domain", "first page — --page 2 for more, --all for everything")
+		default:
+			out.Count(len(domains), "domain")
 		}
 	}
 	return nil

@@ -501,8 +501,8 @@ func TestDNSList_NullRecordIsSkipped(t *testing.T) {
 			if got != "7\n" {
 				t.Errorf("--quiet output = %q, want only the one record's ID", got)
 			}
-		} else if !strings.Contains(got, "192.0.2.1") || !strings.Contains(got, "(1 record)") {
-			t.Errorf("table should show the one record and count only it:\n%s", got)
+		} else if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(got, "192.0.2.1") || !strings.Contains(stderr, "1 record\n") {
+			t.Errorf("table should show the one record and count only it:\n%s\nstderr:\n%s", got, stderr)
 		}
 	}
 }
@@ -534,8 +534,13 @@ func TestDNSList_HasMoreHint(t *testing.T) {
 	if err := runList(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "More records") {
-		t.Errorf("expected 'More records' hint when hasMore=true, got: %q", stdout.String())
+	// The note is part of the count footer, on stderr, so it stays out of a
+	// table redirected to a file.
+	if stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String(); !strings.Contains(stderr, "more exist — pass --all") {
+		t.Errorf("expected a 'more exist' note when hasMore=true, got: %q", stderr)
+	}
+	if strings.Contains(stdout.String(), "--all") {
+		t.Errorf("the note leaked onto stdout: %q", stdout.String())
 	}
 }
 

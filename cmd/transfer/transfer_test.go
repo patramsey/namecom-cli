@@ -207,7 +207,7 @@ func TestTransferList_Empty(t *testing.T) {
 	// An empty result must still guide the user — the point of the empty state
 	// is that someone with no records is told what to do next, not shown a
 	// blank screen. Asserting err == nil alone cannot see that.
-	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	buf, ok := cmdutil.Out(cmd).EWriter.(*bytes.Buffer)
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
@@ -826,7 +826,8 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			if err := runEligibility(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("runEligibility: %v", err)
 			}
-			got := stdout.String()
+			// The recommendation is a hint, on stderr; the badges are on stdout.
+			got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 			if !strings.Contains(got, tt.wantCmd) {
 				t.Errorf("output should recommend %q, got:\n%s", tt.wantCmd, got)
 			}

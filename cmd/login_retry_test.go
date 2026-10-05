@@ -181,7 +181,9 @@ func TestAuthLogin_HintNamesTheProfile(t *testing.T) {
 			setLoginProfile(t, tt.profile)
 
 			var buf bytes.Buffer
-			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+			// One buffer for both streams: the success line is on stdout, the
+			// hints on stderr.
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &buf}
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.WithValue(context.Background(), cmdutil.KeyOutput, out))
 			if err := runAuthLogin(cmd, nil); err != nil {

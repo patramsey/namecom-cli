@@ -93,8 +93,8 @@ func TestOrderList_PaginationStopsAtFirstPage(t *testing.T) {
 	if len(*requests) != 1 {
 		t.Errorf("expected 1 request (first page only), got %d: %v", len(*requests), *requests)
 	}
-	if !contains(stdout.String(), "Showing the newest orders") {
-		t.Errorf("expected pagination hint in output: %q", stdout.String())
+	if !contains(stderr.String(), "newest first") {
+		t.Errorf("expected a pagination note on stderr: %q", stderr.String())
 	}
 }
 
