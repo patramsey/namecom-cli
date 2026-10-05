@@ -73,7 +73,7 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	if IsDryRun(cmd) {
 		ctx := ""
 		if w.Quote != nil {
-			ctx = PromptContext(cmd)
+			ctx = AccountContext(cmd)
 		}
 		return false, out.DryRunQuote(w.Method, w.Path, previewOf(w), w.Quote, ctx)
 	}

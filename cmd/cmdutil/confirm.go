@@ -120,13 +120,23 @@ const PromptedRequired = "(required; prompted in a terminal)"
 // instead: production or sandbox is then only where the credentials came
 // from, not where the request goes.
 func PromptContext(cmd *cobra.Command) string {
+	return accountContext(cmd, true)
+}
+
+// AccountContext is PromptContext for text with no "[sandbox]" tag of its own
+// — the dry-run "Would charge" line — so it always names the environment.
+func AccountContext(cmd *cobra.Command) string {
+	return accountContext(cmd, false)
+}
+
+func accountContext(cmd *cobra.Command, tagged bool) string {
 	env := "production"
 	switch {
 	case baseURLOverride(cmd) != "":
 		env = "base URL overridden: " + baseURLOverride(cmd)
-	case Out(cmd).Sandbox:
+	case tagged && Out(cmd).Sandbox:
 		env = "" // Confirm's [sandbox] tag says it
-	case IsSandbox(cmd):
+	case IsSandbox(cmd) || Out(cmd).Sandbox:
 		env = "sandbox"
 	}
 	f, _ := cmd.Context().Value(KeyConfig).(*config.File)

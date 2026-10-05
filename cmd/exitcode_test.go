@@ -398,8 +398,15 @@ func resetFlags(t *testing.T, args []string) {
 func TestExitCode_MissingRequiredFlagIsUsage(t *testing.T) {
 	withConfig(t, loneProfile)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// dns delete reads the record first so its prompt can show it (#235);
+		// that read is allowed. Nothing else — and no write — may be sent.
+		if r.Method == http.MethodGet && r.URL.Path == "/core/v1/domains/example.com/records/123" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":123,"domainName":"example.com","host":"www","fqdn":"www.example.com.","type":"A","answer":"192.0.2.1","ttl":300}`))
+			return
+		}
 		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 	}))
 	t.Cleanup(srv.Close)
 
