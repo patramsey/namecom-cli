@@ -40,6 +40,7 @@ func stubLoginAnswers(t *testing.T, username, token string, sandboxAnswer bool) 
 	t.Cleanup(func() { askLogin = prev })
 	t.Cleanup(output.StubInteractive(true))
 	stubRetryLogin(t, false)
+	stubReplaceProfile(t, true)
 	prevGF := gf
 	gf = globalFlags{baseURL: helloServer(t).URL}
 	t.Cleanup(func() { gf = prevGF })
@@ -116,6 +117,20 @@ func stubRetryLogin(t *testing.T, answer bool) *int {
 		return answer, nil
 	}
 	t.Cleanup(func() { confirmRetryLogin = prev })
+	return asked
+}
+
+// stubReplaceProfile answers "replace the existing profile?" and counts how
+// often it was asked.
+func stubReplaceProfile(t *testing.T, answer bool) *int {
+	t.Helper()
+	asked := new(int)
+	prev := confirmReplaceProfile
+	confirmReplaceProfile = func(_ *output.Config, _ bool, _, _ string) (bool, error) {
+		*asked++
+		return answer, nil
+	}
+	t.Cleanup(func() { confirmReplaceProfile = prev })
 	return asked
 }
 

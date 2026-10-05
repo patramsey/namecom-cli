@@ -1,12 +1,18 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/config"
+	"github.com/patramsey/namecom-cli/internal/output"
+	"github.com/spf13/cobra"
 )
 
 // TestAuthLogin_OffersRetryAfterRejection guards #239: a 401 at login ended
@@ -95,6 +101,102 @@ func TestAuthLogin_OffersRetryAfterRejection(t *testing.T) {
 				t.Errorf("asked to retry %d times, want %d", *asked, tt.wantAsked)
 			}
 			unchanged(t, path, loneProfile)
+		})
+	}
+}
+
+// TestAuthLogin_AsksBeforeReplacingAProfile guards #239: logging in again
+// under an existing profile replaced its credentials without a word.
+func TestAuthLogin_AsksBeforeReplacingAProfile(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		flag      string
+		answer    bool
+		wantAsked int
+		wantSaved bool
+	}{
+		{"yes replaces", "", true, 1, true},
+		{"no keeps the profile", "", false, 1, false},
+		{"--yes replaces without asking", "yes", false, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := withConfig(t, loneProfile)
+			stubLoginForm(t, false)
+			setLoginProfile(t, "work")
+			replace := stubReplaceProfile(t, tt.answer)
+
+			cmd, _ := jsonCmd(t)
+			if tt.flag != "" {
+				cmd.PersistentFlags().Bool(tt.flag, true, "")
+			}
+			if err := runAuthLogin(cmd, nil); err != nil {
+				t.Fatalf("runAuthLogin: %v", err)
+			}
+			if *replace != tt.wantAsked {
+				t.Errorf("asked to replace %d times, want %d", *replace, tt.wantAsked)
+			}
+			f, _ := config.Load()
+			if saved := f.Profiles["work"].Username == "alice"; saved != tt.wantSaved {
+				t.Errorf("profile replaced = %v, want %v", saved, tt.wantSaved)
+			}
+			if !tt.wantSaved {
+				unchanged(t, path, loneProfile)
+			}
+		})
+	}
+
+	t.Run("a new profile is not asked about", func(t *testing.T) {
+		withConfig(t, loneProfile)
+		stubLoginForm(t, false)
+		setLoginProfile(t, "other")
+		replace := stubReplaceProfile(t, false)
+		cmd, _ := jsonCmd(t)
+		if err := runAuthLogin(cmd, nil); err != nil {
+			t.Fatalf("runAuthLogin: %v", err)
+		}
+		if *replace != 0 {
+			t.Error("asked to replace a profile that did not exist")
+		}
+	})
+}
+
+// TestAuthLogin_HintNamesTheProfile guards #239: after logging in to a
+// profile that is not the default, "Run 'namecom status'" showed the default
+// profile's account.
+func TestAuthLogin_HintNamesTheProfile(t *testing.T) {
+	for _, tt := range []struct {
+		name, contents, profile string
+		want, dontWant          []string
+	}{
+		{"first login becomes the default", "", "work",
+			[]string{"Run 'namecom status' to"}, []string{"--profile"}},
+		{"another profile is the default", twoProfiles, "work",
+			[]string{"namecom status --profile work", "namecom config use work"}, nil},
+		{"logging in to the default again", twoProfiles, "prod",
+			[]string{"Run 'namecom status' to"}, []string{"--profile"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, tt.contents)
+			stubLoginForm(t, false)
+			setLoginProfile(t, tt.profile)
+
+			var buf bytes.Buffer
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+			cmd := &cobra.Command{}
+			cmd.SetContext(context.WithValue(context.Background(), cmdutil.KeyOutput, out))
+			if err := runAuthLogin(cmd, nil); err != nil {
+				t.Fatalf("runAuthLogin: %v", err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(buf.String(), w) {
+					t.Errorf("output does not contain %q:\n%s", w, buf.String())
+				}
+			}
+			for _, w := range tt.dontWant {
+				if strings.Contains(buf.String(), w) {
+					t.Errorf("output contains %q:\n%s", w, buf.String())
+				}
+			}
 		})
 	}
 }

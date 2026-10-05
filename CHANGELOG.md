@@ -28,6 +28,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   403), it explains why and asks "Try again?", reopening the form with the
   username kept, instead of exiting. Declining, `--yes` and `--dry-run` exit
   **3** as before, and nothing is saved until a check succeeds.
+- `auth login` asks before replacing the credentials of a profile that
+  already exists; `--yes` replaces them without asking. After logging in to
+  a profile that is not the one commands use, the hint says `namecom status
+  --profile <name>` or `namecom config use <name>`, rather than a bare
+  `namecom status` that showed a different account.
 
 ### Fixed
 - `dns create` in a terminal opens its guided form again when `--type` or

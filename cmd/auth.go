@@ -89,9 +89,33 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	// false and the flag was never read, so `auth login --sandbox` saved a
 	// production profile unless the user also said Yes at the prompt.
 	sandbox := cmdutil.IsSandbox(cmd)
+
+	cfgFile, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	// Ask before replacing a profile's credentials, as gh asks before
+	// re-authenticating; login used to overwrite them silently (#239). Asked
+	// before the form, so a "no" costs no typing. --yes answers it, and
+	// --dry-run writes nothing, so neither asks.
+	if old, ok := cfgFile.Profiles[loginProfile]; ok && !cmdutil.IsYes(cmd) && !cmdutil.IsDryRun(cmd) {
+		detail := loginEnv(old.Sandbox)
+		if old.Username != "" {
+			detail += " · " + old.Username
+		}
+		replace, cerr := confirmReplaceProfile(out, false,
+			fmt.Sprintf("Profile %q already has credentials. Replace them?", loginProfile), detail)
+		if cerr != nil {
+			return cerr
+		}
+		if !replace {
+			out.Warn(fmt.Sprintf("profile %q left unchanged", loginProfile))
+			return nil
+		}
+	}
+
 	a := loginAnswers{Sandbox: sandbox}
 	var verifiedAs string
-	var err error
 	for {
 		if err := askLogin(&a, !sandbox); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
@@ -154,10 +178,6 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	cfgFile, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
 	if cfgFile.Profiles == nil {
 		cfgFile.Profiles = make(map[string]config.Profile)
 	}
@@ -193,7 +213,15 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	} else {
 		out.Success(fmt.Sprintf("Credentials saved to %s (profile: %s), unverified", path, loginProfile))
 	}
-	out.Hint("Run 'namecom status' to see your account overview")
+	// Name the profile unless it is the one commands will use: after `auth
+	// login --profile work` with another default, a bare 'namecom status'
+	// showed the default profile's account (#239).
+	if config.ActiveProfile(cfgFile, "") == loginProfile {
+		out.Hint("Run 'namecom status' to see your account overview")
+	} else {
+		out.Hint(fmt.Sprintf("Run 'namecom status --profile %s' to see this account, or 'namecom config use %s' to make it the default",
+			loginProfile, loginProfile))
+	}
 	out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
 	return nil
 }
@@ -205,6 +233,10 @@ var confirmSaveUnverified = cmdutil.Confirm
 // confirmRetryLogin asks whether to try again after the API rejected the
 // credentials. Replaceable in tests.
 var confirmRetryLogin = cmdutil.Confirm
+
+// confirmReplaceProfile asks before login overwrites an existing profile.
+// Replaceable in tests.
+var confirmReplaceProfile = cmdutil.Confirm
 
 // verifyLogin checks a's credentials with the API's Hello endpoint, against
 // the endpoint the saved profile will use, and returns the username the API
