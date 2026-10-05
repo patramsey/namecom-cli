@@ -127,3 +127,66 @@ func TestWarn_StructuredModesKeepStderrOneDocument(t *testing.T) {
 		t.Errorf(`want one {"warnings": ["one", "two"]} document, got %v (%v)`, got, err)
 	}
 }
+
+// TestResults_OneDocument pins output.Results (#240): a write over several
+// targets is one document whose "changed" is true when any target changed,
+// one target keeps the plain write-result shape, and table mode prints a
+// line per target as it goes.
+func TestResults_OneDocument(t *testing.T) {
+	var w bytes.Buffer
+	c := &Config{Format: FormatJSON, Writer: &w}
+	r := c.Results()
+	r.Add(ResultItem{Domain: "a.com", Message: "already on"})
+	r.Add(ResultItem{Domain: "b.com", Changed: true, Message: "enabled"})
+	r.Print("enabled for 1 domain; already on for 1")
+	var doc struct {
+		Success, Changed bool
+		Message          string
+		Data             []ResultItem
+	}
+	dec := json.NewDecoder(&w)
+	if err := dec.Decode(&doc); err != nil || dec.More() {
+		t.Fatalf("want one document: %v", err)
+	}
+	if !doc.Success || !doc.Changed || len(doc.Data) != 2 || doc.Data[0].Changed || !doc.Data[1].Changed {
+		t.Errorf("got %+v", doc)
+	}
+
+	w.Reset()
+	r = c.Results()
+	r.Add(ResultItem{Domain: "a.com", Message: "already on"})
+	r.Print("unused")
+	if got := strings.TrimSpace(w.String()); got != "{\n  \"success\": true,\n  \"changed\": false,\n  \"message\": \"already on\"\n}" {
+		t.Errorf("one target should print the write result, got:\n%s", got)
+	}
+
+	w.Reset()
+	c = &Config{Format: FormatTable, Writer: &w, Color: ColorNever}
+	r = c.Results()
+	r.Add(ResultItem{Message: "one"})
+	r.Add(ResultItem{Message: "two", Changed: true})
+	r.Print("unused")
+	if got := w.String(); got != "✓ one\n✓ two\n" {
+		t.Errorf("table mode = %q", got)
+	}
+}
+
+// TestWithChanged adds "changed" after the object's own keys, and refuses
+// anything but an object.
+func TestWithChanged(t *testing.T) {
+	for _, tc := range []struct {
+		in   any
+		want string
+	}{
+		{map[string]int{"id": 1}, `{"id":1,"changed":false}`},
+		{struct{}{}, `{"changed":false}`},
+	} {
+		got, err := WithChanged(tc.in, false)
+		if err != nil || string(got) != tc.want {
+			t.Errorf("WithChanged(%v) = %s, %v; want %s", tc.in, got, err, tc.want)
+		}
+	}
+	if _, err := WithChanged([]int{1}, true); err == nil {
+		t.Error("an array should be refused")
+	}
+}

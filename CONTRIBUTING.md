@@ -122,7 +122,9 @@ or change a command's JSON:
   own types, which already are.
 - Report a write that has no resource to print with `out.Success`, or
   `out.Unchanged` when the target was already in the requested state and
-  nothing was sent; that is the `changed` field.
+  nothing was sent; that is the `changed` field. A write over several
+  targets reports through `out.Results()`, so it prints one document, not
+  one per target.
 - Say things to the user with `out.Warn`, `out.Note` or `out.Hint`, never
   with a bare write to stderr: in JSON mode a warning is collected into the
   `warnings` array, so stderr stays one document.

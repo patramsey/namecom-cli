@@ -76,13 +76,30 @@ func reportExisting(cmd *cobra.Command, existing *coreapigo.Record, body coreapi
 		return nil
 	}
 	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(existing)
-	case output.FormatYAML:
-		return out.YAML(existing)
+	case output.FormatJSON, output.FormatYAML:
+		return printCreated(out, existing, false)
 	}
 	out.Success(fmt.Sprintf("%s already exists on %s (id %d): nothing created", recordSummary(existing), body.DomainName, id))
 	return nil
+}
+
+// printCreated prints the record `dns create` made, or with --if-not-exists
+// found, in JSON or YAML. Under --if-not-exists the record carries "changed":
+// false when it was already there and true when it was created, so a script
+// can tell which (#240); without the flag the record is printed as it is.
+func printCreated(out *output.Config, rec *coreapigo.Record, changed bool) error {
+	var doc any = rec
+	if createIfNotExists {
+		withChanged, err := output.WithChanged(rec, changed)
+		if err != nil {
+			return err
+		}
+		doc = withChanged
+	}
+	if out.Format == output.FormatYAML {
+		return out.YAML(doc)
+	}
+	return out.JSON(doc)
 }
 
 // deleteAbsent is `dns delete --if-exists` when the API says none of the
@@ -102,8 +119,11 @@ func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
 		}
 		return err
 	}
+	// "changed": false in JSON and YAML, one document however many IDs.
+	res := out.Results()
 	for _, id := range ids {
-		out.Success(fmt.Sprintf("Record %d is not on %s: nothing to delete", id, domain))
+		res.Add(output.ResultItem{Domain: domain, ID: id, Message: fmt.Sprintf("Record %d is not on %s: nothing to delete", id, domain)})
 	}
+	res.Print(fmt.Sprintf("None of the %d records is on %s: nothing to delete", len(ids), domain))
 	return nil
 }

@@ -49,6 +49,20 @@ parse; table output is unchanged.
   release only and is deprecated: read `error.hint`. A rejected
   `auth status` also puts its profile, username, endpoint and config file in
   `error.details`, which was only in the message.
+- **The commands added in this release follow the same rules** (they never
+  shipped in another shape, but their pull requests described one).
+  `domain get` with several domains or `-` prints `{"data": [...]}`, not a
+  bare array. A toggle over several domains, and `dns delete` with several
+  IDs, print one `{"success", "changed", "message", "data": [...]}` document
+  rather than one document per target. `dns sync --dry-run` lists its
+  requests under `data`, not `requests`, as every multi-request dry run
+  does; its result gains `changed`. `dns create --if-not-exists` adds
+  `changed` to the record, and `dns delete --if-exists` and
+  `dns import --skip-existing` report `"changed": false` when there was
+  nothing to do. A rejected `auth status` puts where each credential came
+  from in `error.details` (`usernameSource`, `tokenSource`, …), as the
+  successful output does. The `NAMECOM_BASE_URL` notice and the TTL warning
+  of `dns create --if-not-exists` are collected warnings, like any other.
 - **Warnings are part of the JSON on stderr.** In JSON and YAML modes, a
   warning — the `--base-url` caution on every run, say — was a plain
   `! …` line on stderr, so stderr was not one parseable document. It is now
@@ -78,14 +92,16 @@ parse; table output is unchanged.
 ### Added
 - `domain check` takes any number of names. The API answers at most 50 per
   request, so a longer list is sent 50 at a time, one batch after another,
-  and the results come back as one table (or one JSON array) in the order
-  the names were given. 120 names used to fail with "number of items must
+  and the results come back as one table (or one `{"data": [...]}` list)
+  in the order the names were given. 120 names used to fail with "number of items must
   be less than or equal to 50".
 - `dns delete <domain> <id>...` takes several record IDs. Every record is
   fetched first (a missing one fails before anything is deleted), one
   confirmation lists them all, and they are deleted in order; the first
   failure stops the rest, and the error says how many were deleted before
-  it. Each deleted record still gets its own `Deleted record …` line.
+  it. Each deleted record still gets its own `Deleted record …` line; in
+  JSON and YAML they are one document, with one item per record under
+  `data`.
 - `domain check --exit-status` exits 1 when any name checked is not
   available, after printing the results as usual, so
   `namecom domain check --exit-status x.com && …` needs no output parsing.
@@ -104,9 +120,11 @@ parse; table output is unchanged.
   each domain first, skips any already in the requested state, and asks
   once, listing every domain it will change; it stops at the first failure
   and says how many were changed before it. **Scripts**: `domain get` with
-  more than one domain, or with `-`, prints a JSON (or YAML) array; with
+  more than one domain, or with `-`, prints a `{"data": [...]}` list; with
   one domain named on the command line it prints the same single object
-  as before.
+  as before. A toggle over several domains prints one document, with
+  `changed` true when any domain changed and one item per domain under
+  `data`.
 - `namecom dns sync <domain> --file <file>` makes a domain's records match a
   file — the JSON `dns export` writes, or a BIND zone file such as
   `dns export --zone` writes. It prints a plan of creates, updates (a TTL or
@@ -114,18 +132,26 @@ parse; table output is unchanged.
   Deleting needs `--prune`, and `--prune` never touches NS records at the apex
   or CAA records; `--prune-all` does. An empty file is refused with either.
   `--dry-run` prints the plan, as one
-  document with `-o json`. A failure stops the run and reports what was
-  applied and what was not; running sync again picks up from the live zone,
-  and a run with nothing to change sends nothing.
+  document with `-o json`, with the requests it would send under `data`. A
+  failure stops the run and reports what was applied and what was not;
+  running sync again picks up from the live zone, and a run with nothing to
+  change sends nothing. The result document's `changed` says whether
+  anything was applied. A change that failed with a 5xx, or lost its
+  connection after it was sent, is marked `outcomeUnknown` and exits 6, with
+  a hint to run sync again.
 - `dns import` reads BIND zone files as well as JSON, and `--skip-existing`
   skips records already in the zone instead of stopping at the first one, so
   a partly applied import can be run again. With it, `--dry-run` previews
   only the records that would be created.
 - `dns create --if-not-exists` exits 0 and prints the existing record's ID
-  when a record with the same host, type and answer is already there.
+  when a record with the same host, type and answer is already there. In
+  JSON and YAML the record carries `"changed": false` then, and
+  `"changed": true` when it was created.
   `dns delete --if-exists` exits 0 when the record is already gone (a missing
-  domain still exits 4). With several IDs it skips the ones already gone,
-  with a note, and deletes the rest.
+  domain still exits 4), reporting `"changed": false`. With several IDs it
+  skips the ones already gone, with a note, and deletes the rest.
+  `dns import --skip-existing` reports `"changed": false` when every record
+  was already there.
 - `dns list --host <host>` lists only the records at that host; `@` or the
   domain itself means the apex.
 - A dry run of `domain register`, `domain renew` or `transfer create` now

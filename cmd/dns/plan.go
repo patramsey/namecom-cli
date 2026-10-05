@@ -181,8 +181,10 @@ type syncPlan struct {
 	Kept      []planKept   `json:"kept"`
 	// Requests are the API calls the plan makes, in the order they are
 	// sent: the body each carries is the one a real run sends. Only a dry
-	// run reports them.
-	Requests []output.DryRunRequest `json:"requests,omitempty"`
+	// run reports them. The key is "data", as in every dry run that plans
+	// several requests ({"dryRun": true, "data": [...]}), so one jq path
+	// reads the requests of any of them (#240).
+	Requests []output.DryRunRequest `json:"data,omitempty"`
 
 	ops []syncOp
 }

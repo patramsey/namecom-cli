@@ -157,6 +157,45 @@ func TestJSONContract(t *testing.T) {
 			}
 		}
 	}
+	// wantResults checks a write over several targets: the write result,
+	// changed when any target changed, and each target under "data" as
+	// {target, changed} pairs — target is the domain, or the record ID.
+	wantResults := func(changed bool, targets ...[]any) check {
+		return func(t *testing.T, doc map[string]any) {
+			wantResult(changed)(t, doc)
+			wantList(len(targets))(t, doc)
+			data, _ := doc["data"].([]any)
+			for i, want := range targets {
+				if i >= len(data) {
+					break
+				}
+				item, _ := data[i].(map[string]any)
+				target := item["domain"]
+				if _, ok := want[0].(float64); ok {
+					target = item["id"]
+				}
+				if target != want[0] || item["changed"] != want[1] || item["message"] == "" {
+					t.Errorf("data[%d] = %v, want target %v with changed %v", i, item, want[0], want[1])
+				}
+			}
+		}
+	}
+	// wantRecord checks `dns create --if-not-exists`: the record, with
+	// "changed" saying whether it was created.
+	wantRecord := func(changed bool) check {
+		return func(t *testing.T, doc map[string]any) {
+			if doc["id"] != float64(42) || doc["changed"] != changed {
+				t.Errorf(`want the record with id 42 and "changed": %v, got %v`, changed, doc)
+			}
+		}
+	}
+
+	// One A record, as the API returns it, and a file listing the same.
+	const aRecord = `{"id":42,"domainName":"example.com","host":"www","fqdn":"www.example.com.","type":"A","answer":"192.0.2.1","ttl":300}`
+	recordsFile := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(recordsFile, []byte(`{"data":[{"type":"A","host":"www","answer":"192.0.2.1","ttl":300}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name   string
@@ -228,6 +267,162 @@ func TestJSONContract(t *testing.T) {
 			args:   []string{"domain", "lock", "on", "example.com", "--yes"},
 			routes: map[string]reply{"GET /core/v1/domains/example.com": {200, domain}},
 			check:  wantResult(false),
+		},
+
+		// The commands #259–#261 added, held to the same rules.
+		{
+			name:   "domain get with one domain is the object",
+			args:   []string{"domain", "get", "a.com"},
+			routes: map[string]reply{"GET /core/v1/domains/a.com": {200, `{"domainName":"a.com"}`}},
+			check: func(t *testing.T, doc map[string]any) {
+				if doc["domainName"] != "a.com" {
+					t.Errorf("want the domain object, got %v", doc)
+				}
+			},
+		},
+		{
+			name: "domain get with several domains is a list",
+			args: []string{"domain", "get", "a.com", "b.com"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/a.com": {200, `{"domainName":"a.com"}`},
+				"GET /core/v1/domains/b.com": {200, `{"domainName":"b.com"}`},
+			},
+			check: wantList(2),
+		},
+		{
+			name: "toggle over several domains",
+			args: []string{"domain", "lock", "on", "a.com", "b.com", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/a.com": {200, `{"domainName":"a.com","locked":true}`},
+				"GET /core/v1/domains/b.com": {200, `{"domainName":"b.com","locked":false}`},
+			},
+			check: wantResults(true, []any{"a.com", false}, []any{"b.com", true}),
+		},
+		{
+			name: "toggle over several domains, none changed",
+			args: []string{"domain", "lock", "on", "a.com", "b.com", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/a.com": {200, `{"domainName":"a.com","locked":true}`},
+				"GET /core/v1/domains/b.com": {200, `{"domainName":"b.com","locked":true}`},
+			},
+			check: wantResults(false, []any{"a.com", false}, []any{"b.com", false}),
+		},
+		{
+			name: "dns delete with several IDs",
+			args: []string{"dns", "delete", "example.com", "1", "2", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.com/records/1": {200, `{"id":1,"type":"A","answer":"192.0.2.1"}`},
+				"GET /core/v1/domains/example.com/records/2": {200, `{"id":2,"type":"A","answer":"192.0.2.2"}`},
+			},
+			check: wantResults(true, []any{float64(1), true}, []any{float64(2), true}),
+		},
+		{
+			name: "dns delete --if-exists, one present and one gone",
+			args: []string{"dns", "delete", "example.com", "1", "2", "--if-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.com/records/1": {200, `{"id":1,"type":"A","answer":"192.0.2.1"}`},
+				"GET /core/v1/domains/example.com/records/2": {404, `{"message":"Not Found"}`},
+			},
+			check: wantResults(true, []any{float64(1), true}, []any{float64(2), false}),
+		},
+		{
+			name: "dns delete --if-exists, all gone",
+			args: []string{"dns", "delete", "example.com", "1", "2", "--if-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.com/records/1": {404, `{"message":"Not Found"}`},
+				"GET /core/v1/domains/example.com/records/2": {404, `{"message":"Not Found"}`},
+				"GET /core/v1/domains/example.com/records":   {200, `{"records":[]}`},
+			},
+			check: wantResults(false, []any{float64(1), false}, []any{float64(2), false}),
+		},
+		{
+			name: "dns delete --if-exists, one ID gone",
+			args: []string{"dns", "delete", "example.com", "1", "--if-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.com/records/1": {404, `{"message":"Not Found"}`},
+				"GET /core/v1/domains/example.com/records":   {200, `{"records":[]}`},
+			},
+			check: wantResult(false),
+		},
+		{
+			name:   "dns create --if-not-exists, already there",
+			args:   []string{"dns", "create", "example.com", "--type", "A", "--host", "www", "--answer", "192.0.2.1", "--if-not-exists", "--yes"},
+			routes: map[string]reply{"GET /core/v1/domains/example.com/records": {200, `{"records":[` + aRecord + `]}`}},
+			check:  wantRecord(false),
+		},
+		{
+			name: "dns create --if-not-exists, created",
+			args: []string{"dns", "create", "example.com", "--type", "A", "--host", "www", "--answer", "192.0.2.1", "--if-not-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.com/records":  {200, `{"records":[]}`},
+				"POST /core/v1/domains/example.com/records": {200, aRecord},
+			},
+			check: wantRecord(true),
+		},
+		{
+			name:   "dns import --skip-existing with nothing new",
+			args:   []string{"dns", "import", "example.com", "--file", recordsFile, "--skip-existing", "--yes"},
+			routes: map[string]reply{"GET /core/v1/domains/example.com/records": {200, `{"records":[` + aRecord + `]}`}},
+			check:  wantResult(false),
+		},
+		{
+			name:   "dns sync --dry-run",
+			args:   []string{"dns", "sync", "example.com", "--file", recordsFile, "--dry-run"},
+			routes: map[string]reply{"GET /core/v1/domains/example.com/records": {200, `{"records":[]}`}},
+			check: func(t *testing.T, doc map[string]any) {
+				wantList(1)(t, doc)
+				creates, _ := doc["creates"].([]any)
+				if doc["dryRun"] != true || len(creates) != 1 {
+					t.Errorf(`want {"dryRun": true, "creates": [1 record], "data": [1 request]}, got %v`, doc)
+				}
+			},
+		},
+		{
+			name: "dns sync",
+			args: []string{"dns", "sync", "example.com", "--file", recordsFile, "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.com/records":  {200, `{"records":[]}`},
+				"POST /core/v1/domains/example.com/records": {200, aRecord},
+			},
+			check: func(t *testing.T, doc map[string]any) {
+				applied, _ := doc["applied"].([]any)
+				if doc["changed"] != true || len(applied) != 1 {
+					t.Errorf(`want {"changed": true, "applied": [1 change]}, got %v`, doc)
+				}
+			},
+		},
+		{
+			name:   "dns sync with nothing to change",
+			args:   []string{"dns", "sync", "example.com", "--file", recordsFile, "--yes"},
+			routes: map[string]reply{"GET /core/v1/domains/example.com/records": {200, `{"records":[` + aRecord + `]}`}},
+			check: func(t *testing.T, doc map[string]any) {
+				if doc["changed"] != false || doc["unchanged"] != float64(1) {
+					t.Errorf(`want {"changed": false, "unchanged": 1}, got %v`, doc)
+				}
+			},
+		},
+		{
+			name: "config show credential sources",
+			args: []string{"config", "show"},
+			check: func(t *testing.T, doc map[string]any) {
+				for _, k := range []string{"profileSource", "usernameSource", "tokenSource", "endpointSource"} {
+					if _, ok := doc[k]; !ok {
+						t.Errorf("config show has no %q key: %v", k, doc)
+					}
+				}
+			},
+		},
+		{
+			name:   "auth status credential sources",
+			args:   []string{"auth", "status"},
+			routes: map[string]reply{"GET /core/v1/hello": {200, `{"username":"workuser"}`}},
+			check: func(t *testing.T, doc map[string]any) {
+				for _, k := range []string{"usernameSource", "tokenSource", "verified"} {
+					if _, ok := doc[k]; !ok {
+						t.Errorf("auth status has no %q key: %v", k, doc)
+					}
+				}
+			},
 		},
 	}
 	for _, tc := range tests {
@@ -386,6 +581,66 @@ func TestJSONContract_AuthStatusDetails(t *testing.T) {
 	d, _ := e["details"].(map[string]any)
 	if e["type"] != output.ErrorTypeAuth || d["profile"] != "work" || d["username"] != "workuser" || d["endpoint"] != srv.URL || d["config"] == "" {
 		t.Errorf("want type auth and details {profile, username, endpoint, config}, got:\n%s", stderr)
+	}
+	// Where each came from (#246), as sibling keys, as in the successful
+	// output.
+	for _, k := range []string{"usernameSource", "tokenSource", "endpointSource"} {
+		if s, _ := d[k].(string); s == "" {
+			t.Errorf("details has no %q: %v", k, d)
+		}
+	}
+}
+
+// TestJSONContract_SyncOutcomeUnknown pins how `dns sync` reports a write
+// that failed in a way that may have gone through (#243): stdout is the
+// result document, with what was applied and the failed change marked
+// "outcomeUnknown"; stderr is the envelope, exit 6, with the idempotency key
+// and a hint to run sync again rather than to pin the key.
+func TestJSONContract_SyncOutcomeUnknown(t *testing.T) {
+	withConfig(t, loneProfile)
+	file := filepath.Join(t.TempDir(), "records.json")
+	if err := os.WriteFile(file, []byte(`[{"type":"A","host":"www","answer":"192.0.2.1","ttl":300}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"dns", "sync", "example.com", "--file", file, "--yes"}
+	resetFlags(t, args)
+	srv := contractServer(t, map[string]reply{
+		"GET /core/v1/domains/example.com/records":  {200, `{"records":[]}`},
+		"POST /core/v1/domains/example.com/records": {500, `{"message":"Internal Error"}`},
+	})
+	stdout, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "-o", "json"}, args...)...)
+	if code != 6 {
+		t.Errorf("exit %d, want 6", code)
+	}
+	res := decodeDoc(t, "stdout", stdout)
+	failed, _ := res["failed"].(map[string]any)
+	if res["changed"] != false || failed["outcomeUnknown"] != true || failed["action"] != "create" {
+		t.Errorf(`want {"changed": false, "failed": {"action": "create", "outcomeUnknown": true, …}}, got %v`, res)
+	}
+	e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+	hint, _ := e["hint"].(string)
+	if e["status"] != float64(500) || e["idempotencyKey"] == nil || !strings.Contains(hint, "run sync again") {
+		t.Errorf("want status 500, the idempotency key, and a hint to run sync again, got:\n%s", stderr)
+	}
+}
+
+// TestJSONContract_BaseURLEnvWarning: the notice that NAMECOM_BASE_URL (#246)
+// is in use is a collected warning in JSON mode, like --base-url's, so stderr
+// stays one document.
+func TestJSONContract_BaseURLEnvWarning(t *testing.T) {
+	withConfig(t, loneProfile)
+	args := []string{"domain", "get", "example.com"}
+	resetFlags(t, args)
+	srv := contractServer(t, map[string]reply{"GET /core/v1/domains/example.com": {200, `{"domainName":"example.com"}`}})
+	t.Setenv("NAMECOM_BASE_URL", srv.URL)
+	stdout, stderr, code := runContract(t, append([]string{"-o", "json"}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+	}
+	decodeDoc(t, "stdout", stdout)
+	list, _ := decodeDoc(t, "stderr", stderr)["warnings"].([]any)
+	if len(list) != 1 || !strings.Contains(list[0].(string), "NAMECOM_BASE_URL") {
+		t.Errorf(`stderr should be {"warnings": ["NAMECOM_BASE_URL is set: …"]}, got:%s`, stderr)
 	}
 }
 

@@ -850,6 +850,99 @@ type writeResult struct {
 	Message string `json:"message"`
 }
 
+// ResultItem is one target of a write over several — a domain toggled, a
+// record deleted — as Results reports it. Domain and ID name the target;
+// either may be left empty.
+type ResultItem struct {
+	Domain  string `json:"domain,omitempty"`
+	ID      int    `json:"id,omitempty"`
+	Changed bool   `json:"changed"`
+	Message string `json:"message"`
+}
+
+// writeResults is the document Results prints for several targets: the
+// write-result keys, summarizing, and one item per target under "data".
+type writeResults struct {
+	Success bool         `json:"success"`
+	Changed bool         `json:"changed"`
+	Message string       `json:"message"`
+	Data    []ResultItem `json:"data"`
+}
+
+// Results reports a write over several targets as one document (#240).
+// Calling Success once per target printed a document each, so stdout was a
+// stream of them where the contract promises one.
+//
+// In table mode Add prints each target's "✓" line at once, as Success does.
+// In JSON and YAML it keeps them, and Print writes them out: one target as
+// the {"success", "changed", "message"} document Success prints, so a write
+// to one target looks the same whichever command made it, and several as
+// that document with "changed" true when any target changed, and the
+// targets under "data". A script can read .changed from either.
+type Results struct {
+	c     *Config
+	items []ResultItem
+}
+
+// Results starts a report of a write over several targets.
+func (c *Config) Results() *Results { return &Results{c: c} }
+
+// Add records one target's outcome.
+func (r *Results) Add(it ResultItem) {
+	if r.c.Format != FormatJSON && r.c.Format != FormatYAML {
+		r.c.result(it.Message, it.Changed)
+		return
+	}
+	r.items = append(r.items, it)
+}
+
+// Print writes the kept targets, with summary as the message when there is
+// more than one. Nothing is printed when there are none, or in table mode,
+// where Add printed them already.
+func (r *Results) Print(summary string) {
+	c := r.c
+	if c.QuietMode || len(r.items) == 0 || (c.Format != FormatJSON && c.Format != FormatYAML) {
+		return
+	}
+	if len(r.items) == 1 {
+		c.result(r.items[0].Message, r.items[0].Changed)
+		return
+	}
+	doc := writeResults{Success: true, Message: summary, Data: r.items}
+	for _, it := range r.items {
+		doc.Changed = doc.Changed || it.Changed
+	}
+	if c.Format == FormatYAML {
+		_ = writeYAML(c.Writer, doc)
+		return
+	}
+	_ = encodeJSON(c.Writer, doc)
+}
+
+// WithChanged returns v, which must encode as a JSON object, with a
+// "changed" key added after its own. It is for a write that returns a
+// resource either way — `dns create --if-not-exists` prints the record it
+// made or the one already there — so a script can tell which without
+// comparing IDs (#240). Key order is kept, so YAML matches JSON.
+func WithChanged(v any, changed bool) (json.RawMessage, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	b = bytes.TrimSpace(b)
+	if len(b) < 2 || b[0] != '{' || b[len(b)-1] != '}' {
+		return nil, fmt.Errorf("adding \"changed\": %s is not a JSON object", b)
+	}
+	inner := bytes.TrimSpace(b[1 : len(b)-1])
+	out := append([]byte{'{'}, inner...)
+	if len(inner) > 0 {
+		out = append(out, ',')
+	}
+	out = append(out, `"changed":`...)
+	out = strconv.AppendBool(out, changed)
+	return append(out, '}'), nil
+}
+
 func (c *Config) result(msg string, changed bool) {
 	if c.QuietMode {
 		return

@@ -338,23 +338,42 @@ of them is a breaking change and is called out in the
 - **Lists are `{"data": [...]}`**, with `nextPage` and `total` added when the
   list is paged. `data` is `[]`, never `null`, when there is nothing in it.
   This covers every `list`, and `domain check`, `domain search`,
-  `config list-profiles` and `dns export` too (`dns import` reads both that
-  and the bare array older versions exported).
-- **One resource is the object itself**, as the API returns it: `domain get`,
-  `dns create`, `email update`.
+  `config list-profiles` and `dns export` too (`dns import` and `dns sync`
+  read both that and the bare array older versions exported), and
+  `domain get` given several domains or `-`.
+- **One resource is the object itself**, as the API returns it: `domain get`
+  with one domain, `dns create`, `email update`. With `--if-not-exists`,
+  `dns create` adds `"changed"` to the record: `false` when it was already
+  there, `true` when it was created.
 - **Keys are camelCase** everywhere: `domainsTotal`, `dryRun`,
   `idempotencyKey`. Values that name a kind of thing, such as error types
   (`not_found`) or dry-run actions (`save_profile`), are snake_case.
 - **A write with no resource to return** prints
   `{"success": true, "changed": true, "message": "…"}`. `changed` is `false`
   when the target was already in the requested state and nothing was sent —
-  `domain lock on` for a locked domain. `message` is for people; branch on
-  `changed`, not on its wording.
+  `domain lock on` for a locked domain, `dns delete --if-exists` for a record
+  that is gone, `dns import --skip-existing` with nothing new. `message` is
+  for people; branch on `changed`, not on its wording.
+- **A write over several targets** — a toggle given several domains,
+  `dns delete` with several IDs — is still one document: the same three
+  keys, with `changed` true when any target changed, and one
+  `{"domain", "id", "changed", "message"}` item per target under `data`
+  (`domain` or `id` as applies). One target prints the plain document
+  above, so `.changed` reads either.
 - **A dry run** prints `{"dryRun": true, "method": …, "path": …, "body": …}`,
-  with a `quote` object for a write that costs money. `dns import --dry-run`
-  plans several requests: `{"dryRun": true, "data": [ … ]}`.
-- **Warnings** — a `--base-url` that is not name.com, duplicate IDs dropped
-  from `order refund`, records created before a `dns import` failed — are
+  with a `quote` object for a write that costs money. A dry run that plans
+  several requests — `dns import`, a toggle or `dns delete` over several
+  targets — prints `{"dryRun": true, "data": [ … ]}`; `dns sync --dry-run`
+  adds its plan (`creates`, `updates`, `deletes`, `kept`, `unchanged`)
+  beside that `data`.
+- **`dns sync`** prints what it did: `{"domain", "changed", "applied": [ … ],
+  "unchanged"}`. When a change fails, that document still goes to stdout,
+  with `failed` (and `outcomeUnknown: true` when it may have gone through)
+  and `notAttempted`, and the error envelope goes to stderr.
+- **Warnings** — a `--base-url` or `NAMECOM_BASE_URL` that is not
+  name.com, duplicate IDs dropped from `order refund`, records created before
+  a `dns import` failed, an existing record's different TTL under
+  `dns create --if-not-exists` — are
   not printed as text. They come out at the end, in the error envelope's
   `warnings`, or as `{"warnings": [...]}` on stderr when the command
   succeeded.
@@ -390,7 +409,8 @@ of them is a breaking change and is called out in the
   and `hint` are for people. The other keys appear only when they apply:
   `details` holds structured detail (the raw response body for `namecom api`,
   the profile, username, endpoint and config file for a rejected
-  `auth status`), and `suggestions` the full command lines an unknown command
+  `auth status`, with where each came from as `usernameSource`,
+  `tokenSource` and so on), and `suggestions` the full command lines an unknown command
   was probably meant to be (`["namecom dns delete"]`). `idempotencyKey` is
   set when a write's outcome is unknown (exit 6): the `X-Idempotency-Key`
   the request carried. The envelope also has
@@ -574,6 +594,11 @@ sent — namecom exits `6` and names the key it used: in the hint
 as `error.idempotencyKey`. A `POST` is never retried on a 5xx, because the
 server may already have done the work. Check whether the change was made;
 if it was not, re-run the same command with `--idempotency-key <key>`.
+
+`dns sync` is the exception: it is not re-run with the key, since the next
+run sends different requests, but simply run again. It plans from the live
+zone, so a change that did land is not repeated. Its result document marks
+the failed change `outcomeUnknown`, and its hint says to run sync again.
 
 Whether the key prevents a duplicate depends on the endpoint. The Core API
 declares the header on five operations:
