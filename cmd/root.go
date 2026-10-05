@@ -105,7 +105,9 @@ func Execute() {
 	// Start version check in background before the command runs, so there's
 	// a chance the network round-trip completes by the time we're done.
 	updateCh := make(chan string, 1)
-	go func() { updateCh <- update.Check(Version) }()
+	if checksForUpdates(os.Args[1:]) {
+		go func() { updateCh <- update.Check(Version) }()
+	}
 
 	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
 	// usage errors so they exit 2 rather than collapsing into the generic 1.
@@ -129,6 +131,22 @@ func Execute() {
 			// Check not done yet — don't block.
 		}
 	}
+}
+
+// checksForUpdates reports whether an invocation with these arguments looks
+// for a newer release. Shell completion does not: it runs on every TAB, and
+// in a package manager's sandbox at install time (the Homebrew formula
+// generates its completion scripts with `namecom completion <shell>`), where
+// a request to GitHub and a cache write are both out of place.
+func checksForUpdates(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return false
+	}
+	return true
 }
 
 func init() {

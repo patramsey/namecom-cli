@@ -38,6 +38,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   one, or the reverse — a one-line notice on stderr says so and names the
   endpoint in use. It appears only when stderr is a terminal, so scripts and
   JSON error output are unaffected, and not when `--sandbox` was passed.
+- The Homebrew formula installs shell completions for bash, zsh and fish.
+  The README's completion instructions now write to directories in your home
+  directory instead of `/etc/bash_completion.d` and `${fpath[1]}`, which
+  usually need root. `namecom completion` no longer checks for updates.
 
 ### Fixed
 - The `url create` and `url update` forms check the destination as you type
