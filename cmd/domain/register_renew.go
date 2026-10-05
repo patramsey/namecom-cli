@@ -559,7 +559,7 @@ func acknowledgeClaim(out *output.Config, domainName string) error {
 	}
 	// Interactive: the notice is on screen, so an explicit answer is a
 	// genuine acknowledgement. Pass false for `yes` deliberately.
-	ok, err := confirm(out, false, "Acknowledge this trademark claim and continue?")
+	ok, err := confirm(out, false, "Acknowledge this trademark claim and continue?", "")
 	if err != nil {
 		return err
 	}

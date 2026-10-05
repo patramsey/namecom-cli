@@ -34,6 +34,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   instead of a line printed over it. Without a spinner they are still one
   line on stderr, now worded the same way; a script matching the old
   "retrying (attempt N, waiting …)" text needs updating.
+- Every write confirmation now shows one line under the question saying
+  which environment, profile and account it acts on, for example
+  `production · profile work (acme-corp)`. A production purchase used to read
+  only "Register x?", with nothing to say which account would pay. The
+  "pass --yes to confirm in non-interactive mode" error carries the same text
+  in brackets, so a script matching that message exactly will see it change.
 
 ## [0.4.9] - 2026-10-03
 
