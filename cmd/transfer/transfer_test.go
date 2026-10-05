@@ -207,7 +207,7 @@ func TestTransferList_Empty(t *testing.T) {
 	// An empty result must still guide the user — the point of the empty state
 	// is that someone with no records is told what to do next, not shown a
 	// blank screen. Asserting err == nil alone cannot see that.
-	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	buf, ok := cmdutil.Out(cmd).EWriter.(*bytes.Buffer)
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
@@ -797,7 +797,9 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			body:       `{"domainName":"example.com","atName":false,"supportsInternalTransfer":false}`,
 			wantCmd:    "transfer create example.com",
 			wantAbsent: "internal-in",
-			wantBadges: []string{"no"},
+			// Not "AT NAME.COM no" beside "SUPPORTS INTERNAL yes" (#238): the
+			// TLD flag is irrelevant here, so its column is not shown.
+			wantBadges: []string{"REGISTERED AT", "another registrar"},
 		},
 		{
 			name:       "at name.com recommends internal-in, with the approval caveat",
@@ -805,7 +807,7 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			wantCmd:    "transfer internal-in example.com",
 			wantAbsent: "transfer create",
 			wantCaveat: true,
-			wantBadges: []string{"yes"},
+			wantBadges: []string{"name.com (an account)", "TLD ALLOWS INTERNAL TRANSFER", "yes"},
 		},
 		{
 			// atName drives the recommendation; supportsInternalTransfer is a
@@ -826,7 +828,8 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			if err := runEligibility(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("runEligibility: %v", err)
 			}
-			got := stdout.String()
+			// The recommendation is a hint, on stderr; the badges are on stdout.
+			got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 			if !strings.Contains(got, tt.wantCmd) {
 				t.Errorf("output should recommend %q, got:\n%s", tt.wantCmd, got)
 			}

@@ -97,7 +97,7 @@ func TestURLList_Empty(t *testing.T) {
 	// An empty result must still guide the user — the point of the empty state
 	// is that someone with no records is told what to do next, not shown a
 	// blank screen. Asserting err == nil alone cannot see that.
-	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	buf, ok := cmdutil.Out(cmd).EWriter.(*bytes.Buffer)
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}

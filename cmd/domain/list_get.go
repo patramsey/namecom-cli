@@ -243,24 +243,28 @@ func runList(cmd *cobra.Command, _ []string) error {
 				d.DomainName,
 				out.ExpiryDate(d.ExpireDate),
 				out.BoolBadge(d.AutorenewEnabled),
-				out.BoolBadge(d.Locked),
+				out.BoolAlert(d.Locked, false),
 				out.BoolBadge(d.PrivacyEnabled),
 			})
 		}
 		out.Table(headers, rows)
-		out.Count(len(domains), "domain")
-		if hasMore && lastResult.TotalCount > 0 {
-			nextPage := 0
+		// One footer, short enough for 80 columns. --filter and --tld are in
+		// the help; the footer only says how to see the rest.
+		switch {
+		case hasMore && lastResult.TotalCount > 0:
+			nextPage := 2
 			if lastResult.NextPage != nil {
 				nextPage = *lastResult.NextPage
 			}
-			hint := fmt.Sprintf(
-				"Showing %d–%d of %d — use --page %d for next page, or --filter/--tld to narrow results, --all for everything",
-				lastResult.From, lastResult.To, lastResult.TotalCount, nextPage,
+			out.Footer(
+				fmt.Sprintf("Showing %s–%s of %s", output.Thousands(lastResult.From),
+					output.Thousands(lastResult.To), output.Plural(lastResult.TotalCount, "domain")),
+				fmt.Sprintf("--page %d for more, --all for everything", nextPage),
 			)
-			out.Hint(hint)
-		} else if hasMore {
-			out.Hint("Showing first page — use --page 2 for next, --filter/--tld to narrow results, --all for everything")
+		case hasMore:
+			out.Count(len(domains), "domain", "first page — --page 2 for more, --all for everything")
+		default:
+			out.Count(len(domains), "domain")
 		}
 	}
 	return nil
@@ -306,14 +310,31 @@ func runGet(cmd *cobra.Command, args []string) error {
 			{"Created", out.Dim(formatTime(d.CreateDate))},
 			{"Expires", out.ExpiryDate(d.ExpireDate)},
 			{"Auto-Renew", out.BoolBadge(d.AutorenewEnabled)},
-			{"Locked", out.BoolBadge(d.Locked)},
+			{"Locked", out.BoolAlert(d.Locked, false)},
 			{"Privacy", out.BoolBadge(d.PrivacyEnabled)},
 			{"Nameservers", out.Dim(formatNS(d.Nameservers))},
 		}
 		out.KVTable(rows)
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to manage DNS records", d.DomainName))
+		out.Hint(domainHint(d, time.Now()))
 	}
 	return nil
+}
+
+// domainHint picks the next step for the domain's state. It always suggested
+// `dns list`, even for an expired domain, where renewing is what is needed
+// (#238).
+func domainHint(d *coreapigo.DomainResponsePayload, now time.Time) string {
+	if d.ExpireDate != nil {
+		days := d.ExpireDate.Sub(now).Hours() / 24
+		switch {
+		case days < 0:
+			return fmt.Sprintf("Run 'namecom domain renew %s' — it expired %s", d.DomainName, output.RelativeDays(days))
+		case days < 30 && !d.AutorenewEnabled:
+			return fmt.Sprintf("Run 'namecom domain renew %s' or 'namecom domain autorenew on %s' — it expires %s and will not renew itself",
+				d.DomainName, d.DomainName, output.RelativeDays(days))
+		}
+	}
+	return fmt.Sprintf("Run 'namecom dns list %s' to manage DNS records", d.DomainName)
 }
 
 // filterToWildcard wraps a bare search term in * wildcards so that --filter

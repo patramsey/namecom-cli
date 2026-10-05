@@ -148,8 +148,37 @@ func TestDomainList_PaginationStopsAtFirstPage(t *testing.T) {
 	if contains(out, "gamma.io") {
 		t.Errorf("output contains domain from page 2 which should not have been fetched")
 	}
-	if !contains(stdout.String(), "Showing first page") {
-		t.Errorf("expected pagination hint in stdout: %q", stdout.String())
+	// One footer, on stderr: the count and how to get the rest (#233).
+	if want := "2 domains · first page — --page 2 for more, --all for everything\n"; stderr.String() != want {
+		t.Errorf("footer on stderr = %q, want %q", stderr.String(), want)
+	}
+	if contains(stdout.String(), "page") {
+		t.Errorf("pagination note leaked onto stdout: %q", stdout.String())
+	}
+}
+
+// TestDomainList_FooterMergesCountAndTotal: a page of a large account printed
+// "(250 domains)" and then "Showing 1–250 of 6522 — use --page 2 …", the
+// count twice, the second line wrapping at 80 columns (#233).
+func TestDomainList_FooterMergesCountAndTotal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"domains":[{"domainName":"acme.io"},{"domainName":"beta.io"}],` +
+			`"totalCount":6522,"from":1,"to":2,"nextPage":2,"lastPage":3261}`))
+	}))
+	t.Cleanup(srv.Close)
+	var stdout, stderr bytes.Buffer
+	cmd := cmdForDomainList(t, srv, &stdout, &stderr)
+	listAll, listFilter, listTLD, listExpiringAfter, listExpiringBefore, listPage = false, "", "", "", "", 1
+
+	if err := runList(cmd, nil); err != nil {
+		t.Fatalf("runList: %v", err)
+	}
+	want := "Showing 1–2 of 6,522 domains · --page 2 for more, --all for everything\n"
+	if stderr.String() != want {
+		t.Errorf("footer = %q, want %q", stderr.String(), want)
+	}
+	if n := len([]rune(strings.TrimSpace(want))); n > 80 {
+		t.Errorf("footer is %d characters; it wraps at 80", n)
 	}
 }
 
@@ -373,8 +402,8 @@ func TestDomainList_NullDomainIsSkipped(t *testing.T) {
 			if got != "acme.io\n" {
 				t.Errorf("--quiet output = %q, want only the one domain", got)
 			}
-		} else if !strings.Contains(got, "acme.io") || !strings.Contains(got, "(1 domain)") {
-			t.Errorf("table should show the one domain and count only it:\n%s", got)
+		} else if !strings.Contains(got, "acme.io") || stderr.String() != "1 domain\n" {
+			t.Errorf("table should show the one domain and count only it:\n%s\nstderr:\n%s", got, stderr.String())
 		}
 	}
 }

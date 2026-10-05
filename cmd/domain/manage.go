@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -106,7 +107,7 @@ func onOff(b bool) string {
 // transferLockError is the API's refusal to change `locked` during the 60-day
 // transfer lock, restated. The API answers "Invalid Argument (Domain can not
 // be unlocked until 2026-11-28 06:37:39)", which says neither why nor that the
-// lock lifts by itself. The date is the API's, kept verbatim. It unwraps to
+// lock lifts by itself. The date is shown by lockDate. It unwraps to
 // the *api.APIError, so the exit code is unchanged.
 type transferLockError struct {
 	domain, until string
@@ -115,12 +116,26 @@ type transferLockError struct {
 }
 
 func (e *transferLockError) Error() string {
+	until := lockDate(e.until)
 	if e.locking {
 		return fmt.Sprintf("%s is already transfer-locked: it is in the 60-day lock that follows a registration or transfer, "+
-			"and the API refuses any change to the lock, even to restate it, until %s", e.domain, e.until)
+			"and the API refuses any change to the lock, even to restate it, until %s", e.domain, until)
 	}
 	return fmt.Sprintf("%s cannot be unlocked until %s: it is in the 60-day transfer lock that follows a registration or transfer",
-		e.domain, e.until)
+		e.domain, until)
+}
+
+// lockDate renders the API's lock-expiry timestamp as a date with a relative
+// time, "2026-11-28 (in 2 months)", the way every other date is shown. The
+// raw value read "until 2026-11-28T06:37:39Z" (#238). One that does not
+// parse is shown as the API sent it.
+func lockDate(s string) string {
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Format("2006-01-02") + " (" + output.Relative(t) + ")"
+		}
+	}
+	return s
 }
 
 func (e *transferLockError) Unwrap() error { return e.err }
@@ -198,7 +213,6 @@ func runLock(cmd *cobra.Command, args []string) error {
 	}
 	if enable {
 		out.Success(fmt.Sprintf("Transfer lock enabled for %s", domainName))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm status", domainName))
 	} else {
 		out.Success(fmt.Sprintf("Transfer lock disabled for %s", domainName))
 		out.WarnBox("Lock removed — re-enable after transfers are complete to protect against unauthorized outbound transfers")
@@ -248,7 +262,6 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 	}
 	if enable {
 		out.Success(fmt.Sprintf("Auto-renewal enabled for %s", domainName))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm settings", domainName))
 	} else {
 		out.Success(fmt.Sprintf("Auto-renewal disabled for %s", domainName))
 		out.Hint(fmt.Sprintf("Remember to renew manually before expiry — run 'namecom domain get %s' to check the expiry date", domainName))
@@ -300,7 +313,6 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	}
 	if enable {
 		out.Success(fmt.Sprintf("WHOIS privacy enabled for %s", domainName))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm privacy status", domainName))
 	} else {
 		out.Success(fmt.Sprintf("WHOIS privacy disabled for %s", domainName))
 	}
@@ -370,7 +382,7 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	if err != nil || !sent {
 		return err
 	}
-	out.Success(fmt.Sprintf("Nameservers updated for %s", domain))
+	out.Success(fmt.Sprintf("Set nameservers for %s: %s", domain, strings.Join(ns, ", ")))
 	out.Hint("DNS propagation typically takes a few minutes to a few hours")
 	return nil
 }
@@ -495,7 +507,7 @@ func warnUnverifiedContacts(out *output.Config, c coreapigo.Contacts) {
 		return
 	}
 	out.WarnBox(
-		fmt.Sprintf("Unverified contact(s): %s", strings.Join(pending, ", ")),
+		fmt.Sprintf("Unverified %s: %s", output.PluralNoun(len(pending), "contact"), strings.Join(pending, ", ")),
 		"ICANN requires contact verification. If it is not completed by the deadline",
 		"(typically 15 days from when it was triggered) the registry may LOCK the domain.",
 		"Check the inbox for the verification email — name.com can resend it.",
@@ -532,7 +544,7 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	if err != nil || !sent {
 		return err
 	}
-	out.Success(fmt.Sprintf("Contacts updated for %s", domain))
+	out.Success(contactsSetLine(body))
 	// Updating the registrant can start an ICANN verification clock. The spec:
 	// "When registrant contact information is updated, validation may be
 	// triggered if the new contact information has not been previously
@@ -544,28 +556,68 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// updateSummary lists the settings a domain update sent, in the order the
+// flags are documented: "auto-renew off, lock on". The success line said only
+// "Updated example.com" (#238).
+func updateSummary(req *coreapigo.UpdateDomainRequest) string {
+	var parts []string
+	for _, f := range []struct {
+		name string
+		v    *bool
+	}{
+		{"auto-renew", req.AutorenewEnabled},
+		{"privacy", req.PrivacyEnabled},
+		{"lock", req.Locked},
+	} {
+		if f.v != nil {
+			parts = append(parts, f.name+" "+onOff(*f.v))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// contactsRoles lists the contact roles body sets, in WHOIS order.
+func contactsRoles(body coreapigo.DomainsSetContactsBody) []string {
+	var roles []string
+	if c := body.Contacts; c != nil {
+		for _, r := range []struct {
+			name string
+			set  bool
+		}{
+			{"registrant", c.Registrant != nil},
+			{"admin", c.Admin != nil},
+			{"tech", c.Tech != nil},
+			{"billing", c.Billing != nil},
+		} {
+			if r.set {
+				roles = append(roles, r.name)
+			}
+		}
+	}
+	return roles
+}
+
+// contactsSetLine says which contacts were replaced: "Replaced the registrant
+// and admin contacts for example.com". It said "Contacts updated" (#238).
+func contactsSetLine(body coreapigo.DomainsSetContactsBody) string {
+	roles := contactsRoles(body)
+	if len(roles) == 0 {
+		return fmt.Sprintf("Contacts updated for %s", body.DomainName)
+	}
+	list := roles[0]
+	if n := len(roles); n > 1 {
+		list = strings.Join(roles[:n-1], ", ") + " and " + roles[n-1]
+	}
+	return fmt.Sprintf("Replaced the %s %s for %s", list, output.PluralNoun(len(roles), "contact"), body.DomainName)
+}
+
 // contactsSetPrompt asks before replacing contacts, naming the roles the file
 // sets. A registrant change gets the stronger warning: the SDK documents that
 // it "may" trigger ICANN verification, and that a material registrant change
 // is one cause of an ICANN-mandated transfer lock.
 func contactsSetPrompt(body coreapigo.DomainsSetContactsBody) string {
-	var roles []string
-	registrant := false
-	if c := body.Contacts; c != nil {
-		if c.Registrant != nil {
-			roles = append(roles, "registrant")
-			registrant = true
-		}
-		if c.Admin != nil {
-			roles = append(roles, "admin")
-		}
-		if c.Tech != nil {
-			roles = append(roles, "tech")
-		}
-		if c.Billing != nil {
-			roles = append(roles, "billing")
-		}
-	}
+	roles := contactsRoles(body)
+	registrant := len(roles) > 0 && roles[0] == "registrant"
 	if len(roles) == 0 {
 		return fmt.Sprintf("Update contacts for %s? The file sets no contact role.", body.DomainName)
 	}
@@ -696,7 +748,7 @@ func runPricing(cmd *cobra.Command, args []string) error {
 		if p == nil {
 			return "N/A"
 		}
-		return fmt.Sprintf("$%.2f", *p)
+		return output.Money(*p)
 	}
 	register := fmtPrice(pricing.PurchasePrice)
 	if acq != nil {
@@ -879,8 +931,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(updated)
 	default:
-		out.Success(fmt.Sprintf("Updated %s", domain))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to confirm the new settings", domain))
+		out.Success(fmt.Sprintf("Updated %s: %s", domain, updateSummary(req)))
 	}
 	return nil
 }

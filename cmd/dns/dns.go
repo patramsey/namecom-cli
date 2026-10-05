@@ -229,19 +229,19 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		if listType != "" {
 			// Filtered: single flat table.
-			out.Table(
-				[]string{"ID", "TYPE", "HOST", "ANSWER", "TTL", "PRIORITY"},
-				recordRows(out, records),
-			)
+			headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
+			if hasPriority(records) {
+				headers = append(headers, "PRIORITY")
+			}
+			out.Table(headers, recordRows(out, records), output.Essential("ANSWER"))
 		} else {
 			// Unfiltered: group by type with section headers.
 			renderGroupedRecords(out, records)
 		}
-		out.Count(len(records), "record")
 		if hasMore {
-			out.Hint("More records exist — pass --all to fetch all pages")
+			out.Count(len(records), "record", "more exist — pass --all for the rest")
 		} else {
-			out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to view domain details", domain))
+			out.Count(len(records), "record")
 		}
 	}
 	return nil
@@ -347,8 +347,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(record)
 	default:
-		out.Success(fmt.Sprintf("Created %s record (id %d)", createType, derefInt(record.ID)))
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see all records", domain))
+		out.Success(fmt.Sprintf("Created %s %s → %s (id %d)",
+			strings.ToUpper(createType), recordName(host, domain), answer, derefInt(record.ID)))
 	}
 	return nil
 }
@@ -472,8 +472,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(updated)
 	default:
-		out.Success(fmt.Sprintf("Updated record %d", id))
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see all records", domain))
+		name := fmt.Sprintf("%s %s (id %d)", string(body.Type), recordName(derefStr(body.Host), domain), id)
+		if changes := recordChanges(current, body); len(changes) > 0 {
+			out.Success("Updated " + name + ": " + strings.Join(changes, ", "))
+		} else {
+			out.Success("Updated " + name + ": no values changed")
+		}
 	}
 	return nil
 }
@@ -506,7 +510,6 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
-	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see remaining records", domain))
 	return nil
 }
 
@@ -665,9 +668,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.
 			if created > 0 {
-				out.Warn(fmt.Sprintf("%d of %d record(s) were already created on %s before this failure — "+
+				out.Warn(fmt.Sprintf("%d of %s were already created on %s before this failure — "+
 					"remove them from the file or delete them before retrying, or the retry will duplicate them",
-					created, len(records), domain))
+					created, output.Plural(len(records), "record"), domain))
 			}
 			return fmt.Errorf("creating %s %s (after %d of %d succeeded): %w",
 				body.Type, body.Host, created, len(records), err)
@@ -680,8 +683,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		// parses every request at once rather than a stream of them.
 		return out.DryRunAll(previews)
 	}
-	out.Success(fmt.Sprintf("Imported %d record(s) to %s", created, domain))
-	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to verify the imported records", domain))
+	out.Success(fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain))
 	return nil
 }
 
@@ -720,28 +722,93 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []*co
 	return records, hasMore, nextPage, nil
 }
 
+// recordName is the name a record answers to: host joined to the domain, or
+// the domain itself for the apex ("" or "@").
+func recordName(host, domain string) string {
+	if host == "" || host == "@" {
+		return domain
+	}
+	return host + "." + domain
+}
+
+// recordChanges describes what an update changes, "answer 192.0.2.1 →
+// 192.0.2.2", one entry per field whose value differs. The success line used
+// to say only "Updated record 12345", which named neither the record nor the
+// change (#238).
+func recordChanges(current *coreapigo.Record, body coreapigo.DNSUpdateRecordBody) []string {
+	var changes []string
+	add := func(field, was, now string) {
+		if was != now {
+			changes = append(changes, fmt.Sprintf("%s %s → %s", field, orNone(was), orNone(now)))
+		}
+	}
+	add("type", strings.ToUpper(derefStr(current.Type)), strings.ToUpper(string(body.Type)))
+	add("host", displayHost(current.Host), displayHost(body.Host))
+	add("answer", derefStr(current.Answer), body.Answer)
+	add("ttl", strconv.FormatInt(current.TTL, 10), strconv.FormatInt(derefInt64(body.TTL), 10))
+	prio := func(p *int64) string {
+		if p == nil {
+			return ""
+		}
+		return strconv.FormatInt(*p, 10)
+	}
+	add("priority", prio(current.Priority), prio(body.Priority))
+	return changes
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return output.None
+	}
+	return s
+}
+
+// hasPriority reports whether any of records is a type that has a priority.
+// The PRIORITY column is shown only then: on A, CNAME and TXT records it is
+// always empty, and it took width a long answer needed (#233).
+func hasPriority(records []*coreapigo.Record) bool {
+	for _, r := range records {
+		switch strings.ToUpper(derefStr(r.Type)) {
+		case "MX", "SRV":
+			return true
+		}
+	}
+	return false
+}
+
+// recordRows renders records with a TYPE column, and a PRIORITY column when
+// hasPriority says so.
 func recordRows(out *output.Config, records []*coreapigo.Record) [][]string {
+	withPriority := hasPriority(records)
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
-		id := ""
-		if r.ID != nil {
-			id = strconv.Itoa(*r.ID)
-		}
+		row := recordRow(out, r, withPriority)
+		rows = append(rows, append([]string{row[0], out.TypeBadge(derefStr(r.Type))}, row[1:]...))
+	}
+	return rows
+}
+
+// recordRow is one record's ID, HOST, ANSWER and TTL cells, then PRIORITY if
+// withPriority. A missing value is left empty; Table shows it as "—".
+func recordRow(out *output.Config, r *coreapigo.Record, withPriority bool) []string {
+	id := ""
+	if r.ID != nil {
+		id = strconv.Itoa(*r.ID)
+	}
+	row := []string{
+		out.Dim(id),
+		displayHost(r.Host),
+		derefStr(r.Answer),
+		out.Dim(strconv.FormatInt(r.TTL, 10)),
+	}
+	if withPriority {
 		priority := ""
 		if r.Priority != nil {
 			priority = strconv.FormatInt(*r.Priority, 10)
 		}
-		ttl := strconv.FormatInt(r.TTL, 10)
-		rows = append(rows, []string{
-			out.Dim(id),
-			out.TypeBadge(derefStr(r.Type)),
-			displayHost(r.Host),
-			derefStr(r.Answer),
-			out.Dim(ttl),
-			priority,
-		})
+		row = append(row, priority)
 	}
-	return rows
+	return row
 }
 
 // dnsTypeOrder defines the preferred display order for grouped DNS output.
@@ -770,10 +837,11 @@ func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 		rendered[t] = true
 		label := out.TypeBadge(t)
 		fmt.Fprintf(out.Writer, "\n%s\n", label)
-		out.Table(
-			[]string{"ID", "HOST", "ANSWER", "TTL", "PRIORITY"},
-			recordRowsNoType(out, groups[t]),
-		)
+		headers := []string{"ID", "HOST", "ANSWER", "TTL"}
+		if hasPriority(groups[t]) {
+			headers = append(headers, "PRIORITY")
+		}
+		out.Table(headers, recordRowsNoType(out, groups[t]), output.Essential("ANSWER"))
 	}
 	for _, t := range dnsTypeOrder {
 		emit(t)
@@ -785,23 +853,10 @@ func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 
 // recordRowsNoType is like recordRows but omits the TYPE column (used in grouped view).
 func recordRowsNoType(out *output.Config, records []*coreapigo.Record) [][]string {
+	withPriority := hasPriority(records)
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
-		id := ""
-		if r.ID != nil {
-			id = strconv.Itoa(*r.ID)
-		}
-		priority := ""
-		if r.Priority != nil {
-			priority = strconv.FormatInt(*r.Priority, 10)
-		}
-		rows = append(rows, []string{
-			out.Dim(id),
-			displayHost(r.Host),
-			derefStr(r.Answer),
-			out.Dim(strconv.FormatInt(r.TTL, 10)),
-			priority,
-		})
+		rows = append(rows, recordRow(out, r, withPriority))
 	}
 	return rows
 }

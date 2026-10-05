@@ -10,6 +10,72 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Changed
+- Tables that are too wide for the terminal now cut their longest values
+  short with `…` (to no less than 20 characters) before hiding any column, and
+  never hide the column that carries the point of the table: the DNS answer in
+  `dns list`, the domains in `contact unverified`, the item name in
+  `order get`. `dns list` with an SPF or DKIM record used to show only ID and
+  HOST; `domain list` at 80 columns lost locked, privacy and auto-renew to one
+  long domain name. The footer says when values were cut. `--wide` and piped
+  output are unchanged: every column, every character.
+- **Scripts:** `-o table` with stdout piped or redirected now prints a plain
+  table — columns aligned with spaces, no borders — like `gh` does, so `awk`
+  and `cut` can split it. Detail views (`domain get`, `auth status`) print
+  `Key  value` lines the same way. In a terminal tables keep their borders.
+- **Scripts:** in table mode, hints (`→ Run …`), list counts, "No … found"
+  messages and the hidden-columns footer now go to stderr, so
+  `namecom domain list -o table > domains.txt` saves only the table. The count
+  reads `2 domains` rather than `(2 domains)`, and a paginated list prints one
+  footer instead of two: `Showing 1–250 of 6,522 domains · --page 2 for more,
+  --all for everything`, short enough for 80 columns. JSON and YAML output is
+  unchanged.
+- `dns list` shows the PRIORITY column only when an MX or SRV record is
+  listed; it was always empty for A, CNAME and TXT records. Every table now
+  shows a missing value as `—` rather than a blank cell (it was blank in some
+  tables and `—` in others), and `order get` shows REFUNDABLE as `yes`/`no`
+  where a non-refundable item used to show `—`. **Scripts** splitting a plain
+  table on whitespace no longer see later fields shift left when a value is
+  missing.
+- Less colour, and four status symbols. Yes/no values are plain `yes` and
+  `no` rather than a bold green `✓ yes` or red `✗ no`, so a long domain list is
+  no longer a column of green and harmless values (Premium no, Privacy no) are
+  no longer red. Colour is kept for what needs action: expired and
+  soon-expiring dates, `Locked: no`, failed and pending statuses. DNS record
+  types are no longer drawn on coloured backgrounds, and `domain check` shows
+  a taken name as `taken` rather than a red `✗ taken`. `✓` means success, `!`
+  a warning, `✗` an error and `→` a next step; the sandbox note in
+  `domain check` is dim text instead of a `→` line, and the `==>` lines in
+  `domain register` and `domain renew` are now spinner text. The insecure
+  config-permissions warning starts with `!` instead of `warning:`.
+- Dates and numbers read the same everywhere. Relative times use days under
+  60, months under 24 and years beyond, so nothing reads "in 24 months";
+  `status` says an expired domain "expired 2 years ago", as `domain list`
+  does, rather than "expired 804 days ago", and its expiring list reads
+  "(in 3 days)". The transfer-lock refusal from `domain lock off` shows
+  "until 2026-11-28 (in 2 months)" instead of the API's raw timestamp. Prices
+  and counts have thousands separators (`$100,000.00`, `6,522 domains`), and
+  plurals are spelled out: "Register example.com for 1 year", "Refunded
+  $29.98 for 2 items", "Imported 3 records". **Scripts** matching prompt,
+  success or error text containing large prices or `(s)` plurals need
+  updating; JSON and YAML values are unchanged.
+- Success lines say what happened: `dns create` prints
+  `Created A www.example.com → 192.0.2.10 (id 12345)`, `dns update` lists each
+  changed field (`answer 192.0.2.1 → 192.0.2.2, ttl 300 → 600`), `url update`
+  does the same, and `domain update`, `domain set-ns`, `domain contacts set`,
+  `vanity-ns create/update` and `dnssec create` name the values they set.
+  `domain renew` names the new expiry date when the API returns it. The
+  "Run 'namecom … list'" and "… get to confirm" hints after every write are
+  gone. `domain get` suggests renewing an expired domain, or one expiring
+  within 30 days without auto-renew, instead of always suggesting `dns list`.
+  **Scripts** matching the old success text need updating.
+- Warning boxes wrap to the terminal width instead of overflowing it; the
+  `contact unverified` box was 86 columns wide and broke apart at 80. Its
+  wording follows the deadlines: "Verification deadline passed — the registry
+  may suspend or lock these domains at any time" when they have passed,
+  rather than "may be LOCKED … after the deadline". `transfer eligibility`
+  shows REGISTERED AT (`another registrar` or `name.com (an account)`) instead
+  of "AT NAME.COM no" beside "SUPPORTS INTERNAL yes", and shows the TLD's
+  internal-transfer support only for a domain already at name.com.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

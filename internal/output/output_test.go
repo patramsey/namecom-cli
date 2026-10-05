@@ -41,7 +41,8 @@ func TestRelativeTime(t *testing.T) {
 		{1.4, "in 1 day"},
 		{2.0, "in 2 days"},
 		{14.0, "in 14 days"},
-		{60.0, "in 60 days"},
+		{59.0, "in 59 days"},
+		{60.0, "in 2 months"},
 	}
 	for _, tt := range tests {
 		if got := relativeTime(tt.days); got != tt.want {
@@ -74,14 +75,54 @@ func TestBoolBadge_NoColor(t *testing.T) {
 	}
 }
 
-func TestBoolBadge_Color(t *testing.T) {
+// A 250-row domain list was a column of bold green "✓ yes" and red "✗ no",
+// with red on harmless values (#238). BoolBadge is plain text even with
+// colour on; BoolAlert is the one that may colour, and only the value asked.
+func TestBoolBadge_PlainEvenWithColor(t *testing.T) {
 	c := &Config{Color: ColorAlways}
-	// Color output should contain the text and the indicator symbol.
-	if got := c.BoolBadge(true); !strings.Contains(got, "yes") || !strings.Contains(got, "✓") {
-		t.Errorf("BoolBadge(true) = %q, want ✓ and 'yes'", got)
+	if got := c.BoolBadge(true); got != "yes" {
+		t.Errorf("BoolBadge(true) = %q, want plain %q", got, "yes")
 	}
-	if got := c.BoolBadge(false); !strings.Contains(got, "no") || !strings.Contains(got, "✗") {
-		t.Errorf("BoolBadge(false) = %q, want ✗ and 'no'", got)
+	if got := c.BoolBadge(false); got != "no" {
+		t.Errorf("BoolBadge(false) = %q, want plain %q", got, "no")
+	}
+	if got := c.BoolAlert(true, false); got != "yes" {
+		t.Errorf("BoolAlert(true, false) = %q, want plain %q", got, "yes")
+	}
+	if got := noColor().BoolAlert(false, false); got != "no" {
+		t.Errorf("BoolAlert(false, false) without colour = %q, want %q", got, "no")
+	}
+}
+
+// Only statuses that need attention are coloured. Asserted on statusColor,
+// because off a TTY lipgloss renders every style as plain text.
+func TestStatusColor_OnlyActionable(t *testing.T) {
+	for _, s := range []string{"active", "completed", "canceled", "ok"} {
+		if _, ok := statusColor(s); ok {
+			t.Errorf("status %q is coloured; it needs no action", s)
+		}
+	}
+	for _, s := range []string{"expired", "failed", "pending_transfer", "Suspended"} {
+		if _, ok := statusColor(s); !ok {
+			t.Errorf("status %q is not coloured", s)
+		}
+	}
+}
+
+// Note is information, so it carries none of the four symbols and goes to
+// stderr, in table mode only.
+func TestNote(t *testing.T) {
+	var buf, ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
+	c.Note("Sandbox mode: using registry check")
+	if ebuf.String() != "Sandbox mode: using registry check\n" || buf.Len() != 0 {
+		t.Errorf("stdout %q, stderr %q", buf.String(), ebuf.String())
+	}
+	ebuf.Reset()
+	c.Format = FormatJSON
+	c.Note("x")
+	if ebuf.Len() != 0 {
+		t.Errorf("Note printed in JSON mode: %q", ebuf.String())
 	}
 }
 
@@ -92,7 +133,8 @@ func TestAvailabilityBadge_NoColor(t *testing.T) {
 	if got := c.AvailabilityBadge(true); got != "✓ available" {
 		t.Errorf("AvailabilityBadge(true) = %q", got)
 	}
-	if got := c.AvailabilityBadge(false); got != "✗ taken" {
+	// Taken is not an error, so no ✗ (#238).
+	if got := c.AvailabilityBadge(false); got != "taken" {
 		t.Errorf("AvailabilityBadge(false) = %q", got)
 	}
 }
@@ -187,10 +229,10 @@ func TestExpiryDate_NoColor(t *testing.T) {
 		t.Errorf("ExpiryDate(20 days) = %q, want 'in 20 days'", got)
 	}
 
-	// Far future (≥ 30 days) — output contains "in N days".
+	// 60 days and beyond — months.
 	far := time.Now().Add(60 * 24 * time.Hour)
-	if got := c.ExpiryDate(&far); !strings.Contains(got, "in 60 days") {
-		t.Errorf("ExpiryDate(60 days) = %q, want 'in 60 days'", got)
+	if got := c.ExpiryDate(&far); !strings.Contains(got, "in 2 months") {
+		t.Errorf("ExpiryDate(60 days) = %q, want 'in 2 months'", got)
 	}
 }
 
@@ -668,21 +710,69 @@ func int32Ptr(i int32) *int32 { return &i }
 // ---- Hint / WarnBox suppression --------------------------------------------
 
 // Hint is commentary. Emitting it in JSON or YAML mode would corrupt the
-// document that a caller is about to parse.
+// document that a caller is about to parse. In table mode it goes to stderr,
+// so a table redirected to a file holds only the table (#233).
 func TestHint_OnlyInTableMode(t *testing.T) {
 	for _, f := range []Format{FormatJSON, FormatYAML} {
-		var buf bytes.Buffer
-		c := &Config{Format: f, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+		var buf, ebuf bytes.Buffer
+		c := &Config{Format: f, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
 		c.Hint("run something else")
-		if buf.Len() != 0 {
-			t.Errorf("Hint must be silent in %s mode, got: %q", f, buf.String())
+		if buf.Len() != 0 || ebuf.Len() != 0 {
+			t.Errorf("Hint must be silent in %s mode, got: %q %q", f, buf.String(), ebuf.String())
 		}
 	}
-	var buf bytes.Buffer
-	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	var buf, ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
 	c.Hint("run something else")
-	if !strings.Contains(buf.String(), "run something else") {
-		t.Errorf("Hint should print in table mode, got: %q", buf.String())
+	if ebuf.String() != "→ run something else\n" || buf.Len() != 0 {
+		t.Errorf("Hint should print to stderr in table mode, got stdout %q, stderr %q", buf.String(), ebuf.String())
+	}
+}
+
+// Count, Footer and Empty describe a list rather than being part of it, so
+// they go to stderr too, and Count formats its number (#233, #238).
+func TestCountFooterEmpty_GoToStderr(t *testing.T) {
+	var buf, ebuf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &ebuf}
+	c.Count(6522, "domain")
+	c.Count(1, "entry", "first page — pass --all for the rest")
+	c.Footer("Showing 1–2 of 3", "", "--page 2")
+	c.Empty("DNS record", "")
+	want := "6,522 domains\n" +
+		"1 entry · first page — pass --all for the rest\n" +
+		"Showing 1–2 of 3 · --page 2\n" +
+		"No DNS records found.\n"
+	if ebuf.String() != want || buf.Len() != 0 {
+		t.Errorf("stdout %q, stderr %q; want stderr %q", buf.String(), ebuf.String(), want)
+	}
+
+	c.QuietMode = true
+	ebuf.Reset()
+	c.Count(2, "domain")
+	if ebuf.Len() != 0 {
+		t.Errorf("Count printed in quiet mode: %q", ebuf.String())
+	}
+}
+
+func TestPlural(t *testing.T) {
+	for _, tt := range []struct {
+		n    int
+		noun string
+		want string
+	}{
+		{1, "year", "1 year"},
+		{2, "year", "2 years"},
+		{0, "domain", "0 domains"},
+		{6522, "domain", "6,522 domains"},
+		{2, "entry", "2 entries"},
+		{2, "key", "2 keys"},
+		{2, "address", "2 addresses"},
+		{1000000, "record", "1,000,000 records"},
+		{-1234, "day", "-1,234 days"},
+	} {
+		if got := Plural(tt.n, tt.noun); got != tt.want {
+			t.Errorf("Plural(%d, %q) = %q, want %q", tt.n, tt.noun, got, tt.want)
+		}
 	}
 }
 
@@ -772,10 +862,10 @@ func TestTTYPredicates_ReportNonTTYUnderTest(t *testing.T) {
 	}
 }
 
-// TestRelativeTimeWidensUnit guards the unit-widening thresholds. Day counts
-// are exact inside a quarter, where a renewal decision is actually pending;
-// past that they widen, because "in 2750 days" told a reader nothing about a
-// domain paid through 2034.
+// TestRelativeTimeWidensUnit guards the unit-widening thresholds: days under
+// 60, months under 24, years beyond (#238). "in 2750 days" told a reader
+// nothing about a domain paid through 2034, and the old thresholds produced
+// "in 24 months" next to "in 7 years".
 func TestRelativeTimeWidensUnit(t *testing.T) {
 	tests := []struct {
 		days float64
@@ -784,11 +874,13 @@ func TestRelativeTimeWidensUnit(t *testing.T) {
 		{0.5, "today"},
 		{-0.5, "expired today"},
 		{1, "in 1 day"},
-		{90, "in 90 days"},   // boundary: still exact days
-		{91, "in 3 months"},  // first step up
+		{59, "in 59 days"},    // boundary: still exact days
+		{59.6, "in 2 months"}, // rounds to 60 days, so months
+		{60, "in 2 months"},
 		{194, "in 6 months"}, // a real expiry from `domain list`
-		{729, "in 24 months"},
-		{730, "in 2 years"}, // boundary: months give way to years
+		{714, "in 23 months"},
+		{729, "in 2 years"}, // was "in 24 months"
+		{730, "in 2 years"},
 		{2750, "in 8 years"},
 		{-3, "3 days ago"},
 		{-1, "1 day ago"},
@@ -798,6 +890,32 @@ func TestRelativeTimeWidensUnit(t *testing.T) {
 		if got := relativeTime(tt.days); got != tt.want {
 			t.Errorf("relativeTime(%.1f) = %q, want %q", tt.days, got, tt.want)
 		}
+	}
+	// RelativeDays is the general form: no "expired" for a date earlier today.
+	if got := RelativeDays(-0.5); got != "today" {
+		t.Errorf("RelativeDays(-0.5) = %q, want today", got)
+	}
+}
+
+func TestMoney(t *testing.T) {
+	for _, tt := range []struct {
+		v    float64
+		want string
+	}{
+		{0, "$0.00"},
+		{12.99, "$12.99"},
+		{1000, "$1,000.00"},
+		{100000, "$100,000.00"},
+		{1234567.89, "$1,234,567.89"},
+		{-5, "-$5.00"},
+		{999.999, "$1,000.00"},
+	} {
+		if got := Money(tt.v); got != tt.want {
+			t.Errorf("Money(%v) = %q, want %q", tt.v, got, tt.want)
+		}
+	}
+	if got := Decimal(8625); got != "8,625.00" {
+		t.Errorf("Decimal(8625) = %q", got)
 	}
 }
 
@@ -825,7 +943,7 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 
 	t.Run("drops columns to fit", func(t *testing.T) {
 		var buf bytes.Buffer
-		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 80}
+		c := &Config{Format: FormatTable, Writer: &buf, EWriter: &buf, MaxWidth: 50}
 		c.Table(headers, rows)
 		got := buf.String()
 
@@ -836,14 +954,39 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 				tableLines = append(tableLines, line)
 			}
 		}
-		if w := widest(strings.Join(tableLines, "\n")); w > 80 {
-			t.Errorf("table rendered %d columns wide, want <= 80:\n%s", w, got)
+		if w := widest(strings.Join(tableLines, "\n")); w > 50 {
+			t.Errorf("table rendered %d columns wide, want <= 50:\n%s", w, got)
 		}
 		if !strings.Contains(got, "hidden") {
 			t.Errorf("dropped columns without telling the reader:\n%s", got)
 		}
 		if !strings.Contains(got, "DOMAIN") {
 			t.Errorf("dropped the identifying column:\n%s", got)
+		}
+	})
+
+	// One 49-character domain dropped auto-renew, locked and privacy at 80
+	// columns (#233). Shortening the name keeps all five.
+	t.Run("shortens long cells before dropping columns", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &buf, MaxWidth: 80}
+		c.Table(headers, rows)
+		got := buf.String()
+		for _, h := range headers {
+			if !strings.Contains(got, h) {
+				t.Errorf("dropped %q although shortening would have fit:\n%s", h, got)
+			}
+		}
+		if !strings.Contains(got, "loadtest-ff7fb52b") || !strings.Contains(got, "…") {
+			t.Errorf("want the long domain cut short with …:\n%s", got)
+		}
+		if strings.Contains(got, "hidden") {
+			t.Errorf("nothing was hidden, but the footer says so:\n%s", got)
+		}
+		for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+			if w := lipgloss.Width(line); w > 80 {
+				t.Errorf("line %d wide, want <= 80: %q", w, line)
+			}
 		}
 	})
 
@@ -882,6 +1025,33 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 			t.Errorf("dropped columns that fit:\n%s", got)
 		}
 	})
+}
+
+// TestTableEssentialColumns: a DNS answer, the widest column, was the first
+// dropped, leaving `dns list` showing ID and HOST only (#233). An essential
+// column survives, cut short, and the columns after it go instead.
+func TestTableEssentialColumns(t *testing.T) {
+	headers := []string{"ID", "HOST", "ANSWER", "TTL"}
+	spf := "v=spf1 include:_spf.google.com include:mailgun.org include:sendgrid.net ~all"
+	rows := [][]string{{"12345", "@", spf, "300"}}
+
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &buf, MaxWidth: 36}
+	c.Table(headers, rows, Essential("ANSWER"))
+	got := buf.String()
+	if !strings.Contains(got, "ANSWER") || !strings.Contains(got, "v=spf1") {
+		t.Errorf("essential ANSWER column was dropped:\n%s", got)
+	}
+	if !strings.Contains(got, "2 columns hidden (host, ttl)") {
+		t.Errorf("want the other columns dropped in its place, and named:\n%s", got)
+	}
+
+	// Without the mark, the same table drops ANSWER first.
+	buf.Reset()
+	c.Table(headers, rows)
+	if strings.Contains(buf.String(), "v=spf1") {
+		t.Errorf("unmarked ANSWER kept at 36 columns; the test no longer shows the difference:\n%s", buf.String())
+	}
 }
 
 // TestKVTableFitsTerminalWidth: KVTable (`domain get`, `auth status`) was

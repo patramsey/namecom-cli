@@ -154,9 +154,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			[]string{"MAILBOX", "FORWARDS TO"},
 			emailRows(all),
 		)
-		out.Count(len(all), "forwarding")
 		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
+			out.Count(len(all), "forwarding", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(all), "forwarding")
 		}
 	}
 	return nil
@@ -290,7 +291,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return out.YAML(entry)
 	default:
 		out.Success(fmt.Sprintf("Created forwarding %s@%s → %s", mailbox, domain, createEmailTo))
-		out.Hint(fmt.Sprintf("Run 'namecom email list %s' to see all forwardings", domain))
 	}
 	return nil
 }
@@ -369,7 +369,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return out.YAML(entry)
 	default:
 		out.Success(fmt.Sprintf("Updated forwarding %s@%s → %s", mailbox, domain, updateEmailTo))
-		out.Hint(fmt.Sprintf("Run 'namecom email list %s' to see all forwardings", domain))
 	}
 	return nil
 }
@@ -397,7 +396,6 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted forwarding for %s@%s", mailbox, domain))
-	out.Hint(fmt.Sprintf("Run 'namecom email list %s' to see remaining forwardings", domain))
 	return nil
 }
 

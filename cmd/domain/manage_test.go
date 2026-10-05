@@ -699,8 +699,8 @@ func TestRenew_PromptQuotesThePriceSent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the non-interactive confirm error")
 	}
-	if !strings.Contains(err.Error(), "$1800.00") {
-		t.Errorf("prompt does not quote the price sent ($1800.00):\n%v", err)
+	if !strings.Contains(err.Error(), "$1,800.00") {
+		t.Errorf("prompt does not quote the price sent ($1,800.00):\n%v", err)
 	}
 	if strings.Contains(err.Error(), "2500") {
 		t.Errorf("prompt quotes the standard renewal price, which is not sent:\n%v", err)
@@ -2360,8 +2360,8 @@ func TestRegister_PromptQuotesThePriceSent(t *testing.T) {
 		price string // --price, empty for none
 		want  string
 	}{
-		{"aftermarket check price", "", "$2500.00"},
-		{"--price override", "3000", "$3000.00"},
+		{"aftermarket check price", "", "$2,500.00"},
+		{"--price override", "3000", "$3,000.00"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2581,7 +2581,7 @@ func TestRequirements_QuietListsRequiredFields(t *testing.T) {
 // TestRegister_PromptWordingByPurchaseKind guards issue #132. With the price
 // right (#83), the words around it still misled:
 //
-//   - A registry premium name read "at $1000.00/yr" for shoe.luxe, whose
+//   - A registry premium name read "at $1,000.00/yr" for shoe.luxe, whose
 //     premium applies to the purchase while it renews at $24.99 (sandbox
 //     pricing, pricing_premium_shoe_luxe). "/yr" says $1000 every year.
 //   - An aftermarket name read "for 3 year(s)", which the API does not
@@ -2605,15 +2605,15 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":true,"purchasePrice":1000,"renewalPrice":24.99,"transferPrice":24.99}`,
 			purchaseType: "registration", checkPrice: 1000,
-			want:    []string{"Register shoe.luxe for 1 year(s) at $1000.00 (premium; renews at $24.99/yr)?"},
-			notWant: []string{"$1000.00/yr"},
+			want:    []string{"Register shoe.luxe for 1 year at $1,000.00 (premium; renews at $24.99/yr)?"},
+			notWant: []string{"$1,000.00/yr"},
 		},
 		{
 			name:         "premium without renewal price",
 			years:        "1",
 			pricing:      `{"premium":true,"purchasePrice":1000}`,
 			purchaseType: "registration", checkPrice: 1000,
-			want:    []string{"at $1000.00 (premium)?"},
+			want:    []string{"at $1,000.00 (premium)?"},
 			notWant: []string{"/yr", "renews"},
 		},
 		{
@@ -2624,7 +2624,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "2",
 			pricing:      `{"premium":true,"purchasePrice":1523.08,"renewalPrice":1523.08,"transferPrice":761.54}`,
 			purchaseType: "registration", checkPrice: 761.54,
-			want:    []string{"for 2 year(s) at $1523.08 total for 2 years (premium; renews at $1523.08 total for 2 years)?"},
+			want:    []string{"for 2 years at $1,523.08 total for 2 years (premium; renews at $1,523.08 total for 2 years)?"},
 			notWant: []string{"/yr"},
 		},
 		{
@@ -2632,7 +2632,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "3",
 			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99}`,
 			purchaseType: "aftermarket_b", checkPrice: 2500,
-			want:    []string{"Register shoe.luxe at $2500.00 flat (aftermarket_b, not per year", "--years 3"},
+			want:    []string{"Register shoe.luxe at $2,500.00 flat (aftermarket_b, not per year", "--years 3"},
 			notWant: []string{"year(s)", "/yr", "12.99"},
 		},
 		{
@@ -2640,7 +2640,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99}`,
 			purchaseType: "aftermarket_b", checkPrice: 2500,
-			want:    []string{"Register shoe.luxe at $2500.00 flat (aftermarket_b, not per year)?"},
+			want:    []string{"Register shoe.luxe at $2,500.00 flat (aftermarket_b, not per year)?"},
 			notWant: []string{"year(s)", "--years"},
 		},
 		{
@@ -2648,7 +2648,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99,"transferPrice":12.99}`,
 			purchaseType: "registration", checkPrice: 12.99,
-			want:    []string{"Register shoe.luxe for 1 year(s) at $12.99/yr?"},
+			want:    []string{"Register shoe.luxe for 1 year at $12.99/yr?"},
 			notWant: []string{"premium"},
 		},
 	}

@@ -199,9 +199,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 			[]string{"ID", "STATUS", "DATE", "TOTAL"},
 			orderRows(out, orders),
 		)
-		out.Count(len(orders), "order")
 		if hasMore {
-			out.Hint("Showing the newest orders — use --since, --domain, or --status to narrow results; --all for full history")
+			out.Count(len(orders), "order", "newest first — narrow with --since, --domain or --status, or pass --all")
+		} else {
+			out.Count(len(orders), "order")
 		}
 	}
 	return nil
@@ -254,11 +255,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 			out.Table(
 				[]string{"ITEM ID", "NAME", "TYPE", "PRICE", "REFUNDABLE"},
 				orderItemRows(out, o.OrderItems, o.Currency),
+				output.Essential("NAME"),
 			)
 			out.Hint("Run 'namecom order refund --order-id " +
 				strconv.Itoa(derefInt(o.ID)) + " --item-ids <ITEM ID>' to refund a refundable item")
 		}
-		out.Hint("Run 'namecom order list' to see all orders")
 	}
 	return nil
 }
@@ -285,7 +286,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		itemIDs = append(itemIDs, n)
 	}
 	if len(dropped) > 0 {
-		out.Warn("ignoring duplicate item ID(s): " + strings.Join(dropped, ", "))
+		out.Warn("ignoring duplicate item " + output.PluralNoun(len(dropped), "ID") + ": " + strings.Join(dropped, ", "))
 	}
 
 	body := coreapigo.RefundRequest{
@@ -365,17 +366,20 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		}
 	default:
 		if refunded > 0 {
-			out.Success(fmt.Sprintf("Refunded $%.2f for %d item(s)", result.TotalRefundAmount, refunded))
+			out.Success(fmt.Sprintf("Refunded %s for %s", output.Money(result.TotalRefundAmount), output.Plural(refunded, "item")))
 		}
 		for _, p := range problems {
 			out.Warn(p)
 		}
-		out.Hint("Run 'namecom order list' to see updated order status")
 	}
 	if failed > 0 {
 		// Exit 1: the request was valid and authorized, the API declined part
 		// of it — a runtime outcome, not a usage or credential problem.
-		return fmt.Errorf("%d of %d item(s) were not refunded", failed, len(result.Results))
+		verb := "were"
+		if failed == 1 {
+			verb = "was"
+		}
+		return fmt.Errorf("%d of %s %s not refunded", failed, output.Plural(len(result.Results), "item"), verb)
 	}
 	return nil
 }
@@ -407,9 +411,9 @@ func conflictRefundResult(err error) *coreapigo.RefundResponse {
 // rather than guessing at a symbol we may not have.
 func formatAmount(amount float64, currency *string) string {
 	if currency == nil || *currency == "" || strings.EqualFold(*currency, "USD") {
-		return fmt.Sprintf("$%.2f", amount)
+		return output.Money(amount)
 	}
-	return fmt.Sprintf("%.2f %s", amount, strings.ToUpper(*currency))
+	return output.Decimal(amount) + " " + strings.ToUpper(*currency)
 }
 
 func derefInt(n *int) int {
@@ -429,16 +433,12 @@ func orderItemRows(out *output.Config, items []*coreapigo.OrderItem, currency *s
 		if it.Name != nil {
 			name = *it.Name
 		}
-		refundable := out.Dim("—")
-		if it.IsRefundable {
-			refundable = out.BoolBadge(true)
-		}
 		rows = append(rows, []string{
 			strconv.Itoa(it.ID),
 			name,
 			it.Type,
 			formatAmount(it.Price, currency),
-			refundable,
+			out.BoolBadge(it.IsRefundable),
 		})
 	}
 	return rows

@@ -201,9 +201,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 			[]string{"DOMAIN", "STATUS"},
 			transferRows(out, transfers),
 		)
-		out.Count(len(transfers), "transfer")
 		if hasMore {
-			out.Hint("Showing first page — pass --all for full transfer history")
+			out.Count(len(transfers), "transfer", "first page — pass --all for full history")
+		} else {
+			out.Count(len(transfers), "transfer")
 		}
 	}
 	return nil
@@ -343,7 +344,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if premium {
 		desc := fmt.Sprintf("transferring %s costs an unquoted price (premium)", domain)
 		if charged != nil {
-			desc = fmt.Sprintf("transferring %s costs $%.2f (premium)", domain, *charged)
+			desc = fmt.Sprintf("transferring %s costs %s (premium)", domain, output.Money(*charged))
 		}
 		if cmdutil.IsDryRun(cmd) && !createAccept {
 			out.Hint(desc + "; transferring it without the interactive prompt will require --accept-premium")
@@ -389,8 +390,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	default:
-		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total $%.2f)",
-			domain, result.Order, result.TotalPaid))
+		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total %s)",
+			domain, result.Order, output.Money(result.TotalPaid)))
 		// Nil-checked because the SDK types this as *Transfer where the
 		// generated client used a value. A response without a "transfer" key
 		// used to yield an empty status and no status line; unguarded here it
@@ -610,7 +611,6 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Cancelled transfer of %s", domain))
-	out.Hint("Run 'namecom transfer list' to see remaining active transfers")
 	return nil
 }
 
@@ -682,9 +682,7 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Table([]string{"DOMAIN", "AT NAME.COM", "SUPPORTS INTERNAL"}, [][]string{
-			{result.DomainName, out.BoolBadge(result.AtName), out.BoolBadge(result.SupportsInternalTransfer)},
-		})
+		out.Table(eligibilityTable(result))
 		if result.AtName {
 			// supportsInternalTransfer is a TLD-level flag. The spec is explicit
 			// that it "does not reflect per-account allowlist eligibility" — so
@@ -697,6 +695,23 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// eligibilityTable lays out an eligibility result. It showed "AT NAME.COM no"
+// beside "SUPPORTS INTERNAL yes", which read as a contradiction (#238): the
+// second is a TLD-level flag that matters only for a domain already at
+// name.com. REGISTERED AT says where the domain is, and the TLD column
+// appears only when it applies.
+func eligibilityTable(r *coreapigo.TransferEligibilityResponse) ([]string, [][]string) {
+	if !r.AtName {
+		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "another registrar"}}
+	}
+	internal := "yes"
+	if !r.SupportsInternalTransfer {
+		internal = "no"
+	}
+	return []string{"DOMAIN", "REGISTERED AT", "TLD ALLOWS INTERNAL TRANSFER"},
+		[][]string{{r.DomainName, "name.com (an account)", internal}}
 }
 
 func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]string {
@@ -721,7 +736,7 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 	}
 	priceMsg := ""
 	if price != nil {
-		priceMsg = fmt.Sprintf(" for $%.2f", *price)
+		priceMsg = " for " + output.Money(*price)
 		if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
 			priceMsg += " plus WHOIS privacy"
 		}

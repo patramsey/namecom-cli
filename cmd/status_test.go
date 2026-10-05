@@ -225,7 +225,8 @@ func TestClassifyExpiry_SeparatesExpiredFromExpiring(t *testing.T) {
 }
 
 // TestStatus_RendersExpiredAsExpired pins the text: an expired domain reads
-// "expired N days ago", not "(-793 days)" under an "Expiring soon" heading.
+// "expired 2 years ago" — the units `domain list` uses for the same date
+// (#238) — not "(-793 days)" under an "Expiring soon" heading.
 func TestStatus_RendersExpiredAsExpired(t *testing.T) {
 	var buf bytes.Buffer
 	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
@@ -238,7 +239,7 @@ func TestStatus_RendersExpiredAsExpired(t *testing.T) {
 	})
 	got := buf.String()
 
-	for _, want := range []string{"1 expired", "1 expiring within 7 days", "expired 793 days ago", "(3 days)"} {
+	for _, want := range []string{"1 expired", "1 expiring within 7 days", "(expired 2 years ago)", "(in 3 days)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status output missing %q:\n%s", want, got)
 		}

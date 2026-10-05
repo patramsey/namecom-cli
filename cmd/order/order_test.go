@@ -93,8 +93,8 @@ func TestOrderList_PaginationStopsAtFirstPage(t *testing.T) {
 	if len(*requests) != 1 {
 		t.Errorf("expected 1 request (first page only), got %d: %v", len(*requests), *requests)
 	}
-	if !contains(stdout.String(), "Showing the newest orders") {
-		t.Errorf("expected pagination hint in output: %q", stdout.String())
+	if !contains(stderr.String(), "newest first") {
+		t.Errorf("expected a pagination note on stderr: %q", stderr.String())
 	}
 }
 
@@ -620,13 +620,13 @@ func TestRefund_ReportsPerItemFailures(t *testing.T) {
 		{
 			name:        "all succeed",
 			resp:        `{"totalRefundAmount":29.98,"results":[` + ok1 + `,` + ok2 + `]}`,
-			wantSuccess: "Refunded $29.98 for 2 item(s)",
+			wantSuccess: "Refunded $29.98 for 2 items",
 		},
 		{
 			name:        "mixed",
 			resp:        `{"totalRefundAmount":19.99,"results":[` + ok1 + `,` + failed + `]}`,
 			wantErr:     true,
-			wantSuccess: "Refunded $19.99 for 1 item(s)",
+			wantSuccess: "Refunded $19.99 for 1 item",
 			wantWarn:    []string{"item 9", "outside the refund grace period"},
 		},
 		{
@@ -703,7 +703,7 @@ func TestRefund_AllFailed409RendersPerItemResults(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when every item failed")
 	}
-	if got, want := err.Error(), "1 of 1 item(s) were not refunded"; got != want {
+	if got, want := err.Error(), "1 of 1 item was not refunded"; got != want {
 		t.Errorf("err = %q, want %q", got, want)
 	}
 	if _, ok := errors.AsType[*api.APIError](err); ok {
@@ -845,8 +845,8 @@ func TestOrderRows_LargeAmountPrecision(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
-	if got := rows[0][3]; got != "$1234567.89" {
-		t.Errorf("large order total lost precision: got %q, want %q", got, "$1234567.89")
+	if got := rows[0][3]; got != "$1,234,567.89" {
+		t.Errorf("large order total lost precision: got %q, want %q", got, "$1,234,567.89")
 	}
 
 	// And it must survive a JSON round-trip unchanged.

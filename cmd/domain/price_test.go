@@ -168,7 +168,7 @@ func TestPurchase_PremiumNeedsAcceptPremium(t *testing.T) {
 			if !errors.As(err, &usage) {
 				t.Fatalf("want a usage error (exit 2), got %T: %v", err, err)
 			}
-			for _, w := range []string{"$6250.00", "premium", "--accept-premium"} {
+			for _, w := range []string{"$6,250.00", "premium", "--accept-premium"} {
 				if !strings.Contains(err.Error(), w) {
 					t.Errorf("error %q lacks %q", err, w)
 				}

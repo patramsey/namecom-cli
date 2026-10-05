@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -277,38 +276,38 @@ func renderStatus(out *output.Config, s statusSummary) {
 	)
 
 	// Domain summary line.
-	total := out.Dim(countOf(s.DomainsTotal, "domain"))
+	total := out.Dim(output.Plural(s.DomainsTotal, "domain"))
 	expPart := ""
 	if s.Expired > 0 {
-		expPart = "  " + out.Red(strconv.Itoa(s.Expired)+" expired")
+		expPart = "  " + out.Red(output.Thousands(s.Expired)+" expired")
 	}
 	// Both counts when both are non-zero: showing only the 7-day one hid
 	// the rest of the month (#211). ExpiringSoon excludes the critical ones,
 	// hence "more".
 	if s.ExpiringCritical > 0 {
-		expPart += "  " + out.Red(strconv.Itoa(s.ExpiringCritical)+" expiring within 7 days")
+		expPart += "  " + out.Red(output.Thousands(s.ExpiringCritical)+" expiring within 7 days")
 	}
 	if s.ExpiringSoon > 0 {
 		soon := " expiring within 30 days"
 		if s.ExpiringCritical > 0 {
 			soon = " more within 30 days"
 		}
-		expPart += "  " + out.Amber(strconv.Itoa(s.ExpiringSoon)+soon)
+		expPart += "  " + out.Amber(output.Thousands(s.ExpiringSoon)+soon)
 	}
 	transferPart := ""
 	if s.PendingTransfers != nil && *s.PendingTransfers > 0 {
-		transferPart = "  " + out.Amber(countOf(*s.PendingTransfers, "transfer")+" pending")
+		transferPart = "  " + out.Amber(output.Plural(*s.PendingTransfers, "transfer")+" pending")
 	}
 	unlockedPart := ""
 	if s.Unlocked > 0 {
-		unlockedPart = "  " + out.Dim(strconv.Itoa(s.Unlocked)+" unlocked")
+		unlockedPart = "  " + out.Dim(output.Thousands(s.Unlocked)+" unlocked")
 	}
 	fmt.Fprintf(out.Writer, "%s%s%s%s\n", total, expPart, transferPart, unlockedPart)
 
 	// Balance, only when we actually have it. A failed lookup leaves this nil
 	// and prints nothing — showing "$0.00" would read as an empty account.
 	if s.Balance != nil {
-		fmt.Fprintf(out.Writer, "%s  %s\n", out.Dim("Balance"), fmt.Sprintf("$%.2f", *s.Balance))
+		fmt.Fprintf(out.Writer, "%s  %s\n", out.Dim("Balance"), output.Money(*s.Balance))
 	}
 
 	// Expired and expiring domains, each under its own heading.
@@ -331,7 +330,7 @@ func renderStatus(out *output.Config, s statusSummary) {
 		fmt.Fprintln(out.Writer)
 		fmt.Fprintln(out.Writer, "Expiring soon")
 		for _, e := range expiring {
-			days := fmt.Sprintf("(%d days)", e.Days)
+			days := "(" + output.RelativeDays(float64(e.Days)) + ")"
 			if e.Days < 7 {
 				days = out.Red(days)
 			} else {
@@ -360,21 +359,12 @@ func renderStatus(out *output.Config, s statusSummary) {
 
 func ptrInt(n int) *int { return &n }
 
-// countOf phrases n of noun, pluralised: "1 domain", "2 domains".
-func countOf(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return strconv.Itoa(n) + " " + noun + "s"
-}
-
-// expiredAgo phrases an elapsed day count for an expired domain.
+// expiredAgo phrases an elapsed day count for an expired domain, in the units
+// `domain list` uses for the same date: "(expired 2 years ago)", not "(expired
+// 804 days ago)".
 func expiredAgo(days int) string {
-	switch days {
-	case 0:
+	if days == 0 {
 		return "(expired today)"
-	case 1:
-		return "(expired 1 day ago)"
 	}
-	return fmt.Sprintf("(expired %d days ago)", days)
+	return "(expired " + output.RelativeDays(-float64(days)) + ")"
 }

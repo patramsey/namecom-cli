@@ -106,7 +106,7 @@ func TestVanityList_Empty(t *testing.T) {
 	// An account with no vanity nameservers must be told so and pointed at the
 	// command that creates one. Exiting 0 with a blank screen reads as a
 	// failure to the user, and nothing but this assertion guards the message.
-	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
+	buf, ok := cmdutil.Out(cmd).EWriter.(*bytes.Buffer)
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}

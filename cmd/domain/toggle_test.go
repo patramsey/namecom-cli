@@ -122,7 +122,7 @@ func TestLockRefusal_TransferLockIsExplained(t *testing.T) {
 				t.Fatal("want the refusal as an error")
 			}
 			msg := err.Error()
-			for _, want := range []string{"cannot be unlocked until 2026-11-28 06:37:39", "60-day transfer lock"} {
+			for _, want := range []string{"cannot be unlocked until 2026-11-28 (", "60-day transfer lock"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("want %q in the error, got %q", want, msg)
 				}

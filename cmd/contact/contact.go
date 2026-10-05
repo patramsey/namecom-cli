@@ -153,17 +153,44 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		out.Table(
 			[]string{"ID", "EMAIL", "DEADLINE", "DOMAINS"},
 			unverifiedRows(out, contacts),
-		)
-		out.Count(len(contacts), "unverified contact")
-		out.WarnBox(
-			"Domains with unverified contacts may be LOCKED by the registry after the deadline.",
-			"Run 'namecom contact resend <id>' to send the verification email again.",
+			output.Essential("DOMAINS"),
 		)
 		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
+			out.Count(len(contacts), "unverified contact", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(contacts), "unverified contact")
 		}
+		out.WarnBox(
+			deadlineWarning(contacts, time.Now()),
+			"Run 'namecom contact resend <id>' to send the verification email again.",
+		)
 	}
 	return nil
+}
+
+// deadlineWarning words the callout by tense. It said domains "may be LOCKED
+// … after the deadline" when every deadline had passed weeks before (#238).
+func deadlineWarning(contacts []*coreapigo.UnverifiedContact, now time.Time) string {
+	passed, pending := 0, 0
+	for _, c := range contacts {
+		if c.VerifyBy == nil {
+			continue
+		}
+		if c.VerifyBy.Before(now) {
+			passed++
+		} else {
+			pending++
+		}
+	}
+	switch {
+	case passed > 0 && pending == 0:
+		return "Verification deadline passed — the registry may suspend or lock these domains at any time."
+	case passed > 0:
+		return "Some deadlines have passed — the registry may suspend or lock those domains at any time, " +
+			"and the rest after their deadline."
+	default:
+		return "The registry may suspend or lock these domains if the contact is not verified by the deadline."
+	}
 }
 
 func unverifiedRows(out *output.Config, contacts []*coreapigo.UnverifiedContact) [][]string {

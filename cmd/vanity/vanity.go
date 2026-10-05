@@ -160,9 +160,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			[]string{"HOSTNAME", "IPS"},
 			vanityRows(all),
 		)
-		out.Count(len(all), "vanity nameserver")
 		if hasMore {
-			out.Hint("Showing first page — pass --all to fetch all entries")
+			out.Count(len(all), "vanity nameserver", "first page — pass --all for the rest")
+		} else {
+			out.Count(len(all), "vanity nameserver")
 		}
 	}
 	return nil
@@ -313,8 +314,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(ns)
 	default:
-		out.Success(fmt.Sprintf("Created vanity nameserver %s", createHostname))
-		out.Hint(fmt.Sprintf("Run 'namecom vanity-ns list %s' to see all nameservers", domain))
+		out.Success(fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(createIPs))))
 	}
 	return nil
 }
@@ -359,8 +359,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(ns)
 	default:
-		out.Success(fmt.Sprintf("Updated vanity nameserver %s", hostname))
-		out.Hint(fmt.Sprintf("Run 'namecom vanity-ns list %s' to see all nameservers", domain))
+		out.Success(fmt.Sprintf("Updated vanity nameserver %s: IPs now %s", hostname, ipList(ips)))
 	}
 	return nil
 }
@@ -390,8 +389,15 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted vanity nameserver %s from %s", hostname, domain))
-	out.Hint(fmt.Sprintf("Run 'namecom vanity-ns list %s' to see remaining nameservers", domain))
 	return nil
+}
+
+// ipList joins glue IPs for a success line, or says there are none.
+func ipList(ips []string) string {
+	if len(ips) == 0 {
+		return "none"
+	}
+	return strings.Join(ips, ", ")
 }
 
 func vanityRows(nss []*coreapigo.VanityNameserverResponse) [][]string {

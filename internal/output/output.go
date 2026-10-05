@@ -18,6 +18,8 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -82,13 +85,18 @@ type Config struct {
 	// unconstrained, which is what a pipe or a redirect gets: a consumer that
 	// is not a terminal has no width to respect and wants every column.
 	MaxWidth int
+	// Plain renders tables without borders, as whitespace-aligned columns.
+	// DefaultConfig sets it when stdout is not a terminal, so `-o table` into
+	// a pipe gives `awk` and `cut` rows they can split, not box-drawing.
+	Plain bool
 }
 
 // DefaultConfig returns an output config with defaults resolved from the
 // current environment (TTY detection, NO_COLOR, CLICOLOR_FORCE).
 func DefaultConfig() *Config {
+	tty := isStdoutTTY()
 	f := FormatJSON
-	if isStdoutTTY() {
+	if tty {
 		f = FormatTable
 	}
 	c := &Config{
@@ -96,6 +104,7 @@ func DefaultConfig() *Config {
 		Color:   ColorAuto,
 		Writer:  os.Stdout,
 		EWriter: os.Stderr,
+		Plain:   !tty,
 	}
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		c.MaxWidth = w
@@ -169,20 +178,11 @@ func (c *Config) ApplyColorProfile() {
 // Adaptive color tokens — Dark values are vivid for dark terminals; Light
 // values are darker variants that stay readable on cream/white backgrounds.
 // ANSI 1–8 are terminal-theme-defined and adapt automatically; these cover
-// the 256-color palette entries we use for badges and status dots.
+// the 256-color palette entries we use for the states that need attention.
 var (
-	acGreen  = lipgloss.AdaptiveColor{Dark: "82", Light: "28"}
-	acRed    = lipgloss.AdaptiveColor{Dark: "196", Light: "160"}
-	acAmber  = lipgloss.AdaptiveColor{Dark: "220", Light: "136"}
-	acGray   = lipgloss.AdaptiveColor{Dark: "8", Light: "244"}
-	acBlue   = lipgloss.AdaptiveColor{Dark: "75", Light: "26"}
-	acPurple = lipgloss.AdaptiveColor{Dark: "141", Light: "90"}
-	acPink   = lipgloss.AdaptiveColor{Dark: "213", Light: "125"}
-	acOrange = lipgloss.AdaptiveColor{Dark: "208", Light: "166"}
-	acSky    = lipgloss.AdaptiveColor{Dark: "39", Light: "25"}
-	acSpring = lipgloss.AdaptiveColor{Dark: "48", Light: "29"}
-	acSalmon = lipgloss.AdaptiveColor{Dark: "203", Light: "160"}
-	acCyan   = lipgloss.AdaptiveColor{Dark: "6", Light: "6"} // ANSI — terminal-theme safe
+	acGreen = lipgloss.AdaptiveColor{Dark: "82", Light: "28"}
+	acRed   = lipgloss.AdaptiveColor{Dark: "196", Light: "160"}
+	acAmber = lipgloss.AdaptiveColor{Dark: "220", Light: "136"}
 
 	// Lip Gloss styles. Initialized once; use .Render() (not .String()) so
 	// color is applied lazily and tests can disable it via NO_COLOR.
@@ -191,33 +191,17 @@ var (
 	styleWarning = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleBorder  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleStep    = lipgloss.NewStyle().Bold(true).Foreground(acCyan)
 	styleTitle   = lipgloss.NewStyle().Bold(true)
 
-	// DNS record type badge colors — background with black foreground.
-	dnsTypeColors = map[string]lipgloss.AdaptiveColor{
-		"A":     acGreen,
-		"AAAA":  acSky,
-		"CNAME": acPink,
-		"MX":    acAmber,
-		"TXT":   acPurple,
-		"NS":    acBlue,
-		"SRV":   acOrange,
-		"ANAME": acSpring,
-		"CAA":   acSalmon,
-	}
-
-	// Domain / transfer status dot colors — foreground only.
+	// Status colors, for the statuses that ask something of the reader: a
+	// failure to look into, or something still in progress. Every other
+	// status — active, completed, canceled — is plain text (#238).
 	statusColors = map[string]lipgloss.AdaptiveColor{
-		"active":    acGreen,
-		"locked":    acSalmon,
 		"expired":   acRed,
 		"suspended": acRed,
-		"pending":   acAmber,
-		"completed": acGreen,
 		"failed":    acRed,
-		"canceled":  acGray,
 		"rejected":  acRed,
+		"pending":   acAmber,
 	}
 )
 
@@ -368,21 +352,63 @@ func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
 	return c.YAML(newListEnvelope(data, nextPage, total))
 }
 
-// Table renders rows as a styled table. headers is the column header row.
-// Table renders headers and rows as a bordered table, dropping trailing
-// columns that do not fit the terminal.
+// TableOption adjusts how one Table call fits the terminal.
+type TableOption func(*tableOpts)
+
+type tableOpts struct {
+	essential map[string]bool
+}
+
+// Essential marks columns, named by header, that are never dropped to fit
+// the terminal. They can still be shortened with "…". It is for the column
+// that carries the point of the table — the DNS answer, the domains an
+// unverified contact puts at risk — which, being the widest, used to be the
+// first to go.
+func Essential(headers ...string) TableOption {
+	return func(o *tableOpts) {
+		if o.essential == nil {
+			o.essential = map[string]bool{}
+		}
+		for _, h := range headers {
+			o.essential[h] = true
+		}
+	}
+}
+
+// minColWidth is how narrow fitColumns shortens a column before it starts
+// dropping columns instead. Twenty characters keeps enough of a hostname, a
+// TXT value or a domain name to tell rows apart.
+const minColWidth = 20
+
+// Table renders headers and rows as a bordered table that fits the terminal.
 //
 // Tables were rendered at their natural width with no regard for the terminal:
 // `domain list` came to 113 columns, `order list` 99, `dns list` 87. In an
-// 80-column terminal — an SSH session, a split pane — every one of them wrapped
-// and the rounded borders came apart into unreadable fragments. Columns are
-// ordered most- to least-important by their callers, so the ones that go are
-// the ones from the right, and a footer names them rather than letting them
-// vanish. --wide opts out; so does any non-terminal writer, since a pipe has no
-// width to fit and its consumer wants the whole row.
-func (c *Config) Table(headers []string, rows [][]string) {
+// 80-column terminal every one of them wrapped and the rounded borders came
+// apart. Trailing columns were then dropped to fit — but one long value was
+// enough to drop everything after it: an SPF record left `dns list` showing
+// only ID and HOST, the answer itself gone, even at 120 columns (#233).
+//
+// So the widest cells are shortened with "…" first, down to minColWidth, and
+// only then are columns dropped: from the right, never the first column, and
+// never one marked Essential. A footer says what was hidden or shortened.
+// --wide opts out; so does any non-terminal writer, since a pipe has no width
+// to fit and its consumer wants the whole row.
+func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
+	var o tableOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+	rows = dashEmpty(rows, 0)
+	if c.Plain {
+		if c.NoHeader {
+			headers = nil
+		}
+		c.plainTable(headers, rows)
+		return
+	}
 	color := c.ColorEnabled()
-	headers, rows, dropped := c.fitColumns(headers, rows)
+	headers, rows, dropped, truncated := c.fitColumns(headers, rows, o.essential)
 
 	cell := lipgloss.NewStyle().Padding(0, 1)
 	header := cell.Bold(color)
@@ -415,57 +441,214 @@ func (c *Config) Table(headers []string, rows [][]string) {
 
 	fmt.Fprintln(c.Writer, t.Render())
 
+	var notes []string
 	if len(dropped) > 0 {
-		fmt.Fprintln(c.Writer, c.Dim(fmt.Sprintf(
-			"%d column%s hidden (%s) — widen the terminal, pass --wide, or use -o json",
-			len(dropped), plural("", len(dropped)), strings.Join(dropped, ", "))))
+		notes = append(notes, fmt.Sprintf("%s hidden (%s)",
+			Plural(len(dropped), "column"), strings.Join(dropped, ", ")))
+	}
+	if truncated {
+		notes = append(notes, "long values cut short with …")
+	}
+	if len(notes) > 0 {
+		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(notes, "; ")+
+			" — widen the terminal, pass --wide, or use -o json"))
 	}
 }
 
-// fitColumns drops trailing columns until the rendered table fits MaxWidth,
-// returning the surviving headers and rows plus the names of what went.
+// None is what a table shows for a missing value.
+const None = "—"
+
+// dashEmpty returns rows with each empty cell, from column from onward,
+// replaced by None. rows itself is not modified.
+//
+// A missing value was a blank cell in some tables and "—" in others — a
+// missing DNS priority was blank, a missing price in `domain check` a dash
+// (#238). A blank cell also reads as a rendering failure, and in a plain
+// table it vanishes under awk's whitespace splitting, shifting every later
+// field left. Doing it here covers every table without each caller having to
+// remember.
+func dashEmpty(rows [][]string, from int) [][]string {
+	out := make([][]string, len(rows))
+	for i, r := range rows {
+		out[i] = r
+		for j := from; j < len(r); j++ {
+			if strings.TrimSpace(ansi.Strip(r[j])) == "" {
+				if sameBacking(out[i], r) {
+					out[i] = append([]string(nil), r...)
+				}
+				out[i][j] = None
+			}
+		}
+	}
+	return out
+}
+
+// sameBacking reports whether a and b share their first element's storage.
+func sameBacking(a, b []string) bool {
+	return len(a) > 0 && len(b) > 0 && &a[0] == &b[0]
+}
+
+// plainTable prints headers (when non-nil) and rows as columns aligned with
+// spaces, two between each, with no borders and no trailing whitespace —
+// the shape `gh` prints into a pipe (#233). The bordered table kept its box
+// drawing when piped, so `namecom domain list -o table | awk '{print $1}'`
+// printed "╭───" and "│". Line breaks and tabs in a cell become spaces, so
+// every row stays one line.
+func (c *Config) plainTable(headers []string, rows [][]string) {
+	all := rows
+	if headers != nil {
+		all = append([][]string{headers}, rows...)
+	}
+	n := 0
+	for _, r := range all {
+		n = max(n, len(r))
+	}
+	clean := make([][]string, len(all))
+	widths := make([]int, n)
+	for i, r := range all {
+		clean[i] = make([]string, len(r))
+		for j, v := range r {
+			v = strings.Map(func(r rune) rune {
+				if r == '\n' || r == '\r' || r == '\t' {
+					return ' '
+				}
+				return r
+			}, v)
+			clean[i][j] = v
+			widths[j] = max(widths[j], lipgloss.Width(v))
+		}
+	}
+	for _, r := range clean {
+		var b strings.Builder
+		for j, v := range r {
+			if j > 0 {
+				b.WriteString("  ")
+			}
+			b.WriteString(v)
+			if j < len(r)-1 {
+				b.WriteString(strings.Repeat(" ", widths[j]-lipgloss.Width(v)))
+			}
+		}
+		fmt.Fprintln(c.Writer, strings.TrimRight(b.String(), " "))
+	}
+}
+
+// fitColumns makes a table fit MaxWidth. It shortens the widest columns, and
+// if that is not enough, drops trailing columns that are not essential. It
+// returns the surviving headers and rows, the names of the columns dropped,
+// and whether any cell was shortened.
 //
 // The first column is never dropped: a table of nothing but a row count is
 // worse than one that overflows, and callers put the identifying column first.
-func (c *Config) fitColumns(headers []string, rows [][]string) ([]string, [][]string, []string) {
+func (c *Config) fitColumns(headers []string, rows [][]string, essential map[string]bool) ([]string, [][]string, []string, bool) {
 	if c.Wide || c.MaxWidth <= 0 || len(headers) == 0 {
-		return headers, rows, nil
+		return headers, rows, nil, false
 	}
 
-	keep := len(headers)
-	for keep > 1 && tableWidth(colWidths(headers, rows, keep)) > c.MaxWidth {
-		keep--
+	keep := make([]int, len(headers)) // indexes of the surviving columns
+	for i := range keep {
+		keep[i] = i
 	}
-	if keep == len(headers) {
-		return headers, rows, nil
-	}
-
-	dropped := make([]string, 0, len(headers)-keep)
-	for _, h := range headers[keep:] {
-		dropped = append(dropped, strings.ToLower(h))
-	}
-	trimmed := make([][]string, 0, len(rows))
-	for _, r := range rows {
-		if len(r) > keep {
-			r = r[:keep]
+	var natural, widths []int
+	for {
+		natural = colWidths(headers, rows, keep)
+		var fits bool
+		widths, fits = shrinkToFit(headers, keep, natural, c.MaxWidth)
+		if fits {
+			break
 		}
-		trimmed = append(trimmed, r)
+		drop := -1
+		for k := len(keep) - 1; k > 0; k-- {
+			if !essential[headers[keep[k]]] {
+				drop = k
+				break
+			}
+		}
+		if drop < 0 {
+			break // nothing left to drop: overflow at the narrowest widths
+		}
+		keep = append(keep[:drop:drop], keep[drop+1:]...)
 	}
-	return headers[:keep], trimmed, dropped
+	if len(keep) == len(headers) && slices.Equal(widths, natural) {
+		return headers, rows, nil, false
+	}
+
+	kept := make(map[int]bool, len(keep))
+	for _, i := range keep {
+		kept[i] = true
+	}
+	var dropped []string
+	for i, h := range headers {
+		if !kept[i] {
+			dropped = append(dropped, strings.ToLower(h))
+		}
+	}
+
+	outHeaders := make([]string, len(keep))
+	for k, i := range keep {
+		outHeaders[k] = headers[i]
+	}
+	truncated := false
+	outRows := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		nr := make([]string, 0, len(keep))
+		for k, i := range keep {
+			if i >= len(r) {
+				break
+			}
+			v := r[i]
+			if lipgloss.Width(v) > widths[k] {
+				v = ansi.Truncate(v, widths[k], "…")
+				truncated = true
+			}
+			nr = append(nr, v)
+		}
+		outRows = append(outRows, nr)
+	}
+	return outHeaders, outRows, dropped, truncated
 }
 
-// colWidths measures the first n columns at their natural (widest-cell) width.
-// lipgloss.Width is used rather than len because cells arrive pre-styled —
-// ExpiryDate returns ANSI escapes — and because a domain may hold wide runes.
-func colWidths(headers []string, rows [][]string, n int) []int {
-	w := make([]int, n)
-	for i := 0; i < n && i < len(headers); i++ {
-		w[i] = lipgloss.Width(headers[i])
+// shrinkToFit narrows the widest column a character at a time until the table
+// fits maxWidth, taking no column below minColWidth or its header's width. It
+// returns the widths and whether they fit.
+func shrinkToFit(headers []string, keep, natural []int, maxWidth int) ([]int, bool) {
+	widths := append([]int(nil), natural...)
+	floor := make([]int, len(widths))
+	for k, i := range keep {
+		floor[k] = min(natural[k], max(minColWidth, lipgloss.Width(headers[i])))
+	}
+	for tableWidth(widths) > maxWidth {
+		widest := -1
+		for k, w := range widths {
+			if w > floor[k] && (widest < 0 || w > widths[widest]) {
+				widest = k
+			}
+		}
+		if widest < 0 {
+			return widths, false
+		}
+		widths[widest]--
+	}
+	return widths, true
+}
+
+// colWidths measures the columns at the given indexes at their natural
+// (widest-cell) width. lipgloss.Width is used rather than len because cells
+// arrive pre-styled — ExpiryDate returns ANSI escapes — and because a domain
+// may hold wide runes.
+func colWidths(headers []string, rows [][]string, cols []int) []int {
+	w := make([]int, len(cols))
+	for k, i := range cols {
+		if i < len(headers) {
+			w[k] = lipgloss.Width(headers[i])
+		}
 	}
 	for _, r := range rows {
-		for i := 0; i < n && i < len(r); i++ {
-			if cw := lipgloss.Width(r[i]); cw > w[i] {
-				w[i] = cw
+		for k, i := range cols {
+			if i < len(r) {
+				if cw := lipgloss.Width(r[i]); cw > w[k] {
+					w[k] = cw
+				}
 			}
 		}
 	}
@@ -493,12 +676,17 @@ func (c *Config) KVTable(rows [][]string) {
 	if c.Format == FormatJSON || c.Format == FormatYAML || c.QuietMode {
 		return
 	}
+	rows = dashEmpty(rows, 1)
+	if c.Plain {
+		c.plainTable(nil, rows)
+		return
+	}
 	color := c.ColorEnabled()
 
 	valueStyle := lipgloss.NewStyle().Padding(0, 1)
 	fieldStyle := lipgloss.NewStyle().Padding(0, 1)
 	if color {
-		fieldStyle = fieldStyle.Foreground(lipgloss.Color("111")).Bold(true)
+		fieldStyle = fieldStyle.Bold(true) // bold, not blue: colour is for what needs action
 	}
 
 	styleFunc := func(_, col int) lipgloss.Style {
@@ -526,7 +714,7 @@ func (c *Config) KVTable(rows [][]string) {
 	// edge and the borders came apart. Width is set only when the table is too
 	// wide, because lipgloss also stretches a narrower table to fill it.
 	// --wide and a non-terminal writer keep the natural width.
-	if !c.Wide && c.MaxWidth > 0 && tableWidth(colWidths(nil, rows, 2)) > c.MaxWidth {
+	if !c.Wide && c.MaxWidth > 0 && tableWidth(colWidths(nil, rows, []int{0, 1})) > c.MaxWidth {
 		t = t.Width(c.MaxWidth)
 	}
 
@@ -605,18 +793,35 @@ func (c *Config) Success(msg string) {
 	}
 }
 
-// Hint prints a dimmed suggestion line to stdout — shown only in table mode,
-// and never in quiet mode, where stdout is reserved for the values a script
-// captures: `ID=$(namecom dns create … -q)` received the hint instead.
+// Note prints a dim line of information to stderr — something worth knowing
+// that is neither a warning nor a next step, such as which check sandbox mode
+// uses. Shown only in table mode, and never in quiet mode.
+//
+// The CLI has four status symbols: ✓ success, ! warning, ✗ error and → next
+// step (#238). A note used to borrow →, as in "→ Sandbox mode: …", which made
+// it read as an instruction; it carries no symbol now.
+func (c *Config) Note(msg string) {
+	if c.Format != FormatTable || c.QuietMode {
+		return
+	}
+	fmt.Fprintln(c.EWriter, c.Dim(msg))
+}
+
+// Hint prints a dimmed next-step suggestion to stderr — shown only in table
+// mode, and never in quiet mode.
+//
+// It went to stdout, so `domain list -o table > domains.txt` saved the
+// "→ Run …" lines with the table (#233). stdout is for the result; anything
+// said about the result goes to stderr, as gh does.
 func (c *Config) Hint(msg string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
 	if c.ColorEnabled() {
 		arrow := styleDim.Render("→")
-		fmt.Fprintln(c.Writer, arrow+" "+styleDim.Render(msg))
+		fmt.Fprintln(c.EWriter, arrow+" "+styleDim.Render(msg))
 	} else {
-		fmt.Fprintln(c.Writer, "→ "+msg)
+		fmt.Fprintln(c.EWriter, "→ "+msg)
 	}
 }
 
@@ -714,71 +919,77 @@ func errorHint(err error) string {
 	return ""
 }
 
-// StatusBadge returns a styled label for domain/transfer status values.
-func (c *Config) StatusBadge(status string) string {
-	if !c.ColorEnabled() {
-		return status
-	}
+// statusColor returns the colour for status, and whether it has one. A
+// prefix matches, for compound statuses like "pending_transfer".
+func statusColor(status string) (lipgloss.AdaptiveColor, bool) {
 	key := strings.ToLower(status)
-	// Match prefix for compound statuses like "pending_transfer".
-	color := lipgloss.AdaptiveColor{Dark: "7", Light: "245"} // default: gray
 	for k, v := range statusColors {
 		if key == k || strings.HasPrefix(key, k) {
-			color = v
-			break
+			return v, true
 		}
+	}
+	return lipgloss.AdaptiveColor{}, false
+}
+
+// StatusBadge returns a domain, transfer or order status, coloured only when
+// it needs attention: red for a failure, amber for pending. Every status had
+// a coloured dot, so a list of healthy domains was a column of green (#238).
+func (c *Config) StatusBadge(status string) string {
+	color, ok := statusColor(status)
+	if !c.ColorEnabled() || !ok {
+		return status
 	}
 	dot := lipgloss.NewStyle().Foreground(color).Render("●")
 	text := lipgloss.NewStyle().Bold(true).Foreground(color).Render(status)
 	return dot + " " + text
 }
 
-// TypeBadge returns a styled, colored label for DNS record types and similar
-// short categorical values. Falls back to StatusBadge color logic if the type
-// isn't in the DNS palette.
+// TypeBadge returns a DNS record type, upper-cased and bold. It was drawn on a
+// coloured background, one colour per type, which put nine colours on a
+// `dns list` that asked nothing of the reader (#238).
 func (c *Config) TypeBadge(typ string) string {
-	if !c.ColorEnabled() {
-		return typ
-	}
 	upper := strings.ToUpper(typ)
-	color, ok := dnsTypeColors[upper]
-	if !ok {
-		return c.StatusBadge(typ)
+	if !c.ColorEnabled() {
+		return upper
 	}
-	return lipgloss.NewStyle().
-		Background(color).
-		Foreground(lipgloss.Color("0")).
-		Padding(0, 1).
-		Bold(true).
-		Render(upper)
+	return styleTitle.Render(upper)
 }
 
-// AvailabilityBadge returns a visually distinct ✓ available / ✗ taken badge.
+// AvailabilityBadge returns "✓ available" or "taken". A taken name is not an
+// error, so it no longer carries ✗ or red; an available one is what the
+// reader can act on, and keeps the check and the colour.
 func (c *Config) AvailabilityBadge(purchasable bool) string {
+	if !purchasable {
+		return "taken"
+	}
 	if !c.ColorEnabled() {
-		if purchasable {
-			return "✓ available"
-		}
-		return "✗ taken"
+		return "✓ available"
 	}
-	if purchasable {
-		return styleSuccess.Render("✓") + " " + lipgloss.NewStyle().Foreground(acGreen).Render("available")
-	}
-	return styleError.Render("✗") + " " + lipgloss.NewStyle().Foreground(acRed).Render("taken")
+	return styleSuccess.Render("✓") + " " + lipgloss.NewStyle().Foreground(acGreen).Render("available")
 }
 
-// BoolBadge returns a styled ✓ yes (true) or ✗ no (false).
+// BoolBadge returns "yes" or "no", in plain text.
+//
+// It returned a bold green "✓ yes" or red "✗ no", so a 250-row domain list
+// was mostly green, and red landed on harmless values — Premium "no", Privacy
+// "no", a TLD without DNSSEC (#238). Colour is for values that need action;
+// use BoolAlert for those.
 func (c *Config) BoolBadge(b bool) string {
-	if !c.ColorEnabled() {
-		if b {
-			return "yes"
-		}
-		return "no"
-	}
 	if b {
-		return styleSuccess.Render("✓ yes")
+		return "yes"
 	}
-	return styleError.Render("✗ no")
+	return "no"
+}
+
+// BoolAlert returns "yes" or "no" like BoolBadge, in amber when b equals
+// alertOn: the value that needs the reader's attention, such as a domain that
+// is not locked against transfer.
+func (c *Config) BoolAlert(b, alertOn bool) string {
+	s := c.BoolBadge(b)
+	if b == alertOn {
+		return c.Amber(s)
+	}
+	return s
 }
 
 // ExpiryDate formats a domain expiry date with color urgency indicators and a
@@ -813,24 +1024,37 @@ func expiryStyle(days float64) lipgloss.Style {
 	}
 }
 
-// relativeTime converts a floating-point day count into a human-readable
-// string, widening the unit as the distance grows.
-//
-// It used to speak only days, which is right near an expiry and useless far
-// from one: a domain paid through 2034 rendered as "in 2750 days", a number no
-// reader converts to anything meaningful. Days stay exact inside a quarter,
-// where renewal decisions actually happen; past that the unit widens. The
-// absolute date sits immediately before this string in every caller, so the
-// parenthetical only has to convey magnitude.
+// relativeTime is RelativeDays for an expiry date, where a date earlier
+// today has already passed: "expired today" rather than "today".
 func relativeTime(days float64) string {
+	if days < 0 && days > -1 {
+		return "expired today"
+	}
+	return RelativeDays(days)
+}
+
+// Relative phrases t relative to now — "in 5 months", "3 days ago" — with the
+// units RelativeDays picks.
+func Relative(t time.Time) string {
+	return RelativeDays(time.Until(t).Hours() / 24)
+}
+
+// RelativeDays phrases a span of days from now, negative for the past: "today",
+// "in 3 days", "5 months ago", "in 7 years". It is the one relative-time
+// helper; every date and message uses it.
+//
+// Units widen with distance: days under 60, months under 24, years beyond. A
+// date used to read "in 24 months" next to "in 5 months" and "in 7 years", and
+// the same expired domain was "2 years ago" in `domain list` but "expired 804
+// days ago" in `status` (#238). Days stay exact while a renewal decision is
+// near; far off, only the magnitude matters, and callers print the absolute
+// date beside it.
+func RelativeDays(days float64) string {
 	abs := days
 	if abs < 0 {
 		abs = -abs
 	}
-	switch {
-	case days < 0 && abs < 1:
-		return "expired today"
-	case days < 1 && days >= 0:
+	if abs < 1 {
 		return "today"
 	}
 	unit, n := humanizeDays(abs)
@@ -841,16 +1065,16 @@ func relativeTime(days float64) string {
 }
 
 // humanizeDays picks the coarsest unit that still says something useful about a
-// span, and returns the count in that unit.
+// span, and returns the count in that unit. Each threshold is applied to the
+// rounded count, so no span reads as "60 days" or "24 months".
 func humanizeDays(abs float64) (unit string, n int) {
-	switch {
-	case abs <= 90:
-		return "day", int(abs + 0.5)
-	case abs < 730:
-		return "month", int(abs/30.44 + 0.5)
-	default:
-		return "year", int(abs/365.25 + 0.5)
+	if d := int(abs + 0.5); d < 60 {
+		return "day", d
 	}
+	if m := int(abs/30.44 + 0.5); m < 24 {
+		return "month", m
+	}
+	return "year", int(abs/365.25 + 0.5)
 }
 
 func plural(unit string, n int) string {
@@ -858,6 +1082,76 @@ func plural(unit string, n int) string {
 		return unit
 	}
 	return unit + "s"
+}
+
+// Plural returns n and noun together, with thousands separators and the noun
+// pluralised: "1 year", "2 years", "6,522 domains". A noun ending in a
+// consonant and y takes "ies" ("2 entries"); one ending in s, x, sh or ch
+// takes "es"; anything else takes "s".
+func Plural(n int, noun string) string {
+	return Thousands(n) + " " + PluralNoun(n, noun)
+}
+
+// PluralNoun returns noun pluralised for n, without the number.
+func PluralNoun(n int, noun string) string {
+	if n == 1 || n == -1 || noun == "" {
+		return noun
+	}
+	if len(noun) > 1 && strings.HasSuffix(noun, "y") && !strings.ContainsRune("aeiou", rune(noun[len(noun)-2])) {
+		return noun[:len(noun)-1] + "ies"
+	}
+	for _, suf := range []string{"s", "x", "sh", "ch"} {
+		if strings.HasSuffix(noun, suf) {
+			return noun + "es"
+		}
+	}
+	return noun + "s"
+}
+
+// Thousands formats n with comma thousands separators: 6522 → "6,522".
+func Thousands(n int) string {
+	return groupDigits(strconv.Itoa(n))
+}
+
+// Decimal formats an amount to two places with thousands separators:
+// 100000 → "100,000.00".
+func Decimal(v float64) string {
+	return groupDigits(strconv.FormatFloat(v, 'f', 2, 64))
+}
+
+// Money formats a US-dollar amount: 100000 → "$100,000.00", -5 → "-$5.00".
+// Prices printed as "$100000.00", which is hard to read at a glance in a
+// prompt that is about to spend it (#238).
+func Money(v float64) string {
+	s := Decimal(v)
+	if strings.HasPrefix(s, "-") {
+		return "-$" + s[1:]
+	}
+	return "$" + s
+}
+
+// groupDigits inserts commas into the integer part of a formatted number,
+// leaving any sign, fraction, or non-numeric value ("NaN", "+Inf") alone.
+func groupDigits(s string) string {
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
+	intPart, frac, hasFrac := strings.Cut(s, ".")
+	if strings.Trim(intPart, "0123456789") != "" {
+		return sign + s
+	}
+	var b strings.Builder
+	for i, r := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(r)
+	}
+	if hasFrac {
+		b.WriteString("." + frac)
+	}
+	return sign + b.String()
 }
 
 // spinFrames are the animation frames for the spinner.
@@ -1201,16 +1495,33 @@ func (c *Config) dryRunText(reqs []DryRunRequest) error {
 	return nil
 }
 
-// Count prints a dim result count footer — only in table mode, skipped in quiet mode.
-func (c *Config) Count(n int, noun string) {
+// Count prints the footer under a list — "3 domains" — with any notes after
+// it on the same line: "25 transfers · first page — pass --all for the rest".
+//
+// A paginated list used to print two footers, "(250 domains)" and then
+// "Showing 1–250 of 6522 — …" as a hint, saying the count twice and wrapping
+// at 80 columns (#233). A list that has more to say passes it as a note.
+func (c *Config) Count(n int, noun string, notes ...string) {
+	c.Footer(append([]string{Plural(n, noun)}, notes...)...)
+}
+
+// Footer prints parts as one dim line on stderr, joined with " · ". Only in
+// table mode, and not in quiet mode. Count is the usual caller; a list whose
+// count reads differently ("Showing 1–250 of 6,522 domains") calls it
+// directly. It goes to stderr for the reason Hint does.
+func (c *Config) Footer(parts ...string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
-	label := noun + "s"
-	if n == 1 {
-		label = noun
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
 	}
-	fmt.Fprintln(c.Writer, c.Dim(fmt.Sprintf("(%d %s)", n, label)))
+	if len(kept) > 0 {
+		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(kept, " · ")))
+	}
 }
 
 // Dim returns text rendered in a muted/gray style.
@@ -1247,19 +1558,6 @@ func ParseColorMode(s string) (ColorMode, error) {
 	return "", fmt.Errorf("unknown color mode %q; choose auto, always, or never", s)
 }
 
-// Step prints a flyctl-style phase header ("==> Checking availability…") to
-// stdout. Only emitted in table/interactive mode, skipped when quiet or piped.
-func (c *Config) Step(msg string) {
-	if c.Format != FormatTable || c.QuietMode {
-		return
-	}
-	if c.ColorEnabled() {
-		fmt.Fprintln(c.Writer, styleStep.Render("==>")+" "+msg)
-	} else {
-		fmt.Fprintln(c.Writer, "==> "+msg)
-	}
-}
-
 // Title prints a bold resource-name header above a detail view. Only emitted
 // in table/interactive mode.
 func (c *Config) Title(name string) {
@@ -1273,13 +1571,14 @@ func (c *Config) Title(name string) {
 	}
 }
 
-// Empty prints an empty-state message when a list returns zero results.
-// noun should be singular ("domain", "record"). hint is shown as a dim hint.
+// Empty prints an empty-state message to stderr when a list returns zero
+// results, so an empty list leaves stdout empty. noun should be singular
+// ("domain", "record"). hint is shown as a dim hint.
 func (c *Config) Empty(noun, hint string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
-	fmt.Fprintln(c.Writer, c.Dim("No "+noun+"s found."))
+	fmt.Fprintln(c.EWriter, c.Dim("No "+PluralNoun(2, noun)+" found."))
 	if hint != "" {
 		c.Hint(hint)
 	}
@@ -1296,13 +1595,19 @@ func (c *Config) WarnBox(lines ...string) {
 	}
 	body := strings.Join(lines, "\n")
 	if c.ColorEnabled() {
-		box := lipgloss.NewStyle().
+		style := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(acAmber).
 			Foreground(acAmber).
-			Padding(0, 1).
-			Render(body)
-		fmt.Fprintln(c.EWriter, box)
+			Padding(0, 1)
+		// Wrap to the terminal, as KVTable does. The `contact unverified` box
+		// was 86 columns at 60 and 80, so it wrapped and its border came
+		// apart (#238). Width counts the padding but not the border, and is
+		// set only when needed, since lipgloss pads a narrower box out to it.
+		if c.MaxWidth > 4 && lipgloss.Width(body)+4 > c.MaxWidth {
+			style = style.Width(c.MaxWidth - 2)
+		}
+		fmt.Fprintln(c.EWriter, style.Render(body))
 	} else {
 		fmt.Fprintln(c.EWriter, "WARNING: "+body)
 	}

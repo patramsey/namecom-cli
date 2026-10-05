@@ -21,7 +21,7 @@ func TestCheckMaxPrice(t *testing.T) {
 		{"unset", "", price(6250), nil},
 		{"under", "100", price(17.99), nil},
 		{"equal", "17.99", price(17.99), nil},
-		{"above", "100", price(6250), []string{"$6250.00", "--max-price $100.00", "nothing was sent"}},
+		{"above", "100", price(6250), []string{"$6,250.00", "--max-price $100.00", "nothing was sent"}},
 		{"a cent above", "17.99", price(18.00), []string{"$18.00", "$17.99"}},
 		{"no quote", "100", nil, []string{"no price was quoted", "$100.00"}},
 		{"not positive", "0", price(1), []string{"--max-price must be a positive amount"}},
@@ -77,7 +77,7 @@ func TestRequireAcceptPremium(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			defer output.StubInteractive(tc.interactive)()
 			cmd, _, _ := writeCmd(t, tc.dry, tc.yes)
-			err := RequireAcceptPremium(cmd, tc.accept, "shoes.shop costs $6250.00 (premium)")
+			err := RequireAcceptPremium(cmd, tc.accept, "shoes.shop costs $6,250.00 (premium)")
 			if !tc.wantErr {
 				if err != nil {
 					t.Errorf("want no error, got %v", err)
@@ -88,7 +88,7 @@ func TestRequireAcceptPremium(t *testing.T) {
 			if !errors.As(err, &usage) {
 				t.Fatalf("want a usage error (exit 2), got %T: %v", err, err)
 			}
-			for _, w := range []string{"shoes.shop costs $6250.00", "--accept-premium", "--yes does not cover this"} {
+			for _, w := range []string{"shoes.shop costs $6,250.00", "--accept-premium", "--yes does not cover this"} {
 				if !strings.Contains(err.Error(), w) {
 					t.Errorf("error %q lacks %q", err, w)
 				}
