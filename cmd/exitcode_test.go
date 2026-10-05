@@ -401,6 +401,7 @@ func TestExitCode_MissingRequiredFlagIsUsage(t *testing.T) {
 		{[]string{"transfer", "create", "example.com"}, `"auth-code"`},
 		{[]string{"dns", "create", "example.com"}, `"type", "answer"`},
 		{[]string{"order", "refund"}, `"item-ids"`},
+		{[]string{"domain", "contacts", "set", "example.com"}, `"contacts-file"`},
 		{[]string{"dns", "delete", "example.com", "123"}, "confirmation required for"},
 		{[]string{"email", "delete", "example.com", "info"}, "pass --yes"},
 	} {

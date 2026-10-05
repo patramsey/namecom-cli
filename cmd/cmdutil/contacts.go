@@ -9,8 +9,8 @@ import (
 )
 
 // ReadContactsFile reads a contacts file: a ContactsRequest as JSON, the
-// format `domain register --contacts-file`, `domain contacts set --from-file`
-// and `transfer create --contacts-file` all take. A missing, unreadable or
+// format the --contacts-file of `domain register`, `domain contacts set` and
+// `transfer create` takes. A missing, unreadable or
 // invalid file is a usage error (exit 2), so callers read it before any
 // request or prompt.
 func ReadContactsFile(path string) (*coreapigo.ContactsRequest, error) {

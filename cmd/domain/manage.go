@@ -412,12 +412,12 @@ var contactsGetCmd = &cobra.Command{
 }
 
 var contactsSetCmd = &cobra.Command{
-	Use:   "set <domain> --from-file contacts.json",
+	Use:   "set <domain> --contacts-file contacts.json",
 	Short: "Set contact information for a domain",
 	Example: `  namecom domain contacts get example.com -o json > contacts.json
   # edit contacts.json, then:
-  namecom domain contacts set example.com --from-file contacts.json
-  namecom domain contacts set example.com --from-file contacts.json --yes  # no prompt, for scripts`,
+  namecom domain contacts set example.com --contacts-file contacts.json
+  namecom domain contacts set example.com --contacts-file contacts.json --yes  # no prompt, for scripts`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runContactsSet,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -426,8 +426,13 @@ var contactsSetCmd = &cobra.Command{
 var contactsFile string
 
 func init() {
-	contactsSetCmd.Flags().StringVar(&contactsFile, "from-file", "", "JSON file with contact data (required)")
-	_ = contactsSetCmd.MarkFlagRequired("from-file")
+	contactsSetCmd.Flags().StringVar(&contactsFile, "contacts-file", "", "JSON file with contact data, as 'contacts get -o json' writes it (required)")
+	// --from-file was this command's name for the same file that register and
+	// transfer call --contacts-file (#236). It still works, hidden, with a
+	// deprecation notice on stderr. Neither is marked required, since cobra
+	// would then demand one name specifically; runContactsSet checks instead.
+	contactsSetCmd.Flags().StringVar(&contactsFile, "from-file", "", "JSON file with contact data")
+	_ = contactsSetCmd.Flags().MarkDeprecated("from-file", "use --contacts-file")
 	cmdutil.GroupCmd(contactsCmd)
 	contactsCmd.AddCommand(contactsGetCmd, contactsSetCmd)
 }
@@ -523,6 +528,9 @@ func runContactsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if contactsFile == "" {
+		return cmdutil.RequiredFlags(false, "contacts-file")
+	}
 	// A bad file is a usage error (exit 2), like the other contacts files.
 	contacts, err := cmdutil.ReadContactsFile(contactsFile)
 	if err != nil {

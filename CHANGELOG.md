@@ -96,6 +96,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   use the symbols; with colour the hint was a dim `  hint:` line. Scripts
   matching `error:` on stderr need updating. The JSON and YAML error
   envelopes are unchanged.
+- `domain contacts set` takes the contacts file as `--contacts-file`, the name
+  `domain register` and `transfer create` already use for the same JSON.
+  `--from-file` still works but is hidden from help and prints a deprecation
+  notice on stderr.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
