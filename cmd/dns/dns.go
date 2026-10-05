@@ -3,7 +3,6 @@ package dns
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,12 +38,15 @@ var (
 	// listPage and listLimit are --page and --limit.
 	listPage, listLimit int
 	listType            string
+	listHost            string
 
 	createType     string
 	createHost     string
 	createAnswer   string
 	createTTL      int64
 	createPriority int64
+	// createIfNotExists is --if-not-exists.
+	createIfNotExists bool
 
 	updateType     string
 	updateHost     string
@@ -54,6 +56,11 @@ var (
 
 	exportZone bool
 	importFile string
+	// importSkipExisting is --skip-existing.
+	importSkipExisting bool
+
+	// deleteIfExists is --if-exists.
+	deleteIfExists bool
 )
 
 var listCmd = &cobra.Command{
@@ -62,7 +69,8 @@ var listCmd = &cobra.Command{
 	Short:   "List DNS records for a domain",
 	Example: `  namecom dns list example.com
   namecom dns list example.com --type A
-  namecom dns list example.com --type MX`,
+  namecom dns list example.com --type MX
+  namecom dns list example.com --host www`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runList,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -79,7 +87,8 @@ CAA records show in 'dns list' but cannot be created through the API.`,
 	Example: `  namecom dns create example.com --type A --answer 1.2.3.4
   namecom dns create example.com --type CNAME --host www --answer example.com.
   namecom dns create example.com --type MX --answer mail.example.com --priority 10
-  namecom dns create example.com --type TXT --host @ --answer "v=spf1 include:_spf.example.com ~all"`,
+  namecom dns create example.com --type TXT --host @ --answer "v=spf1 include:_spf.example.com ~all"
+  namecom dns create example.com --type A --host www --answer 1.2.3.4 --if-not-exists   # safe to re-run`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCreate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -111,7 +120,10 @@ confirmed once and deleted in order; the first failure stops the rest.`,
   namecom dns delete example.com 12345 12346
 
   # In a script, skip the confirmation; this deletes every TXT record:
-  namecom dns delete example.com $(namecom dns list example.com --type TXT -q) --yes`,
+  namecom dns delete example.com $(namecom dns list example.com --type TXT -q) --yes
+
+  # Succeed when the record is already gone, so a retry does not fail:
+  namecom dns delete example.com 12345 --yes --if-exists`,
 	Args: cmdutil.MinimumNArgs(2),
 	RunE: runDelete,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -135,10 +147,19 @@ var exportCmd = &cobra.Command{
 
 var importCmd = &cobra.Command{
 	Use:   "import <domain>",
-	Short: "Import DNS records from a JSON export file",
+	Short: "Import DNS records from a JSON export or a zone file",
+	Long: `Create every record in a file: the JSON 'dns export' writes, or a BIND zone
+file such as 'dns export --zone' writes. Import only adds records; to make the
+zone match a file, deleting and updating as well, use 'dns sync'.
+
+With --skip-existing, records already in the zone (same host, type and
+answer) are skipped rather than failing the import, so an import that stopped
+partway can be run again.`,
 	Example: `  namecom dns import example.com --file records.json
+  namecom dns import example.com --file example.com.zone
   namecom dns export old.com | namecom dns import new.com --file -   # pipe directly between domains
-  namecom dns import example.com --file records.json --dry-run       # preview without applying`,
+  namecom dns import example.com --file records.json --dry-run       # preview without applying
+  namecom dns import example.com --file records.json --skip-existing # re-run after a partial import`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runImport,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -147,12 +168,14 @@ var importCmd = &cobra.Command{
 func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "record")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
+	listCmd.Flags().StringVar(&listHost, "host", "", "filter by host (@ for the apex; www or www.example.com)")
 
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT; CAA is read-only through the API (required; prompted in a terminal)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required; prompted in a terminal)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
 	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records")
+	createCmd.Flags().BoolVar(&createIfNotExists, "if-not-exists", false, "succeed without creating when a record with this host, type and answer exists, printing its ID")
 	// --type and --answer are required, but not marked so: cobra would reject
 	// the command before runCreate could offer the guided form (#230).
 	// runCreate makes them a usage error itself when there is no terminal.
@@ -169,12 +192,15 @@ func init() {
 	cmdutil.CompleteFlagValues(createCmd, "type", cmdutil.DNSCreateTypes)
 	cmdutil.CompleteFlagValues(updateCmd, "type", cmdutil.DNSCreateTypes)
 
-	importCmd.Flags().StringVar(&importFile, "file", "", "JSON file to import (required)")
+	importCmd.Flags().StringVar(&importFile, "file", "", "'dns export' JSON or zone file to import, - for stdin (required)")
+	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", false, "skip records already in the zone instead of failing on them")
 	_ = importCmd.MarkFlagRequired("file")
 
+	deleteCmd.Flags().BoolVar(&deleteIfExists, "if-exists", false, "succeed when the record does not exist")
+
 	cmdutil.GroupCmd(Cmd)
-	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd, importCmd)
-	Cmd.AddCommand(listCmd, createCmd, updateCmd, deleteCmd, exportCmd, importCmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd, importCmd, syncCmd)
+	Cmd.AddCommand(listCmd, createCmd, updateCmd, deleteCmd, exportCmd, importCmd, syncCmd)
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -184,10 +210,19 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// --type filters client-side, so it must see every page: filtering only
-	// page 1 silently reports "no records" for a zone that has them. Matches
-	// `domain list` and `order list`, which auto-page whenever a filter is set.
-	autoPage := listAll || listType != ""
+	var wantHost string
+	if listHost != "" {
+		if wantHost, err = filterHost(listHost, domain); err != nil {
+			return err
+		}
+	}
+	filtered := listType != "" || listHost != ""
+
+	// --type and --host filter client-side, so they must see every page:
+	// filtering only page 1 silently reports "no records" for a zone that
+	// has them. Matches `domain list` and `order list`, which auto-page
+	// whenever a filter is set.
+	autoPage := listAll || filtered
 	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
 		return err
 	}
@@ -205,13 +240,22 @@ func runList(cmd *cobra.Command, args []string) error {
 	// Apply --type filter.
 	if listType != "" {
 		upper := strings.ToUpper(listType)
-		filtered := records[:0]
+		matched := records[:0]
 		for _, r := range records {
 			if r.Type != nil && strings.ToUpper(*r.Type) == upper {
-				filtered = append(filtered, r)
+				matched = append(matched, r)
 			}
 		}
-		records = filtered
+		records = matched
+	}
+	if listHost != "" {
+		matched := records[:0]
+		for _, r := range records {
+			if normHost(derefStr(r.Host)) == wantHost {
+				matched = append(matched, r)
+			}
+		}
+		records = matched
 	}
 
 	if out.QuietMode {
@@ -236,15 +280,21 @@ func runList(cmd *cobra.Command, args []string) error {
 			// The generic message claimed the zone had no records at all and
 			// suggested creating "the first record" with a type the user hadn't
 			// asked about — three wrong statements for a filtered search.
-			if listType != "" {
-				out.Empty(strings.ToUpper(listType)+" record",
-					fmt.Sprintf("Run 'namecom dns list %s' to see records of all types", domain))
+			if filtered {
+				noun := "DNS record"
+				if listType != "" {
+					noun = strings.ToUpper(listType) + " record"
+				}
+				if listHost != "" {
+					noun += " at " + displayHost(&listHost)
+				}
+				out.Empty(noun, fmt.Sprintf("Run 'namecom dns list %s' to see every record", domain))
 				return nil
 			}
 			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
 			return nil
 		}
-		if listType != "" {
+		if filtered {
 			// Filtered: single flat table.
 			headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
 			if hasPriority(records) {
@@ -327,6 +377,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// off Changed(), and runUpdate/runImport do the same.
 	if cmd.Flags().Changed("priority") {
 		body.Priority = &createPriority
+	}
+
+	if createIfNotExists {
+		// A read, so it runs under --dry-run too: the preview then says
+		// whether anything would be sent.
+		existing, err := findRecord(cmd, domain, createType, host, answer)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			return reportExisting(cmd, existing, body)
+		}
 	}
 
 	var record *coreapigo.Record
@@ -532,6 +594,9 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			err = api.FromSDKError(err)
 			if cmdutil.IsNotFound(err) {
+				if deleteIfExists && len(ids) == 1 {
+					return deleteAbsent(cmd, domain, id)
+				}
 				return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
 			}
 			return err
@@ -641,71 +706,61 @@ func runImport(cmd *cobra.Command, args []string) error {
 	// persistent flag is accepted after the subcommand as well as before.
 	dryRun := cmdutil.IsDryRun(cmd)
 
-	data, err := readImportData(importFile)
+	records, _, err := readRecordsFile(importFile, domain)
 	if err != nil {
-		return fmt.Errorf("reading import file: %w", err)
+		return err
+	}
+	// Validate every record before writing any of them. Import is not
+	// transactional, so a file whose 4th record was malformed wrote 3
+	// records and then failed on a server-side 422.
+	if err := prepareRecords(records, false); err != nil {
+		return err
 	}
 
-	// A malformed file is bad input, not a failed request: exit 2.
-	data, err = decodeImportData(data)
-	if err != nil {
-		return cmdutil.NewUsageError(fmt.Errorf("decoding import file: %w", err))
-	}
-	var records []*coreapigo.Record
-	if err := json.Unmarshal(data, &records); err != nil {
-		return cmdutil.NewUsageError(fmt.Errorf("parsing import file: %w", err))
-	}
-
-	// Validate every record before writing any of them. `dns create` validates
-	// type/host/answer client-side; the import loop did not, and import is not
-	// transactional — so a file whose 4th record was malformed wrote 3 records
-	// and then failed on a server-side 422, leaving the zone half-updated.
-	for i, r := range records {
-		// Normalize before validating, so what is checked is what is sent. The
-		// API returns the apex host as "", which is what `dns export` writes;
-		// send it as "@", the spelling `dns create --host` defaults to. A file
-		// with no ttl decodes as 0, which the server rejects mid-import; give it
-		// the same default `dns create --ttl` has.
-		if derefStr(r.Host) == "" {
-			apex := "@"
-			r.Host = &apex
-		}
-		if r.TTL == 0 {
-			r.TTL = defaultTTL
-		}
-		rtype, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
-		if err := cmdutil.ValidDNSCreateType(rtype); err != nil {
-			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
-		}
-		// Converted in place, so the request body carries the ASCII form.
-		asciiH, err := asciiHost(host)
+	// --skip-existing compares with the live zone, the dry run included,
+	// so the preview lists only what would really be sent. A record listed
+	// twice in the file is skipped the second time, as the API would
+	// refuse it.
+	skipped := 0
+	if importSkipExisting {
+		stop := out.Spin("Fetching DNS records…")
+		live, _, _, err := fetchRecords(cmd, domain, 1, nil, true)
+		stop()
 		if err != nil {
-			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+			}
+			return err
 		}
-		asciiA, err := asciiAnswer(rtype, asciiH, answer)
-		if err != nil {
-			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
-		}
-		r.Host, r.Answer = &asciiH, &asciiA
-		if err := cmdutil.ValidTTL(r.TTL); err != nil {
-			return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
-		}
-		if r.Priority != nil {
-			if err := cmdutil.ValidPriority(*r.Priority); err != nil {
-				return fmt.Errorf("record %d (%s %s): %w", i+1, rtype, host, err)
+		present := map[recordKey]bool{}
+		for _, r := range live {
+			if r != nil {
+				present[liveKey(r)] = true
 			}
 		}
+		kept := records[:0]
+		for _, r := range records {
+			k := keyOf(r.Type, r.Host, r.Answer)
+			if present[k] {
+				skipped++
+				continue
+			}
+			present[k] = true
+			kept = append(kept, r)
+		}
+		records = kept
 	}
 
 	created := 0
 	var previews []output.DryRunRequest
 	for _, r := range records {
+		ttl := r.TTL
 		body := coreapigo.DNSCreateRecordBody{
 			DomainName: domain,
-			Type:       coreapigo.DNSCreateRecordBodyType(derefStr(r.Type)),
-			Host:       derefStr(r.Host),
-			Answer:     derefStr(r.Answer),
-			TTL:        &r.TTL,
+			Type:       coreapigo.DNSCreateRecordBodyType(r.Type),
+			Host:       r.Host,
+			Answer:     r.Answer,
+			TTL:        &ttl,
 			Priority:   r.Priority,
 		}
 
@@ -724,7 +779,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			// retry would duplicate the records written so far.
 			if created > 0 {
 				out.Warn(fmt.Sprintf("%d of %s were already created on %s before this failure — "+
-					"remove them from the file or delete them before retrying, or the retry will duplicate them",
+					"re-run with --skip-existing to continue without duplicating them",
 					created, output.Plural(len(records), "record"), domain))
 			}
 			return fmt.Errorf("creating %s %s (after %d of %d succeeded): %w",
@@ -733,12 +788,19 @@ func runImport(cmd *cobra.Command, args []string) error {
 		created++
 	}
 
+	if skipped > 0 {
+		out.Note(fmt.Sprintf("Skipped %s already in the zone", output.Plural(skipped, "record")))
+	}
 	if dryRun {
 		// One document for the whole plan in JSON and YAML modes, so a script
 		// parses every request at once rather than a stream of them.
 		return out.DryRunAll(previews)
 	}
-	out.Success(fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain))
+	msg := fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain)
+	if skipped > 0 {
+		msg += fmt.Sprintf(" (%d already present, skipped)", skipped)
+	}
+	out.Success(msg)
 	return nil
 }
 
