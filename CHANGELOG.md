@@ -9,6 +9,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- `auth login --help` and the login form say where to create an API token
+  (https://www.name.com/account/settings/api) and that sandbox credentials are
+  separate, with usernames that usually end in `-test`.
+
 ### Fixed
 - `dns create` in a terminal opens its guided form again when `--type` or
   `--answer` is left out. The form had been unreachable: both flags were
@@ -65,6 +70,21 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--yes` does not cover it, as with `--acknowledge-claim`. In a terminal
   without `--yes`, the purchase prompt, which quotes the price, still counts
   as acceptance. `--dry-run` shows a hint instead of failing.
+- `NAMECOM_SANDBOX` accepts `yes`/`no`, `on`/`off` and `y`/`n` in any case,
+  as well as `true`/`false` and `1`/`0`. Any other value used to count as
+  false, so `NAMECOM_SANDBOX=yes` sent requests to **production**, even over a
+  profile saved with `sandbox: true`. An unrecognized value is now a usage
+  error (exit **2**) naming the variable and value, and nothing is sent.
+  `config show` reports the same error.
+- `auth login` checks the credentials with the API before saving them, and
+  says "Logged in to production as alice (profile default)". Credentials the
+  API rejects are not saved: the command exits **3** and, when the username
+  and the environment look mismatched, says that sandbox credentials are
+  separate and usually end in `-test`. If the API cannot be reached it asks
+  whether to save them unverified; with `--yes` it refuses. `--dry-run` runs
+  the check too, and still writes nothing. Leading and trailing whitespace is
+  trimmed from the username and token; a pasted token with a trailing space
+  used to be saved with it.
 
 ## [0.4.9] - 2026-10-03
 

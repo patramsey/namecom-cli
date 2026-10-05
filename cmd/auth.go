@@ -19,9 +19,18 @@ var authCmd = &cobra.Command{
 	Short: "Manage name.com API credentials",
 }
 
+// apiSettingsURL is the name.com page where an account creates API tokens.
+const apiSettingsURL = "https://www.name.com/account/settings/api"
+
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Configure credentials interactively",
+	Long: `Asks for your name.com API username and token, checks them with the API,
+and saves them to a profile in the config file.
+
+Create a token at ` + apiSettingsURL + `.
+Sandbox credentials are separate from production ones, and the sandbox
+username usually ends in -test; log in to the sandbox with --sandbox.`,
 	Example: `  namecom auth login
   namecom auth login --profile staging
   namecom auth login --profile sandbox --sandbox`,
@@ -68,6 +77,13 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("auth login requires an interactive terminal; " +
 			"set credentials via NAMECOM_USERNAME and NAMECOM_TOKEN environment variables instead")
 	}
+	// The credential check below honours --base-url, so reject a bad one
+	// before the form rather than after it.
+	if gf.baseURL != "" {
+		if err := validateBaseURL(gf.baseURL); err != nil {
+			return cmdutil.NewUsageError(err)
+		}
+	}
 
 	// --sandbox answers the sandbox question. The form's answer used to start
 	// false and the flag was never read, so `auth login --sandbox` saved a
@@ -80,6 +96,40 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			return nil
 		}
 		return fmt.Errorf("form: %w", err)
+	}
+	// A token pasted with a trailing space or newline was saved with it, and
+	// every request then failed with a 401 (#229).
+	a.Username = strings.TrimSpace(a.Username)
+	a.Token = strings.TrimSpace(a.Token)
+
+	// Check the credentials before saving them (#229). This runs under
+	// --dry-run too: Hello is a read that changes nothing, as the reads
+	// behind other commands' previews are, and it lets the preview say
+	// whether the save would go ahead. Only the write below is skipped.
+	verifiedAs, err := verifyLogin(cmd, a)
+	switch {
+	case err == nil:
+	case isRejected(err):
+		return rejectedLoginError(err, a)
+	case cmdutil.IsDryRun(cmd):
+		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
+	case cmdutil.IsYes(cmd):
+		return fmt.Errorf("could not verify the credentials, so they were not saved (--yes never saves unverified credentials): %w", err)
+	default:
+		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
+		env := "production"
+		if a.Sandbox {
+			env = "sandbox"
+		}
+		ok, cerr := confirmSaveUnverified(out, false, "Save them anyway, unverified?",
+			fmt.Sprintf("%s · profile %s (%s)", env, loginProfile, a.Username))
+		if cerr != nil {
+			return cerr
+		}
+		if !ok {
+			out.Warn("credentials not saved")
+			return nil
+		}
 	}
 
 	cfgFile, err := config.Load()
@@ -115,10 +165,95 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	}
 
 	path, _ := config.ActivePath()
-	out.Success(fmt.Sprintf("Credentials saved to %s (profile: %s)", path, loginProfile))
+	if verifiedAs != "" {
+		out.Success(fmt.Sprintf("Logged in to %s as %s (profile %s)", loginEnv(a.Sandbox), verifiedAs, loginProfile))
+		out.Hint("Credentials saved to " + path)
+	} else {
+		out.Success(fmt.Sprintf("Credentials saved to %s (profile: %s), unverified", path, loginProfile))
+	}
 	out.Hint("Run 'namecom status' to see your account overview")
 	out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
 	return nil
+}
+
+// confirmSaveUnverified asks whether to save credentials the API could not be
+// reached to check. Replaceable in tests.
+var confirmSaveUnverified = cmdutil.Confirm
+
+// verifyLogin checks a's credentials with the API's Hello endpoint, against
+// the endpoint the saved profile will use, and returns the username the API
+// reports for them.
+func verifyLogin(cmd *cobra.Command, a loginAnswers) (string, error) {
+	client, err := api.New(api.Options{
+		Creds:     config.Credentials{Username: a.Username, Token: a.Token, Sandbox: a.Sandbox},
+		UserAgent: "namecom-cli/" + Version,
+		Timeout:   gf.timeout,
+		BaseURL:   gf.baseURL,
+		// One attempt: someone is waiting at the prompt, and if the API cannot
+		// be reached they are asked what to do rather than kept waiting.
+		MaxRetries: -1,
+	})
+	if err != nil {
+		return "", err
+	}
+	stop := cmdutil.Out(cmd).Spin("Checking credentials…")
+	resp, err := client.SDK().Hello(cmd.Context())
+	stop()
+	if err != nil {
+		return "", api.FromSDKError(err)
+	}
+	if resp != nil && resp.Username != "" {
+		return resp.Username, nil
+	}
+	return a.Username, nil
+}
+
+// isRejected reports whether err is the API refusing the credentials, as
+// opposed to failing to answer.
+func isRejected(err error) bool {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	return ok && (apiErr.StatusCode == 401 || apiErr.StatusCode == 403)
+}
+
+// loginRejectedError is a 401 or 403 from the login credential check. It
+// unwraps to the API error, so it still exits 3, but carries its own message
+// and hint: the generic ones send the user to `auth login`, the command they
+// just ran, and do not say which environment refused them.
+type loginRejectedError struct {
+	msg string
+	err error
+}
+
+func (e *loginRejectedError) Error() string { return e.msg }
+func (e *loginRejectedError) Unwrap() error { return e.err }
+func (e *loginRejectedError) UserHint() string {
+	return "check the username and token at " + apiSettingsURL + ", then run 'namecom auth login' again"
+}
+
+// rejectedLoginError explains a rejection, including the most common cause:
+// sandbox and production have separate credentials, and sandbox usernames
+// usually end in -test.
+func rejectedLoginError(err error, a loginAnswers) error {
+	endpoint := gf.baseURL
+	if endpoint == "" {
+		endpoint = api.DefaultBaseURL(a.Sandbox)
+	}
+	msg := fmt.Sprintf("name.com rejected these credentials for %s (%s); nothing was saved", loginEnv(a.Sandbox), endpoint)
+	testUser := strings.HasSuffix(a.Username, "-test")
+	switch {
+	case testUser && !a.Sandbox:
+		msg += ". The username ends in -test, like a sandbox account's, and sandbox credentials work only there: try 'namecom auth login --sandbox'"
+	case !testUser && a.Sandbox:
+		msg += ". Sandbox credentials are separate from production ones, and the username usually ends in -test"
+	}
+	return &loginRejectedError{msg: msg, err: err}
+}
+
+func loginEnv(sandbox bool) string {
+	if sandbox {
+		return "sandbox"
+	}
+	return "production"
 }
 
 // loginAnswers holds what the login form collects.
@@ -128,6 +263,11 @@ type loginAnswers struct {
 	Sandbox  bool
 }
 
+// tokenFieldDescription says where a token comes from; the form used to
+// mention only "the API settings page" without saying where that is (#239).
+const tokenFieldDescription = "Create one at " + apiSettingsURL +
+	"; sandbox has its own. Kept secret in the config file (chmod 600)"
+
 // askLogin runs the login form, filling a. The sandbox question is asked only
 // when askSandbox is set; otherwise a.Sandbox is kept as given. It is
 // replaceable in tests: the token field is a password input, which huh reads
@@ -136,11 +276,11 @@ var askLogin = func(a *loginAnswers, askSandbox bool) error {
 	fields := []huh.Field{
 		huh.NewInput().
 			Title("Username").
-			Description("Your name.com API username (shown in the API settings page)").
+			Description("Your name.com API username, shown at " + apiSettingsURL + " (sandbox usernames usually end in -test)").
 			Placeholder("yourname").
 			Value(&a.Username).
 			Validate(func(s string) error {
-				if s == "" {
+				if strings.TrimSpace(s) == "" {
 					return errors.New("username is required")
 				}
 				return nil
@@ -148,12 +288,12 @@ var askLogin = func(a *loginAnswers, askSandbox bool) error {
 
 		huh.NewInput().
 			Title("API Token").
-			Description("Your name.com API token — kept secret in the config file (chmod 600)").
+			Description(tokenFieldDescription).
 			Placeholder("••••••••••••••••").
 			EchoMode(huh.EchoModePassword).
 			Value(&a.Token).
 			Validate(func(s string) error {
-				if s == "" {
+				if strings.TrimSpace(s) == "" {
 					return errors.New("token is required")
 				}
 				return nil
@@ -185,7 +325,9 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	stop()
 
 	// Report the identity the Hello call just used, resolved the same way.
-	id := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
+	// initContext already resolved it, so an invalid NAMECOM_SANDBOX cannot
+	// reach here; ignoring the error keeps the API error below intact.
+	id, _ := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
 	if err != nil {
 		// The error hints send users here to see which credentials are in
 		// use, so a rejection says which ones were rejected rather than only

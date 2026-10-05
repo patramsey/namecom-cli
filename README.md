@@ -129,7 +129,7 @@ mv "$(go env GOPATH)/bin/namecom-cli" "$(go env GOPATH)/bin/namecom"
 ## Quick start
 
 ```bash
-# 1. Authenticate (grab your API token from name.com → Account → API)
+# 1. Authenticate (create an API token at https://www.name.com/account/settings/api)
 namecom auth login
 
 # 2. See your portfolio at a glance
@@ -305,7 +305,7 @@ separate from your production one. Omit `--profile` to use your default
 ```bash
 export NAMECOM_USERNAME=yourname
 export NAMECOM_TOKEN=yourtoken
-export NAMECOM_SANDBOX=true        # target sandbox API
+export NAMECOM_SANDBOX=true        # target sandbox API (true/false, yes/no, on/off, 1/0)
 export NAMECOM_PROFILE=staging     # select a profile
 export NAMECOM_CONFIG=~/namecom-ci.yaml    # use this file instead of the default
 namecom domain list

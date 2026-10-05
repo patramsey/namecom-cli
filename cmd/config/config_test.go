@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,24 @@ func configCmd(t *testing.T, format output.Format) (*cobra.Command, *bytes.Buffe
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.WithValue(context.Background(), cmdutil.KeyOutput, out))
 	return cmd, &buf
+}
+
+// TestShow_InvalidSandboxEnv guards #225: config show describes the endpoint
+// an API command would use, and an unrecognized NAMECOM_SANDBOX was read as
+// production. It is now the same usage error the API commands report.
+func TestShow_InvalidSandboxEnv(t *testing.T) {
+	cmd, buf := configCmd(t, output.FormatJSON)
+	t.Setenv("NAMECOM_SANDBOX", "garbage")
+	err := runShow(cmd, nil)
+	if err == nil {
+		t.Fatalf("config show accepted NAMECOM_SANDBOX=garbage:\n%s", buf.String())
+	}
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+		t.Errorf("error is %T, want a UsageError (exit 2): %v", err, err)
+	}
+	if strings.Contains(buf.String(), "api.name.com") {
+		t.Errorf("config show still reported production:\n%s", buf.String())
+	}
 }
 
 // TestListProfiles_NeverLeaksToken is a credential-disclosure guard.
