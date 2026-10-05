@@ -46,9 +46,10 @@ An order placed near midnight UTC may show the previous day's date and fall
 outside a date filter you would expect to include it.`
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List orders",
-	Long:  "List orders, newest first.\n\n" + timestampNote,
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List orders",
+	Long:    "List orders, newest first.\n\n" + timestampNote,
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
   namecom order list --since 2026-01-01                # orders from this year

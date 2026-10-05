@@ -41,8 +41,9 @@ var (
 var listAll bool
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List transfers",
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List transfers",
 	Example: `  namecom transfer list         # active/recent transfers (first page)
   namecom transfer list --all   # full transfer history`,
 	Args: cmdutil.NoArgs,

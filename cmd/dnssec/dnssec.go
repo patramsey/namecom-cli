@@ -29,6 +29,7 @@ var (
 
 var listCmd = &cobra.Command{
 	Use:               "list <domain>",
+	Aliases:           []string{"ls"},
 	Short:             "List DNSSEC keys for a domain",
 	Example:           `  namecom dnssec list example.com`,
 	Args:              cmdutil.ExactArgs(1),
@@ -47,6 +48,7 @@ var getCmd = &cobra.Command{
 
 var createCmd = &cobra.Command{
 	Use:               "create <domain>",
+	Aliases:           []string{"add"},
 	Short:             "Add a DNSSEC key",
 	Example:           `  namecom dnssec create example.com --algorithm 8 --digest-type 2 --key-tag 12345 --digest abc123`,
 	Args:              cmdutil.ExactArgs(1),
@@ -56,6 +58,7 @@ var createCmd = &cobra.Command{
 
 var deleteCmd = &cobra.Command{
 	Use:               "delete <domain> <digest>",
+	Aliases:           []string{"rm"},
 	Short:             "Remove a DNSSEC key",
 	Example:           `  namecom dnssec delete example.com abc123def456`,
 	Args:              cmdutil.ExactArgs(2),

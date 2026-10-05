@@ -39,8 +39,9 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List URL forwarding entries",
+	Use:     "list <domain>",
+	Aliases: []string{"ls"},
+	Short:   "List URL forwarding entries",
 	Example: `  namecom url list example.com
   namecom url list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
@@ -58,8 +59,9 @@ var getCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain>",
-	Short: "Create a URL forwarding entry",
+	Use:     "create <domain>",
+	Aliases: []string{"add"},
+	Short:   "Create a URL forwarding entry",
 	Example: `  namecom url create example.com --to https://new-site.com
   namecom url create example.com --host www --to https://new-site.com --type redirect
   namecom url create example.com --to https://new-site.com --type masked --title "My Site"`,
@@ -79,6 +81,7 @@ var updateCmd = &cobra.Command{
 
 var deleteCmd = &cobra.Command{
 	Use:               "delete <domain> <id>",
+	Aliases:           []string{"rm"},
 	Short:             "Delete a URL forwarding entry",
 	Example:           `  namecom url delete example.com 12345`,
 	Args:              cmdutil.ExactArgs(2),

@@ -115,7 +115,7 @@ func Execute() {
 	// a did-you-mean and the usage line.
 	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
 
-	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
+	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
 		os.Exit(reportError(errorOutput(), err))
 	}
 
@@ -130,6 +130,41 @@ func Execute() {
 			// Check not done yet — don't block.
 		}
 	}
+}
+
+// rootSuggestFor maps words typed in place of a top-level command to the
+// command meant, when the two are spelled nothing alike and cobra's
+// edit-distance suggestions cannot find it (#237). Cobra's own SuggestFor
+// field can only name a direct subcommand, and two of these are deeper.
+var rootSuggestFor = map[string]string{
+	"records":   "dns",
+	"record":    "dns",
+	"redirect":  "url",
+	"redirects": "url",
+	"forward":   "url",
+	"login":     "auth login",
+	"logout":    "auth logout",
+	"whoami":    "auth status",
+}
+
+// suggestFor adds rootSuggestFor's answer to an unknown top-level command
+// error, ahead of any suggestion cobra found itself.
+func suggestFor(err error) error {
+	u, ok := errors.AsType[*cmdutil.UnknownCommandError](err)
+	if !ok || u.Path != rootCmd.CommandPath() {
+		return err
+	}
+	target, ok := rootSuggestFor[strings.ToLower(u.Word)]
+	if !ok {
+		return err
+	}
+	suggestions := []string{target}
+	for _, s := range u.Suggestions {
+		if s = strings.TrimPrefix(s, u.Path+" "); s != target {
+			suggestions = append(suggestions, s)
+		}
+	}
+	return cmdutil.UnknownCommand(u.Word, u.Path, suggestions)
 }
 
 // checksForUpdates reports whether an invocation with these arguments looks

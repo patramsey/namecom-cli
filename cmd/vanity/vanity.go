@@ -27,8 +27,9 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List vanity nameservers for a domain",
+	Use:     "list <domain>",
+	Aliases: []string{"ls"},
+	Short:   "List vanity nameservers for a domain",
 	Example: `  namecom vanity-ns list example.com
   namecom vanity-ns list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
@@ -47,8 +48,9 @@ var getCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain>",
-	Short: "Create a vanity nameserver",
+	Use:     "create <domain>",
+	Aliases: []string{"add"},
+	Short:   "Create a vanity nameserver",
 	Example: `  namecom vanity-ns create example.com --hostname ns1.example.com --ips 1.2.3.4
   namecom vanity-ns create example.com --hostname ns1.example.com --ips 1.2.3.4,5.6.7.8`,
 	Args:              cmdutil.ExactArgs(1),
@@ -67,8 +69,9 @@ var updateCmd = &cobra.Command{
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <hostname>",
-	Short: "Delete a vanity nameserver",
+	Use:     "delete <domain> <hostname>",
+	Aliases: []string{"rm"},
+	Short:   "Delete a vanity nameserver",
 	Example: `  namecom vanity-ns delete example.com ns1.example.com
   namecom vanity-ns delete example.com ns1`,
 	Args:              cmdutil.ExactArgs(2),

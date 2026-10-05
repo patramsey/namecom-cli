@@ -56,8 +56,9 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List DNS records for a domain",
+	Use:     "list <domain>",
+	Aliases: []string{"ls"},
+	Short:   "List DNS records for a domain",
 	Example: `  namecom dns list example.com
   namecom dns list example.com --type A
   namecom dns list example.com --type MX`,
@@ -67,8 +68,9 @@ var listCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain>",
-	Short: "Create a DNS record",
+	Use:     "create <domain>",
+	Aliases: []string{"add"},
+	Short:   "Create a DNS record",
 	Example: `  namecom dns create example.com --type A --answer 1.2.3.4
   namecom dns create example.com --type CNAME --host www --answer example.com.
   namecom dns create example.com --type MX --answer mail.example.com --priority 10
@@ -98,8 +100,9 @@ var updateCmd = &cobra.Command{
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <id>",
-	Short: "Delete a DNS record",
+	Use:     "delete <domain> <id>",
+	Aliases: []string{"rm"},
+	Short:   "Delete a DNS record",
 	Example: `  namecom dns delete example.com 12345
   namecom dns list example.com --type TXT -q | xargs -I{} namecom dns delete example.com {} --yes   # every TXT record`,
 	Args: cmdutil.ExactArgs(2),

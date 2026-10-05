@@ -17,6 +17,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   apply) beside the unchanged `body`. A renewal's body carried only
   `{"years": 2}`, and a standard registration's no price at all. **Scripts**
   reading the dry-run document get one new key; nothing else in it changed.
+- Aliases: `ls` for every `list`, `rm` for every `delete`, and `add` for
+  `create` in `dns`, `dnssec`, `email`, `url` and `vanity-ns`.
+  `config list-profiles` also answers to `config profiles` and `config ls`;
+  the old name stays, so scripts that call it keep working.
+- Words typed in place of a top-level command now get the command they
+  meant: `namecom records` suggests `namecom dns`, `redirect` and `forward`
+  suggest `namecom url`, `login` and `logout` suggest `namecom auth login`
+  and `auth logout`, and `whoami` suggests `namecom auth status`. They used
+  to fail with no suggestion.
 
 ### Changed
 - The `domain register` prompt reads as one sentence and states the choices

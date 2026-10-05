@@ -163,11 +163,14 @@ namecom open mycoolstartup.com
 | `auth` | `login` `logout` `status` |
 | `status` | account overview: domain counts, expiring domains, pending transfers, balance |
 | `order` | `list` `get` `refund` |
-| `config` | `list-profiles` `use` `show` |
+| `config` | `list-profiles` (alias `profiles`) `use` `show` |
 | `api` | raw HTTP passthrough with auth applied |
 | `open` | open name.com in a browser (honors `$BROWSER`; prints the URL when no browser can be opened) |
 | `version` | version and build information |
 | `completion` | shell completion scripts: `bash` `zsh` `fish` `powershell` |
+
+Every `list` also answers to `ls` and every `delete` to `rm`. In `dns`,
+`dnssec`, `email`, `url` and `vanity-ns`, `create` also answers to `add`.
 
 ```
 namecom --help
