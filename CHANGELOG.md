@@ -19,6 +19,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and exits 0. Without a terminal a missing `--type` or `--answer` is still a
   usage error (exit **2**); the message now reads `required flag(s) "type",
   "answer" not set — pass them, or run in a terminal for the guided form`.
+- `namecom api` reads a piped stdin as the request body when `--data` is not
+  given, so the help's `echo '{…}' | namecom api POST …` example works; it
+  sent an empty body before, and `--dry-run` showed none. GET and HEAD never
+  read stdin, and neither does a terminal or the null device, so
+  `</dev/null` in CI does not block. An empty stdin, with or without
+  `--data -`, now sends no body and no `Content-Type` rather than an empty
+  one. `--data ''` sends no body without reading stdin.
 
 ## [0.4.9] - 2026-10-03
 
