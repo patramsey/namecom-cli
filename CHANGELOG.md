@@ -40,6 +40,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   JSON error output are unaffected, and not when `--sandbox` was passed.
 
 ### Fixed
+- The `url create` and `url update` forms check the destination as you type
+  it: it must be an `http://` or `https://` URL with a host. Anything else
+  used to get through the form and then fail with an error naming `--to`, a
+  flag that had not been typed, losing the input. The create form asks where
+  `example.com` (or `www.example.com`) should forward to, instead of
+  `example.com/@`.
 - `dns create` in a terminal opens its guided form again when `--type` or
   `--answer` is left out. The form had been unreachable: both flags were
   marked required, so the command failed with `required flag(s) "answer",
