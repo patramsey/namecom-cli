@@ -117,7 +117,12 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("could not verify the credentials, so they were not saved (--yes never saves unverified credentials): %w", err)
 	default:
 		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
-		ok, cerr := confirmSaveUnverified(out, false, "Save them anyway, unverified?")
+		env := "production"
+		if a.Sandbox {
+			env = "sandbox"
+		}
+		ok, cerr := confirmSaveUnverified(out, false, "Save them anyway, unverified?",
+			fmt.Sprintf("%s · profile %s (%s)", env, loginProfile, a.Username))
 		if cerr != nil {
 			return cerr
 		}

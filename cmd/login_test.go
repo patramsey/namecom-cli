@@ -96,7 +96,7 @@ func stubSaveUnverified(t *testing.T, answer bool) *bool {
 	t.Helper()
 	asked := new(bool)
 	prev := confirmSaveUnverified
-	confirmSaveUnverified = func(_ *output.Config, yes bool, _ string) (bool, error) {
+	confirmSaveUnverified = func(_ *output.Config, yes bool, _, _ string) (bool, error) {
 		*asked = true
 		return answer || yes, nil
 	}

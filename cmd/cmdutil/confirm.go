@@ -67,7 +67,12 @@ func PromptContext(cmd *cobra.Command) string {
 	}
 	f, _ := cmd.Context().Value(KeyConfig).(*config.File)
 	ov := Overrides(cmd)
-	id := config.Identity(f, ov)
+	id, err := config.Identity(f, ov)
+	if err != nil {
+		// An unparseable NAMECOM_SANDBOX: the command fails with a usage
+		// error before any prompt, so there is no context worth showing.
+		return ""
+	}
 
 	profile := id.Profile
 	if f == nil {
