@@ -76,7 +76,7 @@ type Options struct {
 
 	// OnRetry is called just before sleeping between retry attempts so the
 	// caller can surface a "retrying…" message to the user.
-	OnRetry func(attempt int, delay time.Duration)
+	OnRetry func(Retry)
 
 	// Advanced knobs; zero values fall back to the defaults above.
 	RPS   float64

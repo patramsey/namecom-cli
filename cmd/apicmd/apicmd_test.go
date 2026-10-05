@@ -659,3 +659,126 @@ func TestAPI_TableErrorKeepsRawBody(t *testing.T) {
 		t.Errorf("table-mode stderr = %q, want %q", stderr.String(), want)
 	}
 }
+
+// TestMain points os.Stdin at the null device for the whole package. runAPI
+// reads a piped stdin as the body (#231), so a test that inherited the
+// runner's stdin — a pipe in many CI systems — would send whatever was on it,
+// or block. Tests that want stdin swap it in with stdinWith.
+func TestMain(m *testing.M) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		panic(err)
+	}
+	os.Stdin = null
+	os.Exit(m.Run())
+}
+
+// bodyServer records the body and Content-Type of the request it serves.
+func bodyServer(t *testing.T) (srv *httptest.Server, body, contentType *string) {
+	t.Helper()
+	var b, ct string
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		b, ct = string(raw), r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &b, &ct
+}
+
+// TestAPI_PipedStdinIsTheBody pins #231: the help's own example pipes a
+// record into `namecom api POST` without --data, and stdin was ignored — the
+// preview showed no body and the request went out empty.
+func TestAPI_PipedStdinIsTheBody(t *testing.T) {
+	const payload = `{"host":"www","type":"CNAME"}`
+
+	t.Run("sent", func(t *testing.T) {
+		stdinWith(t, payload)
+		srv, body, ct := bodyServer(t)
+		cmd, _ := apiCmd(t, srv)
+		if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
+			t.Fatalf("runAPI: %v", err)
+		}
+		if *body != payload {
+			t.Errorf("piped stdin should be the body: got %q, want %q", *body, payload)
+		}
+		if *ct != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", *ct)
+		}
+	})
+
+	t.Run("previewed", func(t *testing.T) {
+		stdinWith(t, payload)
+		cmd, buf := apiCmd(t, refuseAll(t))
+		dryRun(cmd, true)
+		if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
+			t.Fatalf("runAPI: %v", err)
+		}
+		if got := string(parseDryRun(t, buf).Body); got != payload {
+			t.Errorf("--dry-run preview body = %s, want %s", got, payload)
+		}
+	})
+}
+
+// TestAPI_EmptyStdinSendsNoBody: a CI job's stdin is often empty or the null
+// device. Neither is a body, so the request carries none — not an empty one
+// labelled application/json — and `--data -` on an empty pipe agrees.
+func TestAPI_EmptyStdinSendsNoBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		pipe       bool
+	}{
+		{"null device", "", false},
+		{"null device with --data -", "-", false},
+		{"empty pipe", "", true},
+		{"empty pipe with --data -", "-", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.pipe {
+				stdinWith(t, "")
+			}
+			srv, body, ct := bodyServer(t)
+			cmd, _ := apiCmd(t, srv)
+			apiBody = tc.data
+			if err := runAPI(cmd, []string{"DELETE", "/core/v1/domains/example.com/records/7"}); err != nil {
+				t.Fatalf("runAPI: %v", err)
+			}
+			if *body != "" || *ct != "" {
+				t.Errorf("sent body %q with Content-Type %q, want neither", *body, *ct)
+			}
+		})
+	}
+}
+
+// TestAPI_StdinIgnoredWhenNotWanted: reads take no body, and an explicit
+// --data, even an empty one, is the body instead of stdin. An explicitly empty
+// --data is the way out for a caller whose stdin is a pipe that never closes.
+func TestAPI_StdinIgnoredWhenNotWanted(t *testing.T) {
+	t.Run("GET", func(t *testing.T) {
+		stdinWith(t, `{"x":1}`)
+		srv, body, _ := bodyServer(t)
+		cmd, _ := apiCmd(t, srv)
+		if err := runAPI(cmd, []string{"GET", "/core/v1/domains"}); err != nil {
+			t.Fatalf("runAPI: %v", err)
+		}
+		if *body != "" {
+			t.Errorf("GET sent stdin as a body: %q", *body)
+		}
+	})
+	t.Run("explicit empty --data", func(t *testing.T) {
+		stdinWith(t, `{"x":1}`)
+		srv, body, _ := bodyServer(t)
+		cmd, _ := apiCmd(t, srv)
+		cmd.Flags().StringVar(&apiBody, "data", "", "")
+		if err := cmd.Flags().Set("data", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := runAPI(cmd, []string{"POST", "/core/v1/domains/example.com/records"}); err != nil {
+			t.Fatalf("runAPI: %v", err)
+		}
+		if *body != "" {
+			t.Errorf("--data '' still read stdin: %q", *body)
+		}
+	})
+}

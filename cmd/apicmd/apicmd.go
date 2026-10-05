@@ -25,12 +25,17 @@ var Cmd = &cobra.Command{
 	Short: "Make a raw API request",
 	Long: `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.
 
+The body is --data, or stdin with --data -. Without --data, any method other
+than GET or HEAD reads its body from stdin when stdin is a pipe or a file; an
+empty stdin sends no body. --data '' sends no body without reading stdin.
+
 With --dry-run, any method other than GET or HEAD is printed — method, path,
 and body — instead of sent. GET and HEAD still run.`,
 	Example: `  namecom api GET /core/v1/domains
   namecom api GET /core/v1/domains/example.com
   namecom api POST /core/v1/domains/example.com/records --data '{"host":"@","type":"A","answer":"1.2.3.4","ttl":300}'
-  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records`,
+  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records
+  namecom api PUT /core/v1/domains/example.com/records/123 --data - < record.json`,
 	Args: cmdutil.ExactArgs(2),
 	// The method, then nothing: a path is not a file (#187).
 	ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
@@ -80,10 +85,17 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	// Read the body once, up front: stdin cannot be read twice, and --dry-run
 	// must preview the bytes the request would carry. The retry transport
 	// buffers the body for replay anyway, so streaming it saved nothing.
+	//
+	// Without --data, a write reads a piped stdin, as the help's own example
+	// does (#231). Only a pipe or a file is read: a terminal would sit waiting
+	// for typing, and the null device is what `</dev/null` in CI gives. An
+	// empty read is no body, the same as no --data, rather than an empty body
+	// labelled application/json.
 	var body []byte
-	switch apiBody {
-	case "":
-	case "-":
+	switch {
+	case apiBody == "-",
+		apiBody == "" && !cmd.Flags().Changed("data") &&
+			method != http.MethodGet && method != http.MethodHead && stdinIsPiped():
 		if body, err = io.ReadAll(os.Stdin); err != nil {
 			return fmt.Errorf("reading request body from stdin: %w", err)
 		}
@@ -102,7 +114,7 @@ func runAPI(cmd *cobra.Command, args []string) error {
 
 	send := func(ctx context.Context, body []byte) error {
 		var bodyReader io.Reader
-		if apiBody != "" {
+		if len(body) > 0 {
 			bodyReader = bytes.NewReader(body)
 		}
 		req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
@@ -179,6 +191,17 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		return send(ctx, rb)
 	})
 	return err
+}
+
+// stdinIsPiped reports whether stdin is a pipe or a regular file: input that
+// was handed to the command and ends. A terminal or the null device is a
+// character device, and is not read.
+func stdinIsPiped() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeNamedPipe != 0 || fi.Mode().IsRegular()
 }
 
 // rawBody is a --data body as --dry-run prints it: parsed and re-indented when

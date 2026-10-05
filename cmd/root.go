@@ -447,9 +447,13 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	case gf.debug:
 		apiOpts.DebugLog = os.Stderr
 	}
-	if apiOpts.DebugLog != nil || output.IsStderrTTY() {
-		apiOpts.OnRetry = func(attempt int, delay time.Duration) {
-			fmt.Fprintf(os.Stderr, "retrying (attempt %d, waiting %s)…\n", attempt, delay.Round(time.Millisecond))
+	// A retry goes into the running spinner's text; a line printed over the
+	// spinner landed on top of its frame (#232). With no spinner, it is one
+	// line on stderr, for a person watching or a --debug log.
+	retryLine := apiOpts.DebugLog != nil || output.IsStderrTTY()
+	apiOpts.OnRetry = func(r api.Retry) {
+		if !output.SpinnerNote(r.String()) && retryLine {
+			fmt.Fprintln(os.Stderr, r.String())
 		}
 	}
 	apiClient, err := api.New(apiOpts)
