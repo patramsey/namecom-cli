@@ -84,7 +84,7 @@ refunded.`,
 }
 
 func init() {
-	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "order")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "orders")
 	listCmd.Flags().StringVar(&listDomain, "domain", "", "filter by domain name (supports * wildcard)")
 	listCmd.Flags().StringVar(&listSince, "since", "", "filter orders created on or after this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
 	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")

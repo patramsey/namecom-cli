@@ -253,9 +253,10 @@ parse; table output is unchanged.
   block of 19. A group's page (`namecom dns --help`) no longer has an `-h`
   flags block, global flags or two footers; every page ends with one
   "Learn More" footer.
-- Help wording is consistent. The `url` pages say "redirect" throughout
-  (the leaves said "URL forwarding entry"), and `--type` spells out that
-  `redirect`, the default, is a 301. `dnssec` is "Manage DS records at the
+- Help wording is consistent. The `url` pages call the feature "URL
+  forwarding" throughout, name.com's own term and its API path (the group
+  page said "URL redirects"), and `--type` spells out that `redirect`, the
+  default, is a 301. `dnssec` is "Manage DS records at the
   registry (DNSSEC)", with "Add/Remove a DS record"; it claimed to enable
   signing, which the DNS host does. `transfer cancel` says it cancels a
   transfer in, `cancel-outbound` that it stops a domain leaving, and
@@ -268,7 +269,7 @@ parse; table output is unchanged.
   `--yes` form comes second, labelled for scripts. `dns create --type`
   says CAA is read-only through the API, and `--profile` on `auth login`
   and `auth logout` says it overrides the global `--profile`.
-- The `--limit` help on `url list` reads "redirects per page".
+- The `--limit` help on `url list` reads "forwarding entries per page".
 - The `domain register` prompt reads as one sentence and states the choices
   it is sent with: "Register acme.io for 2 years: $35.98 total (renews at
   $17.99/yr), with WHOIS privacy, without auto-renew?". It read "for 2 years at

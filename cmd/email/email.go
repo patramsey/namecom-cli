@@ -83,7 +83,7 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
-	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwardings")
 
 	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address "+cmdutil.PromptedRequired)
 	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address "+cmdutil.PromptedRequired)

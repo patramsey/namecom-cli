@@ -236,7 +236,7 @@ namecom transfer get acme.io                              # check status
 namecom transfer create acme.io --auth-code XXXXXX --contacts-file contacts.json
 ```
 
-**Set up email forwarding and URL redirects:**
+**Set up email forwarding and URL forwarding:**
 ```bash
 namecom email create acme.io hello --to you@gmail.com     # hello@acme.io → you@gmail.com
 namecom email list acme.io

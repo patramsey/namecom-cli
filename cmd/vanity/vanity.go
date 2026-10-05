@@ -86,7 +86,7 @@ nameservers first ('domain set-ns'); the registry may refuse while one does.`,
 }
 
 func init() {
-	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "nameserver")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "nameservers")
 
 	createCmd.Flags().StringVar(&createHostname, "hostname", "", "nameserver hostname, either fully-qualified (ns1.example.com) or bare label (ns1) (required)")
 	createCmd.Flags().StringVar(&createIPs, "ips", "", "comma-separated IP addresses (required)")
