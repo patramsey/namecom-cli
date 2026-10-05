@@ -25,6 +25,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `namecom domain check --exit-status x.com && …` needs no output parsing.
   Without the flag, `check` still exits 0 whatever it finds — including
   with `-q`, which prints only the available names.
+- The README explains that the 10 requests/second limit is per process, so
+  `xargs -P` multiplies it past the API's own limit, and shows the
+  one-process alternatives.
 - `-` as an argument reads domain names from stdin, one per line, for
   `domain check`, `domain get`, `domain lock`, `domain autorenew` and
   `domain privacy`; blank lines and `#` comments are skipped. So

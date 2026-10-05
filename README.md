@@ -249,6 +249,23 @@ ID=$(namecom dns create acme.io --type A --host api --answer 1.2.3.4 -q)
 namecom dns delete acme.io "$ID" --yes
 ```
 
+**Rate limit.** namecom paces itself to 10 requests a second (bursts of 5)
+and retries a 429 with backoff, which leaves headroom under the API's limit
+of 20 a second for the account. The limiter is per process: `xargs -P 8`
+runs eight processes with eight limiters, which together send up to 80
+requests a second, so the excess comes back as 429s and, once retries run
+out, exit code 5. Prefer one process with many arguments, which is paced as
+a whole:
+
+```bash
+namecom domain list --all -q | namecom domain check -                 # not xargs -P
+namecom dns delete acme.io $(namecom dns list acme.io --type TXT -q) --yes
+```
+
+For commands that take one domain, run `xargs` without `-P` (one process
+at a time); `-P 2` already reaches the account's limit, and anything else
+using the same account shares it.
+
 Commands that change something ask first when run in a terminal. In a script
 or a pipe there is no one to ask, so they stop with *"confirmation required
 for … — pass --yes to confirm when not running in a terminal"* and exit 2
