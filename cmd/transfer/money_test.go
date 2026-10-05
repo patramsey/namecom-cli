@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/drifttest"
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -69,6 +70,24 @@ func TestTransferDryRun_StatesTheCharge(t *testing.T) {
 		})
 	}
 }
+
+// TestTransferPrompt_SaysWhatThePriceBuys pins #235: the prompt said "plus
+// WHOIS privacy" with no price, which read as an extra charge, and never said
+// what the transfer price covers. Both are now stated as the SDK documents
+// them: privacy is free, and the price covers the TLD's minimum term.
+func TestTransferPrompt_SaysWhatThePriceBuys(t *testing.T) {
+	on := true
+	body := coreapigo.CreateTransferRequest{DomainName: "acme.io", PrivacyEnabled: &on}
+	want := "Transfer acme.io in for $12.99 (covers the TLD's minimum term, typically 1 year), with WHOIS privacy at no charge?"
+	if got := transferPrompt("acme.io", body, ptr(12.99)); got != want {
+		t.Errorf("prompt = %q\nwant     %q", got, want)
+	}
+	if got := transferPrompt("acme.io", coreapigo.CreateTransferRequest{DomainName: "acme.io"}, nil); got != "Transfer acme.io in?" {
+		t.Errorf("unpriced prompt = %q", got)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // TestTransferDryRun_NoQuoteWithoutAPrice: when pricing fails the transfer is
 // still allowed, unpriced, so the dry run reports no charge rather than $0.00.

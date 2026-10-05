@@ -26,6 +26,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   register offer in `domain check` uses the same wording. **Scripts** matching
   the prompt text (it appears in the non-interactive "pass --yes" error) need
   updating.
+- The `transfer create` prompt says what the price covers and that privacy
+  is free: "Transfer acme.io in for $12.99 (covers the TLD's minimum term,
+  typically 1 year), with WHOIS privacy at no charge?". It said "plus WHOIS
+  privacy", which read as an extra charge. **Scripts** matching the prompt
+  text need updating.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

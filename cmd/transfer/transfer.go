@@ -119,7 +119,7 @@ var eligibilityCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code")
-	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "purchase WHOIS privacy with transfer")
+	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "include WHOIS privacy (free) with the transfer")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
 		"which a premium domain's transfer requires; not a cap, see --max-price")
 	createCmd.Flags().Float64Var(&createMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)
@@ -730,6 +730,12 @@ func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]strin
 // price body carries when --price set one, and the standard transfer price
 // otherwise; quoting the standard price unconditionally meant the user
 // approved one amount while the request carried another.
+//
+// It said "plus WHOIS privacy" with no price, which read as an extra charge,
+// and never said what the price buys (#235). The SDK documents privacy on a
+// transfer as free, and transferPrice as covering the TLD's minimum term; it
+// does not promise that term is added to the current expiry, so the prompt
+// states only what is documented.
 func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted *float64) string {
 	price := quoted
 	if body.PurchasePrice != nil {
@@ -737,12 +743,12 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 	}
 	priceMsg := ""
 	if price != nil {
-		priceMsg = " for " + output.Money(*price)
-		if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
-			priceMsg += " plus WHOIS privacy"
-		}
+		priceMsg = fmt.Sprintf(" for %s (covers %s)", output.Money(*price), transferTerm)
 	}
-	return fmt.Sprintf("Initiate transfer of %s%s%s?", domain, priceMsg, contactsPromptNote(body.Contacts))
+	if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
+		priceMsg += ", with WHOIS privacy at no charge"
+	}
+	return fmt.Sprintf("Transfer %s in%s%s?", domain, priceMsg, contactsPromptNote(body.Contacts))
 }
 
 // transferTerm says what a transfer price covers, as PricingResponse
