@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	coreapigo "github.com/namedotcom/core-api-go"
+
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/spf13/cobra"
 )
@@ -206,4 +208,34 @@ func TestCompleteDomains(t *testing.T) {
 	// asserts against a command that cannot reach this function in the real
 	// binary — and it fails by panicking inside cobra rather than in anything
 	// this package owns.
+}
+
+// TestEnumValuesPassValidation keeps the completion lists in step with the
+// validators and the SDK: a value TAB offers must be one the command accepts.
+func TestEnumValuesPassValidation(t *testing.T) {
+	for _, v := range DNSRecordTypes {
+		if err := ValidDNSType(v); err != nil {
+			t.Errorf("DNSRecordTypes offers %q: %v", v, err)
+		}
+	}
+	for _, v := range DNSCreateTypes {
+		if err := ValidDNSCreateType(v); err != nil {
+			t.Errorf("DNSCreateTypes offers %q: %v", v, err)
+		}
+	}
+	for _, v := range URLForwardingTypes {
+		if err := ValidURLForwardingType(v, "type"); err != nil {
+			t.Errorf("URLForwardingTypes offers %q: %v", v, err)
+		}
+	}
+	for _, v := range SortDirs {
+		if err := ValidSortDir(v); err != nil {
+			t.Errorf("SortDirs offers %q: %v", v, err)
+		}
+	}
+	for _, v := range OrderStatuses {
+		if _, err := coreapigo.NewListOrdersRequestOrderStatusFromString(v); err != nil {
+			t.Errorf("OrderStatuses offers %q, which the SDK does not know: %v", v, err)
+		}
+	}
 }

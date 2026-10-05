@@ -62,6 +62,8 @@ func init() {
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "domain")
+	cmdutil.CompleteFlagValues(listCmd, "sort", sortFields)
+	cmdutil.CompleteFlagValues(listCmd, "sort-dir", cmdutil.SortDirs)
 }
 
 // sortFields are the domain properties --sort lists and completes: the

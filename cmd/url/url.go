@@ -102,6 +102,8 @@ func init() {
 	updateCmd.Flags().StringVar(&updateType, "type", "", "forwarding type: redirect, 302, masked (default: keep the current type)")
 	updateCmd.Flags().StringVar(&updateTitle, "title", "", "page title (masked only)")
 	updateCmd.Flags().StringVar(&updateMeta, "meta", "", "meta tags (masked only)")
+	cmdutil.CompleteFlagValues(createCmd, "type", cmdutil.URLForwardingTypes)
+	cmdutil.CompleteFlagValues(updateCmd, "type", cmdutil.URLForwardingTypes)
 
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)

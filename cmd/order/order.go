@@ -81,7 +81,8 @@ func init() {
 	listCmd.Flags().StringVar(&listDomain, "domain", "", "filter by domain name (supports * wildcard)")
 	listCmd.Flags().StringVar(&listSince, "since", "", "filter orders created on or after this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
 	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
-	listCmd.Flags().StringVar(&listStatus, "status", "", "filter by status: success, failed, initialized, started, review")
+	listCmd.Flags().StringVar(&listStatus, "status", "", "filter by status: "+strings.Join(cmdutil.OrderStatuses, ", "))
+	cmdutil.CompleteFlagValues(listCmd, "status", cmdutil.OrderStatuses)
 
 	refundCmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "order ID (required)")
 	refundCmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "comma-separated order item IDs (required)")

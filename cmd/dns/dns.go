@@ -158,6 +158,10 @@ func init() {
 
 	exportCmd.Flags().BoolVar(&exportZone, "zone", false, "output RFC 1035 zone-file format instead of JSON")
 
+	cmdutil.CompleteFlagValues(listCmd, "type", cmdutil.DNSRecordTypes)
+	cmdutil.CompleteFlagValues(createCmd, "type", cmdutil.DNSCreateTypes)
+	cmdutil.CompleteFlagValues(updateCmd, "type", cmdutil.DNSCreateTypes)
+
 	importCmd.Flags().StringVar(&importFile, "file", "", "JSON file to import (required)")
 	_ = importCmd.MarkFlagRequired("file")
 

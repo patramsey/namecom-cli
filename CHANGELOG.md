@@ -123,6 +123,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   list --page 0` exited 1.
 - `domain list --sort` lists the domain properties it can sort by in its
   help. Any other value is still passed to the API.
+- Shell completion offers the values of every flag that takes one of a fixed
+  set: `--type` on `dns list`, `dns create`, `dns update`, `url create` and
+  `url update`, `order list --status`, `domain claims --purchase-type`, and
+  `domain list --sort` and `--sort-dir`. TAB completed filenames there.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

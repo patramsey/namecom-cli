@@ -287,3 +287,32 @@ func completeDirective(t *testing.T, args ...string) cobra.ShellCompDirective {
 	t.Fatalf("no directive in %q", stdout.String())
 	return 0
 }
+
+// TestEnumFlagsComplete pins #236: TAB after a flag that takes one of a fixed
+// set of values offered filenames.
+func TestEnumFlagsComplete(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"dns", "list", "example.com", "--type", ""}, "CAA"},
+		{[]string{"dns", "create", "example.com", "--type", ""}, "MX"},
+		{[]string{"dns", "update", "example.com", "1", "--type", ""}, "TXT"},
+		{[]string{"url", "create", "example.com", "--type", ""}, "masked"},
+		{[]string{"url", "update", "example.com", "1", "--type", ""}, "302"},
+		{[]string{"order", "list", "--status", ""}, "review"},
+		{[]string{"domain", "claims", "example.com", "--purchase-type", ""}, "landrush_eap"},
+		{[]string{"domain", "list", "--sort", ""}, "expireDate"},
+		{[]string{"domain", "list", "--sort-dir", ""}, "desc"},
+	} {
+		t.Run(strings.Join(tc.args[:len(tc.args)-1], " "), func(t *testing.T) {
+			if got := runComplete(t, tc.args...); !slices.Contains(got, tc.want) {
+				t.Errorf("completions = %q, want %q among them", got, tc.want)
+			}
+		})
+	}
+	if got := runComplete(t, "dns", "create", "example.com", "--type", ""); slices.Contains(got, "CAA") {
+		t.Errorf("dns create offers CAA, which the API refuses on create: %q", got)
+	}
+}

@@ -147,3 +147,20 @@ func derefStr(s *string) string {
 	}
 	return *s
 }
+
+// The values of the flags that take one of a fixed set, for shell completion
+// (#236): TAB after --type, --status or --purchase-type completed filenames.
+// TestEnumValuesPassValidation keeps each list in step with its validator.
+var (
+	DNSRecordTypes      = []string{"A", "AAAA", "ANAME", "CAA", "CNAME", "MX", "NS", "SRV", "TXT"}
+	DNSCreateTypes      = []string{"A", "AAAA", "ANAME", "CNAME", "MX", "NS", "SRV", "TXT"}
+	URLForwardingTypes  = []string{"redirect", "302", "masked"}
+	OrderStatuses       = []string{"success", "failed", "initialized", "started", "review"}
+	SortDirs            = []string{"asc", "desc"}
+	ClaimsPurchaseTypes = []string{"registration", "landrush_eap", "landrush_auction_a", "landrush_reserve_a"}
+)
+
+// CompleteFlagValues registers values as the completions of cmd's flag.
+func CompleteFlagValues(cmd *cobra.Command, flag string, values []string) {
+	_ = cmd.RegisterFlagCompletionFunc(flag, cobra.FixedCompletions(values, cobra.ShellCompDirectiveNoFileComp))
+}
