@@ -109,6 +109,7 @@ func init() {
 	cmdutil.CompleteFlagValues(updateCmd, "type", cmdutil.URLForwardingTypes)
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

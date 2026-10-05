@@ -161,39 +161,117 @@ func TestPrintFlags_RendersNamesShorthandsAndUsage(t *testing.T) {
 	}
 }
 
-// Subcommand help shows a curated subset of global flags. --dry-run and --yes
-// are pinned by name deliberately: they are the flags that gate destructive
-// actions, and dropping either from subcommand help hides the safety controls
-// from exactly the pages where someone is about to mutate something.
-func TestEssentialGlobalFlagNames_IncludesTheSafetyFlags(t *testing.T) {
-	essential := essentialGlobalFlagNames()
-	for _, want := range []string{"dry-run", "yes", "output", "quiet"} {
-		if !essential[want] {
-			t.Errorf("--%s should be shown on subcommand help pages", want)
-		}
+// renderHelp renders the real help page for a command path, without colour.
+func renderHelp(t *testing.T, path ...string) string {
+	t.Helper()
+	c, _, err := rootCmd.Find(path)
+	if err != nil {
+		t.Fatalf("namecom %s: %v", strings.Join(path, " "), err)
 	}
-	// It is a filter, not a passthrough — if it ever returns everything, the
-	// filtering below stops meaning anything.
-	if essential["debug"] || essential["token"] {
-		t.Error("noisy flags (--debug, --token) should be filtered out of subcommand help")
+	var buf bytes.Buffer
+	printHelp(&buf, c, false)
+	return buf.String()
+}
+
+// section returns the lines of a help page under heading, up to the next
+// blank line.
+func section(page, heading string) string {
+	_, after, ok := strings.Cut(page, "\n"+heading+"\n")
+	if !ok {
+		return ""
+	}
+	body, _, _ := strings.Cut(after, "\n\n")
+	return body
+}
+
+// TestHelp_GlobalFlagsByKind pins #237: every leaf listed --dry-run and
+// --yes, read-only `domain get` included, while no list listed --wide.
+// --dry-run and --yes stay on writes deliberately: they gate destructive
+// actions, and these are the pages where someone is about to use one.
+func TestHelp_GlobalFlagsByKind(t *testing.T) {
+	for _, tc := range []struct {
+		path      string
+		want, not []string
+	}{
+		{"dns create", []string{"--dry-run", "--yes", "--output", "--quiet"}, []string{"--wide", "--token"}},
+		{"domain register", []string{"--dry-run", "--yes"}, []string{"--wide"}},
+		{"api", []string{"--dry-run", "--yes"}, nil},
+		{"dns list", []string{"--wide", "--no-header", "--quiet", "--output"}, []string{"--dry-run", "--yes"}},
+		{"domain get", []string{"--output"}, []string{"--dry-run", "--yes", "--quiet", "--wide"}},
+	} {
+		got := section(renderHelp(t, strings.Fields(tc.path)...), "Global Flags:")
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("namecom %s: Global Flags lacks %s:\n%s", tc.path, w, got)
+			}
+		}
+		for _, n := range tc.not {
+			if strings.Contains(got, n) {
+				t.Errorf("namecom %s: Global Flags shows %s, which does nothing there:\n%s", tc.path, n, got)
+			}
+		}
 	}
 }
 
-func TestPrintFilteredFlags_ShowsOnlyAllowedFlags(t *testing.T) {
-	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
-	fs.String("output", "table", "output format")
-	fs.Bool("dry-run", false, "print the request without sending it")
-	fs.String("token", "", "API token")
-
-	var buf bytes.Buffer
-	printFilteredFlags(&buf, fs, map[string]bool{"output": true, "dry-run": true}, false, noStyle)
-	got := buf.String()
-
-	if !strings.Contains(got, "--output") || !strings.Contains(got, "--dry-run") {
-		t.Errorf("allowed flags should be rendered, got:\n%s", got)
+// TestWritesAreMarked keeps --dry-run and --yes on the help of every command
+// that honours them. Help learns that from cmdutil.MarkWrite, so a write
+// added without it would hide both; any leaf named like a write must carry it.
+func TestWritesAreMarked(t *testing.T) {
+	writeVerbs := map[string]bool{
+		"create": true, "update": true, "delete": true, "import": true, "register": true,
+		"renew": true, "lock": true, "autorenew": true, "privacy": true, "set-ns": true,
+		"set": true, "refund": true, "cancel": true, "cancel-outbound": true,
+		"internal-in": true, "resend": true, "verify": true, "login": true, "logout": true,
+		"use": true, "api": true,
 	}
-	if strings.Contains(got, "--token") {
-		t.Errorf("a flag outside the allow list must not be rendered, got:\n%s", got)
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+		if writeVerbs[c.Name()] && c.Runnable() && cmdutil.Kind(c) != cmdutil.KindWrite {
+			t.Errorf("%s is a write but is not marked with cmdutil.MarkWrite", c.CommandPath())
+		}
+	}
+	walk(rootCmd)
+}
+
+// TestHelp_GroupPage pins #237: a group's page had an -h flags block, the
+// global flags, and two footers. It runs nothing, so it has no flags.
+func TestHelp_GroupPage(t *testing.T) {
+	got := renderHelp(t, "dns")
+	for _, unwanted := range []string{"Flags:", "-h, --help", "--dry-run", "\n\n\n"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("dns help contains %q:\n%s", unwanted, got)
+		}
+	}
+	if n := strings.Count(got, "Learn More:"); n != 1 || !strings.Contains(got, `"namecom dns <command> --help"`) {
+		t.Errorf("dns help should end with one footer naming 'namecom dns <command> --help':\n%s", got)
+	}
+}
+
+// TestRootHelp_FlagSections pins #237: root help listed 19 global flags in one
+// block, mostly advanced. Every flag has a section, and the few left under
+// plain "Flags:" are the ones meant to be there, so a new global flag must be
+// placed deliberately.
+func TestRootHelp_FlagSections(t *testing.T) {
+	got := renderHelp(t)
+	for heading, flags := range map[string][]string{
+		"Flags:":             {"--dry-run", "--yes", "--help", "--version"},
+		"Output Flags:":      {"--output", "--quiet", "--no-header", "--wide", "--color"},
+		"Credentials Flags:": {"--profile", "--username", "--token", "--sandbox"},
+		"Advanced Flags:":    {"--timeout", "--debug", "--debug-file", "--idempotency-key", "--base-url"},
+	} {
+		body := section(got, heading)
+		lines := strings.Count(body, "\n") + 1
+		if body == "" || lines != len(flags) {
+			t.Errorf("%s has %d lines, want %d (%v):\n%s", heading, lines, len(flags), flags, body)
+		}
+		for _, f := range flags {
+			if !strings.Contains(body, f+" ") && !strings.HasSuffix(body, f) {
+				t.Errorf("%s does not list %s:\n%s", heading, f, body)
+			}
+		}
 	}
 }
 

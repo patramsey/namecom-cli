@@ -91,6 +91,7 @@ func init() {
 	_ = updateCmd.MarkFlagRequired("ips")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

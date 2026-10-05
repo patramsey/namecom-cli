@@ -18,6 +18,7 @@ func AddPageFlags(cmd *cobra.Command, all *bool, page, limit *int, noun string) 
 	cmd.Flags().BoolVar(all, "all", false, AllUsage)
 	cmd.Flags().IntVar(page, "page", 1, "page to fetch, from 1")
 	cmd.Flags().IntVar(limit, "limit", 0, noun+"s per page (default: the API's page size)")
+	MarkList(cmd)
 }
 
 // ValidPage checks --page and --limit before any request. --page 0 used to

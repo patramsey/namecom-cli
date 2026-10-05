@@ -85,6 +85,7 @@ func init() {
 	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address "+cmdutil.PromptedRequired)
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

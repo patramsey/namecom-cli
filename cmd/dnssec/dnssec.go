@@ -77,6 +77,8 @@ func init() {
 	_ = createCmd.MarkFlagRequired("key-tag")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, deleteCmd)
+	cmdutil.MarkList(listCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, deleteCmd)
 }
 

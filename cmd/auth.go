@@ -66,6 +66,7 @@ func init() {
 	// login's names a profile that may not exist yet, so it offers none.
 	_ = authLogoutCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
 	cmdutil.GroupCmd(authCmd)
+	cmdutil.MarkWrite(authLoginCmd, authLogoutCmd)
 	authCmd.AddCommand(authLoginCmd, authStatusCmd, authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
 }

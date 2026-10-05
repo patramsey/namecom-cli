@@ -91,6 +91,7 @@ func init() {
 	_ = refundCmd.MarkFlagRequired("item-ids")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(refundCmd)
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 

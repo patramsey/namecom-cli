@@ -22,6 +22,11 @@ var (
 	helpBrand    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")) // periwinkle
 )
 
+// rootFlagSections is the order root help lists its flag sections in. A flag
+// is placed by its cmdutil.FlagSection annotation; one without is listed
+// first, under "Flags".
+var rootFlagSections = []string{"", "Output", "Credentials", "Advanced"}
+
 // styledHelp is a cobra help function that renders styled output using Lip Gloss.
 func styledHelp(cmd *cobra.Command, _ []string) {
 	w := cmd.OutOrStdout()
@@ -40,6 +45,7 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 		}
 		return text
 	}
+	isRoot := cmd == cmd.Root()
 
 	// Description
 	fmt.Fprintln(w)
@@ -48,11 +54,17 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 		desc = cmd.Short
 	}
 	// Bold the binary name in the long description.
-	if color && cmd == cmd.Root() {
+	if color && isRoot {
 		desc = strings.Replace(desc, "namecom", style(helpBrand, "namecom"), 1)
 	}
 	fmt.Fprintln(w, desc)
 	fmt.Fprintln(w)
+
+	// A help topic (`namecom help environment`) is its text and nothing else:
+	// it has no usage line and takes no flags.
+	if cmd.IsAdditionalHelpTopicCommand() && !isRoot {
+		return
+	}
 
 	// Usage line
 	fmt.Fprintln(w, style(helpHeading, "Usage:"))
@@ -71,29 +83,28 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 	}
 
 	// Subcommands — rendered grouped when groups are defined, flat otherwise.
-	cmds := cmd.Commands()
-	available := make([]*cobra.Command, 0, len(cmds))
-	for _, c := range cmds {
-		if c.IsAvailableCommand() {
+	var available, topics []*cobra.Command
+	for _, c := range cmd.Commands() {
+		switch {
+		case c.IsAvailableCommand():
 			available = append(available, c)
+		case c.IsAdditionalHelpTopicCommand() && !c.Hidden:
+			topics = append(topics, c)
 		}
 	}
+	maxLen := 0
+	for _, c := range append(available, topics...) {
+		maxLen = max(maxLen, len(c.Name()))
+	}
+	printCmdLine := func(c *cobra.Command) {
+		padding := strings.Repeat(" ", maxLen-len(c.Name()))
+		fmt.Fprintf(w, "  %s%s   %s\n",
+			style(helpCmd, c.Name()),
+			padding,
+			style(helpCmdDesc, c.Short),
+		)
+	}
 	if len(available) > 0 {
-		maxLen := 0
-		for _, c := range available {
-			if l := len(c.Name()); l > maxLen {
-				maxLen = l
-			}
-		}
-		printCmdLine := func(c *cobra.Command) {
-			padding := strings.Repeat(" ", maxLen-len(c.Name()))
-			fmt.Fprintf(w, "  %s%s   %s\n",
-				style(helpCmd, c.Name()),
-				padding,
-				style(helpCmdDesc, c.Short),
-			)
-		}
-
 		groups := cmd.Groups()
 		if len(groups) > 0 {
 			// Print each group header followed by its commands.
@@ -134,39 +145,67 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 			fmt.Fprintln(w)
 		}
 	}
-
-	// Local flags (non-inherited)
-	if cmd.HasAvailableLocalFlags() {
-		fmt.Fprintln(w, style(helpHeading, "Flags:"))
-		printFlags(w, cmd.LocalFlags(), color, style)
+	if len(topics) > 0 {
+		fmt.Fprintln(w, style(helpHeading, "Help Topics:"))
+		for _, c := range topics {
+			printCmdLine(c)
+		}
 		fmt.Fprintln(w)
 	}
 
-	// For non-root commands show only the most commonly-used global flags inline;
-	// refer users to root --help for the full list.
-	if cmd.HasAvailableInheritedFlags() && cmd != cmd.Root() {
-		essential := essentialGlobalFlagNames()
-		var hasEssential bool
-		cmd.InheritedFlags().VisitAll(func(f *pflag.Flag) {
-			if !f.Hidden && essential[f.Name] {
-				hasEssential = true
+	// Flags. The root's are its persistent flags, the global ones, under
+	// headings; --help is listed there and nowhere else, since every page
+	// that could list it is the answer to it.
+	if isRoot {
+		for _, section := range rootFlagSections {
+			fs := sectionFlags(cmd.LocalFlags(), section)
+			if !hasVisibleFlags(fs) {
+				continue
 			}
-		})
-		if hasEssential {
-			fmt.Fprintln(w, style(helpHeading, "Global Flags:"))
-			printFilteredFlags(w, cmd.InheritedFlags(), essential, color, style)
+			heading := "Flags:"
+			if section != "" {
+				heading = section + " Flags:"
+			}
+			fmt.Fprintln(w, style(helpHeading, heading))
+			printFlags(w, fs, color, style)
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintln(w, style(helpCmdDesc, `Run "namecom --help" to see all global options.`))
+	} else if local := withoutHelp(cmd.LocalFlags()); hasVisibleFlags(local) {
+		fmt.Fprintln(w, style(helpHeading, "Flags:"))
+		printFlags(w, local, color, style)
 		fmt.Fprintln(w)
 	}
 
-	// Footer hint
-	if cmd.HasAvailableSubCommands() {
-		hint := `Use "` + cmd.CommandPath() + ` [command] --help" for more information about a command.`
-		fmt.Fprintln(w, style(helpCmdDesc, hint))
-		fmt.Fprintln(w)
+	// A command that runs shows the global flags that apply to it (#237). A
+	// group runs nothing, so it shows none.
+	group := cmd.HasAvailableSubCommands()
+	if !isRoot && !group && cmd.HasAvailableInheritedFlags() {
+		fs := pickFlags(cmd.InheritedFlags(), globalFlagNames(cmd))
+		if hasVisibleFlags(fs) {
+			fmt.Fprintln(w, style(helpHeading, "Global Flags:"))
+			printFlags(w, fs, color, style)
+			fmt.Fprintln(w)
+		}
 	}
+
+	// One footer, as gh has, where there used to be two.
+	var more []string
+	switch {
+	case isRoot:
+		more = []string{
+			`Use "namecom <command> --help" for more information about a command.`,
+			`Use "namecom help environment" for the environment variables namecom reads.`,
+		}
+	case group:
+		more = []string{`Use "` + cmd.CommandPath() + ` <command> --help" for more information about a command.`}
+	default:
+		more = []string{`Use "namecom --help" for every global flag.`}
+	}
+	fmt.Fprintln(w, style(helpHeading, "Learn More:"))
+	for _, line := range more {
+		fmt.Fprintln(w, "  "+style(helpCmdDesc, line))
+	}
+	fmt.Fprintln(w)
 }
 
 // usageLine renders the usage line, correcting it for command groups.
@@ -184,26 +223,55 @@ func usageLine(cmd *cobra.Command) string {
 	return cmd.UseLine()
 }
 
-// essentialGlobalFlagNames returns the subset of global flags shown on subcommand help pages.
-// Noisy flags (--debug, --timeout, --token, etc.) are omitted; users can run "namecom --help"
-// to see the full list.
-func essentialGlobalFlagNames() map[string]bool {
-	return map[string]bool{
-		"output":  true,
-		"quiet":   true,
-		"yes":     true,
-		"dry-run": true,
+// globalFlagNames returns the global flags shown on cmd's help page: the ones
+// that do something for that kind of command (#237). Every page used to show
+// --dry-run and --yes, read-only `domain get` included, while no list showed
+// --wide. The rest are a "namecom --help" away.
+func globalFlagNames(cmd *cobra.Command) map[string]bool {
+	switch cmdutil.Kind(cmd) {
+	case cmdutil.KindWrite:
+		return map[string]bool{"output": true, "quiet": true, "yes": true, "dry-run": true}
+	case cmdutil.KindList:
+		return map[string]bool{"output": true, "quiet": true, "wide": true, "no-header": true}
 	}
+	return map[string]bool{"output": true}
 }
 
-func printFilteredFlags(w io.Writer, fs *pflag.FlagSet, allow map[string]bool, color bool, style func(lipgloss.Style, string) string) {
+// pickFlags returns the flags of fs named in allow.
+func pickFlags(fs *pflag.FlagSet, allow map[string]bool) *pflag.FlagSet {
+	return filterFlags(fs, func(f *pflag.Flag) bool { return allow[f.Name] })
+}
+
+// sectionFlags returns the flags of fs whose cmdutil.FlagSection is section.
+func sectionFlags(fs *pflag.FlagSet, section string) *pflag.FlagSet {
+	return filterFlags(fs, func(f *pflag.Flag) bool {
+		got := ""
+		if v := f.Annotations[cmdutil.FlagSection]; len(v) > 0 {
+			got = v[0]
+		}
+		return got == section
+	})
+}
+
+// withoutHelp returns fs less --help.
+func withoutHelp(fs *pflag.FlagSet) *pflag.FlagSet {
+	return filterFlags(fs, func(f *pflag.Flag) bool { return f.Name != "help" })
+}
+
+func filterFlags(fs *pflag.FlagSet, keep func(*pflag.Flag) bool) *pflag.FlagSet {
 	filtered := pflag.NewFlagSet("filtered", pflag.ContinueOnError)
 	fs.VisitAll(func(f *pflag.Flag) {
-		if allow[f.Name] {
+		if keep(f) {
 			filtered.AddFlag(f)
 		}
 	})
-	printFlags(w, filtered, color, style)
+	return filtered
+}
+
+func hasVisibleFlags(fs *pflag.FlagSet) bool {
+	visible := false
+	fs.VisitAll(func(f *pflag.Flag) { visible = visible || !f.Hidden })
+	return visible
 }
 
 func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Style, string) string) {

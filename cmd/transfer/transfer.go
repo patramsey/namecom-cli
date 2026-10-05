@@ -134,6 +134,7 @@ func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfer")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, internalCmd, cancelCmd, cancelOutboundCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 

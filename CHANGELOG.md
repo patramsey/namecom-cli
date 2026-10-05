@@ -32,6 +32,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `hint` are unchanged.
 
 ### Changed
+- Help pages show the global flags that apply to the command:
+  `--dry-run` and `--yes` on writes, `--quiet`, `--wide` and `--no-header`
+  on lists, and `--output` everywhere. Read-only `domain get` listed
+  `--dry-run` and `--yes`, and no list mentioned `--wide`. Root help lists
+  its flags under Output, Credentials and Advanced headings instead of one
+  block of 19. A group's page (`namecom dns --help`) no longer has an `-h`
+  flags block, global flags or two footers; every page ends with one
+  "Learn More" footer.
 - The `domain register` prompt reads as one sentence and states the choices
   it is sent with: "Register acme.io for 2 years: $35.98 total (renews at
   $17.99/yr), with WHOIS privacy, without auto-renew?". It read "for 2 years at

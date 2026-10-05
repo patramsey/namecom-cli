@@ -74,9 +74,7 @@ Exit codes:
   2  usage error: a bad command, flag, argument or value
   3  authentication: credentials missing, failing or rejected, or access denied
   4  not found
-  5  rate limited
-
-Run 'namecom <command> --help' for details on any command.`
+  5  rate limited`
 
 // rootCmd is the top-level `namecom` command. It configures the API client and
 // output renderer and stashes them on the context for every subcommand.
@@ -246,6 +244,18 @@ func init() {
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "for write operations, print the request instead of sending it (reads are unaffected)")
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "pin every write in this invocation to one idempotency key (default: a fresh key per write)")
 	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
+
+	// Root help lists these under headings, not as one block of 19 (#237).
+	// Unlisted flags, the ones nearly every write uses, come first.
+	for section, names := range map[string][]string{
+		"Output":      {"output", "quiet", "no-header", "wide", "color"},
+		"Credentials": {"profile", "username", "token", "sandbox"},
+		"Advanced":    {"timeout", "debug", "debug-file", "idempotency-key", "base-url"},
+	} {
+		for _, name := range names {
+			_ = pf.SetAnnotation(name, cmdutil.FlagSection, []string{section})
+		}
+	}
 
 	// Flag values the shell can offer; without these, TAB after -o, --color
 	// or --profile completed filenames (#187).

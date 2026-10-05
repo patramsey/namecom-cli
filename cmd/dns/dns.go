@@ -169,6 +169,7 @@ func init() {
 	_ = importCmd.MarkFlagRequired("file")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd, importCmd)
 	Cmd.AddCommand(listCmd, createCmd, updateCmd, deleteCmd, exportCmd, importCmd)
 }
 

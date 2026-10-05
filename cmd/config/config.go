@@ -52,6 +52,8 @@ var showCmd = &cobra.Command{
 
 func init() {
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(useCmd)
+	cmdutil.MarkList(listProfilesCmd)
 	Cmd.AddCommand(listProfilesCmd, useCmd, showCmd)
 }
 
