@@ -9,6 +9,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- `auth login --help` and the login form say where to create an API token
+  (https://www.name.com/account/settings/api) and that sandbox credentials are
+  separate, with usernames that usually end in `-test`.
+
 ### Fixed
 - `dns create` in a terminal opens its guided form again when `--type` or
   `--answer` is left out. The form had been unreachable: both flags were

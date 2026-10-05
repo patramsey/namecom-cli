@@ -19,9 +19,18 @@ var authCmd = &cobra.Command{
 	Short: "Manage name.com API credentials",
 }
 
+// apiSettingsURL is the name.com page where an account creates API tokens.
+const apiSettingsURL = "https://www.name.com/account/settings/api"
+
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Configure credentials interactively",
+	Long: `Asks for your name.com API username and token, checks them with the API,
+and saves them to a profile in the config file.
+
+Create a token at ` + apiSettingsURL + `.
+Sandbox credentials are separate from production ones, and the sandbox
+username usually ends in -test; log in to the sandbox with --sandbox.`,
 	Example: `  namecom auth login
   namecom auth login --profile staging
   namecom auth login --profile sandbox --sandbox`,
@@ -213,7 +222,7 @@ type loginRejectedError struct {
 func (e *loginRejectedError) Error() string { return e.msg }
 func (e *loginRejectedError) Unwrap() error { return e.err }
 func (e *loginRejectedError) UserHint() string {
-	return "check the username and token, then run 'namecom auth login' again"
+	return "check the username and token at " + apiSettingsURL + ", then run 'namecom auth login' again"
 }
 
 // rejectedLoginError explains a rejection, including the most common cause:
@@ -249,6 +258,11 @@ type loginAnswers struct {
 	Sandbox  bool
 }
 
+// tokenFieldDescription says where a token comes from; the form used to
+// mention only "the API settings page" without saying where that is (#239).
+const tokenFieldDescription = "Create one at " + apiSettingsURL +
+	"; sandbox has its own. Kept secret in the config file (chmod 600)"
+
 // askLogin runs the login form, filling a. The sandbox question is asked only
 // when askSandbox is set; otherwise a.Sandbox is kept as given. It is
 // replaceable in tests: the token field is a password input, which huh reads
@@ -257,7 +271,7 @@ var askLogin = func(a *loginAnswers, askSandbox bool) error {
 	fields := []huh.Field{
 		huh.NewInput().
 			Title("Username").
-			Description("Your name.com API username (shown in the API settings page)").
+			Description("Your name.com API username, shown at " + apiSettingsURL + " (sandbox usernames usually end in -test)").
 			Placeholder("yourname").
 			Value(&a.Username).
 			Validate(func(s string) error {
@@ -269,7 +283,7 @@ var askLogin = func(a *loginAnswers, askSandbox bool) error {
 
 		huh.NewInput().
 			Title("API Token").
-			Description("Your name.com API token — kept secret in the config file (chmod 600)").
+			Description(tokenFieldDescription).
 			Placeholder("••••••••••••••••").
 			EchoMode(huh.EchoModePassword).
 			Value(&a.Token).

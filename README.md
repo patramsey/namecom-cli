@@ -129,7 +129,7 @@ mv "$(go env GOPATH)/bin/namecom-cli" "$(go env GOPATH)/bin/namecom"
 ## Quick start
 
 ```bash
-# 1. Authenticate (grab your API token from name.com → Account → API)
+# 1. Authenticate (create an API token at https://www.name.com/account/settings/api)
 namecom auth login
 
 # 2. See your portfolio at a glance

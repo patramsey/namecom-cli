@@ -371,3 +371,21 @@ func TestAuthLogin_DryRunVerifiesButNeverWrites(t *testing.T) {
 		unchanged(t, path, loneProfile)
 	})
 }
+
+// TestAuthLogin_SaysWhereTokensComeFrom: neither the help nor the form said
+// where to get a token, and nothing mentioned that sandbox credentials are
+// separate (#239). The rejection hint points at the same page.
+func TestAuthLogin_SaysWhereTokensComeFrom(t *testing.T) {
+	for _, want := range []string{apiSettingsURL, "-test"} {
+		if !strings.Contains(authLoginCmd.Long, want) {
+			t.Errorf("auth login help does not mention %q:\n%s", want, authLoginCmd.Long)
+		}
+	}
+	if !strings.Contains(tokenFieldDescription, apiSettingsURL) {
+		t.Errorf("token field description does not link %s: %q", apiSettingsURL, tokenFieldDescription)
+	}
+	var rejected *loginRejectedError
+	if !strings.Contains(rejected.UserHint(), apiSettingsURL) {
+		t.Errorf("rejection hint does not link %s: %q", apiSettingsURL, rejected.UserHint())
+	}
+}
