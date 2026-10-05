@@ -315,3 +315,29 @@ func TestPrivacyOn_NotPurchasedIsExplained(t *testing.T) {
 		}
 	})
 }
+
+// TestToggles_DomainFirst pins #236: `domain lock example.com on` failed,
+// though every other command takes the domain first. Both orders send the
+// same PATCH.
+func TestToggles_DomainFirst(t *testing.T) {
+	defer output.StubInteractive(false)()
+	for _, args := range [][]string{{"on", "example.com"}, {"example.com", "on"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var patched string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPatch {
+					patched = r.URL.Path
+				}
+				_, _ = w.Write([]byte(toggleStub(true)))
+			}))
+			t.Cleanup(srv.Close)
+			if err := runLock(toggleCmd(t, srv, "yes"), args); err != nil {
+				t.Fatalf("lock %s: %v", strings.Join(args, " "), err)
+			}
+			if patched != "/core/v1/domains/example.com" {
+				t.Errorf("lock %s patched %q, want /core/v1/domains/example.com", strings.Join(args, " "), patched)
+			}
+		})
+	}
+}

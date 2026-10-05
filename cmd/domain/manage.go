@@ -23,15 +23,11 @@ var lockCmd = &cobra.Command{
 	Use:   "lock <on|off> <domain>",
 	Short: "Enable or disable transfer lock",
 	Example: `  namecom domain lock on example.com
-  namecom domain lock off example.com`,
-	Args: cmdutil.ExactArgs(2),
-	RunE: runLock,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return cmdutil.CompleteDomains(cmd, args[1:], toComplete)
-	},
+  namecom domain lock off example.com
+  namecom domain lock example.com off   # the domain may come first`,
+	Args:              cmdutil.ExactArgs(2),
+	RunE:              runLock,
+	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 // applyDomainToggle performs a single-field UpdateDomain (PATCH).
@@ -188,11 +184,7 @@ func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
 
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffFirst(cmd, args)
-	if err != nil {
-		return err
-	}
-	domainName, err := cmdutil.DomainArg(args, 1)
+	enable, domainName, err := cmdutil.ToggleArgs(args)
 	if err != nil {
 		return err
 	}
@@ -226,24 +218,16 @@ var autorenewCmd = &cobra.Command{
 	Use:   "autorenew <on|off> <domain>",
 	Short: "Enable or disable automatic renewal",
 	Example: `  namecom domain autorenew on example.com
-  namecom domain autorenew off example.com`,
-	Args: cmdutil.ExactArgs(2),
-	RunE: runAutorenew,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return cmdutil.CompleteDomains(cmd, args[1:], toComplete)
-	},
+  namecom domain autorenew off example.com
+  namecom domain autorenew example.com off   # the domain may come first`,
+	Args:              cmdutil.ExactArgs(2),
+	RunE:              runAutorenew,
+	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffFirst(cmd, args)
-	if err != nil {
-		return err
-	}
-	domainName, err := cmdutil.DomainArg(args, 1)
+	enable, domainName, err := cmdutil.ToggleArgs(args)
 	if err != nil {
 		return err
 	}
@@ -275,24 +259,16 @@ var privacyCmd = &cobra.Command{
 	Use:   "privacy <on|off> <domain>",
 	Short: "Enable or disable WHOIS privacy",
 	Example: `  namecom domain privacy on example.com
-  namecom domain privacy off example.com`,
-	Args: cmdutil.ExactArgs(2),
-	RunE: runPrivacy,
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) == 0 {
-			return []string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return cmdutil.CompleteDomains(cmd, args[1:], toComplete)
-	},
+  namecom domain privacy off example.com
+  namecom domain privacy example.com off   # the domain may come first`,
+	Args:              cmdutil.ExactArgs(2),
+	RunE:              runPrivacy,
+	ValidArgsFunction: cmdutil.CompleteToggle,
 }
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffFirst(cmd, args)
-	if err != nil {
-		return err
-	}
-	domainName, err := cmdutil.DomainArg(args, 1)
+	enable, domainName, err := cmdutil.ToggleArgs(args)
 	if err != nil {
 		return err
 	}

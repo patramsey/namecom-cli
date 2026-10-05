@@ -100,6 +100,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain register` and `transfer create` already use for the same JSON.
   `--from-file` still works but is hidden from help and prints a deprecation
   notice on stderr.
+- `domain lock`, `domain autorenew` and `domain privacy` take the domain and
+  `on`/`off` in either order, so `namecom domain lock example.com on` works
+  like every other command that takes the domain first. Shell completion
+  offers `on`/`off` or domains to match.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
