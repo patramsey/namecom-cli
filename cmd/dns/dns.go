@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -96,32 +97,28 @@ var updateCmd = &cobra.Command{
 		if len(args) == 0 {
 			return cmdutil.CompleteDomains(cmd, args, toComplete)
 		}
-		if len(args) == 1 {
-			return cmdutil.CompleteRecordIDs(cmd, args[0])
-		}
-		return nil, cobra.ShellCompDirectiveNoFileComp
+		return cmdutil.CompleteRecordIDs(cmd, args[0])
 	},
 }
 
 var deleteCmd = &cobra.Command{
-	Use:     "delete <domain> <id>",
+	Use:     "delete <domain> <id> [<id>...]",
 	Aliases: []string{"rm"},
-	Short:   "Delete a DNS record",
-	Long:    `Delete a DNS record by its ID, which 'dns list' shows.`,
+	Short:   "Delete DNS records",
+	Long: `Delete DNS records by ID, which 'dns list' shows. Several IDs are
+confirmed once and deleted in order; the first failure stops the rest.`,
 	Example: `  namecom dns delete example.com 12345
+  namecom dns delete example.com 12345 12346
 
   # In a script, skip the confirmation; this deletes every TXT record:
-  namecom dns list example.com --type TXT -q | xargs -I{} namecom dns delete example.com {} --yes`,
-	Args: cmdutil.ExactArgs(2),
+  namecom dns delete example.com $(namecom dns list example.com --type TXT -q) --yes`,
+	Args: cmdutil.MinimumNArgs(2),
 	RunE: runDelete,
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
 			return cmdutil.CompleteDomains(cmd, args, toComplete)
 		}
-		if len(args) == 1 {
-			return cmdutil.CompleteRecordIDs(cmd, args[0])
-		}
-		return nil, cobra.ShellCompDirectiveNoFileComp
+		return cmdutil.CompleteRecordIDs(cmd, args[0])
 	},
 }
 
@@ -510,41 +507,65 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	id, err := parseID(args[1])
-	if err != nil {
-		return err
+	// Several IDs are deleted in the order given, after one confirmation
+	// (#244). A repeated ID is deleted once: the second DELETE would 404.
+	var ids []int
+	for _, a := range args[1:] {
+		id, err := parseID(a)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
 	}
 
-	// Fetch the record so the prompt can show it. "Delete DNS record 12345
+	// Fetch each record so the prompt can show it. "Delete DNS record 12345
 	// from D?" named only an ID, and was asked even for a record that did not
 	// exist (#235). A missing one now fails here, before any prompt.
-	stop := out.Spin("Fetching record…")
-	current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
-	stop()
-	if err != nil {
-		err = api.FromSDKError(err)
-		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
+	writes := make([]cmdutil.Write[cmdutil.NoBody], len(ids))
+	summaries := make([]string, len(ids))
+	for i, id := range ids {
+		stop := out.Spin("Fetching record…")
+		current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+		stop()
+		if err != nil {
+			err = api.FromSDKError(err)
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
+			}
+			return err
 		}
-		return err
+		summaries[i] = recordSummary(current)
+		writes[i] = cmdutil.Write[cmdutil.NoBody]{
+			Method: "DELETE",
+			Path:   fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id),
+			Spin:   "Deleting record…",
+		}
 	}
 
-	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
-		Method: "DELETE",
-		Path:   fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id),
-		Prompt: fmt.Sprintf("Delete %s from %s?", recordSummary(current), domain),
-		Spin:   "Deleting record…",
-	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+	prompt := fmt.Sprintf("Delete %s from %s?", summaries[0], domain)
+	if len(ids) > 1 {
+		prompt = fmt.Sprintf("Delete these %d records from %s?\n  %s", len(ids), domain, strings.Join(summaries, "\n  "))
+	}
+	// A DELETE has no body to carry its ID, so send counts through ids:
+	// RunWrites sends the writes one at a time, in order.
+	next := 0
+	done, err := cmdutil.RunWrites(cmd, prompt, writes, func(ctx context.Context, _ cmdutil.NoBody) error {
+		id := ids[next]
+		next++
 		return api.FromSDKError(client.SDK().DNS.DeleteRecord(ctx, &coreapigo.DeleteRecordRequest{
 			DomainName: domain,
 			ID:         id,
 		}))
 	})
-	if err != nil || !sent {
-		return err
+	for _, id := range ids[:done] {
+		out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
 	}
-	out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
-	return nil
+	if err != nil && done > 0 {
+		return fmt.Errorf("deleting record %d: %w — stopped after deleting %d of %d records", ids[done], err, done, len(ids))
+	}
+	return err
 }
 
 func runExport(cmd *cobra.Command, args []string) error {

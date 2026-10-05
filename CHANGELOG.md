@@ -15,6 +15,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and the results come back as one table (or one JSON array) in the order
   the names were given. 120 names used to fail with "number of items must
   be less than or equal to 50".
+- `dns delete <domain> <id>...` takes several record IDs. Every record is
+  fetched first (a missing one fails before anything is deleted), one
+  confirmation lists them all, and they are deleted in order; the first
+  failure stops the rest, and the error says how many were deleted before
+  it. Each deleted record still gets its own `Deleted record …` line.
 - `domain check --exit-status` exits 1 when any name checked is not
   available, after printing the results as usual, so
   `namecom domain check --exit-status x.com && …` needs no output parsing.
