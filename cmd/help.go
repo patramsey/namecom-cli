@@ -24,6 +24,10 @@ var (
 // styledHelp is a cobra help function that renders styled output using Lip Gloss.
 func styledHelp(cmd *cobra.Command, _ []string) {
 	w := cmd.OutOrStdout()
+	if showGettingStarted(cmd) {
+		printGettingStarted(w)
+		return
+	}
 	color := output.DefaultConfig().ColorEnabled()
 	printHelp(w, cmd, color)
 }

@@ -72,6 +72,16 @@ brews:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
+    # Install shell completions with the binary, as gh and stripe do. Homebrew
+    # runs `namecom completion bash|zsh|fish` and puts each script where its
+    # shell already looks, so no rc-file edit is needed. `completion` needs no
+    # credentials and skips the update check, so it runs fine in brew's
+    # sandbox. `install` is spelled out so the binary install does not depend
+    # on how goreleaser combines its default with extra_install.
+    install: |
+      bin.install "namecom"
+    extra_install: |
+      generate_completions_from_executable(bin/"namecom", "completion")
     # No caveats. One was carried from v0.3.2 through v0.4.2, telling anyone
     # upgrading from the Homebrew cask (v0.2.4 - v0.3.1) to run
     #

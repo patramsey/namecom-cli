@@ -30,9 +30,10 @@ type versionCache struct {
 // Check returns a non-empty notification string when a newer version than
 // current is available. Returns "" on any error or when up to date.
 // current should be the bare version without a leading "v" (e.g. "1.2.3").
-// When current is "dev" (a local build), the check is skipped.
+// When current is "dev" (a local build), or NAMECOM_NO_UPDATE_NOTIFIER turns
+// the notice off, the check is skipped.
 func Check(current string) string {
-	if current == "" || current == "dev" {
+	if current == "" || current == "dev" || Disabled() {
 		return ""
 	}
 	// A `git describe` build — "v0.4.0-2-g48cf186", or anything "-dirty" — is
@@ -49,12 +50,90 @@ func Check(current string) string {
 		return ""
 	}
 	if isNewer(latest, current) {
-		return fmt.Sprintf(
-			"A newer version is available: v%s  (current: v%s) — see github.com/patramsey/namecom-cli/releases",
-			latest, current,
-		)
+		return notice(latest, current, upgradeHint(executable()))
 	}
 	return ""
+}
+
+// DisableEnv names the variable that turns the update notice off.
+const DisableEnv = "NAMECOM_NO_UPDATE_NOTIFIER"
+
+// Disabled reports whether DisableEnv is set to anything but an explicit
+// "off" value (0, false, no, off). There was no way to turn the notice off.
+func Disabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(DisableEnv))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
+
+// notice is the text Check returns. It used to say only "see
+// github.com/…/releases", leaving the user to work out how their copy was
+// installed and how to upgrade it; gh prints the exact command.
+func notice(latest, current, upgrade string) string {
+	return fmt.Sprintf("A new release of namecom is available: v%s → v%s\n%s\nSet %s=1 to turn this notice off.",
+		strings.TrimPrefix(current, "v"), strings.TrimPrefix(latest, "v"), upgrade, DisableEnv)
+}
+
+// executable is the running binary's path with symlinks resolved, so a
+// Homebrew install is seen in its Cellar rather than at the bin/ link.
+func executable() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		return resolved
+	}
+	return exe
+}
+
+// upgradeHint says how to upgrade the binary at exe, judged from where it is
+// installed: Homebrew keeps formulas under a Cellar directory, and `go
+// install` writes to GOBIN or GOPATH/bin, naming the binary after the module
+// (namecom-cli). Anything else is taken to be a downloaded release archive.
+func upgradeHint(exe string) string {
+	if exe == "" {
+		return releasesHint
+	}
+	slashed := filepath.ToSlash(exe)
+	if strings.Contains(slashed, "/Cellar/") {
+		return "To upgrade, run: brew upgrade namecom"
+	}
+	if strings.HasPrefix(strings.ToLower(filepath.Base(exe)), "namecom-cli") || inGoBin(filepath.Dir(exe)) {
+		return "To upgrade, run: go install github.com/patramsey/namecom-cli@latest"
+	}
+	return releasesHint
+}
+
+const releasesHint = "To upgrade, download it from https://github.com/patramsey/namecom-cli/releases/latest"
+
+// inGoBin reports whether dir is where `go install` puts binaries: GOBIN, or
+// bin under each GOPATH entry (by default ~/go). It reads the environment
+// rather than running `go env`, which may not be installed.
+func inGoBin(dir string) bool {
+	var dirs []string
+	if gobin := os.Getenv("GOBIN"); gobin != "" {
+		dirs = append(dirs, gobin)
+	}
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			gopath = filepath.Join(home, "go")
+		}
+	}
+	for _, p := range filepath.SplitList(gopath) {
+		if p != "" {
+			dirs = append(dirs, filepath.Join(p, "bin"))
+		}
+	}
+	for _, d := range dirs {
+		if filepath.Clean(d) == filepath.Clean(dir) {
+			return true
+		}
+	}
+	return false
 }
 
 func latestVersion() (string, error) {

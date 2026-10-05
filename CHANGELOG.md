@@ -13,8 +13,56 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.
+- With no credentials configured, every command — `auth status`, `status`,
+  `config show` and API commands alike — now says `Not logged in. Looked in
+  <path>.`, naming the config file it searched, and exits **3**. The hint
+  says how to log in instead of suggesting `namecom auth status`, which on
+  `auth status` pointed at itself. `config show` exited **1** for this and
+  for a missing or ambiguous profile; it now exits **3** like the rest, so a
+  script branching on its exit code sees a change. The old text was `no
+  credentials configured — run 'namecom auth login' …`.
+- A bare `namecom` with no credentials prints a short getting-started banner
+  (`namecom auth login`, and where to create a token) instead of the full
+  command list. `namecom --help` still prints the full help.
+- When name.com rejects the credentials typed into `auth login` (HTTP 401 or
+  403), it explains why and asks "Try again?", reopening the form with the
+  username kept, instead of exiting. Declining, `--yes` and `--dry-run` exit
+  **3** as before, and nothing is saved until a check succeeds.
+- `auth login` asks before replacing the credentials of a profile that
+  already exists; `--yes` replaces them without asking. After logging in to
+  a profile that is not the one commands use, the hint says `namecom status
+  --profile <name>` or `namecom config use <name>`, rather than a bare
+  `namecom status` that showed a different account.
+- When `NAMECOM_SANDBOX` sends a profile's requests to the other endpoint — a
+  leftover `NAMECOM_SANDBOX=1` turning a production profile into a sandbox
+  one, or the reverse — a one-line notice on stderr says so and names the
+  endpoint in use. It appears only when stderr is a terminal, so scripts and
+  JSON error output are unaffected, and not when `--sandbox` was passed.
+- The Homebrew formula installs shell completions for bash, zsh and fish.
+  The README's completion instructions now write to directories in your home
+  directory instead of `/etc/bash_completion.d` and `${fpath[1]}`, which
+  usually need root. `namecom completion` no longer checks for updates.
+- The new-release notice prints the command that upgrades your copy —
+  `brew upgrade namecom` for a Homebrew install, `go install
+  github.com/patramsey/namecom-cli@latest` for one in `GOBIN` or
+  `GOPATH/bin`, or the releases page for a downloaded binary — instead of
+  only pointing at the releases page. `NAMECOM_NO_UPDATE_NOTIFIER=1` turns
+  the notice off, and with it the daily release check.
 
 ### Fixed
+- The `url create` and `url update` forms check the destination as you type
+  it: it must be an `http://` or `https://` URL with a host. Anything else
+  used to get through the form and then fail with an error naming `--to`, a
+  flag that had not been typed, losing the input. The create form asks where
+  `example.com` (or `www.example.com`) should forward to, instead of
+  `example.com/@`.
+- `domain register`'s guided form shows the quoted price — first year and
+  renewal, or the flat price of an aftermarket purchase — before asking for
+  the options; it showed none until after the form. The form no longer opens
+  under `--dry-run`, which previews the flag defaults, or with `-o json`,
+  `-o yaml` or `--quiet` in a terminal, which now fail at once with a usage
+  error (exit **2**) saying to pass `--years` (with `--privacy` and
+  `--autorenew` as wanted) or `--yes`, before any request is sent.
 - `dns create` in a terminal opens its guided form again when `--type` or
   `--answer` is left out. The form had been unreachable: both flags were
   marked required, so the command failed with `required flag(s) "answer",

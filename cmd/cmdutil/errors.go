@@ -39,7 +39,11 @@ func NewUsageError(err error) error {
 
 // AuthError marks a credential problem: none configured, or a credential helper
 // that failed. Maps to exit code 3.
-type AuthError struct{ Err error }
+type AuthError struct {
+	Err error
+	// Hint, when set, replaces the generic hint below.
+	Hint string
+}
 
 func (e *AuthError) Error() string { return e.Err.Error() }
 func (e *AuthError) Unwrap() error { return e.Err }
@@ -47,6 +51,9 @@ func (e *AuthError) Unwrap() error { return e.Err }
 // UserHint points at the auth commands. The error renderer prints it with the
 // error, on stderr, in every output format.
 func (e *AuthError) UserHint() string {
+	if e.Hint != "" {
+		return e.Hint
+	}
 	return "run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure"
 }
 

@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -257,15 +259,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			huh.NewGroup(
 				huh.NewInput().
 					Title("Destination URL").
-					Description(fmt.Sprintf("Where should %s/%s forward to?", domain, createHost)).
+					Description(fmt.Sprintf("Where should %s forward to?", forwardingName(domain, createHost))).
 					Placeholder("https://example.com").
 					Value(&createForwardsTo).
-					Validate(func(s string) error {
-						if s == "" {
-							return errors.New("destination URL is required")
-						}
-						return nil
-					}),
+					Validate(validateDestination),
 				huh.NewSelect[string]().
 					Title("Forwarding Type").
 					Options(typeOptions...).
@@ -279,6 +276,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+		createForwardsTo = strings.TrimSpace(createForwardsTo)
 	}
 
 	if err := cmdutil.ValidURL(createForwardsTo, "to"); err != nil {
@@ -400,12 +398,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					Title("New Destination URL").
 					Placeholder("https://example.com").
 					Value(&updateForwardsTo).
-					Validate(func(s string) error {
-						if s == "" {
-							return errors.New("destination URL is required")
-						}
-						return nil
-					}),
+					Validate(validateDestination),
 				huh.NewSelect[string]().
 					Title("Forwarding Type").
 					Options(typeOptions...).
@@ -419,6 +412,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
+		updateForwardsTo = strings.TrimSpace(updateForwardsTo)
 	}
 
 	if err := cmdutil.ValidURL(updateForwardsTo, "to"); err != nil {
@@ -559,6 +553,36 @@ func parseID(s string) (int, error) {
 		return 0, cmdutil.NewUsageError(fmt.Errorf("invalid ID %q: must be a positive whole number", s))
 	}
 	return int(n), nil
+}
+
+// validateDestination checks a destination typed into the create or update
+// form, as it is typed. The form used to accept anything non-empty, so
+// "example dot com" got through, the typing was lost, and the error named a
+// --to flag the user never passed (#239).
+func validateDestination(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return errors.New("destination URL is required")
+	}
+	lower := strings.ToLower(s)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return errors.New("must start with http:// or https://, e.g. https://example.com")
+	}
+	u, err := neturl.Parse(s)
+	if err != nil || u.Host == "" || strings.ContainsAny(s, " \t") {
+		return errors.New("not a valid URL, e.g. https://example.com/path")
+	}
+	return nil
+}
+
+// forwardingName is the name a forwarding answers on: the bare domain for the
+// apex, host.domain otherwise. The form asked where "example.com/@" should
+// forward to.
+func forwardingName(domain, host string) string {
+	if host == "" || host == "@" {
+		return domain
+	}
+	return host + "." + domain
 }
 
 // displayHost renders a record's host for a table. The API returns the apex as

@@ -204,13 +204,16 @@ func runShow(cmd *cobra.Command, _ []string) error {
 	profileName := id.Profile
 	p, ok := cfgFile.Profiles[profileName]
 	if !ok {
+		// Exit 3 like every other command with no usable credentials; these
+		// exited 1, so the same config gave different codes depending on
+		// which command found it (#239).
 		switch {
 		case len(cfgFile.Profiles) == 0:
-			return fmt.Errorf("no profiles configured — run 'namecom auth login' to set up credentials")
+			return cmdutil.NotLoggedIn()
 		case profileName == "":
-			return fmt.Errorf("%d profiles exist but none is the default — pass --profile or run 'namecom config use <profile>'", len(cfgFile.Profiles))
+			return cmdutil.NewAuthError(fmt.Errorf("%d profiles exist but none is the default — pass --profile or run 'namecom config use <profile>'", len(cfgFile.Profiles)))
 		}
-		return fmt.Errorf("no profile %q configured — run 'namecom auth login' to set up credentials", profileName)
+		return cmdutil.NewAuthError(fmt.Errorf("no profile %q configured — run 'namecom auth login --profile %s' to set it up", profileName, profileName))
 	}
 
 	// The base URL, scheme included, as auth status prints it. A bare host here

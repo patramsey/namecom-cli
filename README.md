@@ -308,6 +308,7 @@ export NAMECOM_TOKEN=yourtoken
 export NAMECOM_SANDBOX=true        # target sandbox API (true/false, yes/no, on/off, 1/0)
 export NAMECOM_PROFILE=staging     # select a profile
 export NAMECOM_CONFIG=~/namecom-ci.yaml    # use this file instead of the default
+export NAMECOM_NO_UPDATE_NOTIFIER=1        # never print the "new release" notice
 namecom domain list
 ```
 
@@ -327,12 +328,28 @@ Windows, call `sh` yourself — for example
 
 ## Shell completion
 
+The Homebrew formula installs completions for bash, zsh and fish. For other
+installs, write the script to a directory your shell reads; these need no
+root:
+
 ```bash
-namecom completion bash  > /etc/bash_completion.d/namecom
-namecom completion zsh   > "${fpath[1]}/_namecom"
-namecom completion fish  > ~/.config/fish/completions/namecom.fish
-namecom completion powershell | Out-String | Invoke-Expression   # current PowerShell session
+# bash (needs the bash-completion package, v2)
+mkdir -p ~/.local/share/bash-completion/completions
+namecom completion bash > ~/.local/share/bash-completion/completions/namecom
+
+# zsh: then add `fpath=(~/.zfunc $fpath)` to ~/.zshrc, before `compinit` runs
+mkdir -p ~/.zfunc
+namecom completion zsh > ~/.zfunc/_namecom
+
+# fish
+mkdir -p ~/.config/fish/completions
+namecom completion fish > ~/.config/fish/completions/namecom.fish
 ```
+
+PowerShell: add `namecom completion powershell | Out-String | Invoke-Expression`
+to your `$PROFILE`.
+
+Open a new shell afterwards. `namecom completion <shell> --help` has more.
 
 ## Global flags
 

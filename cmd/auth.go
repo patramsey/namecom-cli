@@ -89,28 +89,74 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	// false and the flag was never read, so `auth login --sandbox` saved a
 	// production profile unless the user also said Yes at the prompt.
 	sandbox := cmdutil.IsSandbox(cmd)
-	a := loginAnswers{Sandbox: sandbox}
-	if err := askLogin(&a, !sandbox); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			out.Warn("aborted")
+
+	cfgFile, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	// Ask before replacing a profile's credentials, as gh asks before
+	// re-authenticating; login used to overwrite them silently (#239). Asked
+	// before the form, so a "no" costs no typing. --yes answers it, and
+	// --dry-run writes nothing, so neither asks.
+	if old, ok := cfgFile.Profiles[loginProfile]; ok && !cmdutil.IsYes(cmd) && !cmdutil.IsDryRun(cmd) {
+		detail := loginEnv(old.Sandbox)
+		if old.Username != "" {
+			detail += " · " + old.Username
+		}
+		replace, cerr := confirmReplaceProfile(out, false,
+			fmt.Sprintf("Profile %q already has credentials. Replace them?", loginProfile), detail)
+		if cerr != nil {
+			return cerr
+		}
+		if !replace {
+			out.Warn(fmt.Sprintf("profile %q left unchanged", loginProfile))
 			return nil
 		}
-		return fmt.Errorf("form: %w", err)
 	}
-	// A token pasted with a trailing space or newline was saved with it, and
-	// every request then failed with a 401 (#229).
-	a.Username = strings.TrimSpace(a.Username)
-	a.Token = strings.TrimSpace(a.Token)
 
-	// Check the credentials before saving them (#229). This runs under
-	// --dry-run too: Hello is a read that changes nothing, as the reads
-	// behind other commands' previews are, and it lets the preview say
-	// whether the save would go ahead. Only the write below is skipped.
-	verifiedAs, err := verifyLogin(cmd, a)
+	a := loginAnswers{Sandbox: sandbox}
+	var verifiedAs string
+	for {
+		if err := askLogin(&a, !sandbox); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				out.Warn("aborted")
+				return nil
+			}
+			return fmt.Errorf("form: %w", err)
+		}
+		// A token pasted with a trailing space or newline was saved with it,
+		// and every request then failed with a 401 (#229).
+		a.Username = strings.TrimSpace(a.Username)
+		a.Token = strings.TrimSpace(a.Token)
+
+		// Check the credentials before saving them (#229). This runs under
+		// --dry-run too: Hello is a read that changes nothing, as the reads
+		// behind other commands' previews are, and it lets the preview say
+		// whether the save would go ahead. Only the write below is skipped.
+		verifiedAs, err = verifyLogin(cmd, a)
+		if err == nil || !isRejected(err) {
+			break
+		}
+		rejected := rejectedLoginError(err, a)
+		// A rejection used to end the command, and the user retyped
+		// everything from the start (#239). Offer the form again, with the
+		// username and sandbox answer kept. Not under --yes or --dry-run,
+		// which promise not to ask.
+		if cmdutil.IsYes(cmd) || cmdutil.IsDryRun(cmd) {
+			return rejected
+		}
+		out.Warn(rejected.Error())
+		again, cerr := confirmRetryLogin(out, false, "Try again?", "")
+		if cerr != nil {
+			return cerr
+		}
+		if !again {
+			return rejected
+		}
+		a.Token = ""
+	}
 	switch {
 	case err == nil:
-	case isRejected(err):
-		return rejectedLoginError(err, a)
 	case cmdutil.IsDryRun(cmd):
 		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
 	case cmdutil.IsYes(cmd):
@@ -132,10 +178,6 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	cfgFile, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
 	if cfgFile.Profiles == nil {
 		cfgFile.Profiles = make(map[string]config.Profile)
 	}
@@ -171,7 +213,15 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	} else {
 		out.Success(fmt.Sprintf("Credentials saved to %s (profile: %s), unverified", path, loginProfile))
 	}
-	out.Hint("Run 'namecom status' to see your account overview")
+	// Name the profile unless it is the one commands will use: after `auth
+	// login --profile work` with another default, a bare 'namecom status'
+	// showed the default profile's account (#239).
+	if config.ActiveProfile(cfgFile, "") == loginProfile {
+		out.Hint("Run 'namecom status' to see your account overview")
+	} else {
+		out.Hint(fmt.Sprintf("Run 'namecom status --profile %s' to see this account, or 'namecom config use %s' to make it the default",
+			loginProfile, loginProfile))
+	}
 	out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
 	return nil
 }
@@ -179,6 +229,14 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 // confirmSaveUnverified asks whether to save credentials the API could not be
 // reached to check. Replaceable in tests.
 var confirmSaveUnverified = cmdutil.Confirm
+
+// confirmRetryLogin asks whether to try again after the API rejected the
+// credentials. Replaceable in tests.
+var confirmRetryLogin = cmdutil.Confirm
+
+// confirmReplaceProfile asks before login overwrites an existing profile.
+// Replaceable in tests.
+var confirmReplaceProfile = cmdutil.Confirm
 
 // verifyLogin checks a's credentials with the API's Hello endpoint, against
 // the endpoint the saved profile will use, and returns the username the API
@@ -314,6 +372,10 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	// auth status needs the client; init it explicitly since PersistentPreRunE
 	// is skipped for the auth group.
 	if err := initContext(cmd); err != nil {
+		// The generic auth hint suggests 'namecom auth status' — this command.
+		if ae, ok := errors.AsType[*cmdutil.AuthError](err); ok && ae.Hint == "" {
+			ae.Hint = "run 'namecom config list-profiles' to see your profiles, or 'namecom auth login' to add one"
+		}
 		return err
 	}
 	client := cmdutil.APIClient(cmd)
