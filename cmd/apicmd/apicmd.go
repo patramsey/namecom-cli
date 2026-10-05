@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -21,22 +23,49 @@ import (
 
 // Cmd is the `namecom api` command.
 var Cmd = &cobra.Command{
-	Use:   "api <METHOD> <path>",
+	Use:   "api [METHOD] <path>",
 	Short: "Make a raw API request",
 	Long: `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.
 
-The body is --data, or stdin with --data -. Without --data, any method other
-than GET or HEAD reads its body from stdin when stdin is a pipe or a file; an
-empty stdin sends no body. --data '' sends no body without reading stdin.
+The method may be left out: it is GET, or POST when --data, --input, -f or -F
+gives the request a body. With --paginate it is always GET.
+
+The body is one of:
+  --data <json>     the body as given; --data - reads it from stdin
+  --input <file>    the body read from a file; --input - reads stdin
+  -f key=value      a JSON body built from fields; the value is a string
+  -F key=value      the same, but true, false, null and numbers keep their
+                    JSON type, and @file (or @- for stdin) is the contents
+                    of that file as a string
+A key may nest, as -f 'contact[firstName]=Ada', and a trailing [] appends to
+a list, as -f 'nameservers[]=ns1.example.com'. For GET and HEAD, -f and -F
+are query parameters instead.
+
+Without any of these, a method other than GET or HEAD reads its body from
+stdin when stdin is a pipe or a file; an empty stdin sends no body.
+--data '' sends no body without reading stdin.
+
+--paginate follows nextPage until the last page and prints one document: each
+list in it is every page's items end to end, and nextPage and lastPage are
+gone. The global --jq filters that merged document.
+
+--include prints the response status line and headers before the body.
 
 With --dry-run, any method other than GET or HEAD is printed — method, path,
 and body — instead of sent. GET and HEAD still run.`,
-	Example: `  namecom api GET /core/v1/domains
-  namecom api GET /core/v1/domains/example.com
-  namecom api POST /core/v1/domains/example.com/records --data '{"host":"@","type":"A","answer":"1.2.3.4","ttl":300}'
+	Example: `  namecom api /core/v1/domains
+  namecom api /core/v1/domains --paginate --jq '.domains[].domainName'
+  namecom api GET /core/v1/domains/example.com --include
+  namecom api /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
   echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records
-  namecom api PUT /core/v1/domains/example.com/records/123 --data - < record.json`,
-	Args: cmdutil.ExactArgs(2),
+  namecom api PUT /core/v1/domains/example.com/records/123 --input record.json
+  namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) > 2 {
+			return cmdutil.ExactArgs(2)(cmd, args)
+		}
+		return cmdutil.MinimumNArgs(1)(cmd, args)
+	},
 	// The method, then nothing: a path is not a file (#187).
 	ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -54,29 +83,89 @@ var allowedMethods = []string{
 }
 
 var (
-	apiBody    string
-	apiHeaders []string
+	apiBody     string
+	apiHeaders  []string
+	apiFields   []string
+	apiTyped    []string
+	apiInput    string
+	apiInclude  bool
+	apiPaginate bool
 )
 
 func init() {
-	Cmd.Flags().StringVar(&apiBody, "data", "", "request body (JSON); use '-' to read from stdin")
-	Cmd.Flags().StringArrayVar(&apiHeaders, "header", nil, "additional headers: 'Name: Value'")
+	f := Cmd.Flags()
+	f.StringVar(&apiBody, "data", "", "request body (JSON); use '-' to read from stdin")
+	f.StringVar(&apiInput, "input", "", "read the request body from a file; use '-' for stdin")
+	f.StringArrayVarP(&apiFields, "raw-field", "f", nil, "add a string parameter, key=value: the JSON body, or the query of a GET")
+	f.StringArrayVarP(&apiTyped, "field", "F", nil, "add a typed parameter, key=value: true, false, null and numbers keep their type; @file reads a file")
+	f.StringArrayVar(&apiHeaders, "header", nil, "additional headers: 'Name: Value'")
+	f.BoolVarP(&apiInclude, "include", "i", false, "print the response status line and headers before the body")
+	f.BoolVar(&apiPaginate, "paginate", false, "follow nextPage and print every page as one document (GET only)")
 	// Any method but GET or HEAD goes through RunWrite.
 	cmdutil.MarkWrite(Cmd)
 }
 
-func runAPI(cmd *cobra.Command, args []string) error {
-	method := strings.ToUpper(args[0])
+// methodAndPath reads the method and path from args. The method may be left
+// out: then the one argument is the path, and hasBody picks the method.
+func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, path string, err error) {
+	if len(args) == 1 {
+		if slices.Contains(allowedMethods, strings.ToUpper(args[0])) {
+			return "", "", cmdutil.NewUsageError(fmt.Errorf("path is required — try: %s", cmd.UseLine()))
+		}
+		if hasBody && !apiPaginate {
+			return http.MethodPost, args[0], nil
+		}
+		return http.MethodGet, args[0], nil
+	}
+	method = strings.ToUpper(args[0])
 	// Checked before anything else, including --dry-run. nginx answers an
 	// unknown method with 403, which exited 3 with an `auth login` hint for
 	// what was a typo.
 	if !slices.Contains(allowedMethods, method) {
-		return cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %q: must be one of %s",
+		return "", "", cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %q: must be one of %s",
 			args[0], strings.Join(allowedMethods, ", ")))
+	}
+	return method, args[1], nil
+}
+
+// checkFlags rejects flags that contradict each other or the method, before
+// anything is read or sent.
+func checkFlags(cmd *cobra.Command, method string, dataSet bool) error {
+	hasFields := len(apiFields)+len(apiTyped) > 0
+	switch {
+	case apiInput != "" && dataSet:
+		return cmdutil.NewUsageError(errors.New("--input and --data both give the body; use one"))
+	case apiInput != "" && hasFields:
+		return cmdutil.NewUsageError(errors.New("--input cannot be combined with -f or -F: both give the body"))
+	case dataSet && hasFields:
+		return cmdutil.NewUsageError(errors.New("--data cannot be combined with -f or -F: both give the body"))
+	case apiPaginate && method != http.MethodGet:
+		return cmdutil.NewUsageError(fmt.Errorf("--paginate follows the pages of a GET, not a %s", method))
+	}
+	// --jq and --fields read what the command prints as JSON, and a status
+	// line and headers are not.
+	if apiInclude {
+		for _, name := range []string{"jq", "fields"} {
+			if f := cmd.Flag(name); f != nil && f.Changed {
+				return cmdutil.NewUsageError(fmt.Errorf("--include cannot be combined with --%s, which filters a JSON document", name))
+			}
+		}
+	}
+	return nil
+}
+
+func runAPI(cmd *cobra.Command, args []string) error {
+	dataSet := apiBody != "" || cmd.Flags().Changed("data")
+	hasBody := dataSet || apiInput != "" || len(apiFields)+len(apiTyped) > 0
+	method, rawPath, err := methodAndPath(cmd, args, hasBody)
+	if err != nil {
+		return err
+	}
+	if err := checkFlags(cmd, method, dataSet); err != nil {
+		return err
 	}
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	rawPath := args[1]
 
 	base := client.BaseURL()
 	u, err := buildAPIURL(base, rawPath)
@@ -84,22 +173,47 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	fields, err := parseFields(apiFields, apiTyped)
+	if err != nil {
+		return err
+	}
+	isRead := method == http.MethodGet || method == http.MethodHead
+
 	// Read the body once, up front: stdin cannot be read twice, and --dry-run
 	// must preview the bytes the request would carry. The retry transport
 	// buffers the body for replay anyway, so streaming it saved nothing.
 	//
-	// Without --data, a write reads a piped stdin, as the help's own example
-	// does (#231). Only a pipe or a file is read: a terminal would sit waiting
-	// for typing, and the null device is what `</dev/null` in CI gives. An
-	// empty read is no body, the same as no --data, rather than an empty body
-	// labelled application/json.
+	// Without a body flag, a write reads a piped stdin, as the help's own
+	// example does (#231). Only a pipe or a file is read: a terminal would sit
+	// waiting for typing, and the null device is what `</dev/null` in CI
+	// gives. An empty read is no body, the same as no --data, rather than an
+	// empty body labelled application/json.
 	var body []byte
 	switch {
-	case apiBody == "-",
-		apiBody == "" && !cmd.Flags().Changed("data") &&
-			method != http.MethodGet && method != http.MethodHead && stdinIsPiped():
+	case len(fields) > 0 && isRead:
+		// A read's fields are its query, after any the path has.
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return fmt.Errorf("building URL: %w", err)
+		}
+		q := fieldsQuery(fields).Encode()
+		if parsed.RawQuery != "" {
+			q = parsed.RawQuery + "&" + q
+		}
+		parsed.RawQuery = q
+		u = parsed.String()
+	case len(fields) > 0:
+		if body, err = fieldsBody(fields); err != nil {
+			return err
+		}
+	case apiInput == "-", apiBody == "-",
+		!hasBody && !isRead && stdinIsPiped():
 		if body, err = io.ReadAll(os.Stdin); err != nil {
 			return fmt.Errorf("reading request body from stdin: %w", err)
+		}
+	case apiInput != "":
+		if body, err = os.ReadFile(apiInput); err != nil { //nolint:gosec // G304: --input names the file to read; that is the flag's purpose
+			return fmt.Errorf("reading request body: %w", err)
 		}
 	default:
 		body = []byte(apiBody)
@@ -114,14 +228,15 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		headers = append(headers, [2]string{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])})
 	}
 
-	send := func(ctx context.Context, body []byte) error {
+	// do sends one request to target and returns the body of a 2xx reply.
+	do := func(ctx context.Context, target string, body []byte) ([]byte, error) {
 		var bodyReader io.Reader
 		if len(body) > 0 {
 			bodyReader = bytes.NewReader(body)
 		}
-		req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
+		req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
 		if err != nil {
-			return fmt.Errorf("building request: %w", err)
+			return nil, fmt.Errorf("building request: %w", err)
 		}
 		if bodyReader != nil {
 			req.Header.Set("Content-Type", "application/json")
@@ -136,17 +251,20 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		// every raw request goes out unauthenticated. Prepare leaves any header set
 		// above (including --header overrides) untouched.
 		if err := client.Prepare(req); err != nil {
-			return fmt.Errorf("preparing request: %w", err)
+			return nil, fmt.Errorf("preparing request: %w", err)
 		}
 		resp, err := client.HTTPClient().Do(req)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer func() { _ = resp.Body.Close() }()
 
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return fmt.Errorf("reading response: %w", err)
+			return nil, fmt.Errorf("reading response: %w", err)
+		}
+		if apiInclude {
+			writeHead(out.Writer, resp)
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -159,23 +277,33 @@ func runAPI(cmd *cobra.Command, args []string) error {
 			// it as details. Printing it here as well put three things there.
 			if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
 				apiErr.Body = respBody
-				return apiErr
+				return nil, apiErr
 			}
 			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
 			_, _ = out.EWriter.Write(respBody)
 			fmt.Fprintln(out.EWriter)
-			return apiErr
+			return nil, apiErr
 		}
+		return respBody, nil
+	}
 
+	send := func(ctx context.Context, body []byte) error {
+		respBody, err := do(ctx, u, body)
+		if err != nil {
+			return err
+		}
 		fmt.Fprintf(out.Writer, "%s\n", respBody)
 		return nil
 	}
 
+	if apiPaginate {
+		return paginate(cmd.Context(), u, body, do, out.Writer)
+	}
 	// Reads still run under --dry-run, as the flag's help promises. Every
 	// other method is previewed: a raw passthrough cannot tell whether a POST
 	// changes anything (checkAvailability does not; POST /domains buys a
 	// domain), so it treats them all as writes.
-	if method == http.MethodGet || method == http.MethodHead {
+	if isRead {
 		return send(cmd.Context(), body)
 	}
 	parsed, err := url.Parse(u)
@@ -193,6 +321,65 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		return send(ctx, rb)
 	})
 	return err
+}
+
+// paginate GETs target and each nextPage after it, and prints the pages
+// merged into one document. A reply that is not a JSON object has no pages,
+// and is printed as it came. Nothing is printed when a page fails: half a
+// list would read as all of it.
+func paginate(ctx context.Context, target string, body []byte,
+	do func(context.Context, string, []byte) ([]byte, error), w io.Writer) error {
+	var merged pages
+	seen := map[int]bool{startPage(target): true}
+	for n := 1; ; n++ {
+		page, err := do(ctx, target, body)
+		if err != nil {
+			return err
+		}
+		next, err := merged.add(page)
+		if errors.Is(err, errNotObject) && n == 1 {
+			_, err = fmt.Fprintf(w, "%s\n", page)
+			return err
+		}
+		if err != nil {
+			return fmt.Errorf("--paginate: response %d: %w", n, err)
+		}
+		if next == 0 {
+			break
+		}
+		// A page already fetched would loop for ever.
+		if seen[next] {
+			return fmt.Errorf("--paginate: the API gave page %d as the next page again; stopping", next)
+		}
+		seen[next] = true
+		if target, err = withPage(target, next); err != nil {
+			return fmt.Errorf("building URL: %w", err)
+		}
+	}
+	doc, err := merged.bytes()
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "%s\n", doc)
+	return err
+}
+
+// writeHead prints resp's status line and headers, sorted by name, then a
+// blank line, as `curl -i` and `gh api -i` do. They are the response's
+// headers: the request's Authorization is never among them.
+func writeHead(w io.Writer, resp *http.Response) {
+	fmt.Fprintf(w, "%s %s\n", resp.Proto, resp.Status)
+	names := make([]string, 0, len(resp.Header))
+	for name := range resp.Header {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, v := range resp.Header[name] {
+			fmt.Fprintf(w, "%s: %s\n", name, v)
+		}
+	}
+	fmt.Fprintln(w)
 }
 
 // stdinIsPiped reports whether stdin is a pipe or a regular file: input that
