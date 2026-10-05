@@ -69,7 +69,8 @@ Quick start:
 
 Exit codes:
   0  success
-  1  API or other runtime error, or a prompt declined or cancelled
+  1  API or other runtime error, a prompt declined or cancelled, or a name
+     'domain check --exit-status' found unavailable
   2  usage error: a bad command, flag, argument or value
   3  authentication: credentials missing, failing or rejected, or access denied
   4  not found

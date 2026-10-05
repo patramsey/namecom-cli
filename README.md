@@ -425,7 +425,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | API or other runtime error, or a confirmation declined or a prompt cancelled (Ctrl-C) |
+| `1` | API or other runtime error, a confirmation declined or a prompt cancelled (Ctrl-C), or — with `domain check --exit-status` — a name that is not available |
 | `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value |
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |

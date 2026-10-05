@@ -155,7 +155,7 @@ var searchCmd = &cobra.Command{
 	RunE:              runSearch,
 }
 
-var checkAuthoritative bool
+var checkAuthoritative, checkExitStatus bool
 
 var checkCmd = &cobra.Command{
 	Use:   "check <domain> [<domain>...]",
@@ -167,6 +167,7 @@ sent 50 at a time. '-' reads names from stdin, one per line; blank lines and
 	Example: `  namecom domain check example.com
   namecom domain check example.com myidea.io coolname.dev
   namecom domain check - < names.txt                # one name per line
+  namecom domain check --exit-status example.com && echo "it's free"
   namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly
   namecom domain check --sandbox example.com        # sandbox: registry check used automatically`,
 	Args: cmdutil.MinimumNArgs(1),
@@ -177,6 +178,7 @@ sent 50 at a time. '-' reads names from stdin, one per line; blank lines and
 
 func init() {
 	checkCmd.Flags().BoolVar(&checkAuthoritative, "authoritative", false, "use registry check instead of DNS zone check (slower but authoritative)")
+	checkCmd.Flags().BoolVar(&checkExitStatus, "exit-status", false, "exit 1 if any name checked is not available")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -436,7 +438,35 @@ func finishCheck(cmd *cobra.Command, out *output.Config, args []string,
 	if len(unknown) > 0 {
 		return fmt.Errorf("availability unknown for %s", strings.Join(unknown, ", "))
 	}
+	if checkExitStatus {
+		if err := unavailableError(results); err != nil {
+			return err
+		}
+	}
 	return maybeOfferRegister(cmd, out, results)
+}
+
+// unavailableError is --exit-status's failure: an error naming the names that
+// are not available, or nil when every one is. It exits 1 like any runtime
+// error, so `check --exit-status x.com && register` needs no output parsing;
+// without the flag, check exits 0 whatever it found — including under -q,
+// which prints only the available names (#244).
+func unavailableError(results []*coreapigo.SearchResult) error {
+	var taken []string
+	for _, r := range results {
+		if !r.Purchasable {
+			taken = append(taken, r.DomainName)
+		}
+	}
+	if len(taken) == 0 {
+		return nil
+	}
+	const shown = 5
+	list := strings.Join(taken[:min(shown, len(taken))], ", ")
+	if len(taken) > shown {
+		list += fmt.Sprintf(", and %d more", len(taken)-shown)
+	}
+	return fmt.Errorf("%d of %d names not available: %s", len(taken), len(results), list)
 }
 
 // maybeOfferRegister offers to register a domain that `check` just found

@@ -15,6 +15,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and the results come back as one table (or one JSON array) in the order
   the names were given. 120 names used to fail with "number of items must
   be less than or equal to 50".
+- `domain check --exit-status` exits 1 when any name checked is not
+  available, after printing the results as usual, so
+  `namecom domain check --exit-status x.com && …` needs no output parsing.
+  Without the flag, `check` still exits 0 whatever it finds — including
+  with `-q`, which prints only the available names.
 - `-` as an argument reads domain names from stdin, one per line, for
   `domain check`, `domain get`, `domain lock`, `domain autorenew` and
   `domain privacy`; blank lines and `#` comments are skipped. So

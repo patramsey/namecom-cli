@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	coreapigo "github.com/namedotcom/core-api-go"
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 )
 
 // bulkNames is n distinct domain names, name000.com upward.
@@ -154,6 +156,52 @@ func TestCheck_ChunksKeepTheSafetyNet(t *testing.T) {
 			}
 			if len(got) != len(names) || got[107].DomainName != "name107.com" || got[107].Purchasable {
 				t.Errorf("want 120 rows with name107.com unpurchasable at 107, got %d rows", len(got))
+			}
+		})
+	}
+}
+
+// TestCheck_ExitStatus pins #244: `domain check -q` exited 0 even when
+// nothing was available. With --exit-status, any unavailable name fails the
+// command (exit 1) after the results are printed; when every name is
+// available, or without the flag, it succeeds.
+func TestCheck_ExitStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		names      []string
+		exitStatus bool
+		wantErr    string
+	}{
+		{"all available", []string{"name000.com", "name040.com"}, true, ""},
+		{"one taken", []string{"name000.com", "name001.com"}, true, "1 of 2 names not available: name001.com"},
+		{"many taken, across chunks", bulkNames(120), true, "117 of 120 names not available: name001.com, name002.com, name003.com, name004.com, name005.com, and 112 more"},
+		{"taken without the flag", []string{"name001.com"}, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &chunkServer{}
+			srv := httptest.NewServer(s.handler(t))
+			t.Cleanup(srv.Close)
+
+			cmd, buf := cmdForCheckJSON(t, srv)
+			checkExitStatus = tc.exitStatus
+			t.Cleanup(func() { checkExitStatus = false })
+			err := runCheck(cmd, slices.Clone(tc.names))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("runCheck = %v, want success", err)
+				}
+			} else {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("runCheck = %v, want %q", err, tc.wantErr)
+				}
+				// A runtime failure (exit 1), not a usage or API error.
+				if _, ok := errors.AsType[*cmdutil.UsageError](err); ok {
+					t.Error("--exit-status must not be a usage error (exit 2)")
+				}
+			}
+			var got []*coreapigo.SearchResult
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil || len(got) != len(tc.names) {
+				t.Errorf("the results must still be printed: %v\n%s", err, buf.String())
 			}
 		})
 	}
