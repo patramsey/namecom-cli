@@ -13,11 +13,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
@@ -407,7 +409,7 @@ func TestStillRetriesTransientNetworkError(t *testing.T) {
 	c, err := New(Options{
 		BaseURL:    deadURL,
 		MaxRetries: 2,
-		OnRetry:    func(int, time.Duration) { retries++ },
+		OnRetry:    func(Retry) { retries++ },
 	})
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
@@ -435,7 +437,7 @@ func TestNoRetryOnCertificateError(t *testing.T) {
 	defer srv.Close()
 
 	var retries int
-	c, err := New(Options{BaseURL: srv.URL, MaxRetries: 2, OnRetry: func(int, time.Duration) { retries++ }})
+	c, err := New(Options{BaseURL: srv.URL, MaxRetries: 2, OnRetry: func(Retry) { retries++ }})
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
 	}
@@ -759,5 +761,129 @@ func TestNetworkRetryRespectsDeadline(t *testing.T) {
 	// context error produced by our own sleep.
 	if errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("connection error was masked by our own backoff: %v", err)
+	}
+}
+
+// TestNoRetryForCancelledRequests pins #232. `status` sends its requests in
+// parallel under one errgroup context; when one fails the rest are cancelled,
+// and each cancellation was treated as a transient failure — announced as
+// "retrying (attempt 1, waiting 1s)…" four times for a run that took 0.11s
+// and retried nothing. The caller cancelling is not a failure to retry.
+func TestNoRetryForCancelledRequests(t *testing.T) {
+	const blocked = 3
+	var inFlight sync.WaitGroup
+	inFlight.Add(blocked)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path == "/fail" {
+			inFlight.Wait() // fail only once the others are on the wire
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		inFlight.Done()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	var retries atomic.Int32
+	c, err := New(Options{BaseURL: srv.URL, OnRetry: func(Retry) { retries.Add(1) }})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+
+	g, gctx := errgroup.WithContext(context.Background())
+	for i := range blocked + 1 {
+		path := fmt.Sprintf("/wait/%d", i)
+		if i == 0 {
+			path = "/fail"
+		}
+		g.Go(func() error {
+			req, _ := http.NewRequestWithContext(gctx, http.MethodGet, srv.URL+path, nil)
+			resp, err := c.HTTPClient().Do(req)
+			if err != nil {
+				return err
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("HTTP %d", resp.StatusCode)
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err == nil {
+		t.Fatal("expected the 401 to fail the group")
+	}
+
+	if n := retries.Load(); n != 0 {
+		t.Errorf("cancelled requests announced %d retries, want none", n)
+	}
+	if n := calls.Load(); n != blocked+1 {
+		t.Errorf("server saw %d requests, want %d: a cancelled request was resent", n, blocked+1)
+	}
+}
+
+// TestTransientErr_ContextErrors: a cancelled or expired context is the
+// caller's decision, and every retry would fail the same way.
+func TestTransientErr_ContextErrors(t *testing.T) {
+	for _, err := range []error{
+		context.Canceled,
+		context.DeadlineExceeded,
+		&url.Error{Op: "Get", URL: "https://x.invalid", Err: context.Canceled},
+		fmt.Errorf("net/http: request canceled: %w", context.DeadlineExceeded),
+	} {
+		if transientErr(err) {
+			t.Errorf("transientErr(%v) = true, want false", err)
+		}
+	}
+}
+
+// TestRetryString pins the wording the spinner and the stderr line show for
+// a retry (#232): why, how long until it is sent, and which of how many.
+func TestRetryString(t *testing.T) {
+	for _, tc := range []struct {
+		r    Retry
+		want string
+	}{
+		{Retry{Attempt: 2, Max: 3, Delay: 2*time.Second + 40*time.Millisecond, Status: 429},
+			"rate limited, retrying in 2s (2/3)"},
+		{Retry{Attempt: 1, Max: 3, Delay: 1100 * time.Millisecond, Status: 503},
+			"server error (HTTP 503), retrying in 1s (1/3)"},
+		{Retry{Attempt: 1, Max: 2, Delay: 450 * time.Millisecond, Err: io.EOF},
+			"connection failed, retrying in 450ms (1/2)"},
+	} {
+		if got := tc.r.String(); got != tc.want {
+			t.Errorf("String() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// TestOnRetryDescribesTheRetry: the hook is told the cause and the budget, so
+// the caller can say "rate limited … (1/3)" rather than a bare attempt number.
+func TestOnRetryDescribesTheRetry(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var got []Retry
+	c, err := New(Options{BaseURL: srv.URL, MaxRetries: 3, OnRetry: func(r Retry) { got = append(got, r) }})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	resp, err := c.HTTPClient().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	_ = resp.Body.Close()
+	want := []Retry{{Attempt: 1, Max: 3, Delay: 0, Status: http.StatusTooManyRequests}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Errorf("OnRetry got %+v, want %+v", got, want)
 	}
 }

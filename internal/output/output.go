@@ -882,6 +882,7 @@ type SpinRecorder struct {
 	mu      sync.Mutex
 	started []string
 	running map[int]string
+	shown   []string
 }
 
 // RecordSpinners makes Spin and StartSpinner behave as they do on a terminal —
@@ -919,12 +920,22 @@ func (r *SpinRecorder) Running() []string {
 	return msgs
 }
 
+// Shown returns every text a spinner would have drawn, in order: each
+// spinner's starting message, then each change to it from Update or
+// SpinnerNote.
+func (r *SpinRecorder) Shown() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.shown...)
+}
+
 // start records a spinner and returns the function that records its stop.
 func (r *SpinRecorder) start(msg string) func() {
 	r.mu.Lock()
 	id := len(r.started)
 	r.started = append(r.started, msg)
 	r.running[id] = msg
+	r.shown = append(r.shown, msg)
 	r.mu.Unlock()
 	return func() {
 		r.mu.Lock()
@@ -933,57 +944,106 @@ func (r *SpinRecorder) start(msg string) func() {
 	}
 }
 
+// show records a change to a running spinner's text.
+func (r *SpinRecorder) show(text string) {
+	r.mu.Lock()
+	r.shown = append(r.shown, text)
+	r.mu.Unlock()
+}
+
+// spinLine is the text one spinner draws: its message, then the note
+// SpinnerNote last gave it, if any.
+type spinLine struct {
+	mu        sync.Mutex
+	msg, note string
+	rec       *SpinRecorder // set when recording instead of drawing
+}
+
+func (l *spinLine) text() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.note == "" {
+		return l.msg
+	}
+	return l.msg + " " + l.note
+}
+
+// setMsg replaces the message and drops the note, which was about the step
+// the old message described.
+func (l *spinLine) setMsg(msg string) { l.change(func() { l.msg, l.note = msg, "" }) }
+
+// setNote replaces the note.
+func (l *spinLine) setNote(note string) { l.change(func() { l.note = note }) }
+
+func (l *spinLine) change(f func()) {
+	l.mu.Lock()
+	f()
+	l.mu.Unlock()
+	if l.rec != nil {
+		l.rec.show(l.text())
+	}
+}
+
+// spinning is the spinners being drawn now, oldest first. It is package
+// state, like spinnerTTY, because there is one stderr to draw on, and the
+// code that learns of a retry — the API client's hook — holds no spinner.
+var spinning struct {
+	mu    sync.Mutex
+	lines []*spinLine
+}
+
+// startLine registers a spinner that is being drawn.
+func startLine(msg string, rec *SpinRecorder) *spinLine {
+	l := &spinLine{msg: msg, rec: rec}
+	spinning.mu.Lock()
+	spinning.lines = append(spinning.lines, l)
+	spinning.mu.Unlock()
+	return l
+}
+
+// end unregisters l. It is safe to call on a line never registered.
+func (l *spinLine) end() {
+	spinning.mu.Lock()
+	defer spinning.mu.Unlock()
+	for i, s := range spinning.lines {
+		if s == l {
+			spinning.lines = append(spinning.lines[:i], spinning.lines[i+1:]...)
+			return
+		}
+	}
+}
+
+// SpinnerNote shows note after the message of the spinner on screen — the
+// one started last — and reports whether there was one. A line printed to
+// stderr while a spinner runs lands on top of its frame (#232), so a caller
+// with something to say mid-operation, such as a retry, tries this first and
+// prints a line only when it returns false. The note stays until the spinner
+// stops, its message is updated, or another note replaces it.
+func SpinnerNote(note string) bool {
+	spinning.mu.Lock()
+	var l *spinLine
+	if n := len(spinning.lines); n > 0 {
+		l = spinning.lines[n-1]
+	}
+	spinning.mu.Unlock()
+	if l == nil {
+		return false
+	}
+	l.setNote(note)
+	return true
+}
+
 // Spin starts a spinner on stderr with the given message and returns a stop
 // function. Call the returned function when the operation completes.
 // In non-TTY or non-table mode it's a no-op (no spinner, no output).
 func (c *Config) Spin(msg string) func() {
-	if !spinnerTTY() || c.Format != FormatTable || c.QuietMode {
-		return func() {}
-	}
-	if spinRecorder != nil {
-		var once sync.Once
-		stop := spinRecorder.start(msg)
-		return func() { once.Do(stop) }
-	}
-
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(80 * time.Millisecond)
-		defer ticker.Stop()
-		i := 0
-		for {
-			select {
-			case <-done:
-				fmt.Fprintf(c.EWriter, "\r\033[K") // clear line
-				return
-			case <-ticker.C:
-				frame := spinFrames[i%len(spinFrames)]
-				if c.ColorEnabled() {
-					frame = styleDim.Render(frame)
-				}
-				fmt.Fprintf(c.EWriter, "\r%s %s", frame, msg)
-				i++
-			}
-		}
-	}()
-
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			close(done)
-			wg.Wait()
-		})
-	}
+	return c.StartSpinner(msg).Stop
 }
 
 // Spinner is a running spinner whose message can be updated mid-operation.
 // Obtain one via StartSpinner; call Stop when the operation completes.
 type Spinner struct {
-	update chan string
+	line   *spinLine // nil when nothing is drawn
 	stop   chan struct{}
 	wg     sync.WaitGroup
 	once   sync.Once
@@ -993,6 +1053,9 @@ type Spinner struct {
 // Stop halts the spinner and clears the line.
 func (s *Spinner) Stop() {
 	s.once.Do(func() {
+		if s.line != nil {
+			s.line.end()
+		}
 		close(s.stop)
 		s.wg.Wait()
 		if s.onStop != nil {
@@ -1001,48 +1064,46 @@ func (s *Spinner) Stop() {
 	})
 }
 
-// Update changes the message shown next to the spinner frame.
+// Update changes the message shown next to the spinner frame, dropping any
+// note SpinnerNote added to the old one.
 func (s *Spinner) Update(msg string) {
-	select {
-	case s.update <- msg:
-	default:
+	if s.line != nil {
+		s.line.setMsg(msg)
 	}
 }
 
 // StartSpinner starts a spinner that can be updated via Update while running.
 // In non-TTY or non-table mode it is a no-op (Stop/Update are still safe to call).
 func (c *Config) StartSpinner(msg string) *Spinner {
-	s := &Spinner{
-		update: make(chan string, 1),
-		stop:   make(chan struct{}),
-	}
+	s := &Spinner{stop: make(chan struct{})}
 	if !spinnerTTY() || c.Format != FormatTable || c.QuietMode {
 		return s
 	}
 	if spinRecorder != nil {
 		s.onStop = spinRecorder.start(msg)
+		s.line = startLine(msg, spinRecorder)
 		return s
 	}
+	s.line = startLine(msg, nil)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		ticker := time.NewTicker(80 * time.Millisecond)
 		defer ticker.Stop()
-		current := msg
 		i := 0
 		for {
 			select {
 			case <-s.stop:
 				fmt.Fprintf(c.EWriter, "\r\033[K")
 				return
-			case m := <-s.update:
-				current = m
 			case <-ticker.C:
 				frame := spinFrames[i%len(spinFrames)]
 				if c.ColorEnabled() {
 					frame = styleDim.Render(frame)
 				}
-				fmt.Fprintf(c.EWriter, "\r%s %s", frame, current)
+				// Clear to the end of the line: the text shrinks when a note
+				// is dropped or the message is updated to a shorter one.
+				fmt.Fprintf(c.EWriter, "\r%s %s\033[K", frame, s.line.text())
 				i++
 			}
 		}

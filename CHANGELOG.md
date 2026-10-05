@@ -26,6 +26,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `</dev/null` in CI does not block. An empty stdin, with or without
   `--data -`, now sends no body and no `Content-Type` rather than an empty
   one. `--data ''` sends no body without reading stdin.
+- Requests cancelled by the CLI itself are no longer retried or announced.
+  When one of `status`'s parallel requests failed (a bad token, say), each
+  of the others printed "retrying (attempt 1, waiting 1s)…" for a retry that
+  never happened. Real retries (429, 5xx, dropped connections) now show in
+  the spinner's text — `Fetching domain… rate limited, retrying in 2s (2/3)` —
+  instead of a line printed over it. Without a spinner they are still one
+  line on stderr, now worded the same way; a script matching the old
+  "retrying (attempt N, waiting …)" text needs updating.
 
 ## [0.4.9] - 2026-10-03
 

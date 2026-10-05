@@ -33,7 +33,32 @@ type retryTransport struct {
 	baseDelay time.Duration
 	// onRetry, when set, is called just before sleeping between attempts so the
 	// caller can surface "retrying…" feedback to the user.
-	onRetry func(attempt int, delay time.Duration)
+	onRetry func(Retry)
+}
+
+// Retry describes a retry the transport is about to make, for Options.OnRetry.
+type Retry struct {
+	Attempt int           // the retry about to be sent, from 1
+	Max     int           // the most retries this request will get
+	Delay   time.Duration // the wait before it is sent
+	Status  int           // the response status that caused it, or 0
+	Err     error         // the transport error that caused it, or nil
+}
+
+// String describes r for a person: "rate limited, retrying in 2s (2/3)".
+func (r Retry) String() string {
+	cause := "connection failed"
+	switch {
+	case r.Status == http.StatusTooManyRequests:
+		cause = "rate limited"
+	case r.Status != 0:
+		cause = fmt.Sprintf("server error (HTTP %d)", r.Status)
+	}
+	delay := r.Delay.Round(time.Second)
+	if r.Delay < time.Second {
+		delay = r.Delay.Round(time.Millisecond)
+	}
+	return fmt.Sprintf("%s, retrying in %s (%d/%d)", cause, delay, r.Attempt, r.Max)
 }
 
 // retryableStatus reports whether a status code warrants a retry.
@@ -65,6 +90,13 @@ func retryableStatus(code int) bool {
 // them just made the user wait out the full backoff for a verdict available
 // immediately.
 func transientErr(err error) bool {
+	// The caller cancelled the request or its deadline passed (#232). That is
+	// a decision, not a failure: `status` cancels its parallel requests once
+	// one fails, and each was announced as a retry that never happened.
+	// Checked before net.Error, which context.DeadlineExceeded satisfies.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
 	// Network failures that every attempt repeats (#187). A name that does
 	// not exist and a certificate the client rejects were each retried three
 	// times, about seven seconds, before the same error. A DNS timeout or
@@ -174,13 +206,17 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// the failure could plausibly be transient.
 		if err != nil {
 			t.logError(err, start)
-			if attempt < t.maxRetries && idempotent(req) && transientErr(err) {
+			// Ask the context too: net/http fails a cancelled request with
+			// the context's cause, and errgroup's cause is whatever error
+			// the sibling request failed with, so the error alone can look
+			// like anything.
+			if attempt < t.maxRetries && idempotent(req) && transientErr(err) && ctx.Err() == nil {
 				delay := t.backoffDelay(attempt, nil)
 				if !fitsDeadline(ctx, delay) {
 					return nil, err
 				}
 				if t.onRetry != nil {
-					t.onRetry(attempt+1, delay)
+					t.onRetry(Retry{Attempt: attempt + 1, Max: t.maxRetries, Delay: delay, Err: err})
 				}
 				if !t.sleep(ctx, delay) {
 					return nil, ctx.Err()
@@ -205,14 +241,16 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				// exceeded (Client.Timeout exceeded while awaiting headers)" —
 				// exit 1, a transport error, with the real cause discarded.
 				// Returning it keeps the status, the body, and exit code 5.
-				if !fitsDeadline(ctx, delay) {
+				// A caller that has cancelled gets it too, with no retry
+				// announced (#232).
+				if !fitsDeadline(ctx, delay) || ctx.Err() != nil {
 					return resp, nil
 				}
 				// Drain and close so the connection can be reused.
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				_ = resp.Body.Close()
 				if t.onRetry != nil {
-					t.onRetry(attempt+1, delay)
+					t.onRetry(Retry{Attempt: attempt + 1, Max: t.maxRetries, Delay: delay, Status: resp.StatusCode})
 				}
 				if !t.sleep(ctx, delay) {
 					return nil, ctx.Err()
