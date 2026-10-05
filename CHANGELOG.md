@@ -154,6 +154,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a write that the change may or may not have been made. A read that gets an
   unreadable 200 is no longer warned that a change may have been made. Exit
   codes are unchanged; the `hint` text in the JSON/YAML envelope differs.
+- An HTML error page from a proxy is reduced to the status and the page's
+  title, `HTTP 502 Bad Gateway (HTML error page)`, instead of up to 400
+  characters of markup. The title is kept when it adds something:
+  `HTTP 503 Service Unavailable: Down for maintenance (HTML error page)`.
+  This is the error `message` in JSON output too.
 
 ## [0.4.9] - 2026-10-03
 

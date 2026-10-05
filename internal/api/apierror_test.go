@@ -160,18 +160,44 @@ func TestAPIError_UnauthorizedNoteFormatting(t *testing.T) {
 // line — in the terminal and inside the JSON error envelope alike.
 func TestSummarizeBody(t *testing.T) {
 	t.Run("a long non-JSON body is truncated and counted", func(t *testing.T) {
-		html := "<html><body>" + strings.Repeat("<p>nginx error page</p>", 800) + "</body></html>"
-		e := ErrorFromResponse(502, []byte(html))
+		text := "BEGIN " + strings.Repeat("upstream connect error or disconnect ", 800)
+		e := ErrorFromResponse(502, []byte(text))
 		if len(e.Message) > maxFallbackMessage+80 {
 			t.Errorf("message is %d chars, want it bounded near %d", len(e.Message), maxFallbackMessage)
 		}
 		if !strings.Contains(e.Message, "truncated") {
 			t.Errorf("truncation is not disclosed: %q", e.Message)
 		}
-		if !strings.Contains(e.Message, "<html>") {
+		if !strings.HasPrefix(e.Message, "BEGIN ") {
 			t.Errorf("the front of the body was dropped: %q", e.Message)
 		}
 	})
+
+	// #234: an HTML page was still quoted, markup and all, up to the cap:
+	// `<html><head><title>502 Bad Gateway</title></head><body>…`. Only its
+	// title says anything, and only when it adds to the status.
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   string
+	}{
+		"title repeats the status": {502,
+			"<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>",
+			"HTTP 502 Bad Gateway (HTML error page)"},
+		"title adds something": {503,
+			"<!DOCTYPE html>\n<html><head><title>\n  Down for maintenance &amp; upgrades\n</title></head><body>" + strings.Repeat("<p>x</p>", 500) + "</body></html>",
+			"HTTP 503 Service Unavailable: Down for maintenance & upgrades (HTML error page)"},
+		"no title": {502, "<html><body><h1>502 Bad Gateway</h1></body></html>",
+			"HTTP 502 Bad Gateway (HTML error page)"},
+		"upper-case tags": {500, "<HTML><HEAD><TITLE>Oops</TITLE></HEAD></HTML>",
+			"HTTP 500 Internal Server Error: Oops (HTML error page)"},
+	} {
+		t.Run("an HTML page is reduced to its title: "+name, func(t *testing.T) {
+			if got := ErrorFromResponse(tc.status, []byte(tc.body)).Message; got != tc.want {
+				t.Errorf("message = %q, want %q", got, tc.want)
+			}
+		})
+	}
 
 	t.Run("newlines are collapsed so the message stays one line", func(t *testing.T) {
 		e := ErrorFromResponse(500, []byte("upstream\n  connect\n\terror"))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strings"
@@ -182,6 +183,9 @@ func summarizeBody(body []byte, statusCode int) string {
 	if msg == "" {
 		return http.StatusText(statusCode)
 	}
+	if looksLikeHTML(msg) {
+		return summarizeHTML(msg, statusCode)
+	}
 	if len(msg) > maxFallbackMessage {
 		cut := maxFallbackMessage
 		for cut > 0 && !utf8.RuneStart(msg[cut]) {
@@ -191,6 +195,76 @@ func summarizeBody(body []byte, statusCode int) string {
 			strings.TrimSpace(msg[:cut]), len(body))
 	}
 	return msg
+}
+
+// maxHTMLTitle bounds the part of an HTML page's title kept in the message.
+const maxHTMLTitle = 120
+
+// looksLikeHTML reports whether a body, whitespace already collapsed, is an
+// HTML page: what a proxy or load balancer sends in place of the API's JSON.
+func looksLikeHTML(s string) bool {
+	l := strings.ToLower(s)
+	if !strings.HasPrefix(l, "<") {
+		return false
+	}
+	return strings.HasPrefix(l, "<!doctype html") || strings.Contains(l, "<html") ||
+		strings.Contains(l, "<title") || strings.Contains(l, "<body")
+}
+
+// summarizeHTML reduces an HTML error page to the status line and its title
+// (#234). Even shortened to maxFallbackMessage, the markup was most of the
+// message — `<html><head><title>502 Bad Gateway</title></head><body>…` — and
+// the title is the only part written to be read. It is kept only when it says
+// more than the status does.
+func summarizeHTML(page string, statusCode int) string {
+	status := fmt.Sprintf("HTTP %d %s", statusCode, http.StatusText(statusCode))
+	title := htmlTitle(page)
+	l := strings.ToLower(title)
+	if title == "" || strings.Contains(l, strings.ToLower(http.StatusText(statusCode))) ||
+		strings.Trim(l, "0123456789 ") == "" {
+		return status + " (HTML error page)"
+	}
+	return status + ": " + title + " (HTML error page)"
+}
+
+// htmlTitle returns the text of page's <title>, entities decoded and cut to
+// maxHTMLTitle, or "" when it has none.
+func htmlTitle(page string) string {
+	l := asciiLower(page) // offsets into l are offsets into page
+	start := strings.Index(l, "<title")
+	if start < 0 {
+		return ""
+	}
+	open := strings.IndexByte(l[start:], '>')
+	if open < 0 {
+		return ""
+	}
+	start += open + 1
+	end := strings.Index(l[start:], "</title")
+	if end < 0 {
+		return ""
+	}
+	title := strings.Join(strings.Fields(html.UnescapeString(page[start:start+end])), " ")
+	if len(title) > maxHTMLTitle {
+		cut := maxHTMLTitle
+		for cut > 0 && !utf8.RuneStart(title[cut]) {
+			cut--
+		}
+		title = strings.TrimSpace(title[:cut]) + "…"
+	}
+	return title
+}
+
+// asciiLower lower-cases A-Z only, so every byte stays where it was.
+// strings.ToLower can change a character's encoded length.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // parseError builds an APIError from a non-2xx response, reading and closing
