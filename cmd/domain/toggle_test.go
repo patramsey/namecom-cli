@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -106,6 +107,9 @@ func TestLockRefusal_TransferLockIsExplained(t *testing.T) {
 		},
 		"update --lock=false": func() error {
 			cmd := withRootFlags(t, cmdForUpdate(t, srv))
+			if err := cmd.Root().PersistentFlags().Set("yes", "true"); err != nil {
+				t.Fatal(err)
+			}
 			if err := cmd.Flags().Set("lock", "false"); err != nil {
 				t.Fatalf("setting lock: %v", err)
 			}
@@ -134,16 +138,116 @@ func TestLockRefusal_TransferLockIsExplained(t *testing.T) {
 // that has none purchased.
 const privacyNotPurchased = `{"message":"You may need to purchase WHOIS Privacy"}`
 
-// TestPrivacyPrompt_DoesNotClaimBilling covers #187: the prompt said enabling
-// privacy "may be a billable action", but UpdateDomain never charges — it
-// turns on privacy the domain already has, or fails.
-func TestPrivacyPrompt_DoesNotClaimBilling(t *testing.T) {
-	p := privacyPrompt("example.com")
-	if strings.Contains(p, "billable") {
-		t.Errorf("the prompt must not say enabling privacy may bill: %q", p)
+// TestToggles_PromptByRisk covers #227: removing the lock, turning privacy off
+// and changing auto-renewal either way ask first, while turning privacy on
+// (which never charges, #187) and locking do not. A decline sends nothing and
+// exits 0, --yes sends without asking, and `domain update` asks exactly what
+// the toggle command for the same change asks.
+func TestToggles_PromptByRisk(t *testing.T) {
+	for _, tc := range []struct {
+		field, cmd string
+		run        func(*cobra.Command, []string) error
+		on         bool
+		want       string // the prompt's opening, or "" for no prompt
+	}{
+		{"lock", "lock", runLock, false, "Remove the transfer lock on example.com? Anyone with its auth code"},
+		{"lock", "lock", runLock, true, ""},
+		{"privacy", "privacy", runPrivacy, false, "Turn off WHOIS privacy for example.com?"},
+		{"privacy", "privacy", runPrivacy, true, ""},
+		{"autorenew", "autorenew", runAutorenew, false, "Turn off auto-renewal for example.com?"},
+		{"autorenew", "autorenew", runAutorenew, true, "Turn on auto-renewal for example.com? name.com will renew it"},
+	} {
+		serve := func(t *testing.T) (*httptest.Server, *int) {
+			var writes int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method != http.MethodGet {
+					writes++
+				}
+				_, _ = w.Write([]byte(toggleStub(tc.on)))
+			}))
+			t.Cleanup(srv.Close)
+			return srv, &writes
+		}
+		routes := map[string]func(*httptest.Server) (*cobra.Command, func() error){
+			tc.cmd + " " + onOff(tc.on): func(srv *httptest.Server) (*cobra.Command, func() error) {
+				cmd := withRootFlags(t, baseCmd(t, srv))
+				return cmd, func() error { return tc.run(cmd, []string{onOff(tc.on), "example.com"}) }
+			},
+			"update --" + tc.field + "=" + strconv.FormatBool(tc.on): func(srv *httptest.Server) (*cobra.Command, func() error) {
+				cmd := withRootFlags(t, cmdForUpdate(t, srv))
+				if err := cmd.Flags().Set(tc.field, strconv.FormatBool(tc.on)); err != nil {
+					t.Fatalf("setting %s: %v", tc.field, err)
+				}
+				return cmd, func() error { return runUpdate(cmd, []string{"example.com"}) }
+			},
+		}
+		for name, build := range routes {
+			t.Run(name+"/decline", func(t *testing.T) {
+				asked := ""
+				defer cmdutil.StubConfirm(func(p string) bool { asked = p; return false })()
+				srv, writes := serve(t)
+				_, run := build(srv)
+				if err := run(); err != nil {
+					t.Fatalf("want exit 0, got %v", err)
+				}
+				if tc.want == "" {
+					if asked != "" || *writes != 1 {
+						t.Errorf("want no prompt and one write, got prompt %q and %d write(s)", asked, *writes)
+					}
+					return
+				}
+				if !strings.HasPrefix(asked, tc.want) {
+					t.Errorf("prompt %q should start %q", asked, tc.want)
+				}
+				if *writes != 0 {
+					t.Errorf("declined, but %d write(s) were sent", *writes)
+				}
+			})
+			t.Run(name+"/yes", func(t *testing.T) {
+				defer output.StubInteractive(false)()
+				srv, writes := serve(t)
+				cmd, run := build(srv)
+				if err := cmd.Root().PersistentFlags().Set("yes", "true"); err != nil {
+					t.Fatal(err)
+				}
+				if err := run(); err != nil || *writes != 1 {
+					t.Errorf("with --yes want one write and no error, got %d write(s), err %v", *writes, err)
+				}
+			})
+		}
 	}
-	if !strings.Contains(p, "does not charge") {
-		t.Errorf("the prompt should say it does not charge: %q", p)
+}
+
+// TestUpdate_SeveralRiskyFlagsAskOnce: each change that prompts is named in
+// the one question, and a flag restating the current state adds nothing.
+func TestUpdate_SeveralRiskyFlagsAskOnce(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"domainName":"example.com","locked":true,"autorenewEnabled":true,"privacyEnabled":false}`))
+	}))
+	t.Cleanup(srv.Close)
+	cmd := withRootFlags(t, cmdForUpdate(t, srv))
+	for flag, v := range map[string]string{"lock": "false", "autorenew": "false", "privacy": "false"} {
+		if err := cmd.Flags().Set(flag, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var prompts []string
+	defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
+	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("want one prompt, got %q", prompts)
+	}
+	for _, want := range []string{"transfer lock", "auto-renewal"} {
+		if !strings.Contains(prompts[0], want) {
+			t.Errorf("prompt %q should mention %q", prompts[0], want)
+		}
+	}
+	if strings.Contains(prompts[0], "WHOIS privacy") {
+		t.Errorf("privacy is already off, so the prompt %q should not mention it", prompts[0])
 	}
 }
 

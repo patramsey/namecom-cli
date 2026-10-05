@@ -40,6 +40,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   only "Register x?", with nothing to say which account would pay. The
   "pass --yes to confirm in non-interactive mode" error carries the same text
   in brackets, so a script matching that message exactly will see it change.
+- Domain setting changes now confirm according to their risk.
+  `domain lock off`, `domain privacy off`, `domain autorenew off` and
+  `domain autorenew on` (which commits the account to future renewal charges)
+  ask first, and so do the matching `domain update` flags; each prompt says
+  what the change does. `domain privacy on` and `domain update --privacy=true`
+  no longer ask, since they never charge. **Scripts that run any of the newly
+  prompted changes must now pass `--yes`**, or they stop with "pass --yes to
+  confirm in non-interactive mode". A change the domain already has still
+  sends nothing and does not ask. `domain update --autorenew`,
+  `--privacy=false` and `--lock=false` read the domain first to decide whether
+  to ask.
 
 ## [0.4.9] - 2026-10-03
 
