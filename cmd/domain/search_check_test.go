@@ -587,7 +587,7 @@ func TestCheck_YesDoesNotAutoPurchase(t *testing.T) {
 func stubConfirm(t *testing.T, answer func(yes bool, prompt string) bool) {
 	t.Helper()
 	prev := confirm
-	confirm = func(_ *output.Config, yes bool, msg string) (bool, error) {
+	confirm = func(_ *output.Config, yes bool, msg, _ string) (bool, error) {
 		return answer(yes, msg), nil
 	}
 	t.Cleanup(func() { confirm = prev })

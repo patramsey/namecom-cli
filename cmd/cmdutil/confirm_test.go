@@ -11,7 +11,7 @@ import (
 // so this is safe to run regardless of the test environment's stdin.
 func TestConfirm_YesSkipsPrompt(t *testing.T) {
 	out := &output.Config{Color: output.ColorNever, Sandbox: true}
-	ok, err := Confirm(out, true, "Delete acme.io?")
+	ok, err := Confirm(out, true, "Delete acme.io?", "")
 	if err != nil {
 		t.Fatalf("Confirm(yes=true) returned error: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestConfirm_NonInteractiveError_SandboxTag(t *testing.T) {
 		t.Skip("stdin is a TTY in this environment — would block on a prompt")
 	}
 	out := &output.Config{Color: output.ColorNever, Sandbox: true}
-	_, err := Confirm(out, false, "Delete acme.io?")
+	_, err := Confirm(out, false, "Delete acme.io?", "")
 	if err == nil {
 		t.Fatal("Confirm(yes=false) in non-interactive mode = nil error, want error")
 	}
@@ -44,7 +44,7 @@ func TestConfirm_NonInteractiveError_NoSandboxTagInProduction(t *testing.T) {
 		t.Skip("stdin is a TTY in this environment — would block on a prompt")
 	}
 	out := &output.Config{Color: output.ColorNever, Sandbox: false}
-	_, err := Confirm(out, false, "Delete acme.io?")
+	_, err := Confirm(out, false, "Delete acme.io?", "")
 	if err == nil {
 		t.Fatal("Confirm(yes=false) in non-interactive mode = nil error, want error")
 	}

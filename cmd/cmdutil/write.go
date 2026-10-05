@@ -34,7 +34,8 @@ type Write[B any] struct {
 	Preview func(B) any
 
 	// Prompt is the confirmation question. Empty means the command does not
-	// confirm. Text that quotes the request — a price, a year count — should
+	// confirm. RunWrite adds the PromptContext line under it, so the question
+	// need not name the account or environment. Text that quotes the request — a price, a year count — should
 	// be computed from Body so the question describes what is sent.
 	Prompt string
 
@@ -69,7 +70,7 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	}
 
 	if w.Prompt != "" {
-		ok, err := confirmFunc(out, IsYes(cmd), w.Prompt)
+		ok, err := confirmFunc(out, IsYes(cmd), w.Prompt, PromptContext(cmd))
 		if err != nil {
 			return false, err
 		}
@@ -108,7 +109,7 @@ func previewOf[B any](w Write[B]) any {
 //	defer cmdutil.StubConfirm(func(string) bool { return false })()
 func StubConfirm(answer func(prompt string) bool) func() {
 	prev := confirmFunc
-	confirmFunc = func(_ *output.Config, _ bool, msg string) (bool, error) {
+	confirmFunc = func(_ *output.Config, _ bool, msg, _ string) (bool, error) {
 		return answer(msg), nil
 	}
 	return func() { confirmFunc = prev }

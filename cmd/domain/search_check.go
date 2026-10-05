@@ -406,7 +406,7 @@ func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []*corea
 	}
 	r := results[0]
 	// Deliberately passing false, not cmdutil.IsYes(cmd) — see the doc comment.
-	ok, err := confirm(out, false, checkRegisterPrompt(r))
+	ok, err := confirm(out, false, checkRegisterPrompt(r), cmdutil.PromptContext(cmd))
 	if err != nil {
 		return err
 	}

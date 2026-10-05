@@ -27,6 +27,8 @@ var (
 	createAuthCode string
 	createPrivacy  bool
 	createPrice    float64
+	createMaxPrice float64
+	createAccept   bool
 	createWatch    bool
 	// createContactsFile and internalContactsFile name a ContactsRequest JSON
 	// file, the format `domain register --contacts-file` takes.
@@ -118,7 +120,10 @@ var eligibilityCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code")
 	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "purchase WHOIS privacy with transfer")
-	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price for premium domain transfers")
+	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
+		"which a premium domain's transfer requires; not a cap, see --max-price")
+	createCmd.Flags().Float64Var(&createMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)
+	createCmd.Flags().BoolVar(&createAccept, "accept-premium", false, cmdutil.AcceptPremiumUsage)
 	createCmd.Flags().BoolVar(&createWatch, "watch", false, "poll transfer status every 5 minutes until complete or failed")
 	createCmd.Flags().StringVar(&createContactsFile, "contacts-file", "", contactsFileUsage)
 
@@ -259,6 +264,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if err := cmdutil.ValidMaxPrice(cmd, createMaxPrice); err != nil {
+		return err
+	}
 
 	contacts, err := readContactsFlag(createContactsFile)
 	if err != nil {
@@ -303,9 +311,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// approved a charge they had never seen. A pricing failure must not block
 	// the transfer — fall back to an unpriced prompt.
 	var quoted *float64
+	premium := false
 	if pricing, perr := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domain}); perr == nil {
 		quoted = pricing.TransferPrice
+		premium = pricing.GetPremium()
 	}
 
 	body := coreapigo.CreateTransferRequest{
@@ -319,6 +329,29 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		body.PurchasePrice = &createPrice
 	}
 	body.Contacts = contacts
+
+	// The spending gates (#226). Without a quote, --max-price has nothing to
+	// compare unless --price set the amount, and refuses; a transfer whose
+	// premium status is unknown is not gated, as before.
+	charged := quoted
+	if body.PurchasePrice != nil {
+		charged = body.PurchasePrice
+	}
+	if err := cmdutil.CheckMaxPrice(cmd, createMaxPrice, "transferring "+domain, charged); err != nil {
+		return err
+	}
+	if premium {
+		desc := fmt.Sprintf("transferring %s costs an unquoted price (premium)", domain)
+		if charged != nil {
+			desc = fmt.Sprintf("transferring %s costs $%.2f (premium)", domain, *charged)
+		}
+		if cmdutil.IsDryRun(cmd) && !createAccept {
+			out.Hint(desc + "; transferring it without the interactive prompt will require --accept-premium")
+		}
+		if err := cmdutil.RequireAcceptPremium(cmd, createAccept, desc); err != nil {
+			return err
+		}
+	}
 
 	// RunWrite skips the prompt under --dry-run: nothing will be sent, and in
 	// a script Confirm hard-errors without --yes, which made --dry-run

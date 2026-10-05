@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -38,7 +39,7 @@ func writeCmd(t *testing.T, dryRun, yes bool) (cmd *cobra.Command, stdout, stder
 func stubConfirm(t *testing.T, f func(*output.Config, bool, string) (bool, error)) {
 	t.Helper()
 	prev := confirmFunc
-	confirmFunc = f
+	confirmFunc = func(out *output.Config, yes bool, msg, _ string) (bool, error) { return f(out, yes, msg) }
 	t.Cleanup(func() { confirmFunc = prev })
 }
 
@@ -226,4 +227,86 @@ func TestRunWrite_SendErrorIsReturnedWithSentTrue(t *testing.T) {
 	if !sent || !errors.Is(err, boom) {
 		t.Fatalf("RunWrite = (%v, %v), want (true, boom)", sent, err)
 	}
+}
+
+// contextCmd is writeCmd with a config file, overrides and sandbox setting on
+// the context, as root.go stores them.
+func contextCmd(t *testing.T, f *config.File, ov config.Overrides, sandbox bool) *cobra.Command {
+	t.Helper()
+	cmd, _, _ := writeCmd(t, false, false)
+	Out(cmd).Sandbox = sandbox
+	ctx := context.WithValue(cmd.Context(), KeyConfig, f)
+	ctx = context.WithValue(ctx, KeyOverrides, ov)
+	cmd.SetContext(ctx)
+	return cmd
+}
+
+// clearCredentialEnv keeps the developer's own NAMECOM_* settings out of a
+// test that resolves an identity.
+func clearCredentialEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_PROFILE", "NAMECOM_SANDBOX"} {
+		t.Setenv(k, "")
+	}
+}
+
+// TestPromptContext covers #228: a write prompt names the environment, the
+// profile and the account, so a production purchase cannot be mistaken for a
+// sandbox one, or one profile's account for another's.
+func TestPromptContext(t *testing.T) {
+	clearCredentialEnv(t)
+	two := &config.File{Default: "work", Profiles: map[string]config.Profile{
+		"work":     {Username: "acme-corp", Token: "t"},
+		"personal": {Username: "me", Token: "t", Sandbox: true},
+	}}
+	tests := []struct {
+		name    string
+		f       *config.File
+		ov      config.Overrides
+		sandbox bool
+		want    string
+	}{
+		{"default profile", two, config.Overrides{}, false, "production · profile work (acme-corp)"},
+		{"--profile", two, config.Overrides{Profile: "personal"}, true, "sandbox · profile personal (me)"},
+		{"flags supply everything", two, config.Overrides{Username: "bob", Token: "x"}, false, "production · bob"},
+		{"no config file", nil, config.Overrides{Username: "bob", Token: "x"}, false, "production · bob"},
+		{"nothing known", nil, config.Overrides{}, true, "sandbox"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PromptContext(contextCmd(t, tc.f, tc.ov, tc.sandbox)); got != tc.want {
+				t.Errorf("PromptContext = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunWrite_PromptCarriesContext covers #228 end to end: the confirmation
+// receives the context line, and a script without --yes sees it in the error.
+func TestRunWrite_PromptCarriesContext(t *testing.T) {
+	clearCredentialEnv(t)
+	f := &config.File{Profiles: map[string]config.Profile{"work": {Username: "acme-corp", Token: "t"}}}
+	const want = "production · profile work (acme-corp)"
+	w := Write[testBody]{Method: "POST", Path: "/core/v1/things", Body: testBody{Name: "a"}, Prompt: "Create a thing?"}
+
+	t.Run("prompt", func(t *testing.T) {
+		var detail string
+		prev := confirmFunc
+		confirmFunc = func(_ *output.Config, _ bool, _, d string) (bool, error) { detail = d; return false, nil }
+		t.Cleanup(func() { confirmFunc = prev })
+		if _, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t)); err != nil {
+			t.Fatal(err)
+		}
+		if detail != want {
+			t.Errorf("confirm detail = %q, want %q", detail, want)
+		}
+	})
+
+	t.Run("non-interactive refusal", func(t *testing.T) {
+		defer output.StubInteractive(false)()
+		_, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t))
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "pass --yes") {
+			t.Errorf("error = %v, want it to carry %q and name --yes", err, want)
+		}
+	})
 }

@@ -44,8 +44,12 @@ var (
 	registerPrice        float64
 	registerAckClaim     bool
 	registerTLDReqs      []string
+	registerMaxPrice     float64
+	registerAccept       bool
 	renewYears           int
 	renewPrice           float64
+	renewMaxPrice        float64
+	renewAccept          bool
 )
 
 func init() {
@@ -53,14 +57,20 @@ func init() {
 	registerCmd.Flags().BoolVar(&registerPrivacy, "privacy", false, "enable WHOIS privacy")
 	registerCmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "enable auto-renewal")
 	registerCmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "JSON file with contact data")
-	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "override the purchase price in USD (premium prices are filled in automatically; use this only to cap what you will pay)")
+	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "purchase price in USD to send as purchasePrice instead of the quoted one "+
+		"(premium and aftermarket prices are filled in automatically); not a cap, see --max-price")
+	registerCmd.Flags().Float64Var(&registerMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)
+	registerCmd.Flags().BoolVar(&registerAccept, "accept-premium", false, cmdutil.AcceptPremiumUsage)
 	registerCmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false,
 		"acknowledge a trademark claim on this domain (required to register a claimed domain non-interactively; --yes does NOT cover this)")
 	registerCmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil,
 		"registry-required field as key=value; repeatable (see 'namecom domain requirements <tld>')")
 
 	renewCmd.Flags().IntVar(&renewYears, "years", 1, "number of years to renew")
-	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "override the renewal price in USD (premium prices are filled in automatically; use this only to cap what you will pay)")
+	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "renewal price in USD to send as purchasePrice instead of the quoted one "+
+		"(premium prices are filled in automatically); not a cap, see --max-price")
+	renewCmd.Flags().Float64Var(&renewMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)
+	renewCmd.Flags().BoolVar(&renewAccept, "accept-premium", false, cmdutil.AcceptPremiumUsage)
 }
 
 // formatTermPrice renders a price for the term it actually covers.
@@ -96,6 +106,9 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidPrice(registerPrice); err != nil {
 			return err
 		}
+	}
+	if err := cmdutil.ValidMaxPrice(cmd, registerMaxPrice); err != nil {
+		return err
 	}
 
 	// Parse --tld-requirement up front. It touches nothing but argv, and running
@@ -229,6 +242,29 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		out.Hint("This domain has a trademark claim; registering it will require --acknowledge-claim")
 	}
 
+	// The spending gates (#226), checked against the price the body carries or,
+	// when it carries none, the quote the API will charge.
+	charged := body.PurchasePrice
+	if charged == nil {
+		charged = pricing.PurchasePrice
+	}
+	if err := cmdutil.CheckMaxPrice(cmd, registerMaxPrice, domainName, charged); err != nil {
+		return err
+	}
+	if kind := registerPremiumKind(body, pricing); kind != "" {
+		note := kind + " purchase"
+		if kind == "premium" && pricing.RenewalPrice != nil {
+			note = "premium; renews at " + formatTermPrice(*pricing.RenewalPrice, years)
+		}
+		desc := fmt.Sprintf("%s costs %s (%s)", domainName, priceOrUnquoted(charged), note)
+		if dryRun && !registerAccept {
+			out.Hint(desc + "; buying it without the interactive prompt will require --accept-premium")
+		}
+		if err := cmdutil.RequireAcceptPremium(cmd, registerAccept, desc); err != nil {
+			return err
+		}
+	}
+
 	// RunWrite skips the prompt entirely under --dry-run. Asking a human to
 	// confirm an action that will not happen is noise, and in a script Confirm
 	// hard-errors ("pass --yes to confirm in non-interactive mode"), which made
@@ -294,6 +330,27 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// registerPremiumKind names what makes this registration's price
+// non-standard — the purchase type for an aftermarket, expiring or backorder
+// purchase, or "premium" for a registry premium — or "" for a standard one.
+func registerPremiumKind(body coreapigo.CreateDomainRequest, pricing *coreapigo.PricingResponse) string {
+	switch {
+	case body.PurchaseType != nil && *body.PurchaseType != "":
+		return *body.PurchaseType
+	case pricing.GetPremium():
+		return "premium"
+	}
+	return ""
+}
+
+// priceOrUnquoted renders a price for a gate's message.
+func priceOrUnquoted(p *float64) string {
+	if p == nil {
+		return "an unquoted price"
+	}
+	return fmt.Sprintf("$%.2f", *p)
 }
 
 // registerPrompt is the purchase confirmation for body. The price it quotes
@@ -416,6 +473,9 @@ func runRenew(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	if err := cmdutil.ValidMaxPrice(cmd, renewMaxPrice); err != nil {
+		return err
+	}
 
 	// Fetch pricing to show renewal cost before charging. Quote the same term
 	// the request body will carry, so the price we show and the price we send
@@ -437,6 +497,25 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		// we already quoted above so the user isn't forced to pass --price
 		// manually. Mirrors the same merge in runRegister.
 		body.PurchasePrice = pricing.RenewalPrice
+	}
+
+	// The spending gates (#226), as in runRegister. A premium name renews at
+	// its premium price, so renewing one is gated too.
+	charged := body.PurchasePrice
+	if charged == nil {
+		charged = pricing.RenewalPrice
+	}
+	if err := cmdutil.CheckMaxPrice(cmd, renewMaxPrice, "renewing "+domainName, charged); err != nil {
+		return err
+	}
+	if pricing.GetPremium() {
+		desc := fmt.Sprintf("renewing %s costs %s (premium)", domainName, priceOrUnquoted(charged))
+		if cmdutil.IsDryRun(cmd) && !renewAccept {
+			out.Hint(desc + "; renewing it without the interactive prompt will require --accept-premium")
+		}
+		if err := cmdutil.RequireAcceptPremium(cmd, renewAccept, desc); err != nil {
+			return err
+		}
 	}
 
 	// See runRegister: --dry-run must not prompt, and must not hard-error in a
@@ -559,7 +638,7 @@ func acknowledgeClaim(out *output.Config, domainName string) error {
 	}
 	// Interactive: the notice is on screen, so an explicit answer is a
 	// genuine acknowledgement. Pass false for `yes` deliberately.
-	ok, err := confirm(out, false, "Acknowledge this trademark claim and continue?")
+	ok, err := confirm(out, false, "Acknowledge this trademark claim and continue?", "")
 	if err != nil {
 		return err
 	}

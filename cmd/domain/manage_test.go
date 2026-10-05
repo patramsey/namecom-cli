@@ -232,7 +232,11 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().Float64Var(&registerPrice, "price", 0, "")
 	cmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false, "")
 	cmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil, "")
-	t.Cleanup(func() { registerAckClaim = false; registerTLDReqs = nil })
+	cmd.Flags().Float64Var(&registerMaxPrice, "max-price", 0, "")
+	cmd.Flags().BoolVar(&registerAccept, "accept-premium", false, "")
+	t.Cleanup(func() {
+		registerAckClaim, registerTLDReqs, registerMaxPrice, registerAccept = false, nil, 0, false
+	})
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	return cmd
@@ -474,8 +478,9 @@ func TestDomainUpdate_NormalizesDomain(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForUpdate(t, srv)
-	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
-		t.Fatalf("setting autorenew flag: %v", err)
+	// --privacy=true, because it neither prompts nor reads the domain first.
+	if err := cmd.Flags().Set("privacy", "true"); err != nil {
+		t.Fatalf("setting privacy flag: %v", err)
 	}
 	if err := runUpdate(cmd, []string{"EXAMPLE.COM"}); err != nil {
 		t.Fatalf("runUpdate: %v", err)
@@ -498,12 +503,14 @@ func cmdForRenew(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd := baseCmd(t, srv)
 	cmd.Flags().IntVar(&renewYears, "years", 1, "")
 	cmd.Flags().Float64Var(&renewPrice, "price", 0, "")
+	cmd.Flags().Float64Var(&renewMaxPrice, "max-price", 0, "")
+	cmd.Flags().BoolVar(&renewAccept, "accept-premium", false, "")
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
-	t.Cleanup(func() { renewYears = 1; renewPrice = 0 })
+	t.Cleanup(func() { renewYears, renewPrice, renewMaxPrice, renewAccept = 1, 0, 0, false })
 	return cmd
 }
 
@@ -567,6 +574,7 @@ func TestRenew_PremiumSendsPurchasePrice(t *testing.T) {
 	srv := renewServer(t, coreapigo.PricingResponse{Premium: true, RenewalPrice: &renewal}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
+	renewAccept = true // a premium renewal needs --accept-premium (#226)
 	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
 		t.Fatalf("runRenew: %v", err)
 	}
@@ -611,7 +619,7 @@ func TestRenew_ExplicitPriceOverridesQuote(t *testing.T) {
 	srv := renewServer(t, coreapigo.PricingResponse{Premium: true, RenewalPrice: &quoted}, &gotBody)
 
 	cmd := cmdForRenew(t, srv)
-	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--price", "1800", "--accept-premium"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	if err := runRenew(cmd, []string{"premium.io"}); err != nil {
@@ -645,7 +653,7 @@ func TestRenew_PromptQuotesThePriceSent(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "false"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.ParseFlags([]string{"--price", "1800"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--price", "1800", "--accept-premium"}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	err := runRenew(cmd, []string{"premium.io"})
@@ -1229,6 +1237,7 @@ func TestRegister_ForwardsPurchaseTypeAndPrice(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
+	registerAccept = true // a non-standard price needs --accept-premium (#226)
 	if err := runRegister(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runRegister: %v", err)
 	}
@@ -1942,51 +1951,36 @@ func TestRegisterRenew_MultiYearPromptIsNotLabelledPerYear(t *testing.T) {
 	}
 }
 
-// TestUpdate_PrivacyPurchaseIsConfirmed guards a consistency hole. `domain
-// privacy on` deliberately confirms first. (It was thought to be billable; it
-// is not — see TestPrivacyPrompt_DoesNotClaimBilling — but the prompt stays.)
-// `domain update --privacy=true` reaches the identical API call — both now PATCH
-// /core/v1/domains/{name} with privacyEnabled — but asked nothing.
-//
-// Two ways to the same charge, only one of which paused.
-func TestUpdate_PrivacyPurchaseIsConfirmed(t *testing.T) {
+// TestUpdate_PrivacyOnDoesNotPrompt: `domain update --privacy=true` used to
+// confirm, like `domain privacy on`, but neither charges — they turn on privacy
+// already purchased, or fail (#187). Both dropped the prompt (#227), and
+// update no longer reads the domain for it.
+func TestUpdate_PrivacyOnDoesNotPrompt(t *testing.T) {
 	defer output.StubInteractive(false)()
 
-	var patched bool
+	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch {
-			patched = true
-		}
+		requests = append(requests, r.Method)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"domainName":"example.com","privacyEnabled":false}`))
 	}))
 	t.Cleanup(srv.Close)
 
-	// No --yes: non-interactively, a confirmed change must not proceed silently.
-	cmd := baseCmd(t, srv)
-	cmd.Flags().Bool("autorenew", false, "")
-	cmd.Flags().Bool("privacy", false, "")
-	cmd.Flags().Bool("lock", false, "")
-	root := &cobra.Command{Use: "namecom"}
-	var dr, yes bool
-	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
-	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
-	root.AddCommand(cmd)
+	// No --yes: a prompt would fail non-interactively.
+	cmd := withRootFlags(t, cmdForUpdate(t, srv))
 	if err := cmd.Flags().Set("privacy", "true"); err != nil {
 		t.Fatalf("setting privacy flag: %v", err)
 	}
-
-	err := runUpdate(cmd, []string{"example.com"})
-	if err == nil {
-		t.Fatal("enabling privacy must be confirmed, like 'domain privacy on'")
+	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("enabling privacy must not need --yes: %v", err)
 	}
-	if patched {
-		t.Error("the update was sent despite no confirmation")
+	if strings.Join(requests, " ") != http.MethodPatch {
+		t.Errorf("want a single PATCH, got %v", requests)
 	}
 }
 
-// TestUpdate_NonBillableChangesDoNotPrompt is the counterweight: only enabling
-// privacy should gate. Turning autorenew on must stay frictionless.
+// TestUpdate_NonBillableChangesDoNotPrompt is the counterweight: locking a
+// domain carries no risk, so it must stay frictionless.
 func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	defer output.StubInteractive(false)()
 
@@ -2009,12 +2003,12 @@ func TestUpdate_NonBillableChangesDoNotPrompt(t *testing.T) {
 	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
 	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	root.AddCommand(cmd)
-	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
-		t.Fatalf("setting autorenew flag: %v", err)
+	if err := cmd.Flags().Set("lock", "true"); err != nil {
+		t.Fatalf("setting lock flag: %v", err)
 	}
 
 	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
-		t.Fatalf("an autorenew update must not require confirmation: %v", err)
+		t.Fatalf("locking must not require confirmation: %v", err)
 	}
 	if !patched {
 		t.Error("the update was not sent")
@@ -2060,6 +2054,9 @@ func TestUpdate_PreservesUnmentionedSettings(t *testing.T) {
 	root.PersistentFlags().BoolVar(&dr, "dry-run", false, "")
 	root.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")
 	root.AddCommand(cmd)
+	if err := root.PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
 		t.Fatalf("setting autorenew flag: %v", err)
 	}
@@ -2100,8 +2097,8 @@ const updateTransferLockedDomain = `{"domainName":"example.com","createDate":"20
 // restated the lock it had just read. The stub rejects `locked` the way the
 // sandbox does.
 //
-// It also pins that an update which neither enables privacy nor unlocks makes
-// no GET: nothing about the current state changes what is sent or asked.
+// The GET it makes is for the auto-renewal prompt (#227); what it read must
+// still not leak into the body.
 func TestUpdate_TransferLockedDomainDoesNotSendLocked(t *testing.T) {
 	defer output.StubInteractive(false)()
 
@@ -2123,32 +2120,37 @@ func TestUpdate_TransferLockedDomainDoesNotSendLocked(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := withRootFlags(t, cmdForUpdate(t, srv))
+	if err := cmd.Root().PersistentFlags().Set("yes", "true"); err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Flags().Set("autorenew", "true"); err != nil {
 		t.Fatalf("setting autorenew flag: %v", err)
 	}
 	if err := runUpdate(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("--autorenew alone must not touch the transfer lock: %v", err)
 	}
-	if len(requests) != 1 || requests[0] != http.MethodPatch {
-		t.Errorf("want a single PATCH, got %v", requests)
+	if strings.Join(requests, " ") != "GET PATCH" {
+		t.Errorf("want GET then PATCH, got %v", requests)
 	}
 }
 
-// TestUpdate_ReadsStateOnlyToPromptOrWarn pins why update still GETs the
-// domain in two cases: the privacy prompt and the unlock warning each depend on
-// the current value. Restating --privacy=true on a domain that already has it
-// costs nothing and must not need --yes; unlocking an unlocked domain has no
-// consequence to warn about.
+// TestUpdate_ReadsStateOnlyToPromptOrWarn pins why update GETs the domain: the
+// prompts (#227) and the unlock warning depend on the current value. A flag
+// restating the current state must not need --yes, and unlocking an unlocked
+// domain has no consequence to warn about. --privacy=true never prompts, so
+// it reads nothing.
 func TestUpdate_ReadsStateOnlyToPromptOrWarn(t *testing.T) {
 	defer output.StubInteractive(false)()
 
 	for _, tc := range []struct {
 		name, flag, current string
-		warn                bool
+		yes, warn           bool
+		want                string
 	}{
-		{"privacy already on", "privacy=true", `"privacyEnabled":true`, false},
-		{"unlock a locked domain", "lock=false", `"locked":true`, true},
-		{"unlock an unlocked domain", "lock=false", `"locked":false`, false},
+		{"privacy on", "privacy=true", `"privacyEnabled":false`, false, false, "PATCH"},
+		{"autorenew already on", "autorenew=true", `"autorenewEnabled":true`, false, false, "GET PATCH"},
+		{"unlock a locked domain", "lock=false", `"locked":true`, true, true, "GET PATCH"},
+		{"unlock an unlocked domain", "lock=false", `"locked":false`, false, false, "GET PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests []string
@@ -2164,12 +2166,17 @@ func TestUpdate_ReadsStateOnlyToPromptOrWarn(t *testing.T) {
 			if err := cmd.Flags().Set(name, value); err != nil {
 				t.Fatalf("setting %s: %v", name, err)
 			}
-			// No --yes: a prompt here fails non-interactively.
+			// Without --yes, a prompt here fails non-interactively.
+			if tc.yes {
+				if err := cmd.Root().PersistentFlags().Set("yes", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := runUpdate(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("runUpdate: %v", err)
 			}
-			if want := []string{http.MethodGet, http.MethodPatch}; strings.Join(requests, " ") != strings.Join(want, " ") {
-				t.Errorf("want %v, got %v", want, requests)
+			if got := strings.Join(requests, " "); got != tc.want {
+				t.Errorf("want %s, got %s", tc.want, got)
 			}
 			stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 			if got := strings.Contains(stderr, "Transfer lock removed"); got != tc.warn {
@@ -2410,6 +2417,7 @@ func TestRegister_ClaimsCheckedForTheActualPurchaseType(t *testing.T) {
 	if err := cmd.PersistentFlags().Set("yes", "true"); err != nil {
 		t.Fatalf("setting yes flag: %v", err)
 	}
+	registerAccept = true // a non-standard price needs --accept-premium (#226)
 	if err := runRegister(cmd, []string{"example.com"}); err != nil {
 		t.Fatalf("runRegister: %v", err)
 	}
@@ -2633,6 +2641,8 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			if err := cmd.Flags().Set("years", tt.years); err != nil {
 				t.Fatal(err)
 			}
+			// Past the premium gate, so the refusal is the purchase prompt's.
+			registerAccept = true
 			err := runRegister(cmd, []string{"shoe.luxe"})
 			if err == nil {
 				t.Fatal("expected the non-interactive confirm error")

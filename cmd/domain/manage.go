@@ -184,7 +184,7 @@ func runLock(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, Locked: &enable}
-	if sent, err := applyDomainToggle(cmd, req, ""); err != nil || !sent {
+	if sent, err := applyDomainToggle(cmd, req, togglePrompt(domainName, "lock", enable)); err != nil || !sent {
 		return err
 	}
 	if enable {
@@ -234,7 +234,7 @@ func runAutorenew(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, AutorenewEnabled: &enable}
-	if sent, err := applyDomainToggle(cmd, req, ""); err != nil || !sent {
+	if sent, err := applyDomainToggle(cmd, req, togglePrompt(domainName, "autorenew", enable)); err != nil || !sent {
 		return err
 	}
 	if enable {
@@ -286,14 +286,7 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 	}
 
 	req := &coreapigo.UpdateDomainRequest{DomainName: domainName, PrivacyEnabled: &enable}
-	// Confirm before enabling. It never charges: UpdateDomain turns on privacy
-	// the domain already has, and fails with a 409 when none was purchased,
-	// which explainUpdateError restates (#187). The prompt says so.
-	prompt := ""
-	if enable {
-		prompt = privacyPrompt(domainName)
-	}
-	if sent, err := applyDomainToggle(cmd, req, prompt); err != nil || !sent {
+	if sent, err := applyDomainToggle(cmd, req, togglePrompt(domainName, "privacy", enable)); err != nil || !sent {
 		return err
 	}
 	if enable {
@@ -799,33 +792,42 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return cmdutil.NewUsageError(errors.New("nothing to update — pass at least one of --autorenew, --privacy, --lock"))
 	}
 
-	enablingPrivacy := req.PrivacyEnabled != nil && *req.PrivacyEnabled
 	unlocking := req.Locked != nil && !*req.Locked
 
-	// The current state decides only whether to prompt and whether to warn, so
-	// it is read only when one of those is in question. Without the read, a
-	// script restating --privacy=true on a domain that already has it would
-	// need --yes for a change that costs nothing.
-	wasPrivate, wasLocked := false, true
-	if enablingPrivacy || unlocking {
-		current, err := client.SDK().Domains.GetDomain(cmd.Context(),
+	// Each flag asks what its toggle command asks (#227): two routes to the
+	// same change should not differ in whether they pause. The current state
+	// decides whether a flag is a change at all, so it is read only when a flag
+	// that prompts was passed. Without the read, a script restating
+	// --autorenew=true would need --yes for a change that is not one. With no
+	// domain in the response, every flag is treated as a change.
+	risky := unlocking || req.AutorenewEnabled != nil || (req.PrivacyEnabled != nil && !*req.PrivacyEnabled)
+	var current *coreapigo.DomainResponsePayload
+	if risky {
+		current, err = client.SDK().Domains.GetDomain(cmd.Context(),
 			&coreapigo.GetDomainRequest{DomainName: domain})
 		if err != nil {
 			return api.FromSDKError(err)
 		}
-		if current != nil {
-			wasPrivate, wasLocked = current.PrivacyEnabled, current.Locked
+	}
+	var prompts []string
+	for _, f := range []struct {
+		name string
+		want *bool
+		was  func(*coreapigo.DomainResponsePayload) bool
+	}{
+		{"lock", req.Locked, func(d *coreapigo.DomainResponsePayload) bool { return d.Locked }},
+		{"privacy", req.PrivacyEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled }},
+		{"autorenew", req.AutorenewEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled }},
+	} {
+		if f.want == nil || (current != nil && f.was(current) == *f.want) {
+			continue
+		}
+		if p := togglePrompt(domain, f.name, *f.want); p != "" {
+			prompts = append(prompts, p)
 		}
 	}
-
-	// `domain privacy on` confirms before enabling privacy, and this command
-	// reaches the identical API call, so it asks too — two routes to the same
-	// change should not differ in whether they pause. Only turning it ON is
-	// gated, and neither route charges (#187).
-	prompt := ""
-	if enablingPrivacy && !wasPrivate {
-		prompt = privacyPrompt(domain)
-	}
+	prompt := strings.Join(prompts, " ")
+	wasLocked := current == nil || current.Locked
 
 	var updated *coreapigo.DomainResponsePayload
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[*coreapigo.UpdateDomainRequest]{
@@ -863,12 +865,27 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// privacyPrompt is the confirmation for turning WHOIS privacy on, shared by
-// `domain privacy on` and `domain update --privacy`, which reach the same API
-// call. It used to call that call "a billable action", but it never bills: it
-// enables privacy already purchased, or fails (#187).
-func privacyPrompt(domain string) string {
-	return fmt.Sprintf("Enable WHOIS privacy for %s? This turns on privacy already purchased for the domain; it does not charge.", domain)
+// togglePrompt is the confirmation for setting one of the UpdateDomain fields
+// ("lock", "privacy" or "autorenew") to on, shared by the toggle commands and
+// `domain update`. It is "" for the changes that carry no risk worth a pause.
+//
+// The prompts follow the risk, not the habit (#227). Removing the lock, making
+// WHOIS data public and letting a domain lapse each used to run unprompted,
+// while turning privacy on, which only enables privacy already purchased and
+// never charges (#187), asked first. Turning auto-renewal on asks because it
+// commits the account to future charges.
+func togglePrompt(domain, field string, on bool) string {
+	switch {
+	case field == "lock" && !on:
+		return fmt.Sprintf("Remove the transfer lock on %s? Anyone with its auth code can then transfer it away.", domain)
+	case field == "privacy" && !on:
+		return fmt.Sprintf("Turn off WHOIS privacy for %s? Its registrant contact details may then be shown publicly in WHOIS.", domain)
+	case field == "autorenew" && !on:
+		return fmt.Sprintf("Turn off auto-renewal for %s? It expires on its expiry date unless renewed manually.", domain)
+	case field == "autorenew" && on:
+		return fmt.Sprintf("Turn on auto-renewal for %s? name.com will renew it before each expiry and charge the renewal price to the account.", domain)
+	}
+	return ""
 }
 
 func init() {
