@@ -203,6 +203,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	entry, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s — run 'namecom url list %s' to see forwarding IDs", id, domain, domain))
+	}
 	if err != nil {
 		return err
 	}

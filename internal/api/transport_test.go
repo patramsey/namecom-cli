@@ -348,8 +348,9 @@ func TestParseErrorUnauthorizedHint(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(`{"message":"unauthorized"}`)),
 	}
 	e := parseError(resp)
-	if !strings.Contains(e.Details, "sandbox") {
-		t.Errorf("expected sandbox hint, got %q", e.Details)
+	// The sandbox note moved from the details to the hint, sandbox only (#234).
+	if e.Details != "" || !strings.Contains(e.UserHint(), "auth login") {
+		t.Errorf("details = %q, hint = %q; want no details and the auth login hint", e.Details, e.UserHint())
 	}
 }
 

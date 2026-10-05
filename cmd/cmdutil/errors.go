@@ -23,10 +23,31 @@ import (
 
 // UsageError marks a problem with how the command was invoked: an unknown flag,
 // a bad argument count, an unparseable flag value. Maps to exit code 2.
-type UsageError struct{ Err error }
+type UsageError struct {
+	Err error
+	// Hint is the fix to suggest, such as the corrected command line. Empty
+	// defers to any hint carried by Err.
+	Hint string
+}
 
 func (e *UsageError) Error() string { return e.Err.Error() }
 func (e *UsageError) Unwrap() error { return e.Err }
+
+// UserHint returns Hint, or else the hint of the error it wraps. The error
+// renderer stops at the outermost error with a UserHint, so an empty answer
+// here must not hide one underneath.
+func (e *UsageError) UserHint() string {
+	if e.Hint != "" {
+		return e.Hint
+	}
+	if h, ok := errors.AsType[interface {
+		error
+		UserHint() string
+	}](e.Err); ok {
+		return h.UserHint()
+	}
+	return ""
+}
 
 // NewUsageError wraps err as a usage problem. Returns nil for a nil err so it
 // is safe to apply to a function result directly.
@@ -37,21 +58,35 @@ func NewUsageError(err error) error {
 	return &UsageError{Err: err}
 }
 
+// NewUsageErrorHint is NewUsageError with the fix to suggest (#234): a usage
+// error that only says what was wrong leaves the user to work out the
+// command they meant.
+func NewUsageErrorHint(err error, hint string) error {
+	if err == nil {
+		return nil
+	}
+	return &UsageError{Err: err, Hint: hint}
+}
+
 // AuthError marks a credential problem: none configured, or a credential helper
 // that failed. Maps to exit code 3.
 type AuthError struct {
 	Err error
-	// Hint, when set, replaces the generic hint below.
-	Hint string
+	// Hint replaces the generic hint when set. custom marks a hint chosen by
+	// the failing path even when it is "", meaning the message already says
+	// what to do (NewAuthErrorHint).
+	Hint   string
+	custom bool
 }
 
 func (e *AuthError) Error() string { return e.Err.Error() }
 func (e *AuthError) Unwrap() error { return e.Err }
 
-// UserHint points at the auth commands. The error renderer prints it with the
-// error, on stderr, in every output format.
+// UserHint points at the auth commands, unless the error was built with its
+// own hint. The error renderer prints it with the error, on stderr, in every
+// output format.
 func (e *AuthError) UserHint() string {
-	if e.Hint != "" {
+	if e.custom || e.Hint != "" {
 		return e.Hint
 	}
 	return "run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure"
@@ -63,6 +98,17 @@ func NewAuthError(err error) error {
 		return nil
 	}
 	return &AuthError{Err: err}
+}
+
+// NewAuthErrorHint is NewAuthError with its own hint in place of the generic
+// one. Pass "" when err's message already says what to do: the generic hint
+// repeated `auth login` after a message that had just suggested it, and
+// offered `auth status` to someone who had just run it (#234).
+func NewAuthErrorHint(err error, hint string) error {
+	if err == nil {
+		return nil
+	}
+	return &AuthError{Err: err, Hint: hint, custom: true}
 }
 
 // RestrictedError wraps a 403 from an operation the API gates behind account
@@ -146,12 +192,47 @@ func ClassifyCobraUsage(err error) error {
 		return err
 	}
 	msg := err.Error()
+	if strings.HasPrefix(msg, "unknown command ") {
+		return restateUnknownCommand(msg)
+	}
 	for _, p := range cobraUsagePrefixes {
 		if strings.Contains(msg, p) {
 			return NewUsageError(err)
 		}
 	}
 	return err
+}
+
+// restateUnknownCommand turns cobra's unknown-command error — one line, then
+// "\n\nDid you mean this?\n\tdomain\n" when it has a suggestion — into the
+// same error GroupCmd returns: the line alone, with the suggestion as the hint.
+func restateUnknownCommand(msg string) error {
+	first, rest, _ := strings.Cut(msg, "\n")
+	var suggestions []string
+	if _, list, ok := strings.Cut(rest, "Did you mean this?\n"); ok {
+		suggestions = strings.Fields(list)
+	}
+	path := ""
+	if _, p, ok := strings.Cut(first, ` for "`); ok {
+		path, _, _ = strings.Cut(p, `"`)
+	}
+	return unknownCommandError(first, path, suggestions)
+}
+
+// unknownCommandError is a usage error for an unknown subcommand of path. The
+// hint names the near misses, or points at the help when there are none:
+// `namecom dns rm` used to get nothing to go on (#234). The near misses were
+// in the message itself, over three more lines.
+func unknownCommandError(msg, path string, suggestions []string) error {
+	hint := fmt.Sprintf("run '%s --help' for usage", path)
+	if len(suggestions) > 0 {
+		quoted := make([]string, len(suggestions))
+		for i, s := range suggestions {
+			quoted[i] = fmt.Sprintf("'%s %s'", path, s)
+		}
+		hint = "did you mean " + strings.Join(quoted, " or ") + "?"
+	}
+	return NewUsageErrorHint(errors.New(msg), hint)
 }
 
 // RequireField returns an *api.UnexpectedResponseError when value, the field
@@ -168,5 +249,5 @@ func RequireField[T comparable](what string, value T) error {
 	if value != zero {
 		return nil
 	}
-	return &api.UnexpectedResponseError{Reason: "the response did not include " + what, Read: true}
+	return &api.UnexpectedResponseError{Reason: "the response did not include " + what}
 }

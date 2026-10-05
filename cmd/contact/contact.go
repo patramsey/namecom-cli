@@ -230,7 +230,7 @@ func runResend(cmd *cobra.Command, args []string) error {
 	// required and gives it no default, so its absence is not an answer
 	// either way.
 	if !hasSent(result) {
-		return &api.UnexpectedResponseError{Reason: "the response did not say whether the email was sent"}
+		return &api.UnexpectedResponseError{Reason: "the response did not say whether the email was sent", Write: true}
 	}
 
 	// The API reports throttling as HTTP 200 with sent=false. Returning nil for

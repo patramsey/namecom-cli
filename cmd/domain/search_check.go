@@ -66,7 +66,7 @@ func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	created, err := client.SDK().Domains.CreateDomain(cmd.Context(), &body)
 	stop()
 	if err != nil {
-		return api.FromSDKError(err)
+		return api.MarkWrite(err) // not sent through RunWrite, so marked here
 	}
 	// Same nil guard as `domain register`: created.Domain is a pointer in the
 	// SDK, so a response without a domain object would panic here rather than

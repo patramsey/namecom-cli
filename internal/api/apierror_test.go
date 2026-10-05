@@ -1,12 +1,16 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	sdkcore "github.com/namedotcom/core-api-go/core"
 )
 
 func makeResp(status int, body string) *http.Response {
@@ -53,10 +57,20 @@ func TestParseError_EmptyBody(t *testing.T) {
 	}
 }
 
-func TestParseError_401AppendsSandboxHint(t *testing.T) {
+// TestAPIError_401SandboxNoteOnlyInSandbox pins #234. Every 401 carried "note:
+// sandbox uses a separate API token from production" in its message, in
+// production too. The note is now in the hint, and only for the sandbox.
+func TestAPIError_401SandboxNoteOnlyInSandbox(t *testing.T) {
 	e := parseError(makeResp(401, `{"message":"unauthorized","details":"bad token"}`))
-	if !strings.Contains(e.Details, "sandbox") {
-		t.Errorf("401 Details should mention sandbox, got %q", e.Details)
+	if got := e.Error(); got != "unauthorized (bad token)" {
+		t.Errorf("Error() = %q, want the API's message and details untouched", got)
+	}
+	if hint := e.UserHint(); strings.Contains(hint, "sandbox") || !strings.Contains(hint, "auth login") {
+		t.Errorf("production hint = %q, want auth login and no sandbox note", hint)
+	}
+	e.Sandbox = true
+	if hint := e.UserHint(); !strings.Contains(hint, "sandbox uses a separate API token") {
+		t.Errorf("sandbox hint = %q, want the separate-token note", hint)
 	}
 }
 
@@ -82,13 +96,15 @@ func TestAPIError_UserHint(t *testing.T) {
 		wantContain string
 	}{
 		{401, "auth login"},
-		{403, "auth login"},
-		{404, "not found"},
+		// A 403 is not fixed by new credentials (#234).
+		{403, "IP address"},
+		{404, "name or ID"},
 		{429, "rate limit"},
-		// A bare 5xx — no API message to go on — is most likely transient.
-		// A 5xx that carries one is covered by TestServerErrorHint.
-		{500, "try again"},
-		{503, "try again"},
+		// A bare 5xx on a read: nothing changed, so retrying is safe.
+		// A 5xx that explains itself, or answers a write, is covered by
+		// TestServerErrorHint.
+		{500, "retry later"},
+		{503, "retry later"},
 		{200, ""},
 	}
 	for _, tt := range tests {
@@ -111,7 +127,8 @@ func TestAPIError_UserHint(t *testing.T) {
 //	Unauthorized ((note: sandbox uses a separate API token from production))
 //
 // When the API supplies its own details the note must join them readably rather
-// than nest another parenthetical inside.
+// than nest another parenthetical inside. The note has since moved to the hint
+// (#234), and the message must not grow one back.
 func TestAPIError_UnauthorizedNoteFormatting(t *testing.T) {
 	t.Run("no api details", func(t *testing.T) {
 		e := ErrorFromResponse(401, []byte(`{"message":"Unauthorized"}`))
@@ -119,8 +136,8 @@ func TestAPIError_UnauthorizedNoteFormatting(t *testing.T) {
 		if strings.Contains(got, "((") || strings.Contains(got, "))") {
 			t.Errorf("doubled parentheses in error: %q", got)
 		}
-		if !strings.Contains(got, "sandbox uses a separate API token") {
-			t.Errorf("expected the sandbox hint, got: %q", got)
+		if got != "Unauthorized" {
+			t.Errorf("Error() = %q, want the API's message alone", got)
 		}
 	})
 
@@ -143,18 +160,44 @@ func TestAPIError_UnauthorizedNoteFormatting(t *testing.T) {
 // line — in the terminal and inside the JSON error envelope alike.
 func TestSummarizeBody(t *testing.T) {
 	t.Run("a long non-JSON body is truncated and counted", func(t *testing.T) {
-		html := "<html><body>" + strings.Repeat("<p>nginx error page</p>", 800) + "</body></html>"
-		e := ErrorFromResponse(502, []byte(html))
+		text := "BEGIN " + strings.Repeat("upstream connect error or disconnect ", 800)
+		e := ErrorFromResponse(502, []byte(text))
 		if len(e.Message) > maxFallbackMessage+80 {
 			t.Errorf("message is %d chars, want it bounded near %d", len(e.Message), maxFallbackMessage)
 		}
 		if !strings.Contains(e.Message, "truncated") {
 			t.Errorf("truncation is not disclosed: %q", e.Message)
 		}
-		if !strings.Contains(e.Message, "<html>") {
+		if !strings.HasPrefix(e.Message, "BEGIN ") {
 			t.Errorf("the front of the body was dropped: %q", e.Message)
 		}
 	})
+
+	// #234: an HTML page was still quoted, markup and all, up to the cap:
+	// `<html><head><title>502 Bad Gateway</title></head><body>…`. Only its
+	// title says anything, and only when it adds to the status.
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   string
+	}{
+		"title repeats the status": {502,
+			"<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>",
+			"HTTP 502 Bad Gateway (HTML error page)"},
+		"title adds something": {503,
+			"<!DOCTYPE html>\n<html><head><title>\n  Down for maintenance &amp; upgrades\n</title></head><body>" + strings.Repeat("<p>x</p>", 500) + "</body></html>",
+			"HTTP 503 Service Unavailable: Down for maintenance & upgrades (HTML error page)"},
+		"no title": {502, "<html><body><h1>502 Bad Gateway</h1></body></html>",
+			"HTTP 502 Bad Gateway (HTML error page)"},
+		"upper-case tags": {500, "<HTML><HEAD><TITLE>Oops</TITLE></HEAD></HTML>",
+			"HTTP 500 Internal Server Error: Oops (HTML error page)"},
+	} {
+		t.Run("an HTML page is reduced to its title: "+name, func(t *testing.T) {
+			if got := ErrorFromResponse(tc.status, []byte(tc.body)).Message; got != tc.want {
+				t.Errorf("message = %q, want %q", got, tc.want)
+			}
+		})
+	}
 
 	t.Run("newlines are collapsed so the message stays one line", func(t *testing.T) {
 		e := ErrorFromResponse(500, []byte("upstream\n  connect\n\terror"))
@@ -272,27 +315,31 @@ func TestParseErrorCapturesRetryAfter(t *testing.T) {
 // envelope with something specific to say, the hint must not call the failure
 // transient; with no message (empty body, a gateway's HTML page, or only a
 // generic "Server error") the retry advice stands.
+//
+// #234 made the wording depend on the request too: a read is told retrying is
+// safe and never that "the request itself may be invalid", a write that the
+// change may have been made, and 500, 502 and 503 read the same.
 func TestServerErrorHint(t *testing.T) {
 	// Captured from the sandbox: vanity-ns create with a reserved IP.
 	const reservedIP = `{"message":"Server error","details":"Command Failed - IP Address 192.0.2.53 Is Reserved"}`
 
-	t.Run("a 5xx with an API message does not say try again", func(t *testing.T) {
+	t.Run("a 5xx with an API message is not called transient", func(t *testing.T) {
 		e := parseError(makeResp(500, reservedIP))
 		if !strings.Contains(e.Error(), "IP Address 192.0.2.53 Is Reserved") {
 			t.Errorf("Error() = %q, want the server's explanation in it", e.Error())
 		}
 		hint := e.UserHint()
-		if strings.Contains(hint, "try again") {
+		if strings.Contains(hint, "retry") || strings.Contains(hint, "try again") {
 			t.Errorf("hint = %q, must not suggest the failure is transient", hint)
 		}
-		if !strings.Contains(hint, "request itself may be invalid") {
-			t.Errorf("hint = %q, want it to point at the request", hint)
+		if !strings.Contains(hint, "gave the reason") {
+			t.Errorf("hint = %q, want it to point at the API's reason", hint)
 		}
 	})
 
 	t.Run("a specific message without details counts", func(t *testing.T) {
 		e := ErrorFromResponse(500, []byte(`{"message":"IP Address Is Reserved"}`))
-		if hint := e.UserHint(); strings.Contains(hint, "try again") {
+		if hint := e.UserHint(); strings.Contains(hint, "retry") {
 			t.Errorf("hint = %q, must not suggest the failure is transient", hint)
 		}
 	})
@@ -307,10 +354,51 @@ func TestServerErrorHint(t *testing.T) {
 		"envelope with a generic message": {500, `{"message":"Server error"}`},
 		"envelope with the status text":   {503, `{"message":"Service Unavailable","details":null}`},
 	} {
-		t.Run(name+" keeps try again", func(t *testing.T) {
-			if hint := ErrorFromResponse(tc.status, []byte(tc.body)).UserHint(); !strings.Contains(hint, "try again") {
-				t.Errorf("hint = %q, want the transient wording", hint)
+		t.Run(name+" is one wording", func(t *testing.T) {
+			read := ErrorFromResponse(tc.status, []byte(tc.body))
+			if hint := read.UserHint(); hint != "the failure is on name.com's side; nothing was changed, so it is safe to retry later" {
+				t.Errorf("read hint = %q, want the one transient wording", hint)
+			}
+			write := ErrorFromResponse(tc.status, []byte(tc.body))
+			write.Write = true
+			if hint := write.UserHint(); !strings.Contains(hint, "may or may not have been made") {
+				t.Errorf("write hint = %q, want it to warn the change may have been made", hint)
 			}
 		})
+	}
+
+	t.Run("an explained 5xx on a write still says to check", func(t *testing.T) {
+		e := ErrorFromResponse(500, []byte(reservedIP))
+		e.Write = true
+		if hint := e.UserHint(); !strings.Contains(hint, "check whether the change was made") {
+			t.Errorf("hint = %q, want it to say to check the change", hint)
+		}
+	})
+}
+
+// TestMarkWrite pins the seam RunWrite uses: it finds the API error, or the
+// unreadable-reply error, under a caller's wrapping and under the SDK's own
+// error type, and leaves anything else alone.
+func TestMarkWrite(t *testing.T) {
+	if MarkWrite(nil) != nil {
+		t.Error("MarkWrite(nil) != nil")
+	}
+	apiErr := &APIError{StatusCode: 500}
+	if err := MarkWrite(fmt.Errorf("creating: %w", apiErr)); err == nil || !apiErr.Write {
+		t.Error("a wrapped *APIError was not marked")
+	}
+	sdkErr := sdkcore.NewAPIError(500, nil, errors.New(`{"message":"Server error"}`))
+	got, ok := errors.AsType[*APIError](MarkWrite(fmt.Errorf("creating: %w", sdkErr)))
+	if !ok || !got.Write {
+		t.Errorf("an SDK error was not normalized and marked: %#v", got)
+	}
+	u := &UnexpectedResponseError{Reason: "x"}
+	_ = MarkWrite(u)
+	if !u.Write {
+		t.Error("an *UnexpectedResponseError was not marked")
+	}
+	plain := errors.New("boom")
+	if MarkWrite(plain) != plain {
+		t.Error("an unrelated error should come back unchanged")
 	}
 }

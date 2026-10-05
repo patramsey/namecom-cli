@@ -219,6 +219,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	stop := out.Spin("Fetching order…")
 	o, err := client.SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: int(id)})
 	stop()
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("order %d not found — run 'namecom order list' to see your orders", id))
+	}
 	if err != nil {
 		return err
 	}

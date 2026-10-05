@@ -264,6 +264,24 @@ func TestOrderGet_BadID(t *testing.T) {
 	}
 }
 
+// TestOrderGet_NotFoundNamesTheOrder pins #234: a missing order printed only
+// the API's "Not Found", which does not say what was not found.
+func TestOrderGet_NotFoundNamesTheOrder(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	err := runGet(cmdForOrderGet(t, srv), []string{"42"})
+	if err == nil || !strings.HasPrefix(err.Error(), "order 42 not found") {
+		t.Fatalf("runGet = %v, want it to start with %q", err, "order 42 not found")
+	}
+	if !cmdutil.IsNotFound(err) {
+		t.Error("the named error must still be a 404, so it exits 4")
+	}
+}
+
 // TestOrderGet_EmptyObjectIsAnError pins #187: a `200 {}` printed an empty
 // order and exited 0, and --quiet printed the requested ID as if found.
 func TestOrderGet_EmptyObjectIsAnError(t *testing.T) {

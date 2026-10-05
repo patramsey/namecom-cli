@@ -174,6 +174,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	entry, err := client.SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
 		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: args[1]})
 	stop()
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("email forwarding %s@%s not found — run 'namecom email list %s' to see its forwardings", args[1], domain, domain))
+	}
 	if err != nil {
 		return api.FromSDKError(err)
 	}

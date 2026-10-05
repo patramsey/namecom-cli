@@ -106,3 +106,7 @@ type notFoundError struct {
 
 func (e *notFoundError) Error() string { return e.msg }
 func (e *notFoundError) Unwrap() error { return e.err }
+
+// UserHint is empty: the message names the object and says what to do, and
+// the 404's generic hint underneath would only repeat it.
+func (e *notFoundError) UserHint() string { return "" }

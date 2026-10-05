@@ -81,9 +81,18 @@ func toggleAlreadySet(cmd *cobra.Command, domainName string, want bool, get func
 	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(),
 		&coreapigo.GetDomainRequest{DomainName: domainName})
 	if err != nil {
-		return false, api.FromSDKError(err)
+		return false, domainError(err, domainName)
 	}
 	return d != nil && get(d) == want, nil
+}
+
+// domainError names the domain when fetching it found nothing: the API's
+// own "Not Found" does not say what was missing (#234).
+func domainError(err error, domainName string) error {
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domainName))
+	}
+	return api.FromSDKError(err)
 }
 
 // onOff is a toggle state in the words its command takes.
@@ -164,7 +173,7 @@ func explainUpdateError(err error, req *coreapigo.UpdateDomainRequest) error {
 
 func runLock(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffArg(args[0])
+	enable, err := cmdutil.OnOffFirst(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -216,7 +225,7 @@ var autorenewCmd = &cobra.Command{
 
 func runAutorenew(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffArg(args[0])
+	enable, err := cmdutil.OnOffFirst(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -266,7 +275,7 @@ var privacyCmd = &cobra.Command{
 
 func runPrivacy(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
-	enable, err := cmdutil.OnOffArg(args[0])
+	enable, err := cmdutil.OnOffFirst(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -306,7 +315,7 @@ var setNSCmd = &cobra.Command{
 	Example: `  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com
   namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers
   namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com --yes  # no prompt, for scripts`,
-	Args:              cmdutil.ExactArgs(1),
+	Args:              setNSArgs,
 	RunE:              runSetNS,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
@@ -316,6 +325,17 @@ var setNSList string
 func init() {
 	setNSCmd.Flags().StringVar(&setNSList, "ns", "", "comma-separated nameservers (required)")
 	_ = setNSCmd.MarkFlagRequired("ns")
+	_ = setNSCmd.Flags().SetAnnotation("ns", cmdutil.SuggestFlagFor, []string{"nameservers", "nameserver"})
+}
+
+// setNSArgs is ExactArgs(1), except that nameservers passed as arguments get
+// the command rewritten with --ns as the hint (#234).
+func setNSArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 1 && setNSList == "" {
+		return cmdutil.NewUsageErrorHint(fmt.Errorf("too many arguments — set-ns takes the nameservers in --ns, not as arguments"),
+			fmt.Sprintf("run '%s %s --ns %s'", cmd.CommandPath(), args[0], strings.Join(args[1:], ",")))
+	}
+	return cmdutil.ExactArgs(1)(cmd, args)
 }
 
 func runSetNS(cmd *cobra.Command, args []string) error {
@@ -411,7 +431,7 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 	d, err := client.SDK().Domains.GetDomain(cmd.Context(),
 		&coreapigo.GetDomainRequest{DomainName: domain})
 	if err != nil {
-		return err
+		return domainError(err, domain)
 	}
 	if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
 		return err
@@ -806,7 +826,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		current, err = client.SDK().Domains.GetDomain(cmd.Context(),
 			&coreapigo.GetDomainRequest{DomainName: domain})
 		if err != nil {
-			return api.FromSDKError(err)
+			return domainError(err, domain)
 		}
 	}
 	var prompts []string

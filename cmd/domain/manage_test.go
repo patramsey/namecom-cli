@@ -106,6 +106,24 @@ func TestContentTypeHeader_AllToggleCommands(t *testing.T) {
 	}
 }
 
+// TestToggle_NotFoundNamesTheDomain pins #234: `domain lock on nope.com`
+// printed the API's bare "Not Found".
+func TestToggle_NotFoundNamesTheDomain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	err := runLock(cmdForToggle(t, srv), []string{"on", "nope.com"})
+	if err == nil || !strings.HasPrefix(err.Error(), `domain "nope.com" not found`) {
+		t.Fatalf("runLock = %v, want it to name the domain", err)
+	}
+	if !cmdutil.IsNotFound(err) {
+		t.Error("the named error must still be a 404, so it exits 4")
+	}
+}
+
 func TestSetNS_InvalidNameserver(t *testing.T) {
 	tests := []struct {
 		desc, ns    string
@@ -131,6 +149,27 @@ func TestSetNS_InvalidNameserver(t *testing.T) {
 				t.Errorf("expected %q in error, got: %v", tt.errContains, err)
 			}
 		})
+	}
+}
+
+// TestSetNS_PositionalNameserversSuggestNS pins #234: `set-ns D ns1 ns2` said
+// only "too many arguments", without mentioning --ns.
+func TestSetNS_PositionalNameserversSuggestNS(t *testing.T) {
+	prev := setNSList
+	t.Cleanup(func() { setNSList = prev })
+	setNSList = ""
+
+	err := setNSArgs(setNSCmd, []string{"example.com", "ns1.a.com", "ns2.a.com"})
+	u, ok := errors.AsType[*cmdutil.UsageError](err)
+	if !ok {
+		t.Fatalf("setNSArgs = %v, want a usage error", err)
+	}
+	// The package's command tree has no root here, so the path starts at "domain".
+	if want := "run '" + setNSCmd.CommandPath() + " example.com --ns ns1.a.com,ns2.a.com'"; u.UserHint() != want {
+		t.Errorf("hint = %q, want %q", u.UserHint(), want)
+	}
+	if err := setNSArgs(setNSCmd, []string{"example.com"}); err != nil {
+		t.Errorf("one domain rejected: %v", err)
 	}
 }
 

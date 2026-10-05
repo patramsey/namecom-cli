@@ -78,8 +78,14 @@ func NormalizeError(err error) error {
 	if _, ok := errors.AsType[*UnexpectedResponseError](err); ok {
 		return err
 	}
+	if _, ok := errors.AsType[*NetworkError](err); ok {
+		return err
+	}
 	sdkErr, ok := errors.AsType[*sdkcore.APIError](err)
 	if !ok {
+		if converted := asNetworkError(err); converted != nil {
+			return converted
+		}
 		return normalizeDecodeError(err)
 	}
 	converted := FromSDKError(sdkErr)
@@ -93,12 +99,23 @@ func NormalizeError(err error) error {
 // contextError carries a caller's wrapped message over a converted *APIError,
 // so the text keeps its context and exit-code classification still finds the
 // status code through Unwrap.
+//
+// When inner is set, msg is the original text and inner the part of it that
+// err replaces, substituted when the message is read: a *NetworkError's text
+// depends on the Timeout set after it is converted.
 type contextError struct {
-	msg string
-	err error
+	msg   string
+	inner string
+	err   error
 }
 
-func (e *contextError) Error() string { return e.msg }
+func (e *contextError) Error() string {
+	if e.inner == "" {
+		return e.msg
+	}
+	return strings.Replace(e.msg, e.inner, e.err.Error(), 1)
+}
+
 func (e *contextError) Unwrap() error { return e.err }
 
 // UnexpectedResponseError is a successful (2xx) response whose body could not
@@ -114,9 +131,12 @@ func (e *contextError) Unwrap() error { return e.err }
 type UnexpectedResponseError struct {
 	Reason string
 	Err    error
-	// Read marks the response to a request that changes nothing, so the hint
-	// does not warn that a change may have been made.
-	Read bool
+	// Write marks the response to a request that changes something, so the
+	// hint warns that the change may have been made. It is set by MarkWrite.
+	// It used to be the other way round — a Read flag that only one caller
+	// set — so `domain get` on a non-JSON 200 warned that "a change may have
+	// been made" (#234).
+	Write bool
 }
 
 func (e *UnexpectedResponseError) Error() string {
@@ -128,7 +148,7 @@ func (e *UnexpectedResponseError) Unwrap() error { return e.Err }
 // UserHint warns that a write may have gone through: the API answered with a
 // success status, only its reply was unreadable.
 func (e *UnexpectedResponseError) UserHint() string {
-	if e.Read {
+	if !e.Write {
 		return "--debug shows the response"
 	}
 	return "the API reported success, so a change may have been made — check before retrying; --debug shows the response"

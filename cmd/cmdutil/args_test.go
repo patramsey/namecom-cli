@@ -9,6 +9,65 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// TestFlagError pins #234: an unknown flag got a bare "unknown flag: --x",
+// with neither a near miss nor the usage line.
+func TestFlagError(t *testing.T) {
+	root := &cobra.Command{Use: "namecom"}
+	root.PersistentFlags().Bool("sandbox", false, "")
+	cmd := &cobra.Command{Use: "set-ns <domain> --ns ns1,ns2", Run: func(*cobra.Command, []string) {}}
+	cmd.Flags().String("ns", "", "")
+	_ = cmd.Flags().SetAnnotation("ns", SuggestFlagFor, []string{"nameservers"})
+	cmd.Flags().String("secret", "", "")
+	_ = cmd.Flags().MarkHidden("secret")
+	root.AddCommand(cmd)
+	root.SetFlagErrorFunc(FlagError)
+
+	tests := []struct {
+		flag, want string
+	}{
+		{"--nameservers", "did you mean --ns? usage: namecom set-ns <domain> --ns ns1,ns2 [flags]"},
+		{"--sandbx", "did you mean --sandbox? usage: namecom set-ns <domain> --ns ns1,ns2 [flags]"},
+		{"--secrt", "usage: namecom set-ns <domain> --ns ns1,ns2 [flags] — run 'namecom set-ns --help' for its flags"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			root.SetArgs([]string{"set-ns", "x.com", tt.flag})
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			err := root.Execute()
+			u, ok := errors.AsType[*UsageError](err)
+			if !ok {
+				t.Fatalf("Execute = %v, want a *UsageError", err)
+			}
+			if err.Error() != "unknown flag: "+tt.flag {
+				t.Errorf("message = %q, want pflag's own", err.Error())
+			}
+			if u.UserHint() != tt.want {
+				t.Errorf("hint = %q\nwant   %q", u.UserHint(), tt.want)
+			}
+		})
+	}
+
+	t.Run("other flag errors are usage errors without a hint", func(t *testing.T) {
+		err := FlagError(cmd, errors.New(`invalid argument "x" for "--ttl" flag`))
+		if u, ok := errors.AsType[*UsageError](err); !ok || u.UserHint() != "" {
+			t.Errorf("FlagError = %#v, want a hintless *UsageError", err)
+		}
+	})
+}
+
+// TestExactArgs_TooManyShowsUsage: the usage line says where extra values go.
+func TestExactArgs_TooManyShowsUsage(t *testing.T) {
+	root := &cobra.Command{Use: "namecom"}
+	cmd := &cobra.Command{Use: "get <domain>"}
+	root.AddCommand(cmd)
+	err := ExactArgs(1)(cmd, []string{"a", "b"})
+	u, ok := errors.AsType[*UsageError](err)
+	if !ok || u.UserHint() != "usage: namecom get <domain>" {
+		t.Errorf("err = %v, hint = %q; want the usage line as the hint", err, u.UserHint())
+	}
+}
+
 func TestArgNames(t *testing.T) {
 	tests := []struct {
 		use  string
@@ -194,8 +253,21 @@ func TestGroupCmd(t *testing.T) {
 		if !strings.Contains(err.Error(), `unknown command "regsiter"`) {
 			t.Errorf("error does not name the typo: %v", err)
 		}
-		if !strings.Contains(err.Error(), "register") {
-			t.Errorf("error carries no suggestion: %v", err)
+		// The suggestion is the hint, so the message stays one line (#234).
+		if strings.Contains(err.Error(), "\n") {
+			t.Errorf("message spans lines: %q", err.Error())
+		}
+		if h := u.UserHint(); h != "did you mean 'namecom domain register'?" {
+			t.Errorf("hint = %q, want the suggestion", h)
+		}
+	})
+
+	t.Run("no near miss points at the help", func(t *testing.T) {
+		group := newGroup()
+		err := group.Args(group, []string{"rm"})
+		u, ok := errors.AsType[*UsageError](err)
+		if !ok || u.UserHint() != "run 'namecom domain --help' for usage" {
+			t.Errorf("err = %v, want a usage error pointing at the help", err)
 		}
 	})
 

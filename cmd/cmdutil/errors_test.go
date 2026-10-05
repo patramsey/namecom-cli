@@ -116,6 +116,24 @@ func TestClassifyCobraUsage(t *testing.T) {
 		}
 	}
 
+	// #234: cobra's root-level near misses moved from three extra message
+	// lines into the hint, and a typo with none points at the help.
+	t.Run("unknown command is restated with a hint", func(t *testing.T) {
+		for msg, want := range map[string]struct{ msg, hint string }{
+			"unknown command \"domian\" for \"namecom\"\n\nDid you mean this?\n\tdomain\n": {
+				`unknown command "domian" for "namecom"`, "did you mean 'namecom domain'?"},
+			`unknown command "frob" for "namecom"`: {
+				`unknown command "frob" for "namecom"`, "run 'namecom --help' for usage"},
+		} {
+			got := ClassifyCobraUsage(errors.New(msg))
+			u, ok := errors.AsType[*UsageError](got)
+			if !ok || got.Error() != want.msg || u.UserHint() != want.hint {
+				t.Errorf("ClassifyCobraUsage(%q) = %q (hint %q), want %q (hint %q)",
+					msg, got, u.UserHint(), want.msg, want.hint)
+			}
+		}
+	})
+
 	// Issue #165: `namecom open a.com b.com` exited 1, because "accepts at most
 	// 1 arg(s)" from cobra.MaximumNArgs was not recognized. The messages come
 	// from cobra's own validators here, so a reworded one fails this test.

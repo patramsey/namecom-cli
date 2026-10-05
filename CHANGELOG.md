@@ -133,6 +133,50 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the check too, and still writes nothing. Leading and trailing whitespace is
   trimmed from the username and token; a pasted token with a trailing space
   used to be saved with it.
+- Errors say what to do once. `domain get nope.com` printed its own "run
+  'namecom domain list'" and then a generic "check the domain name or ID"
+  hint; an error that already says what to do now has no `hint:` line (and
+  no `hint` key in the JSON/YAML envelope). `order get`, `email get`,
+  `url get`, `vanity-ns get`, `dnssec get`, `domain lock`, `autorenew`,
+  `privacy`, `contacts get` and `update` name what was not found
+  (`order 1 not found — run 'namecom order list' …`) instead of printing
+  `Not Found`; they still exit **4**. Missing credentials read `no
+  credentials configured`, with the fix in the hint alone, and a missing
+  `--profile` is one line, `profile "x" not found in … (available: a, b)`,
+  with `auth login --profile x` in the hint. A script matching the old
+  messages needs updating.
+- Error hints fit the status and whether the command was changing
+  something. A 403 (such as "IP not whitelisted") no longer says to run
+  `auth login`, which cannot fix it; it says the account lacks permission or
+  the API is not accepting your IP address. A 401's "sandbox uses a separate
+  API token" note now appears only against the sandbox, and in the hint: it
+  is no longer part of the error `message` in JSON output. Every 5xx gets
+  the same hint: a read is told nothing changed and retrying later is safe,
+  a write that the change may or may not have been made. A read that gets an
+  unreadable 200 is no longer warned that a change may have been made. Exit
+  codes are unchanged; the `hint` text in the JSON/YAML envelope differs.
+- An HTML error page from a proxy is reduced to the status and the page's
+  title, `HTTP 502 Bad Gateway (HTML error page)`, instead of up to 400
+  characters of markup. The title is kept when it adds something:
+  `HTTP 503 Service Unavailable: Down for maintenance (HTML error page)`.
+  This is the error `message` in JSON output too.
+- Timeouts and connection failures read as one plain line, without Go's
+  `Get "https://…":` prefix. A timeout says `request to api.name.com timed
+  out after 30s`, with a hint to raise `--timeout`, instead of `context
+  deadline exceeded (Client.Timeout exceeded while awaiting headers)`; a
+  refused connection says `could not connect to 127.0.0.1:1: connection
+  refused`, and an unknown host `could not look up <host>: no such host`.
+  When `--base-url` points away from name.com the hint says to check it.
+  These still exit **1**; a script matching the old text needs updating.
+- Usage errors suggest the fix. `domain set-ns D ns1 ns2` gives the command
+  rewritten with `--ns ns1,ns2`; `domain lock example.com on` gives the
+  right order, `domain lock on example.com`; an unknown flag names the
+  nearest flags (`--nameservers` → `--ns`, `--sandbx` → `--sandbox`) and the
+  usage line; an unknown command with no near miss, such as `dns rm`,
+  points at `namecom dns --help`; and too many arguments shows the usage
+  line. An unknown command's "Did you mean this?" list moves from the
+  message, where it took three more lines, into the hint: `did you mean
+  'namecom domain'?`. All still exit **2**.
 
 ## [0.4.9] - 2026-10-03
 

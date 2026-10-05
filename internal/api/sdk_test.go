@@ -250,11 +250,16 @@ func TestFromSDKError(t *testing.T) {
 		}
 	})
 
-	t.Run("a 401 carries the sandbox note", func(t *testing.T) {
+	// The sandbox note is the hint's, and only in the sandbox (#234).
+	t.Run("a 401 gets the sandbox note in the sandbox only", func(t *testing.T) {
 		src := sdkcore.NewAPIError(http.StatusUnauthorized, nil, errAPI(`{"message":"Unauthorized"}`))
 		got := FromSDKError(src).(*APIError)
-		if !strings.Contains(got.Error(), "sandbox uses a separate API token") {
-			t.Errorf("error = %q, want the sandbox token note", got.Error())
+		if strings.Contains(got.Error()+got.UserHint(), "sandbox") {
+			t.Errorf("production 401 mentions the sandbox: %q / %q", got.Error(), got.UserHint())
+		}
+		got.Sandbox = true
+		if !strings.Contains(got.UserHint(), "sandbox uses a separate API token") {
+			t.Errorf("hint = %q, want the sandbox token note", got.UserHint())
 		}
 	})
 
