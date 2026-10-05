@@ -58,6 +58,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   $29.98 for 2 items", "Imported 3 records". **Scripts** matching prompt,
   success or error text containing large prices or `(s)` plurals need
   updating; JSON and YAML values are unchanged.
+- Success lines say what happened: `dns create` prints
+  `Created A www.example.com → 192.0.2.10 (id 12345)`, `dns update` lists each
+  changed field (`answer 192.0.2.1 → 192.0.2.2, ttl 300 → 600`), `url update`
+  does the same, and `domain update`, `domain set-ns`, `domain contacts set`,
+  `vanity-ns create/update` and `dnssec create` name the values they set.
+  `domain renew` names the new expiry date when the API returns it. The
+  "Run 'namecom … list'" and "… get to confirm" hints after every write are
+  gone. `domain get` suggests renewing an expired domain, or one expiring
+  within 30 days without auto-renew, instead of always suggesting `dns list`.
+  **Scripts** matching the old success text need updating.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

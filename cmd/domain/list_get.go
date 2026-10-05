@@ -315,9 +315,26 @@ func runGet(cmd *cobra.Command, args []string) error {
 			{"Nameservers", out.Dim(formatNS(d.Nameservers))},
 		}
 		out.KVTable(rows)
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to manage DNS records", d.DomainName))
+		out.Hint(domainHint(d, time.Now()))
 	}
 	return nil
+}
+
+// domainHint picks the next step for the domain's state. It always suggested
+// `dns list`, even for an expired domain, where renewing is what is needed
+// (#238).
+func domainHint(d *coreapigo.DomainResponsePayload, now time.Time) string {
+	if d.ExpireDate != nil {
+		days := d.ExpireDate.Sub(now).Hours() / 24
+		switch {
+		case days < 0:
+			return fmt.Sprintf("Run 'namecom domain renew %s' — it expired %s", d.DomainName, output.RelativeDays(days))
+		case days < 30 && !d.AutorenewEnabled:
+			return fmt.Sprintf("Run 'namecom domain renew %s' or 'namecom domain autorenew on %s' — it expires %s and will not renew itself",
+				d.DomainName, d.DomainName, output.RelativeDays(days))
+		}
+	}
+	return fmt.Sprintf("Run 'namecom dns list %s' to manage DNS records", d.DomainName)
 }
 
 // filterToWildcard wraps a bare search term in * wildcards so that --filter

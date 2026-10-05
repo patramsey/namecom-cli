@@ -260,7 +260,6 @@ func runGet(cmd *cobra.Command, args []string) error {
 			out.Hint("Run 'namecom order refund --order-id " +
 				strconv.Itoa(derefInt(o.ID)) + " --item-ids <ITEM ID>' to refund a refundable item")
 		}
-		out.Hint("Run 'namecom order list' to see all orders")
 	}
 	return nil
 }

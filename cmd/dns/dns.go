@@ -242,7 +242,6 @@ func runList(cmd *cobra.Command, args []string) error {
 			out.Count(len(records), "record", "more exist — pass --all for the rest")
 		} else {
 			out.Count(len(records), "record")
-			out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to view domain details", domain))
 		}
 	}
 	return nil
@@ -348,8 +347,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(record)
 	default:
-		out.Success(fmt.Sprintf("Created %s record (id %d)", createType, derefInt(record.ID)))
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see all records", domain))
+		out.Success(fmt.Sprintf("Created %s %s → %s (id %d)",
+			strings.ToUpper(createType), recordName(host, domain), answer, derefInt(record.ID)))
 	}
 	return nil
 }
@@ -473,8 +472,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(updated)
 	default:
-		out.Success(fmt.Sprintf("Updated record %d", id))
-		out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see all records", domain))
+		name := fmt.Sprintf("%s %s (id %d)", string(body.Type), recordName(derefStr(body.Host), domain), id)
+		if changes := recordChanges(current, body); len(changes) > 0 {
+			out.Success("Updated " + name + ": " + strings.Join(changes, ", "))
+		} else {
+			out.Success("Updated " + name + ": no values changed")
+		}
 	}
 	return nil
 }
@@ -507,7 +510,6 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted record %d from %s", id, domain))
-	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to see remaining records", domain))
 	return nil
 }
 
@@ -682,7 +684,6 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return out.DryRunAll(previews)
 	}
 	out.Success(fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain))
-	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to verify the imported records", domain))
 	return nil
 }
 
@@ -719,6 +720,47 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []*co
 		nextPage = lastNextPage
 	}
 	return records, hasMore, nextPage, nil
+}
+
+// recordName is the name a record answers to: host joined to the domain, or
+// the domain itself for the apex ("" or "@").
+func recordName(host, domain string) string {
+	if host == "" || host == "@" {
+		return domain
+	}
+	return host + "." + domain
+}
+
+// recordChanges describes what an update changes, "answer 192.0.2.1 →
+// 192.0.2.2", one entry per field whose value differs. The success line used
+// to say only "Updated record 12345", which named neither the record nor the
+// change (#238).
+func recordChanges(current *coreapigo.Record, body coreapigo.DNSUpdateRecordBody) []string {
+	var changes []string
+	add := func(field, was, now string) {
+		if was != now {
+			changes = append(changes, fmt.Sprintf("%s %s → %s", field, orNone(was), orNone(now)))
+		}
+	}
+	add("type", strings.ToUpper(derefStr(current.Type)), strings.ToUpper(string(body.Type)))
+	add("host", displayHost(current.Host), displayHost(body.Host))
+	add("answer", derefStr(current.Answer), body.Answer)
+	add("ttl", strconv.FormatInt(current.TTL, 10), strconv.FormatInt(derefInt64(body.TTL), 10))
+	prio := func(p *int64) string {
+		if p == nil {
+			return ""
+		}
+		return strconv.FormatInt(*p, 10)
+	}
+	add("priority", prio(current.Priority), prio(body.Priority))
+	return changes
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return output.None
+	}
+	return s
 }
 
 // hasPriority reports whether any of records is a type that has a priority.

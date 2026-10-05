@@ -346,7 +346,6 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return out.YAML(entry)
 	default:
 		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, createHost, createForwardsTo))
-		out.Hint(fmt.Sprintf("Run 'namecom url list %s' to see all forwardings", domain))
 	}
 	return nil
 }
@@ -498,8 +497,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(entry)
 	default:
-		out.Success(fmt.Sprintf("Updated URL forwarding %d", id))
-		out.Hint(fmt.Sprintf("Run 'namecom url list %s' to see all forwardings", domain))
+		out.Success(urlUpdateLine(id, current, body))
 	}
 	return nil
 }
@@ -530,8 +528,42 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
-	out.Hint(fmt.Sprintf("Run 'namecom url list %s' to see remaining forwardings", domain))
 	return nil
+}
+
+// urlUpdateLine names the forwarding an update changed and what changed:
+// "Updated URL forwarding 7 (go.example.com): forwards to https://a → https://b".
+// It said only "Updated URL forwarding 7" (#238).
+func urlUpdateLine(id int, current *coreapigo.URLForwardingResponse, body coreapigo.URLForwardingUpdate) string {
+	var changes []string
+	add := func(field, was, now string) {
+		if was != now {
+			if was == "" {
+				was = output.None
+			}
+			if now == "" {
+				now = output.None
+			}
+			changes = append(changes, fmt.Sprintf("%s %s → %s", field, was, now))
+		}
+	}
+	str := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	add("forwards to", current.ForwardsTo, str(body.ForwardsTo))
+	if body.Type != nil {
+		add("type", string(current.Type), string(*body.Type))
+	}
+	add("title", str(current.Title), str(body.Title))
+	add("meta", str(current.Meta), str(body.Meta))
+	line := fmt.Sprintf("Updated URL forwarding %d (%s)", id, displayHost(current.Host))
+	if len(changes) == 0 {
+		return line + ": no values changed"
+	}
+	return line + ": " + strings.Join(changes, ", ")
 }
 
 func urlRows(entries []*coreapigo.URLForwardingResponse) [][]string {

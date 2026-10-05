@@ -214,8 +214,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(key)
 	default:
-		out.Success(fmt.Sprintf("Added DNSSEC key (digest: %s)", key.Digest))
-		out.Hint(fmt.Sprintf("Run 'namecom dnssec list %s' to see all keys", domain))
+		out.Success(fmt.Sprintf("Added DNSSEC key tag %d to %s (algorithm %d, digest type %d, digest %s)",
+			body.KeyTag, domain, body.Algorithm, body.DigestType, body.Digest))
 	}
 	return nil
 }
@@ -243,7 +243,6 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Removed DNSSEC key from %s", domain))
-	out.Hint(fmt.Sprintf("Run 'namecom dnssec list %s' to see remaining keys", domain))
 	return nil
 }
 

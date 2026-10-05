@@ -598,8 +598,15 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		if renewed.TotalPaid != nil {
 			totalPaid = *renewed.TotalPaid
 		}
-		out.Success(fmt.Sprintf("Renewed %s (order #%d, total %s)", domainName, orderNum, output.Money(totalPaid)))
-		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to see the new expiry date", domainName))
+		// Name the new expiry when the response carries it; otherwise say where
+		// to find it.
+		if renewed.Domain != nil && renewed.Domain.ExpireDate != nil {
+			out.Success(fmt.Sprintf("Renewed %s until %s (order #%d, total %s)", domainName,
+				renewed.Domain.ExpireDate.Format("2006-01-02"), orderNum, output.Money(totalPaid)))
+		} else {
+			out.Success(fmt.Sprintf("Renewed %s (order #%d, total %s)", domainName, orderNum, output.Money(totalPaid)))
+			out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to see the new expiry date", domainName))
+		}
 	}
 	return nil
 }

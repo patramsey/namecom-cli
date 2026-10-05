@@ -611,7 +611,6 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Cancelled transfer of %s", domain))
-	out.Hint("Run 'namecom transfer list' to see remaining active transfers")
 	return nil
 }
 
