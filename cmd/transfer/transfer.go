@@ -344,7 +344,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if premium {
 		desc := fmt.Sprintf("transferring %s costs an unquoted price (premium)", domain)
 		if charged != nil {
-			desc = fmt.Sprintf("transferring %s costs $%.2f (premium)", domain, *charged)
+			desc = fmt.Sprintf("transferring %s costs %s (premium)", domain, output.Money(*charged))
 		}
 		if cmdutil.IsDryRun(cmd) && !createAccept {
 			out.Hint(desc + "; transferring it without the interactive prompt will require --accept-premium")
@@ -390,8 +390,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	default:
-		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total $%.2f)",
-			domain, result.Order, result.TotalPaid))
+		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total %s)",
+			domain, result.Order, output.Money(result.TotalPaid)))
 		// Nil-checked because the SDK types this as *Transfer where the
 		// generated client used a value. A response without a "transfer" key
 		// used to yield an empty status and no status line; unguarded here it
@@ -722,7 +722,7 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 	}
 	priceMsg := ""
 	if price != nil {
-		priceMsg = fmt.Sprintf(" for $%.2f", *price)
+		priceMsg = " for " + output.Money(*price)
 		if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
 			priceMsg += " plus WHOIS privacy"
 		}

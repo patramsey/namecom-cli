@@ -1024,24 +1024,37 @@ func expiryStyle(days float64) lipgloss.Style {
 	}
 }
 
-// relativeTime converts a floating-point day count into a human-readable
-// string, widening the unit as the distance grows.
-//
-// It used to speak only days, which is right near an expiry and useless far
-// from one: a domain paid through 2034 rendered as "in 2750 days", a number no
-// reader converts to anything meaningful. Days stay exact inside a quarter,
-// where renewal decisions actually happen; past that the unit widens. The
-// absolute date sits immediately before this string in every caller, so the
-// parenthetical only has to convey magnitude.
+// relativeTime is RelativeDays for an expiry date, where a date earlier
+// today has already passed: "expired today" rather than "today".
 func relativeTime(days float64) string {
+	if days < 0 && days > -1 {
+		return "expired today"
+	}
+	return RelativeDays(days)
+}
+
+// Relative phrases t relative to now — "in 5 months", "3 days ago" — with the
+// units RelativeDays picks.
+func Relative(t time.Time) string {
+	return RelativeDays(time.Until(t).Hours() / 24)
+}
+
+// RelativeDays phrases a span of days from now, negative for the past: "today",
+// "in 3 days", "5 months ago", "in 7 years". It is the one relative-time
+// helper; every date and message uses it.
+//
+// Units widen with distance: days under 60, months under 24, years beyond. A
+// date used to read "in 24 months" next to "in 5 months" and "in 7 years", and
+// the same expired domain was "2 years ago" in `domain list` but "expired 804
+// days ago" in `status` (#238). Days stay exact while a renewal decision is
+// near; far off, only the magnitude matters, and callers print the absolute
+// date beside it.
+func RelativeDays(days float64) string {
 	abs := days
 	if abs < 0 {
 		abs = -abs
 	}
-	switch {
-	case days < 0 && abs < 1:
-		return "expired today"
-	case days < 1 && days >= 0:
+	if abs < 1 {
 		return "today"
 	}
 	unit, n := humanizeDays(abs)
@@ -1052,16 +1065,16 @@ func relativeTime(days float64) string {
 }
 
 // humanizeDays picks the coarsest unit that still says something useful about a
-// span, and returns the count in that unit.
+// span, and returns the count in that unit. Each threshold is applied to the
+// rounded count, so no span reads as "60 days" or "24 months".
 func humanizeDays(abs float64) (unit string, n int) {
-	switch {
-	case abs <= 90:
-		return "day", int(abs + 0.5)
-	case abs < 730:
-		return "month", int(abs/30.44 + 0.5)
-	default:
-		return "year", int(abs/365.25 + 0.5)
+	if d := int(abs + 0.5); d < 60 {
+		return "day", d
 	}
+	if m := int(abs/30.44 + 0.5); m < 24 {
+		return "month", m
+	}
+	return "year", int(abs/365.25 + 0.5)
 }
 
 func plural(unit string, n int) string {
@@ -1097,17 +1110,46 @@ func PluralNoun(n int, noun string) string {
 
 // Thousands formats n with comma thousands separators: 6522 → "6,522".
 func Thousands(n int) string {
-	s := strconv.Itoa(n)
+	return groupDigits(strconv.Itoa(n))
+}
+
+// Decimal formats an amount to two places with thousands separators:
+// 100000 → "100,000.00".
+func Decimal(v float64) string {
+	return groupDigits(strconv.FormatFloat(v, 'f', 2, 64))
+}
+
+// Money formats a US-dollar amount: 100000 → "$100,000.00", -5 → "-$5.00".
+// Prices printed as "$100000.00", which is hard to read at a glance in a
+// prompt that is about to spend it (#238).
+func Money(v float64) string {
+	s := Decimal(v)
+	if strings.HasPrefix(s, "-") {
+		return "-$" + s[1:]
+	}
+	return "$" + s
+}
+
+// groupDigits inserts commas into the integer part of a formatted number,
+// leaving any sign, fraction, or non-numeric value ("NaN", "+Inf") alone.
+func groupDigits(s string) string {
 	sign := ""
 	if strings.HasPrefix(s, "-") {
 		sign, s = "-", s[1:]
 	}
+	intPart, frac, hasFrac := strings.Cut(s, ".")
+	if strings.Trim(intPart, "0123456789") != "" {
+		return sign + s
+	}
 	var b strings.Builder
-	for i, r := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
+	for i, r := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
 			b.WriteByte(',')
 		}
 		b.WriteRune(r)
+	}
+	if hasFrac {
+		b.WriteString("." + frac)
 	}
 	return sign + b.String()
 }

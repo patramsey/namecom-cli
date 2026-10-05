@@ -41,7 +41,8 @@ func TestRelativeTime(t *testing.T) {
 		{1.4, "in 1 day"},
 		{2.0, "in 2 days"},
 		{14.0, "in 14 days"},
-		{60.0, "in 60 days"},
+		{59.0, "in 59 days"},
+		{60.0, "in 2 months"},
 	}
 	for _, tt := range tests {
 		if got := relativeTime(tt.days); got != tt.want {
@@ -228,10 +229,10 @@ func TestExpiryDate_NoColor(t *testing.T) {
 		t.Errorf("ExpiryDate(20 days) = %q, want 'in 20 days'", got)
 	}
 
-	// Far future (≥ 30 days) — output contains "in N days".
+	// 60 days and beyond — months.
 	far := time.Now().Add(60 * 24 * time.Hour)
-	if got := c.ExpiryDate(&far); !strings.Contains(got, "in 60 days") {
-		t.Errorf("ExpiryDate(60 days) = %q, want 'in 60 days'", got)
+	if got := c.ExpiryDate(&far); !strings.Contains(got, "in 2 months") {
+		t.Errorf("ExpiryDate(60 days) = %q, want 'in 2 months'", got)
 	}
 }
 
@@ -861,10 +862,10 @@ func TestTTYPredicates_ReportNonTTYUnderTest(t *testing.T) {
 	}
 }
 
-// TestRelativeTimeWidensUnit guards the unit-widening thresholds. Day counts
-// are exact inside a quarter, where a renewal decision is actually pending;
-// past that they widen, because "in 2750 days" told a reader nothing about a
-// domain paid through 2034.
+// TestRelativeTimeWidensUnit guards the unit-widening thresholds: days under
+// 60, months under 24, years beyond (#238). "in 2750 days" told a reader
+// nothing about a domain paid through 2034, and the old thresholds produced
+// "in 24 months" next to "in 7 years".
 func TestRelativeTimeWidensUnit(t *testing.T) {
 	tests := []struct {
 		days float64
@@ -873,11 +874,13 @@ func TestRelativeTimeWidensUnit(t *testing.T) {
 		{0.5, "today"},
 		{-0.5, "expired today"},
 		{1, "in 1 day"},
-		{90, "in 90 days"},   // boundary: still exact days
-		{91, "in 3 months"},  // first step up
+		{59, "in 59 days"},    // boundary: still exact days
+		{59.6, "in 2 months"}, // rounds to 60 days, so months
+		{60, "in 2 months"},
 		{194, "in 6 months"}, // a real expiry from `domain list`
-		{729, "in 24 months"},
-		{730, "in 2 years"}, // boundary: months give way to years
+		{714, "in 23 months"},
+		{729, "in 2 years"}, // was "in 24 months"
+		{730, "in 2 years"},
 		{2750, "in 8 years"},
 		{-3, "3 days ago"},
 		{-1, "1 day ago"},
@@ -887,6 +890,32 @@ func TestRelativeTimeWidensUnit(t *testing.T) {
 		if got := relativeTime(tt.days); got != tt.want {
 			t.Errorf("relativeTime(%.1f) = %q, want %q", tt.days, got, tt.want)
 		}
+	}
+	// RelativeDays is the general form: no "expired" for a date earlier today.
+	if got := RelativeDays(-0.5); got != "today" {
+		t.Errorf("RelativeDays(-0.5) = %q, want today", got)
+	}
+}
+
+func TestMoney(t *testing.T) {
+	for _, tt := range []struct {
+		v    float64
+		want string
+	}{
+		{0, "$0.00"},
+		{12.99, "$12.99"},
+		{1000, "$1,000.00"},
+		{100000, "$100,000.00"},
+		{1234567.89, "$1,234,567.89"},
+		{-5, "-$5.00"},
+		{999.999, "$1,000.00"},
+	} {
+		if got := Money(tt.v); got != tt.want {
+			t.Errorf("Money(%v) = %q, want %q", tt.v, got, tt.want)
+		}
+	}
+	if got := Decimal(8625); got != "8,625.00" {
+		t.Errorf("Decimal(8625) = %q", got)
 	}
 }
 

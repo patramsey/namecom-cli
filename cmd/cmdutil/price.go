@@ -44,12 +44,12 @@ func CheckMaxPrice(cmd *cobra.Command, maxPrice float64, what string, price *flo
 		return err
 	}
 	if price == nil {
-		return usagef("no price was quoted for %s, so --max-price $%.2f cannot be checked; nothing was sent", what, maxPrice)
+		return usagef("no price was quoted for %s, so --max-price %s cannot be checked; nothing was sent", what, output.Money(maxPrice))
 	}
 	// Compared in cents, so a quote of 17.99 is not "above" a cap of 17.99
 	// because of how either was parsed.
 	if math.Round(*price*100) > math.Round(maxPrice*100) {
-		return usagef("%s costs $%.2f, above --max-price $%.2f; nothing was sent", what, *price, maxPrice)
+		return usagef("%s costs %s, above --max-price %s; nothing was sent", what, output.Money(*price), output.Money(maxPrice))
 	}
 	return nil
 }

@@ -49,10 +49,10 @@ func TestPricing_ReportsNonStandardPurchase(t *testing.T) {
 
 	t.Run("table", func(t *testing.T) {
 		stdout, stderr := run(t, "aftermarket_s", func(*output.Config) {})
-		if !strings.Contains(stdout, "$8625.00 flat (aftermarket_s)") {
+		if !strings.Contains(stdout, "$8,625.00 flat (aftermarket_s)") {
 			t.Errorf("the Register row must quote the acquisition price, got:\n%s", stdout)
 		}
-		if !strings.Contains(stderr, "$8625.00") || !strings.Contains(stderr, "$17.99") {
+		if !strings.Contains(stderr, "$8,625.00") || !strings.Contains(stderr, "$17.99") {
 			t.Errorf("want a warning naming both prices on stderr, got %q", stderr)
 		}
 	})

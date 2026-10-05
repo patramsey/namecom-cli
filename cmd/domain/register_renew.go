@@ -82,9 +82,9 @@ func init() {
 // job is to state the amount correctly.
 func formatTermPrice(price float64, years int) string {
 	if years <= 1 {
-		return fmt.Sprintf("$%.2f/yr", price)
+		return output.Money(price) + "/yr"
 	}
-	return fmt.Sprintf("$%.2f total for %d years", price, years)
+	return fmt.Sprintf("%s total for %d years", output.Money(price), years)
 }
 
 func runRegister(cmd *cobra.Command, args []string) error {
@@ -334,7 +334,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		if created.Domain != nil && created.Domain.DomainName != "" {
 			registered = created.Domain.DomainName
 		}
-		out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", registered, created.Order, created.TotalPaid))
+		out.Success(fmt.Sprintf("Registered %s (order #%d, total %s)", registered, created.Order, output.Money(created.TotalPaid)))
 		// A new registration can trigger ICANN contact verification, and an
 		// unverified contact can get the domain registry-locked (typically 15
 		// days). The verification record is not queryable for ~10 minutes after
@@ -367,7 +367,7 @@ func priceOrUnquoted(p *float64) string {
 	if p == nil {
 		return "an unquoted price"
 	}
-	return fmt.Sprintf("$%.2f", *p)
+	return output.Money(*p)
 }
 
 // registerPrompt is the purchase confirmation for body. The price it quotes
@@ -393,15 +393,15 @@ func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, prici
 		if years != 1 {
 			note = fmt.Sprintf("; --years %d may not apply", years)
 		}
-		return fmt.Sprintf("Register %s at $%.2f flat (%s, not per year%s)?",
-			domainName, *body.PurchasePrice, *body.PurchaseType, note)
+		return fmt.Sprintf("Register %s at %s flat (%s, not per year%s)?",
+			domainName, output.Money(*body.PurchasePrice), *body.PurchaseType, note)
 	case body.PurchasePrice != nil && pricing.GetPremium():
 		// A registry premium is charged on this purchase, and the renewal price
 		// is often far lower — shoe.luxe is $1000.00 to register and $24.99 to
 		// renew. "/yr" on the purchase price read as $1000 every year (#132).
 		// Both figures are totals for the requested term (PricingResponse), so
 		// a multi-year term reuses formatTermPrice's "total for N years".
-		price = fmt.Sprintf("$%.2f", *body.PurchasePrice)
+		price = output.Money(*body.PurchasePrice)
 		if years > 1 {
 			price += fmt.Sprintf(" total for %d years", years)
 		}
@@ -415,7 +415,7 @@ func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, prici
 	case pricing.GetPurchasePrice() != nil:
 		price = formatTermPrice(*pricing.PurchasePrice, years)
 	}
-	return fmt.Sprintf("Register %s for %d year(s) at %s?", domainName, years, price)
+	return fmt.Sprintf("Register %s for %s at %s?", domainName, output.Plural(years, "year"), price)
 }
 
 // renewPrompt is the renewal confirmation for body, quoting the price body
@@ -435,7 +435,7 @@ func renewPrompt(domainName string, body coreapigo.DomainsRenewDomainBody, stand
 	case standard != nil:
 		price = formatTermPrice(*standard, years)
 	}
-	return fmt.Sprintf("Renew %s for %d year(s) at %s?", domainName, years, price)
+	return fmt.Sprintf("Renew %s for %s at %s?", domainName, output.Plural(years, "year"), price)
 }
 
 // registerQuote is the price line the guided form shows, from the
@@ -598,7 +598,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		if renewed.TotalPaid != nil {
 			totalPaid = *renewed.TotalPaid
 		}
-		out.Success(fmt.Sprintf("Renewed %s (order #%d, total $%.2f)", domainName, orderNum, totalPaid))
+		out.Success(fmt.Sprintf("Renewed %s (order #%d, total %s)", domainName, orderNum, output.Money(totalPaid)))
 		out.Hint(fmt.Sprintf("Run 'namecom domain get %s' to see the new expiry date", domainName))
 	}
 	return nil

@@ -47,6 +47,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain check` is dim text instead of a `→` line, and the `==>` lines in
   `domain register` and `domain renew` are now spinner text. The insecure
   config-permissions warning starts with `!` instead of `warning:`.
+- Dates and numbers read the same everywhere. Relative times use days under
+  60, months under 24 and years beyond, so nothing reads "in 24 months";
+  `status` says an expired domain "expired 2 years ago", as `domain list`
+  does, rather than "expired 804 days ago", and its expiring list reads
+  "(in 3 days)". The transfer-lock refusal from `domain lock off` shows
+  "until 2026-11-28 (in 2 months)" instead of the API's raw timestamp. Prices
+  and counts have thousands separators (`$100,000.00`, `6,522 domains`), and
+  plurals are spelled out: "Register example.com for 1 year", "Refunded
+  $29.98 for 2 items", "Imported 3 records". **Scripts** matching prompt,
+  success or error text containing large prices or `(s)` plurals need
+  updating; JSON and YAML values are unchanged.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

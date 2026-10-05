@@ -1425,7 +1425,7 @@ func TestDNSImport_EmptyFileIsNoOp(t *testing.T) {
 			if err := runImport(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("importing %q must be a no-op, got: %v", payload, err)
 			}
-			if !strings.Contains(stdout.String(), "Imported 0 record(s)") {
+			if !strings.Contains(stdout.String(), "Imported 0 records") {
 				t.Errorf("expected a zero-record import, got: %q", stdout.String())
 			}
 		})

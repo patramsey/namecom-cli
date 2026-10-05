@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -106,7 +107,7 @@ func onOff(b bool) string {
 // transferLockError is the API's refusal to change `locked` during the 60-day
 // transfer lock, restated. The API answers "Invalid Argument (Domain can not
 // be unlocked until 2026-11-28 06:37:39)", which says neither why nor that the
-// lock lifts by itself. The date is the API's, kept verbatim. It unwraps to
+// lock lifts by itself. The date is shown by lockDate. It unwraps to
 // the *api.APIError, so the exit code is unchanged.
 type transferLockError struct {
 	domain, until string
@@ -115,12 +116,26 @@ type transferLockError struct {
 }
 
 func (e *transferLockError) Error() string {
+	until := lockDate(e.until)
 	if e.locking {
 		return fmt.Sprintf("%s is already transfer-locked: it is in the 60-day lock that follows a registration or transfer, "+
-			"and the API refuses any change to the lock, even to restate it, until %s", e.domain, e.until)
+			"and the API refuses any change to the lock, even to restate it, until %s", e.domain, until)
 	}
 	return fmt.Sprintf("%s cannot be unlocked until %s: it is in the 60-day transfer lock that follows a registration or transfer",
-		e.domain, e.until)
+		e.domain, until)
+}
+
+// lockDate renders the API's lock-expiry timestamp as a date with a relative
+// time, "2026-11-28 (in 2 months)", the way every other date is shown. The
+// raw value read "until 2026-11-28T06:37:39Z" (#238). One that does not
+// parse is shown as the API sent it.
+func lockDate(s string) string {
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Format("2006-01-02") + " (" + output.Relative(t) + ")"
+		}
+	}
+	return s
 }
 
 func (e *transferLockError) Unwrap() error { return e.err }
@@ -495,7 +510,7 @@ func warnUnverifiedContacts(out *output.Config, c coreapigo.Contacts) {
 		return
 	}
 	out.WarnBox(
-		fmt.Sprintf("Unverified contact(s): %s", strings.Join(pending, ", ")),
+		fmt.Sprintf("Unverified %s: %s", output.PluralNoun(len(pending), "contact"), strings.Join(pending, ", ")),
 		"ICANN requires contact verification. If it is not completed by the deadline",
 		"(typically 15 days from when it was triggered) the registry may LOCK the domain.",
 		"Check the inbox for the verification email — name.com can resend it.",
@@ -696,7 +711,7 @@ func runPricing(cmd *cobra.Command, args []string) error {
 		if p == nil {
 			return "N/A"
 		}
-		return fmt.Sprintf("$%.2f", *p)
+		return output.Money(*p)
 	}
 	register := fmtPrice(pricing.PurchasePrice)
 	if acq != nil {

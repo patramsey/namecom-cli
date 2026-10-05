@@ -287,7 +287,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		itemIDs = append(itemIDs, n)
 	}
 	if len(dropped) > 0 {
-		out.Warn("ignoring duplicate item ID(s): " + strings.Join(dropped, ", "))
+		out.Warn("ignoring duplicate item " + output.PluralNoun(len(dropped), "ID") + ": " + strings.Join(dropped, ", "))
 	}
 
 	body := coreapigo.RefundRequest{
@@ -367,7 +367,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		}
 	default:
 		if refunded > 0 {
-			out.Success(fmt.Sprintf("Refunded $%.2f for %d item(s)", result.TotalRefundAmount, refunded))
+			out.Success(fmt.Sprintf("Refunded %s for %s", output.Money(result.TotalRefundAmount), output.Plural(refunded, "item")))
 		}
 		for _, p := range problems {
 			out.Warn(p)
@@ -376,7 +376,11 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	if failed > 0 {
 		// Exit 1: the request was valid and authorized, the API declined part
 		// of it — a runtime outcome, not a usage or credential problem.
-		return fmt.Errorf("%d of %d item(s) were not refunded", failed, len(result.Results))
+		verb := "were"
+		if failed == 1 {
+			verb = "was"
+		}
+		return fmt.Errorf("%d of %s %s not refunded", failed, output.Plural(len(result.Results), "item"), verb)
 	}
 	return nil
 }
@@ -408,9 +412,9 @@ func conflictRefundResult(err error) *coreapigo.RefundResponse {
 // rather than guessing at a symbol we may not have.
 func formatAmount(amount float64, currency *string) string {
 	if currency == nil || *currency == "" || strings.EqualFold(*currency, "USD") {
-		return fmt.Sprintf("$%.2f", amount)
+		return output.Money(amount)
 	}
-	return fmt.Sprintf("%.2f %s", amount, strings.ToUpper(*currency))
+	return output.Decimal(amount) + " " + strings.ToUpper(*currency)
 }
 
 func derefInt(n *int) int {

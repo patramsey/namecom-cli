@@ -666,9 +666,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.
 			if created > 0 {
-				out.Warn(fmt.Sprintf("%d of %d record(s) were already created on %s before this failure — "+
+				out.Warn(fmt.Sprintf("%d of %s were already created on %s before this failure — "+
 					"remove them from the file or delete them before retrying, or the retry will duplicate them",
-					created, len(records), domain))
+					created, output.Plural(len(records), "record"), domain))
 			}
 			return fmt.Errorf("creating %s %s (after %d of %d succeeded): %w",
 				body.Type, body.Host, created, len(records), err)
@@ -681,7 +681,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		// parses every request at once rather than a stream of them.
 		return out.DryRunAll(previews)
 	}
-	out.Success(fmt.Sprintf("Imported %d record(s) to %s", created, domain))
+	out.Success(fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain))
 	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to verify the imported records", domain))
 	return nil
 }

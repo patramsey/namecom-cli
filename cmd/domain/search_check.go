@@ -75,7 +75,7 @@ func inlineRegister(cmd *cobra.Command, r *coreapigo.SearchResult) error {
 	if created.Domain != nil && created.Domain.DomainName != "" {
 		registered = created.Domain.DomainName
 	}
-	out.Success(fmt.Sprintf("Registered %s (order #%d, total $%.2f)", registered, created.Order, created.TotalPaid))
+	out.Success(fmt.Sprintf("Registered %s (order #%d, total %s)", registered, created.Order, output.Money(created.TotalPaid)))
 	out.Hint(fmt.Sprintf("Run 'namecom dns list %s' to add DNS records", registered))
 	out.Hint(fmt.Sprintf("Run 'namecom domain autorenew on %s' to enable auto-renewal", registered))
 	return nil
@@ -125,15 +125,15 @@ func checkRegisterPrompt(r *coreapigo.SearchResult) string {
 func searchPriceLabel(r *coreapigo.SearchResult) string {
 	price := *r.PurchasePrice
 	if pt, _ := nonDefaultPurchaseType(r); pt != nil {
-		return fmt.Sprintf("$%.2f flat (%s)", price, *pt)
+		return fmt.Sprintf("%s flat (%s)", output.Money(price), *pt)
 	}
 	if derefBool(r.Premium) {
 		if r.RenewalPrice != nil {
-			return fmt.Sprintf("$%.2f (renews $%.2f/yr)", price, *r.RenewalPrice)
+			return fmt.Sprintf("%s (renews %s/yr)", output.Money(price), output.Money(*r.RenewalPrice))
 		}
-		return fmt.Sprintf("$%.2f", price)
+		return output.Money(price)
 	}
-	return fmt.Sprintf("$%.2f/yr", price)
+	return output.Money(price) + "/yr"
 }
 
 var searchCmd = &cobra.Command{
