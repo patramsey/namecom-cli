@@ -41,7 +41,7 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 	// and ignore --color: `--help --color=never` still printed escapes (#237).
 	// The flags are parsed by now; a bad value falls back to the default here
 	// and is reported by any real command.
-	out, err := buildOutputConfig()
+	out, _, err := buildOutputConfig()
 	if err != nil {
 		out = output.DefaultConfig()
 	}
@@ -444,7 +444,7 @@ func printFlags(w io.Writer, fs *pflag.FlagSet, width int, style func(lipgloss.S
 			if _, ok := f.Annotations[cmdutil.BoolValue]; ok || f.DefValue == "true" {
 				typHint = "=true|false"
 			}
-		case f.Value.Type() == "stringArray":
+		case f.Value.Type() == "stringArray", f.Value.Type() == "stringSlice":
 			typHint = " strings"
 		default:
 			typHint = " " + f.Value.Type()

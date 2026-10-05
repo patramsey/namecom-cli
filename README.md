@@ -301,15 +301,73 @@ until you pass `--yes`.
 
 ## Output formats
 
-Every command supports `--output table`, `--output json`, and `--output yaml`.
-The default is `table` in a terminal and `json` when output is piped or
-redirected:
+Every command supports `--output table`, `--output json`, `--output yaml`
+and `--output tsv`. The default is `table` in a terminal and `json` when
+output is piped or redirected:
 
 ```bash
 namecom domain list                     # rich table with colors and expiry urgency
 namecom domain list --output json       # machine-readable JSON
+namecom domain list --output tsv        # the table's columns, tab-separated
 namecom domain list --quiet             # one domain per line, for scripting
 ```
+
+`namecom help formatting` covers everything in this section, with examples.
+
+### Picking fields, jq, and TSV
+
+`--fields a,b,c` keeps only those keys — the JSON keys `-o json` shows — of
+each list item, or of the object a command prints, in that order. A list
+keeps its `{"data": [...]}` envelope, so `nextPage` and `total` are still
+there. It works with every `-o`: in a table or TSV the fields are the
+columns.
+
+```bash
+namecom domain list --all --fields domainName,expireDate -o tsv --no-header |
+  while IFS=$'\t' read -r name expires; do echo "$name $expires"; done
+namecom dns list example.com --fields id,type,host,answer -o table
+```
+
+An item without a field gets `null` for it (an empty TSV cell): the API
+leaves out empty values, so items do not all have the same keys. A field
+that no item has is a usage error (exit 2) that lists the fields there are.
+`--fields` names top-level keys only; reach into nested ones with `--jq`.
+
+`--jq <expr>` runs a jq expression over the document `-o json` would print,
+with an embedded jq ([gojq](https://github.com/itchyny/gojq)), so `jq` need
+not be installed. Each result prints on its own line: a string as itself,
+without quotes (as `jq -r` and `gh --jq` print it), anything else as compact
+JSON. gojq prints an object's keys sorted.
+
+```bash
+namecom domain list --all --jq '.data[] | select(.locked | not) | .domainName'
+id=$(namecom dns create example.com --type A --answer 192.0.2.1 --yes --jq .id)
+namecom dns create example.com --type A --answer 192.0.2.1 --dry-run --jq .body
+```
+
+`--jq` means JSON: without `-o` it prints JSON in a terminal too, and with
+`-o table`, `yaml` or `tsv` it is a usage error. With `--fields`, the fields
+are picked first. A malformed expression is a usage error with gojq's
+message, reported before the command sends anything. An expression that
+fails on the output, and an unknown field, are usage errors too, with
+nothing printed — except after a write, where the change has been made:
+the output is printed unfiltered, with a warning, and the exit code is 0.
+Both flags act on stdout only; a failing command prints its error envelope
+on stderr with its usual exit code.
+
+`-o tsv` prints a table's columns as tab-separated values, with a header row
+unless `--no-header`. There is no colour, a date has no "(in 3 months)", and
+a missing value is an empty cell, not "—". A backslash, tab, line feed or
+carriage return in a value is written `\\`, `\t`, `\n` or `\r`, so every row
+is one line. A command that shows one object (`domain get`) prints
+`field<TAB>value` rows; a write prints its result's keys the same way
+(`changed<TAB>true`); a dry run prints `method`, `path` and `body` (as
+compact JSON) columns. `status` and `version`, whose terminal output is a
+report rather than a table, print that report; use `--fields` or `--jq`
+with them.
+
+`-q` still wins over `-o`, `tsv` included. With `--fields` or `--jq`, which
+choose what to print as well, it is a usage error.
 
 `-q`/`--quiet` follows one rule whatever `--output` says: lists print one ID
 or name per line, create commands print the new resource's ID, other writes
@@ -547,7 +605,9 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 
 | Flag | Default | Description |
 |---|---|---|
-| `-o, --output` | `table` in TTY, `json` otherwise | Output format: `table`, `json`, `yaml` |
+| `-o, --output` | `table` in TTY, `json` otherwise | Output format: `table`, `json`, `yaml`, `tsv` |
+| `--fields` | | Keep only these keys of each list item, or of the object, in this order — see [Picking fields, jq, and TSV](#picking-fields-jq-and-tsv) |
+| `--jq` | | Filter the JSON output with a jq expression; strings print unquoted |
 | `-q, --quiet` | | Script output: lists print one ID or name per line, creates the new ID, other writes nothing — see [Output formats](#output-formats) |
 | `-y, --yes` | | Skip all confirmation prompts; required for writes when not in a terminal |
 | `--dry-run` | | Print the request a write would send, without sending it — a JSON document in JSON mode. Reads are unaffected |
@@ -559,7 +619,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `--timeout` | `30s` | Total time budget for one API call, retries included |
 | `--debug` | | Log HTTP requests/responses to stderr (token and auth codes redacted) |
 | `--debug-file` | | Log HTTP requests/responses to a file (appends; useful as an audit log) |
-| `--no-header` | | Omit the header row from table output |
+| `--no-header` | | Omit the header row from table and TSV output |
 | `--idempotency-key` | a fresh key per write | Pin every write in this invocation to one key, so re-running the same command after a failure can be recognized as a retry by endpoints that honor idempotency keys — see [Idempotency keys](#idempotency-keys) |
 | `--username` | | API username (overrides config and `NAMECOM_USERNAME`) |
 | `--token` | | API token (overrides config and `NAMECOM_TOKEN`) |

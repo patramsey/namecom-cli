@@ -294,8 +294,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
 			return nil
 		}
-		if filtered {
-			// Filtered: single flat table.
+		// Filtered, or TSV, where a section heading would be read as a row:
+		// a single flat table.
+		if filtered || out.Format == output.FormatTSV {
 			headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
 			if hasPriority(records) {
 				headers = append(headers, "PRIORITY")

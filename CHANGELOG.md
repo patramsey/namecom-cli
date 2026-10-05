@@ -90,6 +90,27 @@ parse; table output is unchanged.
   effect only for `order refund` — and says that the rest ignore it.
 
 ### Added
+- `--fields a,b,c`, a global flag, keeps only those keys of each list item,
+  or of the object a command prints, in that order. A list keeps its
+  `{"data": [...]}` envelope. It works with every `-o`: in a table or TSV
+  the fields are the columns, so
+  `domain list --fields domainName,expireDate -o tsv` prints two columns.
+  A field that no item has is a usage error (exit 2) listing the fields
+  there are (#241).
+- `--jq <expr>`, a global flag, filters the JSON document `-o json` would
+  print with an embedded jq ([gojq](https://github.com/itchyny/gojq)), so
+  jq need not be installed. A string result prints without quotes, like
+  `jq -r`; anything else as compact JSON, one result per line. A malformed
+  expression, `--jq` with `-o table`, `yaml` or `tsv`, and `-q` with
+  `--jq` or `--fields` are usage errors, caught before anything is sent.
+  Errors still go to stderr in the error envelope (#241).
+- `-o tsv`: a table's columns as tab-separated values, with a header row
+  unless `--no-header`, no colour, dates without the relative phrase, and
+  tabs, line breaks and backslashes in a value escaped as `\t`, `\n`, `\r`
+  and `\\`. A command that shows one object prints `field<TAB>value` rows
+  (#241).
+- `namecom help formatting` documents output formats, `--fields`, `--jq`
+  and TSV, with examples.
 - `domain check` takes any number of names. The API answers at most 50 per
   request, so a longer list is sent 50 at a time, one batch after another,
   and the results come back as one table (or one `{"data": [...]}` list)

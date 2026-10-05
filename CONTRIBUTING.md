@@ -133,6 +133,11 @@ or change a command's JSON:
   README's table. Adding a type is a contract change; so is renaming a key.
 - Encode through `out.JSON`, not `encoding/json` directly: it turns HTML
   escaping off, including for SDK types that marshal themselves.
+- `--fields` and `--jq` need nothing from a command: it runs in JSON mode
+  and the root filters what it printed. `-o tsv` reaches the table branch
+  (the `default:` of the format switch), so print tables with `out.Table`
+  and `out.KVTable`, which write TSV in that mode; a heading or blank line
+  written straight to `out.Writer` would land in the TSV as a row.
 
 Anything that breaks one of these rules goes in the CHANGELOG under
 "Breaking for scripts", with the output before and after.

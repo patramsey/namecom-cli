@@ -53,6 +53,8 @@ type globalFlags struct {
 	dryRun    bool
 	idempKey  string
 	baseURL   string
+	jq        string
+	fields    []string
 }
 
 var gf globalFlags
@@ -135,7 +137,14 @@ func Execute() {
 // the outcome on stderr: the error, or on success any warnings JSON and YAML
 // modes kept back (#240). Execute is this plus os.Exit, so tests call run.
 func run() int {
-	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
+	err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute()))
+	// --fields and --jq print the command's output once it has returned,
+	// failed or not: `dns sync` prints a document when a change fails. The
+	// command's own error is the one reported.
+	if ferr := endFilter(); err == nil {
+		err = ferr
+	}
+	if err != nil {
 		return reportError(errorOutput(), err)
 	}
 	if resolvedOut != nil {
@@ -247,9 +256,11 @@ func init() {
 	pf.StringVar(&gf.username, "username", "", "API username (env: NAMECOM_USERNAME)")
 	pf.StringVar(&gf.token, "token", "", "API token (env: NAMECOM_TOKEN)")
 	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com) (env: NAMECOM_SANDBOX)")
-	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml (default: table in TTY, json otherwise)")
+	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml, tsv (default: table in TTY, json otherwise)")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "script output, whatever --output says: lists print one ID/name per line, creates the new ID, other writes nothing")
-	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
+	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table and TSV output")
+	pf.StringSliceVar(&gf.fields, "fields", nil, "keep only these keys of each list item, or of the object, in this order (see 'namecom help formatting')")
+	pf.StringVar(&gf.jq, "jq", "", "filter the JSON output with a jq expression; strings print unquoted (see 'namecom help formatting')")
 	pf.BoolVar(&gf.wide, "wide", false, "keep every table column even if it overflows the terminal")
 	pf.StringVar(&gf.color, "color", "auto", "colorize output: auto, always, never (env: NO_COLOR, CLICOLOR_FORCE)")
 	pf.DurationVar(&gf.timeout, "timeout", 30*time.Second, "total time budget for one API call, retries included")
@@ -263,7 +274,7 @@ func init() {
 	// Root help lists these under headings, not as one block of 19 (#237).
 	// Unlisted flags, the ones nearly every write uses, come first.
 	for section, names := range map[string][]string{
-		"Output":      {"output", "quiet", "no-header", "wide", "color"},
+		"Output":      {"output", "fields", "jq", "quiet", "no-header", "wide", "color"},
 		"Credentials": {"profile", "username", "token", "sandbox"},
 		"Advanced":    {"timeout", "debug", "debug-file", "idempotency-key", "base-url"},
 	} {
@@ -275,7 +286,7 @@ func init() {
 	// Flag values the shell can offer; without these, TAB after -o, --color
 	// or --profile completed filenames (#187).
 	_ = rootCmd.RegisterFlagCompletionFunc("output",
-		cobra.FixedCompletions([]string{"table", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp))
+		cobra.FixedCompletions([]string{"table", "json", "yaml", "tsv"}, cobra.ShellCompDirectiveNoFileComp))
 	_ = rootCmd.RegisterFlagCompletionFunc("color",
 		cobra.FixedCompletions([]string{"auto", "always", "never"}, cobra.ShellCompDirectiveNoFileComp))
 	_ = rootCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
@@ -340,9 +351,12 @@ func completionClient(cmd *cobra.Command) (*api.Client, error) {
 // command context. It runs for every command, including those that skip API
 // credential setup (auth, version, etc.).
 func initOutputContext(cmd *cobra.Command) error {
-	out, err := buildOutputConfig()
+	out, filter, err := buildOutputConfig()
 	if err != nil {
 		return err
+	}
+	if filter != nil {
+		out.BeginFilter(filter)
 	}
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOutput, out))
 	// Remember it for Execute's error path. That path ran before this config
@@ -356,22 +370,27 @@ func initOutputContext(cmd *cobra.Command) error {
 	return nil
 }
 
-// buildOutputConfig applies the parsed output flags to the default config.
-func buildOutputConfig() (*output.Config, error) {
+// buildOutputConfig applies the parsed output flags to the default config,
+// and returns the --fields/--jq filter they ask for, or nil.
+func buildOutputConfig() (*output.Config, *output.Filter, error) {
 	out := output.DefaultConfig()
 	// Bad --output/--color values are invocation mistakes, not runtime failures:
 	// classify them so they exit 2 like any other usage error.
 	if gf.output != "" {
 		f, err := output.ParseFormat(gf.output)
 		if err != nil {
-			return nil, cmdutil.NewUsageError(err)
+			return nil, nil, cmdutil.NewUsageError(err)
 		}
 		out.Format = f
+	}
+	filter, err := buildFilter(out)
+	if err != nil {
+		return nil, nil, cmdutil.NewUsageError(err)
 	}
 	if gf.color != "auto" {
 		cm, err := output.ParseColorMode(gf.color)
 		if err != nil {
-			return nil, cmdutil.NewUsageError(err)
+			return nil, nil, cmdutil.NewUsageError(err)
 		}
 		out.Color = cm
 	}
@@ -379,7 +398,63 @@ func buildOutputConfig() (*output.Config, error) {
 	out.QuietMode = gf.quiet
 	out.NoHeader = gf.noHeader
 	out.Wide = gf.wide
-	return out, nil
+	return out, filter, nil
+}
+
+// buildFilter checks --fields and --jq against the other output flags and
+// returns the filter they ask for, or nil when neither is set (#241). --jq
+// sets out's format to JSON when -o did not name one. Everything that can be
+// wrong with them on the command line is caught here, before the command
+// runs, so a mistyped expression never follows a write it was meant to filter.
+func buildFilter(out *output.Config) (*output.Filter, error) {
+	if gf.jq == "" && len(gf.fields) == 0 {
+		return nil, nil
+	}
+	// -q prints one chosen value per line; --fields and --jq choose
+	// something else. Neither can win without surprising someone.
+	if gf.quiet {
+		names := "--jq"
+		if len(gf.fields) > 0 {
+			names = "--fields"
+		}
+		return nil, fmt.Errorf("--quiet cannot be combined with %s: -q prints one ID or name per line; use --jq to pick a value instead", names)
+	}
+	f := &output.Filter{}
+	if len(gf.fields) > 0 {
+		fields, err := output.ParseFields(gf.fields)
+		if err != nil {
+			return nil, err
+		}
+		f.Fields = fields
+	}
+	if gf.jq != "" {
+		// jq reads JSON and prints JSON, so another -o is a contradiction,
+		// as it is in gh. Without -o it is JSON, in a terminal too.
+		if gf.output != "" && out.Format != output.FormatJSON {
+			return nil, fmt.Errorf("--jq filters JSON, so it cannot be combined with -o %s; leave out -o, or use --fields with -o %s", out.Format, out.Format)
+		}
+		out.Format = output.FormatJSON
+		code, err := output.CompileJQ(gf.jq)
+		if err != nil {
+			return nil, err
+		}
+		f.JQ = code
+	}
+	return f, nil
+}
+
+// endFilter prints the output --fields or --jq filtered, if either was
+// given. A filter that does not fit the output is a usage error, except
+// after a write, which output.Config.EndFilter reports as a warning.
+func endFilter() error {
+	if resolvedOut == nil {
+		return nil
+	}
+	err := resolvedOut.EndFilter(resolvedClient.SentWrite())
+	if _, ok := errors.AsType[*output.FilterError](err); ok {
+		return cmdutil.NewUsageError(err)
+	}
+	return err
 }
 
 // resolvedOut is the output config built by initOutputContext, retained so the
@@ -411,7 +486,7 @@ func errorOutput() *output.Config {
 	if gf.output == "" {
 		gf.output = scanOutputFlag(os.Args[1:])
 	}
-	if out, err := buildOutputConfig(); err == nil {
+	if out, _, err := buildOutputConfig(); err == nil {
 		return out
 	}
 	return output.DefaultConfig()
