@@ -59,6 +59,21 @@ parse; table output is unchanged.
 - **Nothing is HTML-escaped.** A TXT record's `"a<b & c>d"` came out with
   `<`, `>` and `&` as `\u` escapes; it prints as written. Both forms decode
   to the same string, so only a script matching the raw text is affected.
+- **A write whose outcome is unknown exits 6, and names its idempotency
+  key** (#243). When a request that changes something got a 5xx, or timed
+  out or lost its connection after it was sent, the CLI exited 1 with
+  `Internal Error`, and the `X-Idempotency-Key` it had sent was never shown,
+  so `--idempotency-key` helped only if it had been pinned in advance.
+  Before: exit 1, `{"error": {"message": "Internal Error"}, "hint": "name.com
+  failed while handling this change, …"}`. After: exit 6,
+  `{"error": {"type": "api", "status": 500, "message": "Internal Error", "hint": "outcome unknown; re-run with --idempotency-key 1d5973ca-… — but check first whether the change was made, since most endpoints ignore the key", "idempotencyKey": "1d5973ca-…"}, …}`.
+  Table mode shows the same hint. A script that treated every non-zero exit
+  other than 2–5 as 1 should handle 6. This applies whether or not the
+  command marked the request as a write: it is decided from the HTTP
+  method, so a read's 5xx still says it is safe to retry and a write's
+  never does. The README's new "Idempotency keys" section lists which
+  endpoints honour the key — five declare it, and the API documents its
+  effect only for `order refund` — and says that the rest ignore it.
 
 ### Added
 - `domain check` takes any number of names. The API answers at most 50 per

@@ -34,6 +34,9 @@ type retryTransport struct {
 	// onRetry, when set, is called just before sleeping between attempts so the
 	// caller can surface "retrying…" feedback to the user.
 	onRetry func(Retry)
+	// writes, when set, records each request's final result, so a write
+	// whose outcome is unknown can be recognised; see Client.OutcomeUnknown.
+	writes *writeLog
 }
 
 // Retry describes a retry the transport is about to make, for Options.OnRetry.
@@ -164,6 +167,19 @@ func idempotent(req *http.Request) bool {
 }
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var sent bool
+	resp, err := t.roundTrip(req, &sent)
+	// A request that never left — the rate limiter's wait outlasted the
+	// deadline, or the body could not be read — has a known outcome.
+	if t.writes != nil && sent {
+		t.writes.record(req, resp, err)
+	}
+	return resp, err
+}
+
+// roundTrip is RoundTrip's retry loop. It sets *sent once an attempt has been
+// handed to the base transport.
+func (t *retryTransport) roundTrip(req *http.Request, sent *bool) (*http.Response, error) {
 	ctx := req.Context()
 
 	// Capture the body so it can be replayed on each attempt. The generated
@@ -199,6 +215,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		start := time.Now()
 		t.logRequest(req, attempt, start)
+		*sent = true
 		resp, err := t.base.RoundTrip(req)
 		lastResp, lastErr = resp, err
 

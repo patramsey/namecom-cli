@@ -58,12 +58,12 @@ func runContract(t *testing.T, args ...string) (stdout, stderr string, code int)
 		t.Fatal(err)
 	}
 	prevOut, prevErr := os.Stdout, os.Stderr
-	prevGF, prevResolved := gf, resolvedOut
+	prevGF, prevResolved, prevClient := gf, resolvedOut, resolvedClient
 	os.Stdout, os.Stderr = outF, errF
-	resolvedOut = nil
+	resolvedOut, resolvedClient = nil, nil
 	t.Cleanup(func() {
 		os.Stdout, os.Stderr = prevOut, prevErr
-		gf, resolvedOut = prevGF, prevResolved
+		gf, resolvedOut, resolvedClient = prevGF, prevResolved, prevClient
 		rootCmd.SetArgs(nil)
 		_ = outF.Close()
 		_ = errF.Close()

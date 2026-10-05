@@ -370,6 +370,7 @@ func TestRootHelp_ListsExitCodes(t *testing.T) {
 		"3  authentication",
 		"4  not found",
 		"5  rate limited",
+		"6  write outcome unknown",
 	} {
 		if !strings.Contains(rootCmd.Long, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, rootCmd.Long)

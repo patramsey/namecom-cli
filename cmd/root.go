@@ -74,7 +74,8 @@ Exit codes:
   2  usage error: a bad command, flag, argument or value
   3  authentication: credentials missing, failing or rejected, or access denied
   4  not found
-  5  rate limited`
+  5  rate limited
+  6  write outcome unknown: a change failed in a way that may have gone through`
 
 // rootCmd is the top-level `namecom` command. It configures the API client and
 // output renderer and stashes them on the context for every subcommand.
@@ -350,6 +351,8 @@ func initOutputContext(cmd *cobra.Command) error {
 	// error instead of the documented JSON envelope, and `-o table` in a pipe
 	// printed the envelope anyway. --color was ignored for errors entirely.
 	resolvedOut = out
+	// No client yet for this command; initClient sets it if one is built.
+	resolvedClient = nil
 	return nil
 }
 
@@ -383,6 +386,11 @@ func buildOutputConfig() (*output.Config, error) {
 // top-level error handler can honor --output/--color. Nil when the command
 // failed before PersistentPreRunE ran; see errorOutput.
 var resolvedOut *output.Config
+
+// resolvedClient is the API client initClient built, retained so the error
+// handler can ask whether the failure was a write whose outcome is unknown
+// (#243). Nil when the command built none.
+var resolvedClient *api.Client
 
 // errorOutput returns the config the top-level error handler renders with.
 //
@@ -516,6 +524,9 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	if err != nil {
 		return fmt.Errorf("initializing API client: %w", err)
 	}
+	if !forCompletion {
+		resolvedClient = apiClient
+	}
 
 	// Stash everything on the context so subcommands can retrieve them via
 	// the helpers below without threading parameters through every call.
@@ -600,6 +611,11 @@ func skipClientInit(cmd *cobra.Command) bool {
 // cmdutil.AuthError now carries its own.
 func reportError(cfg *output.Config, err error) int {
 	err = normalizeError(err)
+	// A write that answered 5xx, or failed after it was sent, may have gone
+	// through: name the idempotency key it carried, and exit 6 (#243). The
+	// client decides from the request method, not from whether the command
+	// marked the write (#247).
+	err = resolvedClient.OutcomeUnknown(err)
 	// The 401 hint mentions the sandbox's separate token only when the
 	// request went there; cfg.Sandbox is set from the resolved credentials.
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
@@ -690,7 +706,8 @@ func (e *detailedError) ErrorDetails() any { return e.details }
 
 // exitCode maps an error to a CLI exit code following the documented table:
 //
-//	0 success, 1 API/runtime, 2 usage, 3 auth, 4 not-found, 5 rate-limited
+//	0 success, 1 API/runtime, 2 usage, 3 auth, 4 not-found, 5 rate-limited,
+//	6 write outcome unknown
 func exitCode(err error) int {
 	if err == nil {
 		return 0
@@ -705,6 +722,10 @@ func exitCode(err error) int {
 	}
 	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
 		return 3
+	}
+	// Ahead of the status: a 5xx write is 6, not 1. reportError wraps it.
+	if _, ok := errors.AsType[*api.OutcomeUnknownError](err); ok {
+		return 6
 	}
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		switch apiErr.StatusCode {

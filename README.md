@@ -58,6 +58,7 @@ line, ready for `xargs`.
 - [Shell completion](#shell-completion)
 - [Global flags](#global-flags)
 - [Exit codes](#exit-codes)
+- [Idempotency keys](#idempotency-keys)
 - [Development](#development)
 - [Contributing](#contributing)
 - [Changelog](CHANGELOG.md)
@@ -390,7 +391,9 @@ of them is a breaking change and is called out in the
   `details` holds structured detail (the raw response body for `namecom api`,
   the profile, username, endpoint and config file for a rejected
   `auth status`), and `suggestions` the full command lines an unknown command
-  was probably meant to be (`["namecom dns delete"]`). The envelope also has
+  was probably meant to be (`["namecom dns delete"]`). `idempotencyKey` is
+  set when a write's outcome is unknown (exit 6): the `X-Idempotency-Key`
+  the request carried. The envelope also has
   a top-level `hint`, a copy of `error.hint` where older versions put it.
   **It is deprecated**, kept for this release only so scripts can move to
   `error.hint`.
@@ -537,7 +540,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `--debug` | | Log HTTP requests/responses to stderr (token and auth codes redacted) |
 | `--debug-file` | | Log HTTP requests/responses to a file (appends; useful as an audit log) |
 | `--no-header` | | Omit the header row from table output |
-| `--idempotency-key` | a fresh key per write | Pin every write in this invocation to one key, so re-running the same command after a failure can be recognized as a retry by endpoints that honor idempotency keys |
+| `--idempotency-key` | a fresh key per write | Pin every write in this invocation to one key, so re-running the same command after a failure can be recognized as a retry by endpoints that honor idempotency keys — see [Idempotency keys](#idempotency-keys) |
 | `--username` | | API username (overrides config and `NAMECOM_USERNAME`) |
 | `--token` | | API token (overrides config and `NAMECOM_TOKEN`) |
 
@@ -551,10 +554,45 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |
 | `5` | Rate limited (HTTP 429), after the CLI's own retries |
+| `6` | Write outcome unknown: a request that changes something got a 5xx, or timed out or lost its connection after it was sent, so it may or may not have been carried out — see [Idempotency keys](#idempotency-keys) |
 
 With `--output json` or `yaml` — including the JSON default when piped — an
 error is written to stderr as one document, an `error` object whose `type`
 says which of these it is. See [JSON contract](#json-contract).
+
+## Idempotency keys
+
+Every `POST`, `PUT` and `DELETE` namecom sends carries an `X-Idempotency-Key`
+header: a fresh key per request, or, with `--idempotency-key`, the key you
+name for every write in that invocation. `PATCH` (`domain update`) carries
+none.
+
+When a write fails in a way that leaves its outcome unknown — the API
+answered 5xx, or the request timed out or lost its connection after it was
+sent — namecom exits `6` and names the key it used: in the hint
+(`outcome unknown; re-run with --idempotency-key <key>`) and, in JSON mode,
+as `error.idempotencyKey`. A `POST` is never retried on a 5xx, because the
+server may already have done the work. Check whether the change was made;
+if it was not, re-run the same command with `--idempotency-key <key>`.
+
+Whether the key prevents a duplicate depends on the endpoint. The Core API
+declares the header on five operations:
+
+| API operation | namecom command |
+|---|---|
+| `CreateDomain` | `domain register`, and the register `domain check` offers |
+| `ProcessRefund` | `order refund` |
+| `VerifyContact` | `contact verify` |
+| `ResendContactVerificationEmail` | `contact resend` |
+| `PurchasePrivacy` | none (`domain privacy on` uses a different endpoint) |
+
+The API reference describes what a reused key does only for refunds: the
+same key returns the original response instead of refunding again. For the
+other four the header is declared but what the API does with it is not
+documented. Every other write — DNS records, email and URL forwarding,
+vanity nameservers, DNSSEC, transfers, renewals, nameserver and contact
+changes — ignores it. Two `dns create` requests under one key made two
+records in the sandbox. For those, check before you retry.
 
 ## Development
 

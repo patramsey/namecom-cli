@@ -204,6 +204,11 @@ Two behaviors are load-bearing and easy to break by accident:
   A wait that would outlast the request deadline is not taken: the response
   is returned at once, so a 429 stays a 429 (exit 5). Nothing sleeps after
   the final attempt either — not the transport, and not the SDK (see above).
+  Instead, a write that ends in a 5xx, or fails after it was sent, exits 6
+  with its idempotency key in the error (`api.OutcomeUnknownError`). What
+  counts as a write there is decided by `retryTransport` from the request
+  method, so a new write command gets it without going through `RunWrite`
+  or `api.MarkWrite` — those still matter for a write's other hints.
 - **Partial updates.** `dns update` is a read-modify-write: it fetches the
   record, merges only the flags that were explicitly changed, and sends the
   full body, because that endpoint is a full `PUT` replacement and a partial

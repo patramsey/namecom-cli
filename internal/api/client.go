@@ -97,6 +97,9 @@ type Client struct {
 	// client and also exposed via Prepare for callers that build their own
 	// requests; keeping one implementation stops the two paths from drifting.
 	editor func(context.Context, *http.Request) error
+	// writes is retryTransport's record of the last request, for
+	// OutcomeUnknown.
+	writes *writeLog
 }
 
 // DefaultBaseURL is the base URL New uses when Options.BaseURL is empty:
@@ -152,6 +155,7 @@ func New(opts Options) (*Client, error) {
 	// headerTransport wraps retryTransport, not the reverse. See its doc
 	// comment: the idempotency key must be stamped once, before the retry loop
 	// replays the request.
+	writes := &writeLog{}
 	httpClient := &http.Client{
 		Timeout:       timeout,
 		CheckRedirect: refuseWriteRedirect,
@@ -165,6 +169,7 @@ func New(opts Options) (*Client, error) {
 				maxRetries: maxRetries,
 				logw:       opts.DebugLog,
 				onRetry:    opts.OnRetry,
+				writes:     writes,
 			},
 		},
 	}
@@ -184,6 +189,7 @@ func New(opts Options) (*Client, error) {
 		baseURL:    baseURL,
 		httpClient: httpClient,
 		editor:     editor,
+		writes:     writes,
 	}, nil
 }
 
