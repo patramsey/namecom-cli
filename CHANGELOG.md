@@ -18,6 +18,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   HOST; `domain list` at 80 columns lost locked, privacy and auto-renew to one
   long domain name. The footer says when values were cut. `--wide` and piped
   output are unchanged: every column, every character.
+- **Scripts:** `-o table` with stdout piped or redirected now prints a plain
+  table — columns aligned with spaces, no borders — like `gh` does, so `awk`
+  and `cut` can split it. Detail views (`domain get`, `auth status`) print
+  `Key  value` lines the same way. In a terminal tables keep their borders.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

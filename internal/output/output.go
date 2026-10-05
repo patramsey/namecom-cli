@@ -85,13 +85,18 @@ type Config struct {
 	// unconstrained, which is what a pipe or a redirect gets: a consumer that
 	// is not a terminal has no width to respect and wants every column.
 	MaxWidth int
+	// Plain renders tables without borders, as whitespace-aligned columns.
+	// DefaultConfig sets it when stdout is not a terminal, so `-o table` into
+	// a pipe gives `awk` and `cut` rows they can split, not box-drawing.
+	Plain bool
 }
 
 // DefaultConfig returns an output config with defaults resolved from the
 // current environment (TTY detection, NO_COLOR, CLICOLOR_FORCE).
 func DefaultConfig() *Config {
+	tty := isStdoutTTY()
 	f := FormatJSON
-	if isStdoutTTY() {
+	if tty {
 		f = FormatTable
 	}
 	c := &Config{
@@ -99,6 +104,7 @@ func DefaultConfig() *Config {
 		Color:   ColorAuto,
 		Writer:  os.Stdout,
 		EWriter: os.Stderr,
+		Plain:   !tty,
 	}
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		c.MaxWidth = w
@@ -418,6 +424,13 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if c.Plain {
+		if c.NoHeader {
+			headers = nil
+		}
+		c.plainTable(headers, rows)
+		return
+	}
 	color := c.ColorEnabled()
 	headers, rows, dropped, truncated := c.fitColumns(headers, rows, o.essential)
 
@@ -463,6 +476,51 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 	if len(notes) > 0 {
 		fmt.Fprintln(c.Writer, c.Dim(strings.Join(notes, "; ")+
 			" — widen the terminal, pass --wide, or use -o json"))
+	}
+}
+
+// plainTable prints headers (when non-nil) and rows as columns aligned with
+// spaces, two between each, with no borders and no trailing whitespace —
+// the shape `gh` prints into a pipe (#233). The bordered table kept its box
+// drawing when piped, so `namecom domain list -o table | awk '{print $1}'`
+// printed "╭───" and "│". Line breaks and tabs in a cell become spaces, so
+// every row stays one line.
+func (c *Config) plainTable(headers []string, rows [][]string) {
+	all := rows
+	if headers != nil {
+		all = append([][]string{headers}, rows...)
+	}
+	n := 0
+	for _, r := range all {
+		n = max(n, len(r))
+	}
+	clean := make([][]string, len(all))
+	widths := make([]int, n)
+	for i, r := range all {
+		clean[i] = make([]string, len(r))
+		for j, v := range r {
+			v = strings.Map(func(r rune) rune {
+				if r == '\n' || r == '\r' || r == '\t' {
+					return ' '
+				}
+				return r
+			}, v)
+			clean[i][j] = v
+			widths[j] = max(widths[j], lipgloss.Width(v))
+		}
+	}
+	for _, r := range clean {
+		var b strings.Builder
+		for j, v := range r {
+			if j > 0 {
+				b.WriteString("  ")
+			}
+			b.WriteString(v)
+			if j < len(r)-1 {
+				b.WriteString(strings.Repeat(" ", widths[j]-lipgloss.Width(v)))
+			}
+		}
+		fmt.Fprintln(c.Writer, strings.TrimRight(b.String(), " "))
 	}
 }
 
@@ -607,6 +665,10 @@ func (c *Config) KVTable(rows [][]string) {
 	// gates on format — this one did not, which is how `auth status -o json`
 	// came to print an envelope followed by a table.
 	if c.Format == FormatJSON || c.Format == FormatYAML || c.QuietMode {
+		return
+	}
+	if c.Plain {
+		c.plainTable(nil, rows)
 		return
 	}
 	color := c.ColorEnabled()
