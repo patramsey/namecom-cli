@@ -312,8 +312,48 @@ export NAMECOM_TOKEN=yourtoken
 export NAMECOM_SANDBOX=true        # target sandbox API (true/false, yes/no, on/off, 1/0)
 export NAMECOM_PROFILE=staging     # select a profile
 export NAMECOM_CONFIG=~/namecom-ci.yaml    # use this file instead of the default
+export NAMECOM_BASE_URL=http://127.0.0.1:8080  # a local stub; --base-url overrides it
 export NAMECOM_NO_UPDATE_NOTIFIER=1        # never print the "new release" notice
 namecom domain list
+```
+
+`NAMECOM_USERNAME` and `NAMECOM_TOKEN` are enough on their own: no config file
+or profile is needed. `namecom config show` and `namecom auth status` resolve
+credentials exactly as other commands do and say where each value came from
+(`env NAMECOM_TOKEN`, `flag --username`, `profile work`, `token_cmd`); in JSON
+that is a sibling key such as `"usernameSource": "env NAMECOM_USERNAME"`.
+
+**CI** — a GitHub Actions job needs only the two variables, from repository
+secrets. `auth status` checks them first, so a bad token fails the job before
+any real work:
+
+```yaml
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    env:
+      NAMECOM_USERNAME: ${{ secrets.NAMECOM_USERNAME }}
+      NAMECOM_TOKEN: ${{ secrets.NAMECOM_TOKEN }}
+      NAMECOM_NO_UPDATE_NOTIFIER: "1"
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: |
+          go install github.com/patramsey/namecom-cli@latest
+          mv "$(go env GOPATH)/bin/namecom-cli" "$(go env GOPATH)/bin/namecom"
+      - run: namecom auth status
+      - run: namecom dns create example.com --type TXT --host _verify --answer "${{ vars.VERIFY_TOKEN }}" --yes
+```
+
+To write a profile without a terminal instead — for a later step, or a
+machine image — pipe the token to `--with-token`, or save a credential
+helper with `--token-cmd`. Both check the credentials with the API first
+(`--no-verify` skips that), and replacing an existing profile needs `--yes`:
+
+```bash
+echo "$NAMECOM_TOKEN" | namecom auth login --username alice --with-token
+namecom auth login --username alice --token-cmd 'op read op://vault/namecom/token' --profile ci
 ```
 
 **Secret manager integration** — add `token_cmd` to your config and credentials are fetched at runtime, never stored on disk:
@@ -365,7 +405,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `--dry-run` | | Print the request a write would send, without sending it — a JSON document in JSON mode. Reads are unaffected |
 | `--profile` | | Use a named credential profile |
 | `--sandbox` | | Target the sandbox API (`api.dev.name.com`) |
-| `--base-url` | | Send requests to another API base URL, such as a local stub or a proxy. Your credentials go wherever it points; a warning says so when it is not name.com |
+| `--base-url` | | Send requests to another API base URL, such as a local stub or a proxy (overrides `NAMECOM_BASE_URL`). Your credentials go wherever it points; a warning says so when it is not name.com |
 | `--color` | `auto` | Colorize output: `auto`, `always`, `never` |
 | `--wide` | | Keep every table column, even when the table is wider than the terminal |
 | `--timeout` | `30s` | Total time budget for one API call, retries included |

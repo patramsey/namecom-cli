@@ -36,6 +36,26 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `NO_COLOR`, `CLICOLOR_FORCE` and `BROWSER`) and what overrides each. They
   were documented only in the README. `--sandbox` now names
   `NAMECOM_SANDBOX` in its help, as `--profile` and `--token` already did.
+- `auth login` works without a terminal: `--username alice --with-token`
+  reads the token from standard input, and `--username alice --token-cmd
+  '<command>'` saves a credential helper instead of a token. Both check the
+  credentials with the API first, as the interactive login does, and fail
+  rather than save when the check cannot be made; `--no-verify` saves them
+  unchecked (and does not run the helper). `--profile`, `--sandbox` and
+  `--dry-run` apply, and replacing an existing profile needs `--yes`.
+  `auth login --token <t>` is refused, since a token on the command line is
+  kept in shell history; it used to be ignored silently.
+- `NAMECOM_BASE_URL` points every command at another API base URL, as
+  `--base-url` does, with the same validation and the same warning when it
+  is not name.com. `--base-url` wins when both are set.
+- `config show` and `auth status` say where each value came from — `flag
+  --username`, `env NAMECOM_TOKEN`, `profile work`, `token_cmd` — as a dimmed
+  note in the table and as sibling keys in JSON and YAML (`profileSource`,
+  `usernameSource`, `tokenSource`, `endpointSource`; `auth status` also
+  `environmentSource`). **Scripts** get new keys only; every existing key
+  keeps its name and string value. `auth status`'s table gains a Token row,
+  masked.
+- The README has a CI section with a GitHub Actions example.
 
 ### Changed
 - Help pages show the global flags that apply to the command:
@@ -284,6 +304,20 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the notice off, and with it the daily release check.
 
 ### Fixed
+- `config show` with credentials only in the environment — `NAMECOM_USERNAME`
+  and `NAMECOM_TOKEN`, no config file — reported "Not logged in" and exited 3
+  while API commands worked. It now resolves credentials exactly as they do,
+  and fails only when they would, with the same error; a profile with a
+  username but no token is now reported as not logged in, as API commands
+  report it.
+- Hints no longer send a CI job to `auth login` when its credentials came
+  from the environment. A 401 says "check NAMECOM_TOKEN" (or the flag or
+  variables actually used), and a token set without a username, or the
+  reverse, names the missing variable. `auth status`'s rejection message
+  names where the username and token came from.
+- `auth login` without a terminal and without `--with-token` or
+  `--token-cmd` now exits 2, as a usage error, and names those flags; it
+  exited 1.
 - Help honours `--color`: `--help --color=never` printed colour escapes
   wherever colour was otherwise on, and `--color=always` was ignored in a
   pipe. Help also wraps descriptions and flag help to the terminal width

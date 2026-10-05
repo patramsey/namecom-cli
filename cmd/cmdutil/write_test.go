@@ -274,7 +274,7 @@ func contextCmd(t *testing.T, f *config.File, ov config.Overrides, sandbox bool)
 // test that resolves an identity.
 func clearCredentialEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_PROFILE", "NAMECOM_SANDBOX"} {
+	for _, k := range []string{"NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_PROFILE", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 		t.Setenv(k, "")
 	}
 }

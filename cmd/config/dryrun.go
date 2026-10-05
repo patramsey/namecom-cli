@@ -25,6 +25,9 @@ type Change struct {
 	// Username and Sandbox describe the profile save_profile would write.
 	Username string `json:"username,omitempty"`
 	Sandbox  *bool  `json:"sandbox,omitempty"`
+	// UsesTokenCmd says the profile would get its token from a token_cmd
+	// (`auth login --token-cmd`) rather than store one.
+	UsesTokenCmd bool `json:"usesTokenCmd,omitempty"`
 	// Default is the file's `default:` key after the change; "" for none.
 	Default string `json:"default"`
 

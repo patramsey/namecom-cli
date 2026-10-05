@@ -119,7 +119,7 @@ func TestResolvePrecedence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Isolate env per subtest.
-			for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+			for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 				t.Setenv(k, "")
 			}
 			for k, v := range tt.env {
@@ -150,7 +150,7 @@ func TestResolvePrecedence(t *testing.T) {
 }
 
 func TestResolveTokenCmd(t *testing.T) {
-	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 		t.Setenv(k, "")
 	}
 	f := &File{
@@ -192,7 +192,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 }
 
 func TestResolveNilFile(t *testing.T) {
-	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 		t.Setenv(k, "")
 	}
 	t.Setenv("NAMECOM_USERNAME", "envuser")
@@ -723,7 +723,7 @@ func TestIdentity_AgreesWithResolve(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+			for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 				t.Setenv(k, tt.env[k])
 			}
 			want, err := Resolve(tt.f, tt.ov)
@@ -744,7 +744,7 @@ func TestIdentity_AgreesWithResolve(t *testing.T) {
 // TestIdentity_NeverRunsTokenCmd: describing credentials must not unlock a
 // vault, and must work when no token is available at all.
 func TestIdentity_NeverRunsTokenCmd(t *testing.T) {
-	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX"} {
+	for _, k := range []string{"NAMECOM_PROFILE", "NAMECOM_USERNAME", "NAMECOM_TOKEN", "NAMECOM_SANDBOX", "NAMECOM_BASE_URL"} {
 		t.Setenv(k, "")
 	}
 	marker := filepath.Join(t.TempDir(), "ran")

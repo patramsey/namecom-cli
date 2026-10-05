@@ -3,8 +3,9 @@
 //
 // Resolution precedence (highest first):
 //
-//  1. Explicit flags (--username, --token, --sandbox)
-//  2. Environment variables (NAMECOM_USERNAME, NAMECOM_TOKEN, NAMECOM_SANDBOX)
+//  1. Explicit flags (--username, --token, --sandbox, --base-url)
+//  2. Environment variables (NAMECOM_USERNAME, NAMECOM_TOKEN, NAMECOM_SANDBOX,
+//     NAMECOM_BASE_URL)
 //  3. The active profile selected by --profile or NAMECOM_PROFILE
 //  4. The default profile recorded in the config file
 //
@@ -64,6 +65,8 @@ type Overrides struct {
 	Token      string
 	Sandbox    bool
 	SandboxSet bool
+	// BaseURL is --base-url; NAMECOM_BASE_URL applies when it is empty.
+	BaseURL string
 }
 
 // Credentials is the fully resolved result handed to the API client.
@@ -73,6 +76,74 @@ type Credentials struct {
 	Sandbox  bool
 	// Profile is the name of the profile that was selected, for diagnostics.
 	Profile string
+	// BaseURL is the API base URL from --base-url or NAMECOM_BASE_URL, or ""
+	// for the default endpoint Sandbox selects. It is not validated here.
+	BaseURL string
+	// Sources says where each value came from.
+	Sources Sources
+}
+
+// Sources records where each resolved value came from, in the words config
+// show and auth status print: "flag --username", "env NAMECOM_USERNAME",
+// "profile work", "token_cmd". A value nothing supplied has no source ("").
+//
+// Without it, a CI run whose credentials came from the environment could not
+// tell which variable was wrong, and the hints sent it to `auth login` (#246).
+type Sources struct {
+	// Profile is "flag --profile", "env NAMECOM_PROFILE", "config default"
+	// (the file's `default:` key) or "implied default" (see impliedDefault).
+	Profile  string
+	Username string
+	// Token is where the token comes from. Identity reports it without
+	// running token_cmd, so it can say "token_cmd" without unlocking a vault.
+	Token string
+	// Sandbox is where the sandbox setting came from; "default" when nothing
+	// set it and production applies.
+	Sandbox string
+	// BaseURL is "flag --base-url" or "env NAMECOM_BASE_URL", or "" when the
+	// endpoint is the default for the sandbox setting.
+	BaseURL string
+}
+
+// Endpoint is where the endpoint came from: the base URL override, or else
+// whatever decided the sandbox setting.
+func (s Sources) Endpoint() string {
+	if s.BaseURL != "" {
+		return s.BaseURL
+	}
+	return s.Sandbox
+}
+
+// Source values shared by more than one field.
+const (
+	SourceTokenCmd = "token_cmd"
+	sourceDefault  = "default"
+)
+
+// SourceName is the flag or variable a source names — "--token" for "flag
+// --token", "NAMECOM_TOKEN" for "env NAMECOM_TOKEN" — for messages that tell
+// the user what to change. Other sources are returned as they are.
+func SourceName(source string) string {
+	if name, ok := strings.CutPrefix(source, "flag "); ok {
+		return name
+	}
+	if name, ok := strings.CutPrefix(source, "env "); ok {
+		return name
+	}
+	return source
+}
+
+// BaseURLOverride returns the base URL from --base-url, else NAMECOM_BASE_URL,
+// with its source; both empty when neither is set. The flag wins, as every
+// flag beats its variable.
+func BaseURLOverride(ov Overrides) (raw, source string) {
+	if ov.BaseURL != "" {
+		return ov.BaseURL, "flag --base-url"
+	}
+	if v := os.Getenv("NAMECOM_BASE_URL"); v != "" {
+		return v, "env NAMECOM_BASE_URL"
+	}
+	return "", ""
 }
 
 // ErrNoCredentials is returned when no username/token can be resolved from any
@@ -228,33 +299,55 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 	profileName := creds.Profile
 	prof := f.Profiles[profileName] // zero Profile if absent
 
-	// Token: flag > env > profile.token > profile.token_cmd.
-	creds.Token = firstNonEmpty(ov.Token, os.Getenv("NAMECOM_TOKEN"), prof.Token)
-	if creds.Token == "" && prof.TokenCmd != "" {
+	// Token: flag > env > profile.token > profile.token_cmd, as Identity
+	// recorded it.
+	switch creds.Sources.Token {
+	case "":
+	case "flag --token":
+		creds.Token = ov.Token
+	case "env NAMECOM_TOKEN":
+		creds.Token = os.Getenv("NAMECOM_TOKEN")
+	case SourceTokenCmd:
 		tok, err := runTokenCmd(prof.TokenCmd)
 		if err != nil {
 			return Credentials{}, fmt.Errorf("profile %q token_cmd: %w", profileName, err)
 		}
 		creds.Token = tok
+	default:
+		creds.Token = prof.Token
 	}
 
-	if creds.Username == "" || creds.Token == "" {
-		// Distinguish "nothing is configured" from "several profiles exist and
-		// none is marked default" — the second needs a different fix, and the
-		// generic message sent people to `auth login`, which overwrites.
-		if profileName == "" && len(f.Profiles) > 1 {
-			names := make([]string, 0, len(f.Profiles))
-			for n := range f.Profiles {
-				names = append(names, n)
-			}
-			sort.Strings(names)
-			return Credentials{}, fmt.Errorf(
-				"%w: %d profiles exist (%s) but none is the default — pass --profile, set NAMECOM_PROFILE, or run 'namecom config use <profile>'",
-				ErrNoCredentials, len(names), strings.Join(names, ", "))
-		}
-		return Credentials{}, ErrNoCredentials
+	if err := CheckComplete(f, creds); err != nil {
+		return Credentials{}, err
 	}
 	return creds, nil
+}
+
+// CheckComplete returns the error Resolve gives when id, as Identity or
+// Resolve returned it, lacks a username or a source for the token; nil when it
+// has both. Commands that describe credentials without resolving the token —
+// config show — use it to fail exactly when an API command would.
+func CheckComplete(f *File, id Credentials) error {
+	if id.Username != "" && id.Sources.Token != "" {
+		return nil
+	}
+	if f == nil {
+		f = &File{}
+	}
+	// Distinguish "nothing is configured" from "several profiles exist and
+	// none is marked default" — the second needs a different fix, and the
+	// generic message sent people to `auth login`, which overwrites.
+	if id.Profile == "" && len(f.Profiles) > 1 {
+		names := make([]string, 0, len(f.Profiles))
+		for n := range f.Profiles {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		return fmt.Errorf(
+			"%w: %d profiles exist (%s) but none is the default — pass --profile, set NAMECOM_PROFILE, or run 'namecom config use <profile>'",
+			ErrNoCredentials, len(names), strings.Join(names, ", "))
+	}
+	return ErrNoCredentials
 }
 
 // ActiveProfile returns the name of the profile Resolve selects: flagProfile
@@ -268,10 +361,27 @@ func Resolve(f *File, ov Overrides) (Credentials, error) {
 // the production profile, and a lone profile not named "default" was reported
 // as missing by the very commands meant to describe it.
 func ActiveProfile(f *File, flagProfile string) string {
+	name, _ := activeProfile(f, flagProfile)
+	return name
+}
+
+// activeProfile is ActiveProfile with the source of the answer.
+func activeProfile(f *File, flagProfile string) (name, source string) {
 	if f == nil {
 		f = &File{}
 	}
-	return firstNonEmpty(flagProfile, os.Getenv("NAMECOM_PROFILE"), f.Default, impliedDefault(f))
+	switch {
+	case flagProfile != "":
+		return flagProfile, "flag --profile"
+	case os.Getenv("NAMECOM_PROFILE") != "":
+		return os.Getenv("NAMECOM_PROFILE"), "env NAMECOM_PROFILE"
+	case f.Default != "":
+		return f.Default, "config default"
+	}
+	if name := impliedDefault(f); name != "" {
+		return name, "implied default"
+	}
+	return "", ""
 }
 
 // Identity resolves everything Resolve does except the token: the profile
@@ -284,24 +394,50 @@ func Identity(f *File, ov Overrides) (Credentials, error) {
 	if f == nil {
 		f = &File{}
 	}
-	profileName := ActiveProfile(f, ov.Profile)
-	prof := f.Profiles[profileName] // zero Profile if absent
+	profileName, profileSrc := activeProfile(f, ov.Profile)
+	prof, inFile := f.Profiles[profileName] // zero Profile if absent
+	fromProfile := "profile " + profileName
 
 	creds := Credentials{Profile: profileName}
+	creds.Sources.Profile = profileSrc
 
 	// Username: flag > env > profile.
-	creds.Username = firstNonEmpty(ov.Username, os.Getenv("NAMECOM_USERNAME"), prof.Username)
+	switch {
+	case ov.Username != "":
+		creds.Username, creds.Sources.Username = ov.Username, "flag --username"
+	case os.Getenv("NAMECOM_USERNAME") != "":
+		creds.Username, creds.Sources.Username = os.Getenv("NAMECOM_USERNAME"), "env NAMECOM_USERNAME"
+	case prof.Username != "":
+		creds.Username, creds.Sources.Username = prof.Username, fromProfile
+	}
+
+	// The token's source only; Resolve reads the value. Same precedence.
+	switch {
+	case ov.Token != "":
+		creds.Sources.Token = "flag --token"
+	case os.Getenv("NAMECOM_TOKEN") != "":
+		creds.Sources.Token = "env NAMECOM_TOKEN"
+	case prof.Token != "":
+		creds.Sources.Token = fromProfile
+	case prof.TokenCmd != "":
+		creds.Sources.Token = SourceTokenCmd
+	}
 
 	// Sandbox: explicit flag > env > profile. The variable is not read when
 	// the flag decides, so --sandbox still works in a shell exporting junk.
-	creds.Sandbox = prof.Sandbox
+	creds.Sandbox, creds.Sources.Sandbox = prof.Sandbox, sourceDefault
+	if inFile {
+		creds.Sources.Sandbox = fromProfile
+	}
 	if ov.SandboxSet {
-		creds.Sandbox = ov.Sandbox
+		creds.Sandbox, creds.Sources.Sandbox = ov.Sandbox, "flag --sandbox"
 	} else if v, set, err := EnvBool("NAMECOM_SANDBOX"); err != nil {
 		return Credentials{}, err
 	} else if set {
-		creds.Sandbox = v
+		creds.Sandbox, creds.Sources.Sandbox = v, "env NAMECOM_SANDBOX"
 	}
+
+	creds.BaseURL, creds.Sources.BaseURL = BaseURLOverride(ov)
 	return creds, nil
 }
 
@@ -335,6 +471,10 @@ func impliedDefault(f *File) string {
 // the CLI forever, and --timeout covers only HTTP. Overridable in tests.
 var tokenCmdTimeout = 15 * time.Second
 
+// RunTokenCmd runs a token_cmd line as Resolve does and returns the token it
+// prints. `auth login --token-cmd` uses it to check the helper before saving.
+func RunTokenCmd(cmdline string) (string, error) { return runTokenCmd(cmdline) }
+
 // runTokenCmd executes the token command through the platform shell (see
 // shellArgv) and returns its trimmed stdout.
 func runTokenCmd(cmdline string) (string, error) {
@@ -344,9 +484,10 @@ func runTokenCmd(cmdline string) (string, error) {
 	// G204: running a shell string is the feature, not a lapse. token_cmd exists
 	// so a token can come from `op read ...` or `pass show ...` instead of living
 	// in the config file, and those invocations need pipes and quoting. cmdline
-	// comes only from the user's own config file — never from a flag, an
-	// environment variable, or an API response — so anyone who can set it can
-	// already run commands as this user. The mitigations that do apply are the
+	// comes only from the user's own config file, or from the `auth login
+	// --token-cmd` flag that writes it there — never from an environment
+	// variable or an API response — so anyone who can set it can already run
+	// commands as this user. The mitigations that do apply are the
 	// timeout above and the process group below.
 	prog, args := shellArgv(runtime.GOOS, cmdline)
 	cmd := exec.CommandContext(ctx, prog, args...) //nolint:gosec
@@ -421,15 +562,6 @@ func shellArgv(goos, cmdline string) (string, []string) {
 		return "cmd.exe", []string{"/d", "/s", "/c", `"` + cmdline + `"`}
 	}
 	return "sh", []string{"-c", cmdline}
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // ParseBool parses a boolean environment value: Go's strconv spellings (1, t,

@@ -34,6 +34,11 @@ type APIError struct {
 	// Sandbox is set when the request went to the sandbox API, so a 401 can
 	// mention its separate token without saying so in production too.
 	Sandbox bool
+	// CredentialSource names the flags or environment variables the
+	// credentials came from, e.g. "NAMECOM_USERNAME and NAMECOM_TOKEN"; ""
+	// when they came from a profile. A 401 then says what to fix rather than
+	// suggesting `auth login`, which a CI job cannot run.
+	CredentialSource string
 	// Body is the raw response body, set only by callers that show it — the
 	// `namecom api` passthrough. It becomes the error envelope's details.
 	Body []byte
@@ -68,6 +73,9 @@ func (e *APIError) UserHint() string {
 	switch e.StatusCode {
 	case 401:
 		hint := "the API rejected the username or token — run 'namecom auth login' to replace them"
+		if e.CredentialSource != "" {
+			hint = "the API rejected the username or token — check " + e.CredentialSource
+		}
 		if e.Sandbox {
 			hint += " (the sandbox uses a separate API token from production)"
 		}

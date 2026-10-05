@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -24,16 +25,25 @@ const apiSettingsURL = "https://www.name.com/account/settings/api"
 
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Configure credentials interactively",
+	Short: "Save credentials to a profile, checking them with the API",
 	Long: `Ask for your name.com API username and token, check them with the API,
 and save them to a profile in the config file.
 
 Create a token at ` + apiSettingsURL + `.
 Sandbox credentials are separate from production ones, and the sandbox
-username usually ends in -test; log in to the sandbox with --sandbox.`,
+username usually ends in -test; log in to the sandbox with --sandbox.
+
+Without a terminal, as in CI, pass --username with either --with-token, which
+reads the token from standard input, or --token-cmd, which saves a command
+that prints the token each time one is needed (a password manager's CLI, say)
+instead of the token itself. Neither asks anything; replacing an existing
+profile then needs --yes. A job that only runs commands needs no profile at
+all: set NAMECOM_USERNAME and NAMECOM_TOKEN instead.`,
 	Example: `  namecom auth login
   namecom auth login --profile staging
-  namecom auth login --profile sandbox --sandbox`,
+  namecom auth login --profile sandbox --sandbox
+  echo "$NAMECOM_TOKEN" | namecom auth login --username alice --with-token
+  namecom auth login --username alice --token-cmd 'op read op://vault/namecom/token'`,
 	Args: cobra.NoArgs,
 	RunE: runAuthLogin,
 }
@@ -59,10 +69,26 @@ var authLogoutCmd = &cobra.Command{
 var loginProfile string
 var logoutProfile string
 
+// The non-interactive login flags (#246).
+var (
+	loginWithToken bool
+	loginTokenCmd  string
+	loginNoVerify  bool
+)
+
 func init() {
 	// Both say they replace the global --profile (#237): here it names the
 	// profile to write or remove, not the credentials to run with.
 	authLoginCmd.Flags().StringVar(&loginProfile, "profile", "default", "profile name to save credentials under (overrides the global --profile)")
+	// --username is the global flag. --token is refused rather than used: a
+	// token on the command line ends up in shell history and process lists,
+	// which is why gh reads it from standard input too.
+	authLoginCmd.Flags().BoolVar(&loginWithToken, "with-token", false, "read the token from standard input instead of asking (with --username)")
+	authLoginCmd.Flags().StringVar(&loginTokenCmd, "token-cmd", "", "save a command that prints the token, run each time one is needed, instead of the token (with --username)")
+	// Without a terminal nobody can answer "save them anyway, unverified?",
+	// so this is that answer, given up front: for a profile written before
+	// the API or the vault behind --token-cmd can be reached.
+	authLoginCmd.Flags().BoolVar(&loginNoVerify, "no-verify", false, "save the credentials without checking them with the API (or running --token-cmd)")
 	authLogoutCmd.Flags().StringVar(&logoutProfile, "profile", "", "profile to remove, by default the active one (overrides the global --profile)")
 	// logout's local --profile shadows the global one, completion included.
 	// login's names a profile that may not exist yet, so it offers none.
@@ -76,14 +102,14 @@ func init() {
 func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 
-	if !output.IsInteractive() {
-		return fmt.Errorf("auth login requires an interactive terminal; " +
-			"set credentials via NAMECOM_USERNAME and NAMECOM_TOKEN environment variables instead")
+	nonInteractive := loginWithToken || loginTokenCmd != ""
+	if err := checkLoginFlags(nonInteractive); err != nil {
+		return err
 	}
-	// The credential check below honours --base-url, so reject a bad one
-	// before the form rather than after it.
-	if gf.baseURL != "" {
-		if err := validateBaseURL(gf.baseURL); err != nil {
+	// The credential check below honours --base-url and NAMECOM_BASE_URL, so
+	// reject a bad one before the form rather than after it.
+	if raw, src := loginBaseURL(); raw != "" {
+		if err := checkBaseURL(config.SourceName(src), raw); err != nil {
 			return cmdutil.NewUsageError(err)
 		}
 	}
@@ -100,7 +126,8 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	// Ask before replacing a profile's credentials, as gh asks before
 	// re-authenticating; login used to overwrite them silently (#239). Asked
 	// before the form, so a "no" costs no typing. --yes answers it, and
-	// --dry-run writes nothing, so neither asks.
+	// --dry-run writes nothing, so neither asks. Without a terminal it cannot
+	// be asked, and the command fails asking for --yes.
 	if old, ok := cfgFile.Profiles[loginProfile]; ok && !cmdutil.IsYes(cmd) && !cmdutil.IsDryRun(cmd) {
 		detail := loginEnv(old.Sandbox)
 		if old.Username != "" {
@@ -116,60 +143,29 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	a := loginAnswers{Sandbox: sandbox}
+	var a loginAnswers
 	var verifiedAs string
-	for {
-		if err := askLogin(&a, !sandbox); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				return cmdutil.ErrAborted
-			}
-			return fmt.Errorf("form: %w", err)
-		}
-		// A token pasted with a trailing space or newline was saved with it,
-		// and every request then failed with a 401 (#229).
-		a.Username = strings.TrimSpace(a.Username)
-		a.Token = strings.TrimSpace(a.Token)
-
-		// Check the credentials before saving them (#229). This runs under
-		// --dry-run too: Hello is a read that changes nothing, as the reads
-		// behind other commands' previews are, and it lets the preview say
-		// whether the save would go ahead. Only the write below is skipped.
-		verifiedAs, err = verifyLogin(cmd, a)
-		if err == nil || !isRejected(err) {
-			break
-		}
-		rejected := rejectedLoginError(err, a)
-		// A rejection used to end the command, and the user retyped
-		// everything from the start (#239). Offer the form again, with the
-		// username and sandbox answer kept. Not under --yes or --dry-run,
-		// which promise not to ask.
-		if cmdutil.IsYes(cmd) || cmdutil.IsDryRun(cmd) {
-			return rejected
-		}
-		out.Warn(rejected.Error())
-		again, cerr := confirmRetryLogin(out, false, "Try again?", "")
-		if cerr != nil {
-			return cerr
-		}
-		if !again {
-			return rejected
-		}
-		a.Token = ""
+	var verifyErr error
+	if nonInteractive {
+		a, verifiedAs, verifyErr, err = loginFromFlags(cmd, sandbox)
+	} else {
+		a, verifiedAs, verifyErr, err = loginFromForm(cmd, sandbox)
+	}
+	if err != nil {
+		return err
 	}
 	switch {
-	case err == nil:
+	case verifyErr == nil:
 	case cmdutil.IsDryRun(cmd):
-		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
+		out.Warn(fmt.Sprintf("could not verify the credentials: %v", verifyErr))
 	case cmdutil.IsYes(cmd):
-		return fmt.Errorf("could not verify the credentials, so they were not saved (--yes never saves unverified credentials): %w", err)
+		return fmt.Errorf("could not verify the credentials, so they were not saved (--yes never saves unverified credentials; --no-verify does): %w", verifyErr)
+	case nonInteractive:
+		return fmt.Errorf("could not verify the credentials, so they were not saved (pass --no-verify to save them unchecked): %w", verifyErr)
 	default:
-		out.Warn(fmt.Sprintf("could not verify the credentials: %v", err))
-		env := "production"
-		if a.Sandbox {
-			env = "sandbox"
-		}
+		out.Warn(fmt.Sprintf("could not verify the credentials: %v", verifyErr))
 		ok, cerr := confirmSaveUnverified(out, false, "Save them anyway, unverified?",
-			fmt.Sprintf("%s · profile %s (%s)", env, loginProfile, a.Username))
+			fmt.Sprintf("%s · profile %s (%s)", loginEnv(a.Sandbox), loginProfile, a.Username))
 		if cerr != nil {
 			return cerr
 		}
@@ -182,11 +178,16 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if cfgFile.Profiles == nil {
 		cfgFile.Profiles = make(map[string]config.Profile)
 	}
-	cfgFile.Profiles[loginProfile] = config.Profile{
+	saved := config.Profile{
 		Username: a.Username,
 		Token:    a.Token,
 		Sandbox:  a.Sandbox,
 	}
+	if loginTokenCmd != "" {
+		// The command is saved, never the token it printed for the check.
+		saved.Token, saved.TokenCmd = "", loginTokenCmd
+	}
+	cfgFile.Profiles[loginProfile] = saved
 	if cfgFile.Default == "" {
 		cfgFile.Default = loginProfile
 	}
@@ -194,12 +195,13 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		// The form still runs, so the preview can say what would be saved —
 		// everything but the token.
 		configcmd.PreviewChange(out, configcmd.Change{
-			Action:   "save_profile",
-			Profile:  loginProfile,
-			Username: a.Username,
-			Sandbox:  &a.Sandbox,
-			Default:  cfgFile.Default,
-			Summary:  fmt.Sprintf("save profile %q (username %s, %s)", loginProfile, a.Username, api.DefaultBaseURL(a.Sandbox)),
+			Action:       "save_profile",
+			Profile:      loginProfile,
+			Username:     a.Username,
+			Sandbox:      &a.Sandbox,
+			UsesTokenCmd: saved.TokenCmd != "",
+			Default:      cfgFile.Default,
+			Summary:      fmt.Sprintf("save profile %q (username %s, %s)", loginProfile, a.Username, api.DefaultBaseURL(a.Sandbox)),
 		})
 		return nil
 	}
@@ -223,8 +225,154 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		out.Hint(fmt.Sprintf("Run 'namecom status --profile %s' to see this account, or 'namecom config use %s' to make it the default",
 			loginProfile, loginProfile))
 	}
-	out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
+	if !nonInteractive {
+		out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
+	}
 	return nil
+}
+
+// checkLoginFlags rejects flag combinations login cannot act on, before
+// anything is read or asked.
+func checkLoginFlags(nonInteractive bool) error {
+	if gf.token != "" {
+		return cmdutil.NewUsageErrorHint(
+			errors.New("auth login does not take --token: a token on the command line is kept in shell history and visible to other processes"),
+			"pipe the token to 'namecom auth login --username <name> --with-token' instead")
+	}
+	if loginWithToken && loginTokenCmd != "" {
+		return cmdutil.NewUsageError(errors.New("--with-token and --token-cmd cannot be used together: pick one source for the token"))
+	}
+	if !nonInteractive {
+		if !output.IsInteractive() {
+			return cmdutil.NewUsageErrorHint(
+				errors.New("auth login needs a terminal to ask for credentials"),
+				"pass --username with --with-token (token on standard input) or --token-cmd, or set NAMECOM_USERNAME and NAMECOM_TOKEN instead of saving a profile")
+		}
+		return nil
+	}
+	flag := "--with-token"
+	if loginTokenCmd != "" {
+		flag = "--token-cmd"
+	}
+	if strings.TrimSpace(gf.username) == "" {
+		return cmdutil.NewUsageError(fmt.Errorf("%s needs --username", flag))
+	}
+	if loginTokenCmd != "" && strings.TrimSpace(loginTokenCmd) == "" {
+		return cmdutil.NewUsageError(errors.New("--token-cmd is empty"))
+	}
+	return nil
+}
+
+// loginBaseURL is the base URL the credential check uses: --base-url, else
+// NAMECOM_BASE_URL, as API commands choose it.
+func loginBaseURL() (raw, source string) {
+	return config.BaseURLOverride(config.Overrides{BaseURL: gf.baseURL})
+}
+
+// loginFromForm asks for the credentials and checks them, offering the form
+// again after a rejection. verifyErr is a check that could not be made; err
+// ends the command.
+func loginFromForm(cmd *cobra.Command, sandbox bool) (a loginAnswers, verifiedAs string, verifyErr, err error) {
+	out := cmdutil.Out(cmd)
+	a = loginAnswers{Sandbox: sandbox}
+	for {
+		if err := askLogin(&a, !sandbox); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				return a, "", nil, cmdutil.ErrAborted
+			}
+			return a, "", nil, fmt.Errorf("form: %w", err)
+		}
+		// A token pasted with a trailing space or newline was saved with it,
+		// and every request then failed with a 401 (#229).
+		a.Username = strings.TrimSpace(a.Username)
+		a.Token = strings.TrimSpace(a.Token)
+		if loginNoVerify {
+			return a, "", nil, nil
+		}
+
+		// Check the credentials before saving them (#229). This runs under
+		// --dry-run too: Hello is a read that changes nothing, as the reads
+		// behind other commands' previews are, and it lets the preview say
+		// whether the save would go ahead. Only the write is skipped.
+		verifiedAs, err = verifyLogin(cmd, a)
+		if err == nil || !isRejected(err) {
+			return a, verifiedAs, err, nil
+		}
+		rejected := rejectedLoginError(err, a)
+		// A rejection used to end the command, and the user retyped
+		// everything from the start (#239). Offer the form again, with the
+		// username and sandbox answer kept. Not under --yes or --dry-run,
+		// which promise not to ask.
+		if cmdutil.IsYes(cmd) || cmdutil.IsDryRun(cmd) {
+			return a, "", nil, rejected
+		}
+		out.Warn(rejected.Error())
+		again, cerr := confirmRetryLogin(out, false, "Try again?", "")
+		if cerr != nil {
+			return a, "", nil, cerr
+		}
+		if !again {
+			return a, "", nil, rejected
+		}
+		a.Token = ""
+	}
+}
+
+// loginFromFlags takes the credentials from --username and --with-token or
+// --token-cmd and checks them as the form's are checked, without asking
+// anything: a rejection ends the command. --token-cmd's command is run for
+// the check, so a helper that fails is found now rather than on the first
+// real command.
+func loginFromFlags(cmd *cobra.Command, sandbox bool) (a loginAnswers, verifiedAs string, verifyErr, err error) {
+	a = loginAnswers{Username: strings.TrimSpace(gf.username), Sandbox: sandbox}
+	if loginWithToken {
+		if a.Token, err = readLoginToken(cmd.InOrStdin()); err != nil {
+			return a, "", nil, err
+		}
+	}
+	if loginNoVerify {
+		return a, "", nil, nil
+	}
+	if loginTokenCmd != "" {
+		tok, terr := config.RunTokenCmd(loginTokenCmd)
+		if terr != nil {
+			return a, "", nil, cmdutil.NewAuthErrorHint(
+				fmt.Errorf("--token-cmd failed, so nothing was saved: %w", terr),
+				"fix the command, or pass --no-verify to save it without running it now")
+		}
+		a.Token = tok
+	}
+	verifiedAs, err = verifyLogin(cmd, a)
+	if err != nil && isRejected(err) {
+		return a, "", nil, rejectedLoginError(err, a)
+	}
+	return a, verifiedAs, err, nil
+}
+
+// maxLoginToken bounds what --with-token reads: a token is a few dozen bytes,
+// and a mistakenly piped file should not be read whole.
+const maxLoginToken = 4096
+
+// readLoginToken reads the token --with-token takes from r, trimmed of the
+// newline `echo` adds and any surrounding space (#229).
+func readLoginToken(r io.Reader) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxLoginToken+1))
+	if err != nil {
+		return "", fmt.Errorf("reading the token from standard input: %w", err)
+	}
+	if len(data) > maxLoginToken {
+		return "", cmdutil.NewUsageError(fmt.Errorf("standard input holds more than %d bytes; --with-token reads only the token", maxLoginToken))
+	}
+	tok := strings.TrimSpace(string(data))
+	if tok == "" {
+		return "", cmdutil.NewUsageErrorHint(errors.New("--with-token read no token from standard input"),
+			"pipe it in: echo \"$NAMECOM_TOKEN\" | namecom auth login --username <name> --with-token")
+	}
+	// Never echo it: the input may be a whole file with the token in it.
+	if strings.ContainsAny(tok, "\r\n") {
+		return "", cmdutil.NewUsageError(errors.New("standard input holds more than one line; --with-token reads only the token"))
+	}
+	return tok, nil
 }
 
 // confirmSaveUnverified asks whether to save credentials the API could not be
@@ -243,11 +391,12 @@ var confirmReplaceProfile = cmdutil.Confirm
 // the endpoint the saved profile will use, and returns the username the API
 // reports for them.
 func verifyLogin(cmd *cobra.Command, a loginAnswers) (string, error) {
+	baseURL, _ := loginBaseURL()
 	client, err := api.New(api.Options{
 		Creds:     config.Credentials{Username: a.Username, Token: a.Token, Sandbox: a.Sandbox},
 		UserAgent: "namecom-cli/" + Version,
 		Timeout:   gf.timeout,
-		BaseURL:   gf.baseURL,
+		BaseURL:   baseURL,
 		// One attempt: someone is waiting at the prompt, and if the API cannot
 		// be reached they are asked what to do rather than kept waiting.
 		MaxRetries: -1,
@@ -293,7 +442,7 @@ func (e *loginRejectedError) UserHint() string {
 // sandbox and production have separate credentials, and sandbox usernames
 // usually end in -test.
 func rejectedLoginError(err error, a loginAnswers) error {
-	endpoint := gf.baseURL
+	endpoint, _ := loginBaseURL()
 	if endpoint == "" {
 		endpoint = api.DefaultBaseURL(a.Sandbox)
 	}
@@ -391,13 +540,22 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	// initContext already resolved it, so an invalid NAMECOM_SANDBOX cannot
 	// reach here; ignoring the error keeps the API error below intact.
 	id, _ := config.Identity(cmdutil.CfgFile(cmd), cmdutil.Overrides(cmd))
+	cfgPath, _ := config.ActivePath()
 	if err != nil {
 		// The error hints send users here to see which credentials are in
-		// use, so a rejection says which ones were rejected rather than only
-		// "Unauthorized" (#187). Wrapped, so the exit code is unchanged.
-		cfgPath, _ := config.ActivePath()
-		return fmt.Errorf("%w (profile %q, username %q, endpoint %s, config %s)",
-			api.FromSDKError(err), id.Profile, id.Username, client.BaseURL(), cfgPath)
+		// use, so a rejection says which ones were rejected, and where each
+		// came from, rather than only "Unauthorized" (#187, #246). Wrapped,
+		// so the exit code is unchanged.
+		var which []string
+		if id.Profile != "" {
+			which = append(which, fmt.Sprintf("profile %q", id.Profile))
+		}
+		which = append(which,
+			fmt.Sprintf("username %q from %s", id.Username, id.Sources.Username),
+			"token from "+id.Sources.Token,
+			"endpoint "+client.BaseURL(),
+			"config "+cfgPath)
+		return fmt.Errorf("%w (%s)", api.FromSDKError(err), strings.Join(which, ", "))
 	}
 
 	env := "production"
@@ -405,13 +563,12 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		env = "sandbox"
 	}
 
-	cfgPath, _ := config.ActivePath()
-
 	renderAuthStatus(out, [][]string{
-		{"Profile", id.Profile},
-		{"Username", id.Username},
-		{"Environment", env},
-		{"Endpoint", client.BaseURL()},
+		{"Profile", id.Profile, id.Sources.Profile},
+		{"Username", id.Username, id.Sources.Username},
+		{"Token", "••••••••", id.Sources.Token},
+		{"Environment", env, id.Sources.Sandbox},
+		{"Endpoint", client.BaseURL(), id.Sources.Endpoint()},
 		{"Config", cfgPath},
 	})
 	return nil
@@ -430,6 +587,11 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 //
 // Quiet prints the username the credentials verified as: the identity, which
 // is what a script checking "am I logged in as the right account" compares.
+//
+// A row's optional third element is where the value came from (#246). The
+// structured views carry it as a sibling key, "usernameSource" beside
+// "username", so the value keys keep their string type. The Token row's value
+// is a mask, so only its source is emitted there.
 func renderAuthStatus(out *output.Config, rows [][]string) {
 	if out.QuietMode {
 		for _, r := range rows {
@@ -441,9 +603,15 @@ func renderAuthStatus(out *output.Config, rows [][]string) {
 	}
 	switch out.Format {
 	case output.FormatJSON, output.FormatYAML:
-		fields := make(map[string]any, len(rows)+1)
+		fields := make(map[string]any, 2*len(rows)+1)
 		for _, r := range rows {
-			fields[strings.ToLower(strings.ReplaceAll(r[0], " ", "_"))] = r[1]
+			key := strings.ToLower(strings.ReplaceAll(r[0], " ", "_"))
+			if len(r) > 2 && r[2] != "" {
+				fields[key+"Source"] = r[2]
+			}
+			if key != "token" {
+				fields[key] = r[1]
+			}
 		}
 		// A boolean, not the string "true" it used to be (#187).
 		fields["verified"] = true
@@ -454,7 +622,15 @@ func renderAuthStatus(out *output.Config, rows [][]string) {
 		_ = out.YAML(fields)
 	default:
 		out.Success("Credentials verified")
-		out.KVTable(rows)
+		table := make([][]string, 0, len(rows))
+		for _, r := range rows {
+			v := r[1]
+			if len(r) > 2 {
+				v = configcmd.WithSource(out, v, r[2])
+			}
+			table = append(table, []string{r[0], v})
+		}
+		out.KVTable(table)
 	}
 }
 
