@@ -159,6 +159,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   characters of markup. The title is kept when it adds something:
   `HTTP 503 Service Unavailable: Down for maintenance (HTML error page)`.
   This is the error `message` in JSON output too.
+- Timeouts and connection failures read as one plain line, without Go's
+  `Get "https://…":` prefix. A timeout says `request to api.name.com timed
+  out after 30s`, with a hint to raise `--timeout`, instead of `context
+  deadline exceeded (Client.Timeout exceeded while awaiting headers)`; a
+  refused connection says `could not connect to 127.0.0.1:1: connection
+  refused`, and an unknown host `could not look up <host>: no such host`.
+  When `--base-url` points away from name.com the hint says to check it.
+  These still exit **1**; a script matching the old text needs updating.
 
 ## [0.4.9] - 2026-10-03
 

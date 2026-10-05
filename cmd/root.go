@@ -578,6 +578,10 @@ func reportError(cfg *output.Config, err error) int {
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		apiErr.Sandbox = cfg.Sandbox
 	}
+	// A timeout says how long it waited, which is the --timeout budget.
+	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
+		netErr.Timeout = gf.timeout
+	}
 	cfg.Error(err)
 	return exitCode(err)
 }

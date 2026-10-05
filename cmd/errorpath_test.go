@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -125,6 +127,25 @@ func TestReportError_HintsMatchTheStatus(t *testing.T) {
 				t.Errorf("must not mention %q:\n%s", tt.not, ew.String())
 			}
 		})
+	}
+}
+
+// TestReportError_TimeoutNamesTheBudget pins #234: a timeout printed Go's
+// "context deadline exceeded (Client.Timeout exceeded …)" with no hint.
+func TestReportError_TimeoutNamesTheBudget(t *testing.T) {
+	prevGF := gf
+	t.Cleanup(func() { gf = prevGF })
+	gf.timeout = 3 * time.Second
+
+	var ew bytes.Buffer
+	cfg := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+	err := fmt.Errorf("getting domain: %w", &url.Error{Op: "Get", URL: "https://api.name.com/core/v1/domains/x.com", Err: context.DeadlineExceeded})
+	if code := reportError(cfg, err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	want := "error: getting domain: request to api.name.com timed out after 3s\n  hint: raise --timeout"
+	if !strings.HasPrefix(ew.String(), want) {
+		t.Errorf("got:\n%s\nwant it to start with:\n%s", ew.String(), want)
 	}
 }
 

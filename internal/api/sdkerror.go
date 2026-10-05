@@ -78,8 +78,14 @@ func NormalizeError(err error) error {
 	if _, ok := errors.AsType[*UnexpectedResponseError](err); ok {
 		return err
 	}
+	if _, ok := errors.AsType[*NetworkError](err); ok {
+		return err
+	}
 	sdkErr, ok := errors.AsType[*sdkcore.APIError](err)
 	if !ok {
+		if converted := asNetworkError(err); converted != nil {
+			return converted
+		}
 		return normalizeDecodeError(err)
 	}
 	converted := FromSDKError(sdkErr)
@@ -93,12 +99,23 @@ func NormalizeError(err error) error {
 // contextError carries a caller's wrapped message over a converted *APIError,
 // so the text keeps its context and exit-code classification still finds the
 // status code through Unwrap.
+//
+// When inner is set, msg is the original text and inner the part of it that
+// err replaces, substituted when the message is read: a *NetworkError's text
+// depends on the Timeout set after it is converted.
 type contextError struct {
-	msg string
-	err error
+	msg   string
+	inner string
+	err   error
 }
 
-func (e *contextError) Error() string { return e.msg }
+func (e *contextError) Error() string {
+	if e.inner == "" {
+		return e.msg
+	}
+	return strings.Replace(e.msg, e.inner, e.err.Error(), 1)
+}
+
 func (e *contextError) Unwrap() error { return e.err }
 
 // UnexpectedResponseError is a successful (2xx) response whose body could not
