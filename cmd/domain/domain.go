@@ -14,6 +14,9 @@ var Cmd = &cobra.Command{
 
 func init() {
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(registerCmd, renewCmd, updateCmd, lockCmd, autorenewCmd, privacyCmd, setNSCmd, contactsSetCmd)
+	// check offers a register in a terminal, but never under --yes.
+	cmdutil.MarkList(searchCmd, checkCmd)
 	Cmd.AddCommand(
 		listCmd,
 		getCmd,

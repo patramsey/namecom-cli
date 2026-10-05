@@ -20,7 +20,11 @@ var Cmd = &cobra.Command{
 }
 
 var listProfilesCmd = &cobra.Command{
-	Use:     "list-profiles",
+	Use: "list-profiles",
+	// Aliases rather than a rename: every other group lists with `list`, but
+	// `config list` reads as listing settings, and renaming would break the
+	// scripts and docs that already call list-profiles (#237).
+	Aliases: []string{"profiles", "ls"},
 	Short:   "List all configured credential profiles",
 	Example: `  namecom config list-profiles`,
 	Args:    cobra.NoArgs,
@@ -48,6 +52,8 @@ var showCmd = &cobra.Command{
 
 func init() {
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(useCmd)
+	cmdutil.MarkList(listProfilesCmd)
 	Cmd.AddCommand(listProfilesCmd, useCmd, showCmd)
 }
 

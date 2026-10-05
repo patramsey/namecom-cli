@@ -3,7 +3,10 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -22,6 +25,11 @@ var (
 	helpBrand    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")) // periwinkle
 )
 
+// rootFlagSections is the order root help lists its flag sections in. A flag
+// is placed by its cmdutil.FlagSection annotation; one without is listed
+// first, under "Flags".
+var rootFlagSections = []string{"", "Output", "Credentials", "Advanced"}
+
 // styledHelp is a cobra help function that renders styled output using Lip Gloss.
 func styledHelp(cmd *cobra.Command, _ []string) {
 	w := cmd.OutOrStdout()
@@ -29,17 +37,46 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 		printGettingStarted(w)
 		return
 	}
-	color := output.DefaultConfig().ColorEnabled()
-	printHelp(w, cmd, color)
+	// Help runs without PersistentPreRunE, so it used to take the TTY default
+	// and ignore --color: `--help --color=never` still printed escapes (#237).
+	// The flags are parsed by now; a bad value falls back to the default here
+	// and is reported by any real command.
+	out, err := buildOutputConfig()
+	if err != nil {
+		out = output.DefaultConfig()
+	}
+	printHelpWidth(w, cmd, out.ColorEnabled(), helpWidth(out))
 }
 
+// helpWidth is the width help wraps to: the terminal's, or $COLUMNS when
+// stdout is not a terminal and it is set. Zero means no wrapping.
+func helpWidth(out *output.Config) int {
+	if out.MaxWidth > 0 {
+		return out.MaxWidth
+	}
+	if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && n > 0 {
+		return n
+	}
+	return 0
+}
+
+// printHelp is printHelpWidth with no wrapping.
 func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
+	printHelpWidth(w, cmd, color, 0)
+}
+
+// printHelpWidth renders cmd's help, wrapping its description, command and
+// flag descriptions, and footer to width columns (#237): at 70 columns long
+// flag help and the `api` description ran past the edge. Examples are left as
+// written, so each stays one line that can be copied.
+func printHelpWidth(w io.Writer, cmd *cobra.Command, color bool, width int) {
 	style := func(s lipgloss.Style, text string) string {
 		if color {
 			return s.Render(text)
 		}
 		return text
 	}
+	isRoot := cmd == cmd.Root()
 
 	// Description
 	fmt.Fprintln(w)
@@ -47,12 +84,19 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 	if desc == "" {
 		desc = cmd.Short
 	}
+	desc = wrapBlock(desc, width)
 	// Bold the binary name in the long description.
-	if color && cmd == cmd.Root() {
+	if color && isRoot {
 		desc = strings.Replace(desc, "namecom", style(helpBrand, "namecom"), 1)
 	}
 	fmt.Fprintln(w, desc)
 	fmt.Fprintln(w)
+
+	// A help topic (`namecom help environment`) is its text and nothing else:
+	// it has no usage line and takes no flags.
+	if cmd.IsAdditionalHelpTopicCommand() && !isRoot {
+		return
+	}
 
 	// Usage line
 	fmt.Fprintln(w, style(helpHeading, "Usage:"))
@@ -71,29 +115,33 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 	}
 
 	// Subcommands — rendered grouped when groups are defined, flat otherwise.
-	cmds := cmd.Commands()
-	available := make([]*cobra.Command, 0, len(cmds))
-	for _, c := range cmds {
-		if c.IsAvailableCommand() {
+	var available, topics []*cobra.Command
+	for _, c := range cmd.Commands() {
+		switch {
+		case c.IsAvailableCommand():
 			available = append(available, c)
+		case c.IsAdditionalHelpTopicCommand() && !c.Hidden:
+			topics = append(topics, c)
+		}
+	}
+	maxLen := 0
+	for _, c := range append(available, topics...) {
+		maxLen = max(maxLen, len(c.Name()))
+	}
+	printCmdLine := func(c *cobra.Command) {
+		padding := strings.Repeat(" ", maxLen-len(c.Name()))
+		col := 2 + maxLen + 3
+		lines := wrapWords(c.Short, descWidth(width, col))
+		fmt.Fprintf(w, "  %s%s   %s\n",
+			style(helpCmd, c.Name()),
+			padding,
+			style(helpCmdDesc, lines[0]),
+		)
+		for _, l := range lines[1:] {
+			fmt.Fprintln(w, strings.Repeat(" ", col)+style(helpCmdDesc, l))
 		}
 	}
 	if len(available) > 0 {
-		maxLen := 0
-		for _, c := range available {
-			if l := len(c.Name()); l > maxLen {
-				maxLen = l
-			}
-		}
-		printCmdLine := func(c *cobra.Command) {
-			padding := strings.Repeat(" ", maxLen-len(c.Name()))
-			fmt.Fprintf(w, "  %s%s   %s\n",
-				style(helpCmd, c.Name()),
-				padding,
-				style(helpCmdDesc, c.Short),
-			)
-		}
-
 		groups := cmd.Groups()
 		if len(groups) > 0 {
 			// Print each group header followed by its commands.
@@ -134,39 +182,171 @@ func printHelp(w io.Writer, cmd *cobra.Command, color bool) {
 			fmt.Fprintln(w)
 		}
 	}
-
-	// Local flags (non-inherited)
-	if cmd.HasAvailableLocalFlags() {
-		fmt.Fprintln(w, style(helpHeading, "Flags:"))
-		printFlags(w, cmd.LocalFlags(), color, style)
+	if len(topics) > 0 {
+		fmt.Fprintln(w, style(helpHeading, "Help Topics:"))
+		for _, c := range topics {
+			printCmdLine(c)
+		}
 		fmt.Fprintln(w)
 	}
 
-	// For non-root commands show only the most commonly-used global flags inline;
-	// refer users to root --help for the full list.
-	if cmd.HasAvailableInheritedFlags() && cmd != cmd.Root() {
-		essential := essentialGlobalFlagNames()
-		var hasEssential bool
-		cmd.InheritedFlags().VisitAll(func(f *pflag.Flag) {
-			if !f.Hidden && essential[f.Name] {
-				hasEssential = true
+	// Flags. The root's are its persistent flags, the global ones, under
+	// headings; --help is listed there and nowhere else, since every page
+	// that could list it is the answer to it.
+	if isRoot {
+		for _, section := range rootFlagSections {
+			fs := sectionFlags(cmd.LocalFlags(), section)
+			if !hasVisibleFlags(fs) {
+				continue
 			}
-		})
-		if hasEssential {
-			fmt.Fprintln(w, style(helpHeading, "Global Flags:"))
-			printFilteredFlags(w, cmd.InheritedFlags(), essential, color, style)
+			heading := "Flags:"
+			if section != "" {
+				heading = section + " Flags:"
+			}
+			fmt.Fprintln(w, style(helpHeading, heading))
+			printFlags(w, fs, width, style)
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintln(w, style(helpCmdDesc, `Run "namecom --help" to see all global options.`))
+	} else if local := withoutHelp(cmd.LocalFlags()); hasVisibleFlags(local) {
+		fmt.Fprintln(w, style(helpHeading, "Flags:"))
+		printFlags(w, local, width, style)
 		fmt.Fprintln(w)
 	}
 
-	// Footer hint
-	if cmd.HasAvailableSubCommands() {
-		hint := `Use "` + cmd.CommandPath() + ` [command] --help" for more information about a command.`
-		fmt.Fprintln(w, style(helpCmdDesc, hint))
-		fmt.Fprintln(w)
+	// A command that runs shows the global flags that apply to it (#237). A
+	// group runs nothing, so it shows none.
+	group := cmd.HasAvailableSubCommands()
+	if !isRoot && !group && cmd.HasAvailableInheritedFlags() {
+		fs := pickFlags(cmd.InheritedFlags(), globalFlagNames(cmd))
+		if hasVisibleFlags(fs) {
+			fmt.Fprintln(w, style(helpHeading, "Global Flags:"))
+			printFlags(w, fs, width, style)
+			fmt.Fprintln(w)
+		}
 	}
+
+	// One footer, as gh has, where there used to be two.
+	var more []string
+	switch {
+	case isRoot:
+		more = []string{
+			`Use "namecom <command> --help" for more information about a command.`,
+			`Use "namecom help environment" for the environment variables namecom reads.`,
+		}
+	case group:
+		more = []string{`Use "` + cmd.CommandPath() + ` <command> --help" for more information about a command.`}
+	default:
+		more = []string{`Use "namecom --help" for every global flag.`}
+	}
+	fmt.Fprintln(w, style(helpHeading, "Learn More:"))
+	for _, line := range more {
+		for _, l := range wrapWords(line, descWidth(width, 2)) {
+			fmt.Fprintln(w, "  "+style(helpCmdDesc, l))
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+// minWrap is the narrowest column help wraps text into. Below it, a
+// description wrapped beside a long flag name would be a word per line, and
+// running past the edge reads better.
+const minWrap = 24
+
+// descWidth is the room left for text starting at column col of a width-wide
+// terminal, or 0 (no wrapping) when width is unknown or too narrow.
+func descWidth(width, col int) int {
+	if width <= 0 || width-col < minWrap {
+		return 0
+	}
+	return width - col
+}
+
+// wrapWords splits s into lines of at most width columns, breaking at spaces.
+// A word longer than width gets a line of its own. Width 0 returns s whole.
+func wrapWords(s string, width int) []string {
+	if width <= 0 || utf8.RuneCountInString(s) <= width {
+		return []string{s}
+	}
+	var lines []string
+	cur, n := "", 0
+	for _, word := range strings.Fields(s) {
+		wl := utf8.RuneCountInString(word)
+		if n > 0 && n+1+wl > width {
+			lines = append(lines, cur)
+			cur, n = "", 0
+		}
+		if n > 0 {
+			cur += " "
+			n++
+		}
+		cur += word
+		n += wl
+	}
+	return append(lines, cur)
+}
+
+// wrapBlock wraps a description to width. Descriptions are written wrapped
+// near 80 columns, so wrapping each line alone left every other line a word
+// long; instead each paragraph is reflowed, and only when one of its lines
+// does not fit, so a wide terminal shows the text as written.
+//
+// A paragraph is a run of unindented lines, or an indented line with its
+// continuations. An indented two-column row ("  NAMECOM_TOKEN   API
+// token.") continues under its second column, and any other indented line
+// at its own indentation.
+func wrapBlock(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	type para struct {
+		lead string   // first-line prefix: indentation, plus the first column of a row
+		hang int      // indentation of continuation lines
+		row  bool     // an indented two-column row
+		text string   // the words to wrap
+		raw  []string // the lines as written
+	}
+	var paras []*para
+	for _, line := range strings.Split(s, "\n") {
+		body := strings.TrimLeft(line, " ")
+		indent := len(line) - len(body)
+		if n := len(paras); n > 0 && body != "" {
+			p := paras[n-1]
+			prose := !p.row && p.hang == 0 && indent == 0
+			if p.text != "" && (prose || (p.row && indent == p.hang)) {
+				p.text += " " + body
+				p.raw = append(p.raw, line)
+				continue
+			}
+		}
+		p := &para{lead: line[:indent], text: body, raw: []string{line}}
+		if gap := strings.Index(body, "  "); indent > 0 && gap > 0 {
+			p.text = strings.TrimLeft(body[gap:], " ")
+			p.lead += body[:len(body)-len(p.text)]
+			p.row = true
+		}
+		p.hang = utf8.RuneCountInString(p.lead)
+		paras = append(paras, p)
+	}
+
+	var out []string
+	for _, p := range paras {
+		fits := true
+		for _, l := range p.raw {
+			fits = fits && utf8.RuneCountInString(l) <= width
+		}
+		if fits {
+			out = append(out, p.raw...)
+			continue
+		}
+		for i, l := range wrapWords(p.text, descWidth(width, p.hang)) {
+			if i == 0 {
+				out = append(out, p.lead+l)
+			} else {
+				out = append(out, strings.Repeat(" ", p.hang)+l)
+			}
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // usageLine renders the usage line, correcting it for command groups.
@@ -184,29 +364,60 @@ func usageLine(cmd *cobra.Command) string {
 	return cmd.UseLine()
 }
 
-// essentialGlobalFlagNames returns the subset of global flags shown on subcommand help pages.
-// Noisy flags (--debug, --timeout, --token, etc.) are omitted; users can run "namecom --help"
-// to see the full list.
-func essentialGlobalFlagNames() map[string]bool {
-	return map[string]bool{
-		"output":  true,
-		"quiet":   true,
-		"yes":     true,
-		"dry-run": true,
+// globalFlagNames returns the global flags shown on cmd's help page: the ones
+// that do something for that kind of command (#237). Every page used to show
+// --dry-run and --yes, read-only `domain get` included, while no list showed
+// --wide. The rest are a "namecom --help" away.
+func globalFlagNames(cmd *cobra.Command) map[string]bool {
+	switch cmdutil.Kind(cmd) {
+	case cmdutil.KindWrite:
+		return map[string]bool{"output": true, "quiet": true, "yes": true, "dry-run": true}
+	case cmdutil.KindList:
+		return map[string]bool{"output": true, "quiet": true, "wide": true, "no-header": true}
 	}
+	return map[string]bool{"output": true}
 }
 
-func printFilteredFlags(w io.Writer, fs *pflag.FlagSet, allow map[string]bool, color bool, style func(lipgloss.Style, string) string) {
+// pickFlags returns the flags of fs named in allow.
+func pickFlags(fs *pflag.FlagSet, allow map[string]bool) *pflag.FlagSet {
+	return filterFlags(fs, func(f *pflag.Flag) bool { return allow[f.Name] })
+}
+
+// sectionFlags returns the flags of fs whose cmdutil.FlagSection is section.
+func sectionFlags(fs *pflag.FlagSet, section string) *pflag.FlagSet {
+	return filterFlags(fs, func(f *pflag.Flag) bool {
+		got := ""
+		if v := f.Annotations[cmdutil.FlagSection]; len(v) > 0 {
+			got = v[0]
+		}
+		return got == section
+	})
+}
+
+// withoutHelp returns fs less --help.
+func withoutHelp(fs *pflag.FlagSet) *pflag.FlagSet {
+	return filterFlags(fs, func(f *pflag.Flag) bool { return f.Name != "help" })
+}
+
+func filterFlags(fs *pflag.FlagSet, keep func(*pflag.Flag) bool) *pflag.FlagSet {
 	filtered := pflag.NewFlagSet("filtered", pflag.ContinueOnError)
 	fs.VisitAll(func(f *pflag.Flag) {
-		if allow[f.Name] {
+		if keep(f) {
 			filtered.AddFlag(f)
 		}
 	})
-	printFlags(w, filtered, color, style)
+	return filtered
 }
 
-func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Style, string) string) {
+func hasVisibleFlags(fs *pflag.FlagSet) bool {
+	visible := false
+	fs.VisitAll(func(f *pflag.Flag) { visible = visible || !f.Hidden })
+	return visible
+}
+
+// printFlags lists fs with aligned descriptions, wrapped to width columns
+// (0: no wrapping) under the description column.
+func printFlags(w io.Writer, fs *pflag.FlagSet, width int, style func(lipgloss.Style, string) string) {
 	// First pass: measure the longest name+type string for alignment.
 	type flagEntry struct {
 		nameType string
@@ -257,13 +468,23 @@ func printFlags(w io.Writer, fs *pflag.FlagSet, _ bool, style func(lipgloss.Styl
 	})
 
 	// Second pass: print with aligned descriptions.
+	col := 2 + maxLen + 3
 	for _, e := range entries {
 		pad := strings.Repeat(" ", maxLen-len(e.nameType))
-		fmt.Fprintf(w, "  %s%s   %s%s\n",
-			style(helpFlag, e.nameType),
-			pad,
-			style(helpFlagDesc, e.usage),
-			style(helpUsage, e.defVal),
-		)
+		lines := wrapWords(e.usage+e.defVal, descWidth(width, col))
+		// The default keeps its own style when it ends up whole on the last
+		// line, as it does unwrapped.
+		last := len(lines) - 1
+		def := strings.TrimSpace(e.defVal)
+		desc := func(i int) string {
+			if i == last && def != "" && strings.HasSuffix(lines[i], def) {
+				return style(helpFlagDesc, strings.TrimSuffix(lines[i], def)) + style(helpUsage, def)
+			}
+			return style(helpFlagDesc, lines[i])
+		}
+		fmt.Fprintf(w, "  %s%s   %s\n", style(helpFlag, e.nameType), pad, desc(0))
+		for i := 1; i < len(lines); i++ {
+			fmt.Fprintln(w, strings.Repeat(" ", col)+desc(i))
+		}
 	}
 }

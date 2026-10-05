@@ -28,6 +28,11 @@ import (
 var Cmd = &cobra.Command{
 	Use:   "contact",
 	Short: "Manage ICANN contact verification",
+	Long: `List contacts still awaiting ICANN verification, resend the verification
+email, or mark a contact verified.
+
+See also: 'namecom domain contacts' to view or change a domain's registrant,
+admin, tech, and billing contacts.`,
 }
 
 var listAll bool
@@ -84,6 +89,7 @@ contact click the link.`,
 func init() {
 	cmdutil.AddPageFlags(unverifiedCmd, &listAll, &listPage, &listLimit, "unverified contact")
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(resendCmd, verifyCmd)
 	Cmd.AddCommand(unverifiedCmd, resendCmd, verifyCmd)
 }
 

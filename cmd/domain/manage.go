@@ -300,9 +300,13 @@ func runPrivacy(cmd *cobra.Command, args []string) error {
 var setNSCmd = &cobra.Command{
 	Use:   "set-ns <domain> --ns ns1.example.com,ns2.example.com",
 	Short: "Set nameservers for a domain",
+	Long: `Replace a domain's nameservers. DNS records hosted at name.com stop
+answering for the domain once it points at other nameservers.`,
 	Example: `  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com
   namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers
-  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com --yes  # no prompt, for scripts`,
+
+  # In a script, skip the confirmation:
+  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com --yes`,
 	Args:              setNSArgs,
 	RunE:              runSetNS,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -374,7 +378,11 @@ func setNSPrompt(body coreapigo.DomainsSetNameserversBody) string {
 
 var contactsCmd = &cobra.Command{
 	Use:   "contacts",
-	Short: "View and update registrant, admin, and tech contacts",
+	Short: "View and update registrant, admin, tech, and billing contacts",
+	Long: `View and update a domain's registrant, admin, tech, and billing contacts.
+
+See also: 'namecom contact' to resend or check the ICANN verification email a
+new or changed contact is sent.`,
 }
 
 var contactsGetCmd = &cobra.Command{
@@ -390,10 +398,15 @@ var contactsGetCmd = &cobra.Command{
 var contactsSetCmd = &cobra.Command{
 	Use:   "set <domain> --contacts-file contacts.json",
 	Short: "Set contact information for a domain",
+	Long: `Replace a domain's contacts with those in a JSON file, in the shape
+'domain contacts get -o json' writes. A changed registrant may be sent an
+ICANN verification email, and may start a transfer lock.`,
 	Example: `  namecom domain contacts get example.com -o json > contacts.json
   # edit contacts.json, then:
   namecom domain contacts set example.com --contacts-file contacts.json
-  namecom domain contacts set example.com --contacts-file contacts.json --yes  # no prompt, for scripts`,
+
+  # In a script, skip the confirmation:
+  namecom domain contacts set example.com --contacts-file contacts.json --yes`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runContactsSet,
 	ValidArgsFunction: cmdutil.CompleteDomains,

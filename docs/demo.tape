@@ -51,8 +51,6 @@ Output docs/demo.gif
 
 Require namecom
 
-Env NAMECOM_ICONS "1"
-
 Set Shell "bash"
 Set FontSize 20
 Set Width 1200

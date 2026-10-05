@@ -38,9 +38,14 @@ var (
 	listAll bool
 )
 
+// urlTypes describes the --type values. The API's names are kept as the
+// values, so "redirect" is the 301 (#237): the help never said so.
+const urlTypes = "redirect (301, permanent), 302 (temporary), masked (destination shown in a frame)"
+
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List URL forwarding entries",
+	Use:     "list <domain>",
+	Aliases: []string{"ls"},
+	Short:   "List URL redirects for a domain",
 	Example: `  namecom url list example.com
   namecom url list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
@@ -50,7 +55,7 @@ var listCmd = &cobra.Command{
 
 var getCmd = &cobra.Command{
 	Use:               "get <domain> <id>",
-	Short:             "Get a URL forwarding entry by ID",
+	Short:             "Get a URL redirect by ID",
 	Example:           `  namecom url get example.com 12345`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runGet,
@@ -58,10 +63,18 @@ var getCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain>",
-	Short: "Create a URL forwarding entry",
+	Use:     "create <domain>",
+	Aliases: []string{"add"},
+	Short:   "Create a URL redirect",
+	Long: `Send visitors to a domain, or to one host on it, to another URL.
+
+The default type, redirect, is a 301 (permanent) redirect; 302 is a temporary
+one. masked keeps the domain in the address bar and shows the destination in
+a frame, with --title and --meta for the page around it.
+
+A redirect on a subdomain replaces that host's A records.`,
 	Example: `  namecom url create example.com --to https://new-site.com
-  namecom url create example.com --host www --to https://new-site.com --type redirect
+  namecom url create example.com --host www --to https://new-site.com --type 302
   namecom url create example.com --to https://new-site.com --type masked --title "My Site"`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCreate,
@@ -69,9 +82,13 @@ var createCmd = &cobra.Command{
 }
 
 var updateCmd = &cobra.Command{
-	Use:               "update <domain> <id>",
-	Short:             "Update a URL forwarding entry",
-	Example:           `  namecom url update example.com 12345 --to https://other-site.com`,
+	Use:   "update <domain> <id>",
+	Short: "Update a URL redirect",
+	Long: `Change a redirect's destination, type, title or meta tags. Only the flags
+passed change; the rest are kept. The host is never changed: to move a
+redirect to another host, delete it and create a new one.`,
+	Example: `  namecom url update example.com 12345 --to https://other-site.com
+  namecom url update example.com 12345 --type 302`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -79,7 +96,8 @@ var updateCmd = &cobra.Command{
 
 var deleteCmd = &cobra.Command{
 	Use:               "delete <domain> <id>",
-	Short:             "Delete a URL forwarding entry",
+	Aliases:           []string{"rm"},
+	Short:             "Delete a URL redirect",
 	Example:           `  namecom url delete example.com 12345`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
@@ -87,11 +105,11 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
-	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "redirect")
 
-	createCmd.Flags().StringVar(&createHost, "host", "@", "subdomain host (@ for apex); a forwarding on a subdomain replaces its existing A records")
+	createCmd.Flags().StringVar(&createHost, "host", "@", "host to redirect (@ for apex); a redirect on a subdomain replaces its A records")
 	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL "+cmdutil.PromptedRequired)
-	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: redirect, 302, masked")
+	createCmd.Flags().StringVar(&createType, "type", "redirect", "redirect type: "+urlTypes)
 	createCmd.Flags().StringVar(&createTitle, "title", "", "page title (masked only)")
 	createCmd.Flags().StringVar(&createMeta, "meta", "", "meta tags (masked only)")
 
@@ -99,13 +117,14 @@ func init() {
 	// No default: an unset --type keeps the forwarding's current type, and a
 	// default of "redirect" in --help read as though a masked forwarding would
 	// be reset to a redirect.
-	updateCmd.Flags().StringVar(&updateType, "type", "", "forwarding type: redirect, 302, masked (default: keep the current type)")
+	updateCmd.Flags().StringVar(&updateType, "type", "", "redirect type: "+urlTypes+" (default: keep the current type)")
 	updateCmd.Flags().StringVar(&updateTitle, "title", "", "page title (masked only)")
 	updateCmd.Flags().StringVar(&updateMeta, "meta", "", "meta tags (masked only)")
 	cmdutil.CompleteFlagValues(createCmd, "type", cmdutil.URLForwardingTypes)
 	cmdutil.CompleteFlagValues(updateCmd, "type", cmdutil.URLForwardingTypes)
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

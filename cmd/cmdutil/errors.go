@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/patramsey/namecom-cli/internal/api"
@@ -212,27 +213,55 @@ func restateUnknownCommand(msg string) error {
 	if _, list, ok := strings.Cut(rest, "Did you mean this?\n"); ok {
 		suggestions = strings.Fields(list)
 	}
-	path := ""
-	if _, p, ok := strings.Cut(first, ` for "`); ok {
-		path, _, _ = strings.Cut(p, `"`)
+	// cobra formats the line as `unknown command %q for %q`.
+	word, path := "", ""
+	after := strings.TrimPrefix(first, "unknown command ")
+	if q, err := strconv.QuotedPrefix(after); err == nil {
+		word, _ = strconv.Unquote(q)
+		if p, err := strconv.QuotedPrefix(strings.TrimPrefix(after, q+" for ")); err == nil {
+			path, _ = strconv.Unquote(p)
+		}
 	}
-	return unknownCommandError(first, path, suggestions)
+	if word == "" || path == "" {
+		return NewUsageError(errors.New(first))
+	}
+	return UnknownCommand(word, path, suggestions)
 }
 
-// unknownCommandError is a usage error for an unknown subcommand of path. The
-// hint names the near misses, or points at the help when there are none:
+// UnknownCommandError is an unknown subcommand, Word, typed after Path.
+// Suggestions are the commands it was probably meant to be, as full command
+// lines ("namecom dns delete"), for the error envelope's `suggestions` field.
+type UnknownCommandError struct {
+	Word        string
+	Path        string
+	Suggestions []string
+}
+
+func (e *UnknownCommandError) Error() string {
+	return fmt.Sprintf("unknown command %q for %q", e.Word, e.Path)
+}
+
+// CommandSuggestions is what the structured error envelope lists as
+// `error.suggestions`.
+func (e *UnknownCommandError) CommandSuggestions() []string { return e.Suggestions }
+
+// UnknownCommand is a usage error for an unknown subcommand word of path.
+// suggestions are subcommands relative to path, one word or several ("auth
+// login"). The hint names them, or points at the help when there are none:
 // `namecom dns rm` used to get nothing to go on (#234). The near misses were
 // in the message itself, over three more lines.
-func unknownCommandError(msg, path string, suggestions []string) error {
+func UnknownCommand(word, path string, suggestions []string) error {
+	e := &UnknownCommandError{Word: word, Path: path}
 	hint := fmt.Sprintf("run '%s --help' for usage", path)
 	if len(suggestions) > 0 {
 		quoted := make([]string, len(suggestions))
 		for i, s := range suggestions {
-			quoted[i] = fmt.Sprintf("'%s %s'", path, s)
+			e.Suggestions = append(e.Suggestions, path+" "+s)
+			quoted[i] = "'" + path + " " + s + "'"
 		}
 		hint = "did you mean " + strings.Join(quoted, " or ") + "?"
 	}
-	return NewUsageErrorHint(errors.New(msg), hint)
+	return NewUsageErrorHint(e, hint)
 }
 
 // RequireField returns an *api.UnexpectedResponseError when value, the field

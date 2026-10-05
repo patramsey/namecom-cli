@@ -17,7 +17,7 @@ import (
 var openCmd = &cobra.Command{
 	Use:   "open [domain]",
 	Short: "Open name.com in your browser",
-	Long:  "Opens the name.com account dashboard, or the management page for a specific domain.",
+	Long:  "Open the name.com account dashboard, or the management page for a domain. With no browser to open, print the URL.",
 	Example: `  namecom open
   namecom open example.com`,
 	Args:              cobra.MaximumNArgs(1),

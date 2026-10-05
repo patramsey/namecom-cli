@@ -257,9 +257,14 @@ func TestDNSCreate_CAAIsRefused(t *testing.T) {
 }
 
 // TestDNSCreate_TypeListsOmitCAA pins that CAA is not offered anywhere on the
-// create path: the --type help and the "--type is required" message.
+// create path: the --type help and the "--type is required" message. The help
+// names it only to say it cannot be created (#237).
 func TestDNSCreate_TypeListsOmitCAA(t *testing.T) {
-	if usage := createCmd.Flags().Lookup("type").Usage; strings.Contains(usage, "CAA") {
+	usage := createCmd.Flags().Lookup("type").Usage
+	if !strings.Contains(usage, "CAA is read-only") {
+		t.Errorf("dns create --type help does not say CAA is read-only: %q", usage)
+	}
+	if strings.Contains(strings.Replace(usage, "CAA is read-only", "", 1), "CAA") {
 		t.Errorf("dns create --type help offers CAA: %q", usage)
 	}
 	srv := neverCalledServer(t)

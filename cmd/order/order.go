@@ -46,9 +46,10 @@ An order placed near midnight UTC may show the previous day's date and fall
 outside a date filter you would expect to include it.`
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List orders",
-	Long:  "List orders, newest first.\n\n" + timestampNote,
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List orders",
+	Long:    "List orders, newest first.\n\n" + timestampNote,
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
   namecom order list --since 2026-01-01                # orders from this year
@@ -69,11 +70,17 @@ var getCmd = &cobra.Command{
 }
 
 var refundCmd = &cobra.Command{
-	Use:     "refund",
-	Short:   "Process a refund for order items",
-	Example: `  namecom order refund --order-id 12345 --item-ids 67890 --yes`,
-	Args:    cobra.NoArgs,
-	RunE:    runRefund,
+	Use:   "refund",
+	Short: "Refund items of an order",
+	Long: `Refund items of an order. The confirmation names what is refunded and for
+how much. A refund cannot be undone; 'order get' shows which items can be
+refunded.`,
+	Example: `  namecom order refund --order-id 12345 --item-ids 67890
+
+  # In a script, skip the confirmation:
+  namecom order refund --order-id 12345 --item-ids 67890 --yes`,
+	Args: cobra.NoArgs,
+	RunE: runRefund,
 }
 
 func init() {
@@ -90,6 +97,7 @@ func init() {
 	_ = refundCmd.MarkFlagRequired("item-ids")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(refundCmd)
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 

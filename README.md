@@ -163,11 +163,14 @@ namecom open mycoolstartup.com
 | `auth` | `login` `logout` `status` |
 | `status` | account overview: domain counts, expiring domains, pending transfers, balance |
 | `order` | `list` `get` `refund` |
-| `config` | `list-profiles` `use` `show` |
+| `config` | `list-profiles` (alias `profiles`) `use` `show` |
 | `api` | raw HTTP passthrough with auth applied |
 | `open` | open name.com in a browser (honors `$BROWSER`; prints the URL when no browser can be opened) |
 | `version` | version and build information |
 | `completion` | shell completion scripts: `bash` `zsh` `fish` `powershell` |
+
+Every `list` also answers to `ls` and every `delete` to `rm`. In `dns`,
+`dnssec`, `email`, `url` and `vanity-ns`, `create` also answers to `add`.
 
 ```
 namecom --help
@@ -205,14 +208,14 @@ namecom transfer get acme.io                              # check status
 namecom transfer create acme.io --auth-code XXXXXX --contacts-file contacts.json
 ```
 
-**Set up email and URL forwarding:**
+**Set up email forwarding and URL redirects:**
 ```bash
 namecom email create acme.io hello --to you@gmail.com     # hello@acme.io → you@gmail.com
 namecom email list acme.io
 namecom url create acme.io --to https://new-site.com      # redirect apex to another URL
 ```
 
-**Enable DNSSEC:**
+**Publish DNSSEC DS records** (values from your DNS host, which signs the zone):
 ```bash
 namecom dnssec list acme.io
 namecom dnssec create acme.io --algorithm 13 --digest-type 2 --key-tag 12345 --digest abc123
@@ -302,7 +305,7 @@ with it targets `api.dev.name.com`. The sandbox has its own API token,
 separate from your production one. Omit `--profile` to use your default
 (production) profile.
 
-**Environment variables** (useful in CI):
+**Environment variables** (useful in CI; `namecom help environment` lists them all):
 ```bash
 export NAMECOM_USERNAME=yourname
 export NAMECOM_TOKEN=yourtoken
@@ -386,7 +389,9 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 
 With `--output json` or `yaml` — including the JSON default when piped — an
 error is written to stderr as one document, an `error` object with a
-`message` and, where there is one, a `hint`.
+`message` and, where there is one, a `hint`. An unknown command also lists
+the commands it was probably meant to be in `error.suggestions`, as full
+command lines (`["namecom dns delete"]`).
 
 ## Development
 

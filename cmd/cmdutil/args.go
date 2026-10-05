@@ -174,8 +174,7 @@ func GroupCmd(cmd *cobra.Command) *cobra.Command {
 		if len(args) == 0 {
 			return nil
 		}
-		return unknownCommandError(fmt.Sprintf("unknown command %q for %q", args[0], c.CommandPath()),
-			c.CommandPath(), c.SuggestionsFor(args[0]))
+		return UnknownCommand(args[0], c.CommandPath(), c.SuggestionsFor(args[0]))
 	}
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
 		return c.Help()

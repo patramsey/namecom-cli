@@ -61,6 +61,8 @@ var (
 func init() {
 	Cmd.Flags().StringVar(&apiBody, "data", "", "request body (JSON); use '-' to read from stdin")
 	Cmd.Flags().StringArrayVar(&apiHeaders, "header", nil, "additional headers: 'Name: Value'")
+	// Any method but GET or HEAD goes through RunWrite.
+	cmdutil.MarkWrite(Cmd)
 }
 
 func runAPI(cmd *cobra.Command, args []string) error {

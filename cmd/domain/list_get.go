@@ -17,8 +17,9 @@ import (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List domains in your account",
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List domains in your account",
 	Example: `  namecom domain list                             # first page (250)
   namecom domain list --page 2                    # second page
   namecom domain list --all                       # all domains (good for scripting)

@@ -49,7 +49,9 @@ type File struct {
 	Profiles map[string]Profile `yaml:"profiles"`
 	// Icons selects the status-icon style for the interactive `browse` TUI:
 	// "nerd" for Nerd Font glyphs, "ascii" (or empty) for the universal
-	// fallback. Overridden by --icons / NAMECOM_ICONS.
+	// fallback. Nothing in this CLI reads it, and there is no longer an
+	// environment variable or flag for it; the key is kept so the file
+	// round-trips.
 	Icons string `yaml:"icons,omitempty"`
 }
 

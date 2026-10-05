@@ -17,8 +17,51 @@ Releases before `0.2.0` predate this file. Their notes are on the
   apply) beside the unchanged `body`. A renewal's body carried only
   `{"years": 2}`, and a standard registration's no price at all. **Scripts**
   reading the dry-run document get one new key; nothing else in it changed.
+- Aliases: `ls` for every `list`, `rm` for every `delete`, and `add` for
+  `create` in `dns`, `dnssec`, `email`, `url` and `vanity-ns`.
+  `config list-profiles` also answers to `config profiles` and `config ls`;
+  the old name stays, so scripts that call it keep working.
+- Words typed in place of a top-level command now get the command they
+  meant: `namecom records` suggests `namecom dns`, `redirect` and `forward`
+  suggest `namecom url`, `login` and `logout` suggest `namecom auth login`
+  and `auth logout`, and `whoami` suggests `namecom auth status`. They used
+  to fail with no suggestion.
+- With `-o json` or `-o yaml`, an unknown-command error lists the commands
+  it was probably meant to be in `error.suggestions`, as full command lines
+  (`["namecom dns delete"]`). **Scripts** get one new key; `message` and
+  `hint` are unchanged.
+- `namecom help environment` lists every environment variable namecom
+  reads (`NAMECOM_USERNAME`, `NAMECOM_TOKEN`, `NAMECOM_PROFILE`,
+  `NAMECOM_SANDBOX`, `NAMECOM_CONFIG`, `NAMECOM_NO_UPDATE_NOTIFIER`, plus
+  `NO_COLOR`, `CLICOLOR_FORCE` and `BROWSER`) and what overrides each. They
+  were documented only in the README. `--sandbox` now names
+  `NAMECOM_SANDBOX` in its help, as `--profile` and `--token` already did.
 
 ### Changed
+- Help pages show the global flags that apply to the command:
+  `--dry-run` and `--yes` on writes, `--quiet`, `--wide` and `--no-header`
+  on lists, and `--output` everywhere. Read-only `domain get` listed
+  `--dry-run` and `--yes`, and no list mentioned `--wide`. Root help lists
+  its flags under Output, Credentials and Advanced headings instead of one
+  block of 19. A group's page (`namecom dns --help`) no longer has an `-h`
+  flags block, global flags or two footers; every page ends with one
+  "Learn More" footer.
+- Help wording is consistent. The `url` pages say "redirect" throughout
+  (the leaves said "URL forwarding entry"), and `--type` spells out that
+  `redirect`, the default, is a 301. `dnssec` is "Manage DS records at the
+  registry (DNSSEC)", with "Add/Remove a DS record"; it claimed to enable
+  signing, which the DNS host does. `transfer cancel` says it cancels a
+  transfer in, `cancel-outbound` that it stops a domain leaving, and
+  `internal-in` which way the domain moves. `contact` and `domain contacts`
+  point at each other. `status`, `open` and `auth login` use the imperative
+  like every other page, and the create, delete and update pages of `dns`,
+  `dnssec`, `email`, `url` and `vanity-ns` say more than their one-line
+  summary. Examples for `order refund`, `domain set-ns`,
+  `domain contacts set` and `dns delete` lead with the plain form; the
+  `--yes` form comes second, labelled for scripts. `dns create --type`
+  says CAA is read-only through the API, and `--profile` on `auth login`
+  and `auth logout` says it overrides the global `--profile`.
+- The `--limit` help on `url list` reads "redirects per page".
 - The `domain register` prompt reads as one sentence and states the choices
   it is sent with: "Register acme.io for 2 years: $35.98 total (renews at
   $17.99/yr), with WHOIS privacy, without auto-renew?". It read "for 2 years at
@@ -241,6 +284,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the notice off, and with it the daily release check.
 
 ### Fixed
+- Help honours `--color`: `--help --color=never` printed colour escapes
+  wherever colour was otherwise on, and `--color=always` was ignored in a
+  pipe. Help also wraps descriptions and flag help to the terminal width
+  (or `$COLUMNS` when not a terminal) instead of running past the edge;
+  examples stay one line each so they can be copied.
 - The `url create` and `url update` forms check the destination as you type
   it: it must be an `http://` or `https://` URL with a host. Anything else
   used to get through the form and then fail with an error naming `--to`, a

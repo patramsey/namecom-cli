@@ -17,7 +17,7 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show a quick overview of your name.com account",
-	Long:  `Displays domain counts, expiry alerts, and pending transfers at a glance.`,
+	Long:  `Show domain counts, domains expired or expiring within 30 days, pending transfers, and the account balance.`,
 	Example: `  namecom status
   namecom status --profile staging`,
 	Args: cobra.NoArgs,

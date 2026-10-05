@@ -29,8 +29,9 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List email forwarding entries",
+	Use:     "list <domain>",
+	Aliases: []string{"ls"},
+	Short:   "List email forwarding entries",
 	Example: `  namecom email list example.com
   namecom email list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
@@ -48,8 +49,11 @@ var getCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain> <mailbox>",
-	Short: "Create an email forwarding entry",
+	Use:     "create <domain> <mailbox>",
+	Aliases: []string{"add"},
+	Short:   "Create an email forwarding entry",
+	Long: `Forward mail sent to <mailbox>@<domain> to another address. <mailbox> is the
+part before the @: info, for info@example.com.`,
 	Example: `  namecom email create example.com info --to you@gmail.com
   namecom email create example.com support --to team@example.com`,
 	Args:              cmdutil.ExactArgs(2),
@@ -60,6 +64,7 @@ var createCmd = &cobra.Command{
 var updateCmd = &cobra.Command{
 	Use:               "update <domain> <mailbox>",
 	Short:             "Update an email forwarding entry",
+	Long:              `Change the address mail sent to <mailbox>@<domain> is forwarded to.`,
 	Example:           `  namecom email update example.com info --to newemail@gmail.com`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
@@ -68,7 +73,9 @@ var updateCmd = &cobra.Command{
 
 var deleteCmd = &cobra.Command{
 	Use:               "delete <domain> <mailbox>",
+	Aliases:           []string{"rm"},
 	Short:             "Delete an email forwarding entry",
+	Long:              `Stop forwarding mail sent to <mailbox>@<domain>.`,
 	Example:           `  namecom email delete example.com info`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
@@ -82,6 +89,7 @@ func init() {
 	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address "+cmdutil.PromptedRequired)
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

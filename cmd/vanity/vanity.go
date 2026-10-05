@@ -27,8 +27,9 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list <domain>",
-	Short: "List vanity nameservers for a domain",
+	Use:     "list <domain>",
+	Aliases: []string{"ls"},
+	Short:   "List vanity nameservers for a domain",
 	Example: `  namecom vanity-ns list example.com
   namecom vanity-ns list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
@@ -47,8 +48,12 @@ var getCmd = &cobra.Command{
 }
 
 var createCmd = &cobra.Command{
-	Use:   "create <domain>",
-	Short: "Create a vanity nameserver",
+	Use:     "create <domain>",
+	Aliases: []string{"add"},
+	Short:   "Create a vanity nameserver",
+	Long: `Register a nameserver named under the domain, such as ns1.example.com, with
+the IP addresses it answers on, so other domains can use it with
+'domain set-ns'. The servers at those addresses must answer for those domains.`,
 	Example: `  namecom vanity-ns create example.com --hostname ns1.example.com --ips 1.2.3.4
   namecom vanity-ns create example.com --hostname ns1.example.com --ips 1.2.3.4,5.6.7.8`,
 	Args:              cmdutil.ExactArgs(1),
@@ -59,6 +64,7 @@ var createCmd = &cobra.Command{
 var updateCmd = &cobra.Command{
 	Use:   "update <domain> <hostname>",
 	Short: "Update vanity nameserver IPs",
+	Long:  `Replace a vanity nameserver's IP addresses with those in --ips.`,
 	Example: `  namecom vanity-ns update example.com ns1.example.com --ips 1.2.3.4,5.6.7.8
   namecom vanity-ns update example.com ns1 --ips 1.2.3.4`,
 	Args:              cmdutil.ExactArgs(2),
@@ -67,8 +73,11 @@ var updateCmd = &cobra.Command{
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete <domain> <hostname>",
-	Short: "Delete a vanity nameserver",
+	Use:     "delete <domain> <hostname>",
+	Aliases: []string{"rm"},
+	Short:   "Delete a vanity nameserver",
+	Long: `Delete a vanity nameserver. Move any domain that uses it to other
+nameservers first ('domain set-ns'); the registry may refuse while one does.`,
 	Example: `  namecom vanity-ns delete example.com ns1.example.com
   namecom vanity-ns delete example.com ns1`,
 	Args:              cmdutil.ExactArgs(2),
@@ -88,6 +97,7 @@ func init() {
 	_ = updateCmd.MarkFlagRequired("ips")
 
 	cmdutil.GroupCmd(Cmd)
+	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 

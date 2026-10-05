@@ -74,9 +74,7 @@ Exit codes:
   2  usage error: a bad command, flag, argument or value
   3  authentication: credentials missing, failing or rejected, or access denied
   4  not found
-  5  rate limited
-
-Run 'namecom <command> --help' for details on any command.`
+  5  rate limited`
 
 // rootCmd is the top-level `namecom` command. It configures the API client and
 // output renderer and stashes them on the context for every subcommand.
@@ -115,7 +113,7 @@ func Execute() {
 	// a did-you-mean and the usage line.
 	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
 
-	if err := cmdutil.ClassifyCobraUsage(rootCmd.Execute()); err != nil {
+	if err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute())); err != nil {
 		os.Exit(reportError(errorOutput(), err))
 	}
 
@@ -130,6 +128,42 @@ func Execute() {
 			// Check not done yet — don't block.
 		}
 	}
+}
+
+// rootSuggestFor maps words typed in place of a top-level command to the
+// command meant, when the two are spelled nothing alike and cobra's
+// edit-distance suggestions cannot find it (#237). Cobra's own SuggestFor
+// field can only name a direct subcommand, and two of these are deeper.
+var rootSuggestFor = map[string]string{
+	"records":   "dns",
+	"record":    "dns",
+	"redirect":  "url",
+	"redirects": "url",
+	"forward":   "url",
+	"login":     "auth login",
+	"logout":    "auth logout",
+	"whoami":    "auth status",
+	"env":       "help environment",
+}
+
+// suggestFor adds rootSuggestFor's answer to an unknown top-level command
+// error, ahead of any suggestion cobra found itself.
+func suggestFor(err error) error {
+	u, ok := errors.AsType[*cmdutil.UnknownCommandError](err)
+	if !ok || u.Path != rootCmd.CommandPath() {
+		return err
+	}
+	target, ok := rootSuggestFor[strings.ToLower(u.Word)]
+	if !ok {
+		return err
+	}
+	suggestions := []string{target}
+	for _, s := range u.Suggestions {
+		if s = strings.TrimPrefix(s, u.Path+" "); s != target {
+			suggestions = append(suggestions, s)
+		}
+	}
+	return cmdutil.UnknownCommand(u.Word, u.Path, suggestions)
 }
 
 // checksForUpdates reports whether an invocation with these arguments looks
@@ -198,7 +232,7 @@ func init() {
 	pf.StringVar(&gf.profile, "profile", "", "credentials profile to use (env: NAMECOM_PROFILE)")
 	pf.StringVar(&gf.username, "username", "", "API username (env: NAMECOM_USERNAME)")
 	pf.StringVar(&gf.token, "token", "", "API token (env: NAMECOM_TOKEN)")
-	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com)")
+	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com) (env: NAMECOM_SANDBOX)")
 	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml (default: table in TTY, json otherwise)")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "script output, whatever --output says: lists print one ID/name per line, creates the new ID, other writes nothing")
 	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")
@@ -211,6 +245,18 @@ func init() {
 	pf.BoolVar(&gf.dryRun, "dry-run", false, "for write operations, print the request instead of sending it (reads are unaffected)")
 	pf.StringVar(&gf.idempKey, "idempotency-key", "", "pin every write in this invocation to one idempotency key (default: a fresh key per write)")
 	pf.StringVar(&gf.baseURL, "base-url", "", "override the API base URL (for local stubs and proxies; credentials are sent to whatever you name)")
+
+	// Root help lists these under headings, not as one block of 19 (#237).
+	// Unlisted flags, the ones nearly every write uses, come first.
+	for section, names := range map[string][]string{
+		"Output":      {"output", "quiet", "no-header", "wide", "color"},
+		"Credentials": {"profile", "username", "token", "sandbox"},
+		"Advanced":    {"timeout", "debug", "debug-file", "idempotency-key", "base-url"},
+	} {
+		for _, name := range names {
+			_ = pf.SetAnnotation(name, cmdutil.FlagSection, []string{section})
+		}
+	}
 
 	// Flag values the shell can offer; without these, TAB after -o, --color
 	// or --profile completed filenames (#187).
