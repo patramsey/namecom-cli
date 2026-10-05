@@ -58,7 +58,8 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `dns create --if-not-exists` exits 0 and prints the existing record's ID
   when a record with the same host, type and answer is already there.
   `dns delete --if-exists` exits 0 when the record is already gone (a missing
-  domain still exits 4).
+  domain still exits 4). With several IDs it skips the ones already gone,
+  with a note, and deletes the rest.
 - `dns list --host <host>` lists only the records at that host; `@` or the
   domain itself means the apex.
 - A dry run of `domain register`, `domain renew` or `transfer create` now

@@ -122,7 +122,7 @@ confirmed once and deleted in order; the first failure stops the rest.`,
   # In a script, skip the confirmation; this deletes every TXT record:
   namecom dns delete example.com $(namecom dns list example.com --type TXT -q) --yes
 
-  # Succeed when the record is already gone, so a retry does not fail:
+  # Skip records already gone, so a retry does not fail:
   namecom dns delete example.com 12345 --yes --if-exists`,
 	Args: cmdutil.MinimumNArgs(2),
 	RunE: runDelete,
@@ -196,7 +196,7 @@ func init() {
 	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", false, "skip records already in the zone instead of failing on them")
 	_ = importCmd.MarkFlagRequired("file")
 
-	deleteCmd.Flags().BoolVar(&deleteIfExists, "if-exists", false, "succeed when the record does not exist")
+	deleteCmd.Flags().BoolVar(&deleteIfExists, "if-exists", false, "skip IDs whose record does not exist instead of failing")
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd, importCmd, syncCmd)
@@ -584,30 +584,44 @@ func runDelete(cmd *cobra.Command, args []string) error {
 
 	// Fetch each record so the prompt can show it. "Delete DNS record 12345
 	// from D?" named only an ID, and was asked even for a record that did not
-	// exist (#235). A missing one now fails here, before any prompt.
-	writes := make([]cmdutil.Write[cmdutil.NoBody], len(ids))
-	summaries := make([]string, len(ids))
-	for i, id := range ids {
+	// exist (#235). A missing one now fails here, before any prompt — unless
+	// --if-exists, which skips it and deletes the rest.
+	var writes []cmdutil.Write[cmdutil.NoBody]
+	var summaries []string
+	var present, absent []int
+	for _, id := range ids {
 		stop := out.Spin("Fetching record…")
 		current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
 		stop()
 		if err != nil {
 			err = api.FromSDKError(err)
 			if cmdutil.IsNotFound(err) {
-				if deleteIfExists && len(ids) == 1 {
-					return deleteAbsent(cmd, domain, id)
+				if deleteIfExists {
+					absent = append(absent, id)
+					continue
 				}
 				return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
 			}
 			return err
 		}
-		summaries[i] = recordSummary(current)
-		writes[i] = cmdutil.Write[cmdutil.NoBody]{
+		present = append(present, id)
+		summaries = append(summaries, recordSummary(current))
+		writes = append(writes, cmdutil.Write[cmdutil.NoBody]{
 			Method: "DELETE",
 			Path:   fmt.Sprintf("/core/v1/domains/%s/records/%d", domain, id),
 			Spin:   "Deleting record…",
-		}
+		})
 	}
+	if len(present) == 0 {
+		return deleteAbsent(cmd, domain, absent)
+	}
+	// A record was found, so the domain exists and the rest really are gone.
+	// A note, not a Success line: under --dry-run -o json stdout is the
+	// preview alone.
+	for _, id := range absent {
+		out.Note(fmt.Sprintf("Record %d is not on %s: skipped", id, domain))
+	}
+	ids = present
 
 	prompt := fmt.Sprintf("Delete %s from %s?", summaries[0], domain)
 	if len(ids) > 1 {

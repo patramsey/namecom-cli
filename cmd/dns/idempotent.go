@@ -85,11 +85,11 @@ func reportExisting(cmd *cobra.Command, existing *coreapigo.Record, body coreapi
 	return nil
 }
 
-// deleteAbsent is `dns delete --if-exists` for a record the API says is not
-// there. The record's 404 could also mean the domain is missing, which
-// --if-exists must not hide — a typo in the domain would otherwise "succeed"
-// — so the domain is checked with a one-record list first.
-func deleteAbsent(cmd *cobra.Command, domain string, id int) error {
+// deleteAbsent is `dns delete --if-exists` when the API says none of the
+// records is there. A record's 404 could also mean the domain is missing,
+// which --if-exists must not hide — a typo in the domain would otherwise
+// "succeed" — so the domain is checked with a one-record list first.
+func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 	one, page := 1, 1
@@ -102,6 +102,8 @@ func deleteAbsent(cmd *cobra.Command, domain string, id int) error {
 		}
 		return err
 	}
-	out.Success(fmt.Sprintf("Record %d is not on %s: nothing to delete", id, domain))
+	for _, id := range ids {
+		out.Success(fmt.Sprintf("Record %d is not on %s: nothing to delete", id, domain))
+	}
 	return nil
 }

@@ -255,6 +255,90 @@ func TestDNSDelete_IfExists(t *testing.T) {
 	})
 }
 
+// TestDNSDelete_IfExistsSeveral pins --if-exists with several IDs: absent
+// ones are skipped with a note and the rest deleted under one prompt that
+// lists only them; all absent is exit 0; a missing domain is still exit 4;
+// and without the flag one missing ID fails before anything is deleted.
+func TestDNSDelete_IfExistsSeveral(t *testing.T) {
+	present := []fakeRecord{
+		{ID: 1, Host: "www", Type: "A", Answer: "192.0.2.1", TTL: 300},
+		{ID: 3, Host: "api", Type: "A", Answer: "192.0.2.3", TTL: 300},
+	}
+	t.Run("absent IDs are skipped, the rest deleted", func(t *testing.T) {
+		z, srv := newFakeZone(t, present...)
+		cmd, _, stderr := commandFor(t, srv, runOpts{yes: true})
+		deleteIfExists = true
+		t.Cleanup(func() { deleteIfExists = false })
+		var prompts []string
+		defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return true })()
+		if err := runDelete(cmd, []string{"example.com", "1", "2", "3", "4"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := z.writeLog(); !reflect.DeepEqual(got, []string{"DELETE 1", "DELETE 3"}) {
+			t.Errorf("writes = %q", got)
+		}
+		if len(prompts) != 1 || !strings.Contains(prompts[0], "these 2 records") || strings.Contains(prompts[0], "192.0.2.2") {
+			t.Errorf("prompts = %q, want one listing records 1 and 3", prompts)
+		}
+		for _, want := range []string{"record 2 is not on example.com", "record 4 is not on example.com"} {
+			if !strings.Contains(strings.ToLower(stderr.String()), want) {
+				t.Errorf("stderr = %q, want %q", stderr.String(), want)
+			}
+		}
+		stdout := cmdutil.Out(cmd).Writer.(interface{ String() string }).String()
+		if !strings.Contains(stdout, "Deleted record 1") || !strings.Contains(stdout, "Deleted record 3") {
+			t.Errorf("stdout = %q", stdout)
+		}
+	})
+	t.Run("all absent is exit 0", func(t *testing.T) {
+		z, srv := newFakeZone(t, present...)
+		cmd := deleteFor(t, srv, true)
+		if err := runDelete(cmd, []string{"example.com", "2", "4"}); err != nil {
+			t.Fatalf("want success, got %v", err)
+		}
+		out := cmdutil.Out(cmd).Writer.(interface{ String() string }).String()
+		if !strings.Contains(out, "Record 2 is not on example.com") || !strings.Contains(out, "Record 4 is not on example.com") {
+			t.Errorf("stdout = %q", out)
+		}
+		if len(z.writeLog()) != 0 {
+			t.Errorf("wrote %q", z.writeLog())
+		}
+	})
+	t.Run("absent domain is exit 4", func(t *testing.T) {
+		_, srv := newFakeZone(t, present...)
+		err := runDelete(deleteFor(t, srv, true), []string{"other.com", "2", "4"})
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `domain "other.com" not found`) {
+			t.Errorf("want the domain's not-found, got %v", err)
+		}
+	})
+	t.Run("a dry run previews only the present records", func(t *testing.T) {
+		z, srv := newFakeZone(t, present...)
+		cmd, stdout, _ := commandFor(t, srv, runOpts{dryRun: true, format: output.FormatJSON})
+		deleteIfExists = true
+		t.Cleanup(func() { deleteIfExists = false })
+		if err := runDelete(cmd, []string{"example.com", "1", "2", "3"}); err != nil {
+			t.Fatal(err)
+		}
+		var reqs []map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &reqs); err != nil || len(reqs) != 2 {
+			t.Fatalf("stdout = %q (%v), want a two-request array", stdout.String(), err)
+		}
+		if len(z.writeLog()) != 0 {
+			t.Errorf("wrote %q", z.writeLog())
+		}
+	})
+	t.Run("without the flag one missing ID deletes nothing", func(t *testing.T) {
+		z, srv := newFakeZone(t, present...)
+		err := runDelete(deleteFor(t, srv, false), []string{"example.com", "1", "2", "3"})
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "record 2 not found") {
+			t.Errorf("want record 2's not-found, got %v", err)
+		}
+		if len(z.writeLog()) != 0 {
+			t.Errorf("wrote %q", z.writeLog())
+		}
+	})
+}
+
 // TestDNSList_HostFilter pins --host: "@" and the bare domain mean the apex,
 // and a host may be given relative or fully qualified.
 func TestDNSList_HostFilter(t *testing.T) {
