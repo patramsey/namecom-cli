@@ -660,7 +660,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 		_, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
 		if err != nil {
-			err = api.FromSDKError(err)
+			err = api.MarkWrite(err) // not sent through RunWrite, so marked here
 			// Report what already landed. Import is not transactional, so bailing
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.

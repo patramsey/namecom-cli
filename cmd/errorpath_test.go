@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -93,6 +94,37 @@ func TestReportError_NotFoundSaysWhatToDoOnce(t *testing.T) {
 		if strings.Contains(ew.String(), "hint") {
 			t.Errorf("%s: the message already says what to do; want no hint, got:\n%s", f, ew.String())
 		}
+	}
+}
+
+// TestReportError_HintsMatchTheStatus pins #234: a 403 ("IP not whitelisted")
+// was told to log in again, which new credentials cannot fix; a 401 mentioned
+// the sandbox's separate token in production; and a read that got a non-JSON
+// 200 was warned that "a change may have been made".
+func TestReportError_HintsMatchTheStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		sandbox   bool
+		want, not string
+	}{
+		{"403", &api.APIError{StatusCode: 403, Message: "Permission Denied", Details: "IP not whitelisted"}, false, "IP address", "auth login"},
+		{"401 production", &api.APIError{StatusCode: 401, Message: "Unauthorized"}, false, "auth login", "sandbox"},
+		{"401 sandbox", &api.APIError{StatusCode: 401, Message: "Unauthorized"}, true, "sandbox uses a separate API token", ""},
+		{"undecodable read", api.NormalizeError(&json.SyntaxError{}), false, "--debug", "change"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ew bytes.Buffer
+			cfg := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew, Sandbox: tt.sandbox}
+			reportError(cfg, tt.err)
+			if !strings.Contains(ew.String(), tt.want) {
+				t.Errorf("want %q in:\n%s", tt.want, ew.String())
+			}
+			if tt.not != "" && strings.Contains(ew.String(), tt.not) {
+				t.Errorf("must not mention %q:\n%s", tt.not, ew.String())
+			}
+		})
 	}
 }
 

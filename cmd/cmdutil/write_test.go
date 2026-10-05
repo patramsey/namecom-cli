@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -226,6 +228,32 @@ func TestRunWrite_SendErrorIsReturnedWithSentTrue(t *testing.T) {
 		func(context.Context, NoBody) error { return boom })
 	if !sent || !errors.Is(err, boom) {
 		t.Fatalf("RunWrite = (%v, %v), want (true, boom)", sent, err)
+	}
+}
+
+// TestRunWrite_ServerErrorWarnsTheChangeMayHaveBeenMade pins #234's write
+// half. The SDK's errors do not say which method drew them, so a 5xx from a
+// write read the same as one from a read; RunWrite now marks what send
+// returns, and the same error from a read says nothing changed.
+func TestRunWrite_ServerErrorWarnsTheChangeMayHaveBeenMade(t *testing.T) {
+	cmd, _, _ := writeCmd(t, false, true)
+	_, err := RunWrite(cmd, Write[NoBody]{Method: "POST", Path: "/x"},
+		func(context.Context, NoBody) error {
+			return fmt.Errorf("creating: %w", &api.APIError{StatusCode: 502, Message: "Bad Gateway"})
+		})
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	if !ok {
+		t.Fatalf("RunWrite = %v, want the *api.APIError kept in the chain", err)
+	}
+	if !strings.Contains(apiErr.UserHint(), "may or may not have been made") {
+		t.Errorf("write 5xx hint = %q, want the may-have-been-made warning", apiErr.UserHint())
+	}
+	if err.Error() != "creating: Bad Gateway" {
+		t.Errorf("message = %q, want the caller's wrapping kept", err.Error())
+	}
+	read := &api.APIError{StatusCode: 502, Message: "Bad Gateway"}
+	if strings.Contains(read.UserHint(), "may") {
+		t.Errorf("read 5xx hint = %q, must not suggest a change was made", read.UserHint())
 	}
 }
 

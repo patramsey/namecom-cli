@@ -3,6 +3,7 @@ package cmdutil
 import (
 	"context"
 
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -86,7 +87,9 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	}
 	err = send(cmd.Context(), w.Body)
 	stop()
-	return true, err
+	// So a 5xx or an unreadable reply warns that the change may have been
+	// made, which a read's error must not say.
+	return true, api.MarkWrite(err)
 }
 
 // previewOf returns the value --dry-run prints for w: nothing for NoBody, the

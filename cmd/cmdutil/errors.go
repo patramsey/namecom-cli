@@ -183,5 +183,5 @@ func RequireField[T comparable](what string, value T) error {
 	if value != zero {
 		return nil
 	}
-	return &api.UnexpectedResponseError{Reason: "the response did not include " + what, Read: true}
+	return &api.UnexpectedResponseError{Reason: "the response did not include " + what}
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,13 @@ type APIError struct {
 	// specific to say, rather than an empty body, a proxy's page, or a bare
 	// "Server error". See UserHint.
 	explained bool
+	// Write marks the reply to a request that changes something, set by
+	// MarkWrite. A 5xx then warns that the change may have been made; for a
+	// read it does not, since nothing could have changed.
+	Write bool
+	// Sandbox is set when the request went to the sandbox API, so a 401 can
+	// mention its separate token without saying so in production too.
+	Sandbox bool
 	// Body is the raw response body, set only by callers that show it — the
 	// `namecom api` passthrough. It becomes the error envelope's details.
 	Body []byte
@@ -53,13 +61,23 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("HTTP %d", e.StatusCode)
 }
 
-// UserHint returns an actionable next-step hint for display alongside the error.
+// UserHint returns an actionable next-step hint for display alongside the
+// error, chosen by status and by whether the request was a write (#234).
 func (e *APIError) UserHint() string {
 	switch e.StatusCode {
-	case 401, 403:
-		return "run 'namecom auth login' to reconfigure credentials"
+	case 401:
+		hint := "the API rejected the username or token — run 'namecom auth login' to replace them"
+		if e.Sandbox {
+			hint += " (the sandbox uses a separate API token from production)"
+		}
+		return hint
+	case 403:
+		// Not "log in again": the API answers 403 to credentials it accepted,
+		// for an account without permission or a request from an IP address
+		// the account's API settings do not allow. New credentials fix neither.
+		return "the account is not permitted to do this, or the API is not accepting requests from your IP address — check the account's API settings at https://www.name.com/account/settings/api"
 	case 404:
-		return "the requested resource was not found — check the domain name or ID"
+		return "check the name or ID for typos"
 	case 429:
 		// Say how long when the server said so: "wait a moment" is misleading
 		// advice next to a Retry-After of ten minutes.
@@ -69,15 +87,44 @@ func (e *APIError) UserHint() string {
 		return "rate limited — wait a moment and try again"
 	}
 	if e.StatusCode >= 500 {
-		// The API answers 500 for some validation failures — a reserved IP on
-		// vanity-ns create, for one. When it says why, retrying will not help,
-		// so don't call it transient; the message is already on the error line.
-		if e.explained {
-			return "name.com returned a server error; if it persists, the request itself may be invalid"
+		// One wording for every 5xx, varied only by what is true of this
+		// request. 500, 502 and 503 used to get three different hints, and
+		// a read was told "the request itself may be invalid".
+		//
+		// The API answers 500 for some validation failures — a reserved IP
+		// on vanity-ns create, for one. When it says why (explained), the
+		// same request will fail the same way. A write the server failed
+		// partway may still have happened, which is why a POST is not
+		// retried on a 5xx.
+		switch {
+		case e.Write && e.explained:
+			return "name.com gave the reason above; check whether the change was made before sending it again"
+		case e.Write:
+			return "name.com failed while handling this change, so it may or may not have been made — check before retrying"
+		case e.explained:
+			return "name.com gave the reason above; repeating the same request will likely fail the same way"
 		}
-		return "name.com API error — try again shortly"
+		return "the failure is on name.com's side; nothing was changed, so it is safe to retry later"
 	}
 	return ""
+}
+
+// MarkWrite records that err came from a request that changes something, so
+// its hint can say a change may have been made. It normalizes err first and
+// returns it, otherwise unchanged; nil stays nil.
+//
+// The SDK's errors do not carry the request's method, and a write command
+// also makes reads — `dns update` fetches the record first — so the command
+// cannot be the judge either. cmdutil.RunWrite marks what its send returns.
+func MarkWrite(err error) error {
+	err = NormalizeError(err)
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
+		apiErr.Write = true
+	}
+	if u, ok := errors.AsType[*UnexpectedResponseError](err); ok {
+		u.Write = true
+	}
+	return err
 }
 
 // errorEnvelope matches the API's error body shape.
@@ -101,18 +148,9 @@ func ErrorFromResponse(statusCode int, body []byte) *APIError {
 	} else {
 		e.Message = summarizeBody(body, statusCode)
 	}
-	if statusCode == http.StatusUnauthorized {
-		// Error() already renders details as "message (details)", so the note
-		// must not carry its own parentheses — that produced
-		// "Unauthorized ((note: …))". Join to any API-supplied details rather
-		// than nesting a second parenthetical inside the first.
-		const note = "note: sandbox uses a separate API token from production"
-		if d := strings.TrimSpace(e.Details); d != "" {
-			e.Details = d + "; " + note
-		} else {
-			e.Details = note
-		}
-	}
+	// A 401 used to carry "note: sandbox uses a separate API token from
+	// production" in its details, in production too. It is now part of the
+	// hint, and only when Sandbox is set (#234).
 	return e
 }
 

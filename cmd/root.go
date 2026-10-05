@@ -573,6 +573,11 @@ func skipClientInit(cmd *cobra.Command) bool {
 // cmdutil.AuthError now carries its own.
 func reportError(cfg *output.Config, err error) int {
 	err = normalizeError(err)
+	// The 401 hint mentions the sandbox's separate token only when the
+	// request went there; cfg.Sandbox is set from the resolved credentials.
+	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
+		apiErr.Sandbox = cfg.Sandbox
+	}
 	cfg.Error(err)
 	return exitCode(err)
 }
