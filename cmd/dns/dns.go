@@ -34,8 +34,10 @@ var Cmd = &cobra.Command{
 const defaultTTL = 300
 
 var (
-	listAll  bool
-	listType string
+	listAll bool
+	// listPage and listLimit are --page and --limit.
+	listPage, listLimit int
+	listType            string
 
 	createType     string
 	createHost     string
@@ -136,7 +138,7 @@ var importCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages automatically")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "record")
 	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
 
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT (required; prompted in a terminal)")
@@ -174,9 +176,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	// page 1 silently reports "no records" for a zone that has them. Matches
 	// `domain list` and `order list`, which auto-page whenever a filter is set.
 	autoPage := listAll || listType != ""
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
 
 	stop := out.Spin("Fetching DNS records…")
-	records, hasMore, nextPage, err := fetchAllRecords(cmd, domain, autoPage)
+	records, hasMore, nextPage, err := fetchRecords(cmd, domain, listPage, cmdutil.PerPage(listLimit), autoPage)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
@@ -239,7 +244,11 @@ func runList(cmd *cobra.Command, args []string) error {
 			renderGroupedRecords(out, records)
 		}
 		if hasMore {
-			out.Count(len(records), "record", "more exist — pass --all for the rest")
+			next := listPage + 1
+			if nextPage != nil {
+				next = *nextPage
+			}
+			out.Count(len(records), "record", cmdutil.MorePages(next))
 		} else {
 			out.Count(len(records), "record")
 		}
@@ -530,7 +539,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	records, _, _, err := fetchAllRecords(cmd, domain, true)
+	records, _, _, err := fetchRecords(cmd, domain, 1, nil, true)
 	if err != nil {
 		return err
 	}
@@ -697,18 +706,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// fetchAllRecords pages through all DNS records for a domain.
-func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, err error) {
+// fetchRecords fetches a domain's DNS records from page start, perPage at a
+// time (nil for the API's default), and every later page when all is set.
+func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, err error) {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 
-	page := 1
+	page := start
 	var lastNextPage *int
 
 	for {
 		result, err2 := client.SDK().DNS.ListRecords(ctx, &coreapigo.ListRecordsRequest{
 			DomainName: domain,
 			Page:       &page,
+			PerPage:    perPage,
 		})
 		if err2 != nil {
 			return nil, false, nil, api.FromSDKError(err2)

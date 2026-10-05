@@ -113,6 +113,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - **Scripts — exit code:** `domain list` rejects arguments with exit 2, like
   the other list commands. `domain list --all false` used to ignore the
   `false` and list everything.
+- Every paged list — `domain`, `dns`, `email`, `url`, `vanity-ns`, `transfer`
+  and `order list`, and `contact unverified` — takes `--page` (the page to
+  fetch, from 1), `--limit` (results per page) and `--all`, described the same
+  way everywhere. Only `domain list` had `--page`, and none could set the
+  page size. A list that stops early ends with
+  `--page N for more, --all for everything`, as `domain list` already did.
+  **Scripts — exit code:** `--page 0` and a negative `--limit` exit 2; `domain
+  list --page 0` exited 1.
+- `domain list --sort` lists the domain properties it can sort by in its
+  help. Any other value is still passed to the API.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

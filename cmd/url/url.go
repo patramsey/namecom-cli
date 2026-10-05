@@ -87,7 +87,7 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding")
 
 	createCmd.Flags().StringVar(&createHost, "host", "@", "subdomain host (@ for apex); a forwarding on a subdomain replaces its existing A records")
 	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL "+cmdutil.PromptedRequired)
@@ -107,6 +107,8 @@ func init() {
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 
+var listPage, listLimit int
+
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
@@ -115,14 +117,19 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching URL forwardings…")
-	page := 1
+	page := listPage
 	var all []*coreapigo.URLForwardingResponse
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListURLForwardingsResponse
 	for {
 		result, err := client.SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
-			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page})
+			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -137,7 +144,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		// early would truncate silently. Page fully whenever the caller cannot
 		// be told there is more — see cmd/contact/contact.go.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -179,7 +186,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			urlRows(all),
 		)
 		if hasMore {
-			out.Count(len(all), "URL forwarding", "first page — pass --all for the rest")
+			out.Count(len(all), "URL forwarding", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(all), "URL forwarding")
 		}

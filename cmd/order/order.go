@@ -77,7 +77,7 @@ var refundCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full history — can be slow)")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "order")
 	listCmd.Flags().StringVar(&listDomain, "domain", "", "filter by domain name (supports * wildcard)")
 	listCmd.Flags().StringVar(&listSince, "since", "", "filter orders created on or after this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
 	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
@@ -91,6 +91,8 @@ func init() {
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
+
+var listPage, listLimit int
 
 func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
@@ -118,10 +120,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 		cmd.Flags().Changed("until") || cmd.Flags().Changed("status")
 	autoPage := listAll || filtered
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching orders…")
-	page := 1
+	page := listPage
 	var orders []*coreapigo.Order
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListOrdersResponse
 	// Newest first. The API defaults to ascending, so without this the first
 	// page of a long history was its oldest orders and anything recent — the
@@ -129,7 +136,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	// sat behind every other page.
 	dir := "desc"
 	for {
-		req := &coreapigo.ListOrdersRequest{Page: &page, Dir: &dir}
+		req := &coreapigo.ListOrdersRequest{Page: &page, Dir: &dir, PerPage: cmdutil.PerPage(listLimit)}
 		if listDomain != "" {
 			req.DomainName = &listDomain
 		}
@@ -158,7 +165,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		// stopping early would truncate silently. Page fully whenever the
 		// caller cannot be told there is more — see cmd/contact/contact.go.
 		if !autoPage && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -197,7 +204,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		orderTable(out, orders)
 		if hasMore {
-			out.Count(len(orders), "order", "newest first — narrow with --since, --domain or --status, or pass --all")
+			out.Count(len(orders), "order", "newest first · "+cmdutil.MorePages(nextPage)+", or narrow with --since, --domain or --status")
 		} else {
 			out.Count(len(orders), "order")
 		}

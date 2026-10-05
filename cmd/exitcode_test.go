@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -364,19 +365,30 @@ func TestExitCode_OpenTooManyArgs(t *testing.T) {
 	}
 }
 
-// resetFlags returns the flags of the command args name to their defaults.
-// Subcommand flags are package variables that outlive one Execute, so a value
-// another test passed would otherwise satisfy the flag this test leaves out.
+// resetFlags returns the flags of the command args name to their defaults,
+// now and when the test ends. Subcommand flags are package variables that
+// outlive one Execute, so a value another test passed would otherwise satisfy
+// the flag this test leaves out, and a bad value this test passes would fail
+// the next.
 func resetFlags(t *testing.T, args []string) {
 	t.Helper()
 	c, _, err := rootCmd.Find(args)
 	if err != nil {
 		t.Fatalf("finding %v: %v", args, err)
 	}
-	c.Flags().VisitAll(func(f *pflag.Flag) {
-		_ = f.Value.Set(f.DefValue)
-		f.Changed = false
-	})
+	reset := func() {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			// Set appends to a slice flag, so a slice is emptied instead.
+			if sv, ok := f.Value.(pflag.SliceValue); ok {
+				_ = sv.Replace(nil)
+			} else {
+				_ = f.Value.Set(f.DefValue)
+			}
+			f.Changed = false
+		})
+	}
+	reset()
+	t.Cleanup(reset)
 }
 
 // TestExitCode_MissingRequiredFlagIsUsage pins #236: a flag a command needs,
@@ -415,5 +427,64 @@ func TestExitCode_MissingRequiredFlagIsUsage(t *testing.T) {
 				t.Errorf("namecom %s exited %d (%v); want 2", strings.Join(tc.args, " "), got, err)
 			}
 		})
+	}
+}
+
+// pagedLists is every list command the API pages.
+var pagedLists = [][]string{
+	{"domain", "list"},
+	{"dns", "list", "example.com"},
+	{"email", "list", "example.com"},
+	{"url", "list", "example.com"},
+	{"vanity-ns", "list", "example.com"},
+	{"transfer", "list"},
+	{"order", "list"},
+	{"contact", "unverified"},
+}
+
+// TestPagedLists_PageAndLimit pins #236: --page existed only on domain list,
+// so `order list --page 2` was an unknown flag, and no list could set the
+// page size. Each now sends both.
+func TestPagedLists_PageAndLimit(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, args := range pagedLists {
+		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+			var query url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				query = r.URL.Query()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+			resetFlags(t, args)
+			full := append([]string{"--base-url", srv.URL, "-o", "json"}, args...)
+			if err := executeRoot(t, append(full, "--page", "3", "--limit", "10")...); err != nil {
+				t.Fatalf("namecom %s --page 3 --limit 10: %v", strings.Join(args, " "), err)
+			}
+			if query.Get("page") != "3" || query.Get("perPage") != "10" {
+				t.Errorf("sent page=%q perPage=%q, want 3 and 10", query.Get("page"), query.Get("perPage"))
+			}
+		})
+	}
+}
+
+// TestPagedLists_BadPageIsUsage pins #236: `--page 0` exited 1.
+func TestPagedLists_BadPageIsUsage(t *testing.T) {
+	withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	for _, args := range pagedLists {
+		for _, bad := range [][]string{{"--page", "0"}, {"--limit", "-1"}} {
+			t.Run(strings.Join(append(args[:2:2], bad...), " "), func(t *testing.T) {
+				resetFlags(t, args)
+				full := append(append([]string{"--base-url", srv.URL, "-o", "json"}, args...), bad...)
+				err := cmdutil.ClassifyCobraUsage(executeRoot(t, full...))
+				if got := exitCode(err); got != 2 {
+					t.Errorf("namecom %s exited %d (%v), want 2", strings.Join(full[4:], " "), got, err)
+				}
+			})
+		}
 	}
 }

@@ -77,7 +77,7 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "nameserver")
 
 	createCmd.Flags().StringVar(&createHostname, "hostname", "", "nameserver hostname, either fully-qualified (ns1.example.com) or bare label (ns1) (required)")
 	createCmd.Flags().StringVar(&createIPs, "ips", "", "comma-separated IP addresses (required)")
@@ -91,6 +91,8 @@ func init() {
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 
+var listPage, listLimit int
+
 func runList(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
@@ -99,14 +101,19 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching vanity nameservers…")
-	page := 1
+	page := listPage
 	var all []*coreapigo.VanityNameserverResponse
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListVanityNameserversResponse
 	for {
 		result, err := client.SDK().VanityNameservers.ListVanityNameservers(cmd.Context(),
-			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page})
+			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -121,7 +128,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		// early would truncate silently. Page fully whenever the caller cannot
 		// be told there is more — see cmd/contact/contact.go.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -161,7 +168,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			vanityRows(all),
 		)
 		if hasMore {
-			out.Count(len(all), "vanity nameserver", "first page — pass --all for the rest")
+			out.Count(len(all), "vanity nameserver", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(all), "vanity nameserver")
 		}

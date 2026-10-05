@@ -130,24 +130,31 @@ func init() {
 	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
 	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
 
-	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full transfer history)")
+	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfer")
 
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
+var listPage, listLimit int
+
 func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
+	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+		return err
+	}
+
 	spin := out.StartSpinner("Fetching transfers…")
-	page := 1
+	page := listPage
 	var transfers []*coreapigo.Transfer
 	var hasMore bool
+	var nextPage int
 	var lastResult *coreapigo.ListTransfersResponse
 	for {
 		result, err := client.SDK().Transfers.ListTransfers(cmd.Context(),
-			&coreapigo.ListTransfersRequest{Page: &page})
+			&coreapigo.ListTransfersRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)})
 		if err != nil {
 			spin.Stop()
 			return err
@@ -162,7 +169,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		// early would truncate silently. Page fully whenever the caller cannot
 		// be told there is more — see cmd/contact/contact.go.
 		if !listAll && !out.QuietMode {
-			hasMore = true
+			hasMore, nextPage = true, next
 			break
 		}
 		page = next
@@ -202,7 +209,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			transferRows(out, transfers),
 		)
 		if hasMore {
-			out.Count(len(transfers), "transfer", "first page — pass --all for full history")
+			out.Count(len(transfers), "transfer", cmdutil.MorePages(nextPage))
 		} else {
 			out.Count(len(transfers), "transfer")
 		}
