@@ -761,11 +761,19 @@ func runPricing(cmd *cobra.Command, args []string) error {
 		out.Warn(fmt.Sprintf("%s is not a standard registration (purchase type %s): registering it costs %s, not %s",
 			domain, *pt, register, fmtPrice(pricing.PurchasePrice)))
 	}
+	// The table had no heading and listed "Premium: no" as a row of the PRICE
+	// column (#235). The heading names the domain and the term the prices
+	// cover — GetPricingForDomain quotes the TLD's minimum term, which the
+	// SDK documents as usually 1 year (2 for .ai) — and says premium there.
+	title := domain
+	if pricing.Premium {
+		title += " (premium)"
+	}
+	out.Title(title + " — per term (1 year for most TLDs)")
 	out.Table([]string{"TYPE", "PRICE"}, [][]string{
 		{"Register", register},
 		{"Renew", fmtPrice(pricing.RenewalPrice)},
 		{"Transfer", fmtPrice(pricing.TransferPrice)},
-		{"Premium", boolStr(pricing.Premium)},
 	})
 	return nil
 }

@@ -53,6 +53,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   at much more is visible before buying. A premium name's PRICE cell no
   longer repeats the renewal price in brackets. **Scripts** splitting the
   plain table by column position need updating; JSON and YAML are unchanged.
+- `domain pricing` has a heading, `example.org — per term (1 year for most
+  TLDs)`, with `(premium)` after the name for a premium domain. The PRICE
+  column no longer has a `Premium  no` row. **Scripts** reading the table
+  need updating; JSON, YAML and `-q` are unchanged.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

@@ -355,13 +355,6 @@ func formatTime(t *time.Time) string {
 	return t.Format("2006-01-02")
 }
 
-func boolStr(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
-}
-
 // formatNS formats gen.Nameservers (type alias for []string) for display.
 func formatNS(ns []string) string {
 	if len(ns) == 0 {

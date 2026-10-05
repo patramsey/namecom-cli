@@ -122,6 +122,41 @@ func TestPurchaseDryRun_StatesTheCharge(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+// TestPricing_HeadedAndNoPremiumRow pins #235: `domain pricing` printed an
+// unheaded table with "Premium: no" as a row of the PRICE column. The heading
+// names the domain, the term, and premium status when it applies.
+func TestPricing_HeadedAndNoPremiumRow(t *testing.T) {
+	for _, tc := range []struct {
+		premium bool
+		title   string
+	}{
+		{false, "example.org — per term (1 year for most TLDs)"},
+		{true, "example.org (premium) — per term (1 year for most TLDs)"},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.HasSuffix(r.URL.Path, ":checkAvailability") {
+				_, _ = w.Write([]byte(`{"results":[{"domainName":"example.org","purchasable":true,"purchasePrice":17.99}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"premium":` + map[bool]string{true: "true", false: "false"}[tc.premium] +
+				`,"purchasePrice":17.99,"renewalPrice":17.99,"transferPrice":12.99}`))
+		}))
+		cmd := cmdForPricing(t, srv)
+		if err := runPricing(cmd, []string{"example.org"}); err != nil {
+			t.Fatalf("runPricing: %v", err)
+		}
+		srv.Close()
+		stdout := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String()
+		if first := strings.SplitN(stdout, "\n", 2)[0]; first != tc.title {
+			t.Errorf("heading = %q, want %q\n%s", first, tc.title, stdout)
+		}
+		if strings.Contains(stdout, "Premium") {
+			t.Errorf("premium is not a price, but is a row:\n%s", stdout)
+		}
+	}
+}
+
 // TestSearchResults_ShowRenewalPrice pins #235: search and check showed the
 // first-year price only, though the results carry renewalPrice — $3.99 now,
 // renewing at several times that, is the surprise a registrar is known for.
