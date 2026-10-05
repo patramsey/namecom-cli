@@ -873,16 +873,19 @@ func (c *Config) Error(err error) {
 		_ = enc.Encode(env)
 		return
 	}
+	// The four status symbols (#238): ✗ for the error and → for the hint, the
+	// next step, as Hint prints it. Without colour the lines read
+	// "error: …" and "  hint: …", the only output that did not use them.
 	msg := err.Error()
 	if c.ColorEnabled() {
 		fmt.Fprintln(c.EWriter, styleError.Render("✗")+" "+msg)
 		if hint != "" {
-			fmt.Fprintln(c.EWriter, styleDim.Render("  hint: "+hint))
+			fmt.Fprintln(c.EWriter, styleDim.Render("→ "+hint))
 		}
 	} else {
-		fmt.Fprintln(c.EWriter, "error: "+msg)
+		fmt.Fprintln(c.EWriter, "✗ "+msg)
 		if hint != "" {
-			fmt.Fprintln(c.EWriter, "  hint: "+hint)
+			fmt.Fprintln(c.EWriter, "→ "+hint)
 		}
 	}
 }

@@ -90,6 +90,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `aborted: profile "…" left unchanged`. The one exception is the register
   offer after `domain check`: the check itself succeeded, so saying no exits
   0, with a note that nothing was registered.
+- **Scripts:** error lines use the status symbols in table mode: `✗ <message>`
+  and, when there is advice, `→ <hint>` on the next line. Without colour they
+  read `error: <message>` and `  hint: <hint>`, the only output that did not
+  use the symbols; with colour the hint was a dim `  hint:` line. Scripts
+  matching `error:` on stderr need updating. The JSON and YAML error
+  envelopes are unchanged.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

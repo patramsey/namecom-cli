@@ -99,7 +99,7 @@ func TestErrorHint_OutermostDecides(t *testing.T) {
 			if tt.want != "" {
 				want = 1
 			}
-			if n := strings.Count(ew.String(), "hint:"); n != want {
+			if n := strings.Count(ew.String(), "→ "); n != want {
 				t.Errorf("rendered %d hint lines, want %d:\n%s", n, want, ew.String())
 			}
 		})
