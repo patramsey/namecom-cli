@@ -1138,7 +1138,7 @@ func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
 			name: "premium shows its renewal price",
 			result: coreapigo.SearchResult{DomainName: "shoe.luxe", Purchasable: true,
 				PurchasePrice: new(1000.0), RenewalPrice: new(24.99), Premium: &yes, PurchaseType: &registration},
-			wantCell:       "$1,000.00 (renews $24.99/yr)",
+			wantCell:       "$1,000.00",
 			wantPrompt:     "Register shoe.luxe for 1 year: $1,000.00 (premium; renews at $24.99/yr), without WHOIS privacy or auto-renew?",
 			notWantInPrice: "$1,000.00/yr",
 		},
@@ -1162,11 +1162,11 @@ func TestCheck_PriceWordingFollowsPurchaseKind(t *testing.T) {
 			if err := renderSearchResults(out, []*coreapigo.SearchResult{&r}); err != nil {
 				t.Fatalf("renderSearchResults: %v", err)
 			}
-			if !strings.Contains(buf.String(), tc.wantCell) {
+			if !strings.Contains(buf.String(), tc.wantCell) || searchPriceLabel(&r) != tc.wantCell {
 				t.Errorf("PRICE cell %q missing:\n%s", tc.wantCell, buf.String())
 			}
-			if tc.notWantInPrice != "" && strings.Contains(buf.String(), tc.notWantInPrice) {
-				t.Errorf("table must not say %q:\n%s", tc.notWantInPrice, buf.String())
+			if tc.notWantInPrice != "" && strings.Contains(searchPriceLabel(&r), tc.notWantInPrice) {
+				t.Errorf("PRICE cell must not say %q:\n%s", tc.notWantInPrice, buf.String())
 			}
 		})
 	}

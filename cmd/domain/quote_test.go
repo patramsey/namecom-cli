@@ -122,6 +122,34 @@ func TestPurchaseDryRun_StatesTheCharge(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+// TestSearchResults_ShowRenewalPrice pins #235: search and check showed the
+// first-year price only, though the results carry renewalPrice — $3.99 now,
+// renewing at several times that, is the surprise a registrar is known for.
+func TestSearchResults_ShowRenewalPrice(t *testing.T) {
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}, Wide: true, Plain: true}
+	results := []*coreapigo.SearchResult{
+		{DomainName: "cheap.xyz", Purchasable: true, PurchasePrice: ptr(3.99), RenewalPrice: ptr(14.99)},
+		{DomainName: "taken.com", Purchasable: false},
+	}
+	if err := renderSearchResults(out, results); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want a header and two rows, got:\n%s", buf.String())
+	}
+	for i, want := range [][]string{
+		{"DOMAIN", "AVAILABILITY", "PRICE", "RENEWS", "PREMIUM"},
+		{"cheap.xyz", "✓", "available", "$3.99/yr", "$14.99/yr", "no"},
+		{"taken.com", "taken", "—", "—", "—"},
+	} {
+		if got := strings.Fields(lines[i]); strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("line %d = %q, want %q", i, got, want)
+		}
+	}
+}
+
 // registerBody is a CreateDomainRequest for years, with purchaseType and
 // purchasePrice set when purchaseType is not empty.
 func registerBody(years int, purchaseType string, price float64) coreapigo.CreateDomainRequest {

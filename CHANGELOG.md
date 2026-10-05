@@ -48,6 +48,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--dry-run`), and fails before asking when the order does not exist (exit
   4) or has no such item (exit 2). **Scripts** matching the prompt text need
   updating.
+- `domain search` and `domain check` have a RENEWS column with the yearly
+  renewal price, between PRICE and PREMIUM, so a cheap first year that renews
+  at much more is visible before buying. A premium name's PRICE cell no
+  longer repeats the renewal price in brackets. **Scripts** splitting the
+  plain table by column position need updating; JSON and YAML are unchanged.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
