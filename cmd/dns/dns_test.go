@@ -1724,8 +1724,12 @@ func TestDNSDelete_DryRunWorksNonInteractively(t *testing.T) {
 	defer output.StubInteractive(false)()
 
 	var called bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		called = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// delete looks the record up first, to show it and to fail early
+		// when it is missing (#235); only the DELETE is the real request.
+		if r.Method != http.MethodGet {
+			called = true
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
 	}))

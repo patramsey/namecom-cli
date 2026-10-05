@@ -229,6 +229,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	digest := args[1]
 
+	// The delete gave no warning at all (#235). What these "keys" are is the
+	// DS records the registry publishes for the zone, so what removing one
+	// can break depends on what is left: resolvers that validate fail the
+	// domain when the remaining DS records match none of the keys its DNS
+	// host signs with, and simply stop validating when none remain — the
+	// first step of turning DNSSEC off.
+	if out.Format == output.FormatTable && !out.QuietMode {
+		out.Warn(fmt.Sprintf("If other DS records remain for %s and none matches a key its DNS host signs the zone with, "+
+			"validating resolvers will fail to resolve it. With no DS record left, validation simply stops.", domain))
+	}
+
 	// Escaped as the SDK escapes it, so --dry-run shows the path sent (#187).
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",

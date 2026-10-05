@@ -54,6 +54,17 @@ func CheckMaxPrice(cmd *cobra.Command, maxPrice float64, what string, price *flo
 	return nil
 }
 
+// ChargeQuote is the Write.Quote of a purchase charging price, in USD, for a
+// term of years (0 when the purchase states none). It is nil when there is no
+// price to quote, so a dry run never reports a charge of $0.00 it does not
+// know.
+func ChargeQuote(price *float64, years int, note string) *output.Quote {
+	if price == nil {
+		return nil
+	}
+	return &output.Quote{Total: *price, Currency: "USD", Years: years, Note: note}
+}
+
 // RequireAcceptPremium gates a purchase at a premium, aftermarket, expiring or
 // backorder price. desc says what is being bought and for how much; it opens
 // the error.

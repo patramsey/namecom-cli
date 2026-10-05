@@ -1980,10 +1980,14 @@ func TestRegisterRenew_MultiYearPromptIsNotLabelledPerYear(t *testing.T) {
 			if !strings.Contains(prompt, "699.90") {
 				t.Fatalf("prompt should quote the price, got: %s", prompt)
 			}
-			if hasYr := strings.Contains(prompt, "/yr"); hasYr != tc.wantYr {
-				t.Errorf("years=%s prompt %q: /yr present=%v, want %v", tc.years, prompt, hasYr, tc.wantYr)
+			// The term price is what must not read "/yr"; register's prompt
+			// also states the yearly renewal rate, which is a different figure
+			// for a multi-year term (#235).
+			if hasYr := strings.Contains(prompt, "$699.90/yr"); hasYr != tc.wantYr {
+				t.Errorf("years=%s prompt %q: $699.90/yr present=%v, want %v", tc.years, prompt, hasYr, tc.wantYr)
 			}
-			if !tc.wantYr && !strings.Contains(prompt, "total for "+tc.years) {
+			if !tc.wantYr && !strings.Contains(prompt, "total for "+tc.years) &&
+				!strings.Contains(prompt, tc.years+" years: $699.90 total") {
 				t.Errorf("multi-year prompt should state the term total, got: %s", prompt)
 			}
 		})
@@ -2605,7 +2609,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":true,"purchasePrice":1000,"renewalPrice":24.99,"transferPrice":24.99}`,
 			purchaseType: "registration", checkPrice: 1000,
-			want:    []string{"Register shoe.luxe for 1 year at $1,000.00 (premium; renews at $24.99/yr)?"},
+			want:    []string{"Register shoe.luxe for 1 year: $1,000.00 (premium; renews at $24.99/yr), without WHOIS privacy or auto-renew?"},
 			notWant: []string{"$1,000.00/yr"},
 		},
 		{
@@ -2613,7 +2617,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":true,"purchasePrice":1000}`,
 			purchaseType: "registration", checkPrice: 1000,
-			want:    []string{"at $1,000.00 (premium)?"},
+			want:    []string{": $1,000.00 (premium), without"},
 			notWant: []string{"/yr", "renews"},
 		},
 		{
@@ -2624,8 +2628,8 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "2",
 			pricing:      `{"premium":true,"purchasePrice":1523.08,"renewalPrice":1523.08,"transferPrice":761.54}`,
 			purchaseType: "registration", checkPrice: 761.54,
-			want:    []string{"for 2 years at $1,523.08 total for 2 years (premium; renews at $1,523.08 total for 2 years)?"},
-			notWant: []string{"/yr"},
+			want:    []string{"for 2 years: $1,523.08 total (premium; renews at $761.54/yr), without"},
+			notWant: []string{"$1,523.08/yr"},
 		},
 		{
 			name:         "aftermarket drops the year count",
@@ -2640,7 +2644,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99}`,
 			purchaseType: "aftermarket_b", checkPrice: 2500,
-			want:    []string{"Register shoe.luxe at $2,500.00 flat (aftermarket_b, not per year)?"},
+			want:    []string{"Register shoe.luxe at $2,500.00 flat (aftermarket_b, not per year), without WHOIS privacy or auto-renew?"},
 			notWant: []string{"year(s)", "--years"},
 		},
 		{
@@ -2648,7 +2652,7 @@ func TestRegister_PromptWordingByPurchaseKind(t *testing.T) {
 			years:        "1",
 			pricing:      `{"premium":false,"purchasePrice":12.99,"renewalPrice":12.99,"transferPrice":12.99}`,
 			purchaseType: "registration", checkPrice: 12.99,
-			want:    []string{"Register shoe.luxe for 1 year at $12.99/yr?"},
+			want:    []string{"Register shoe.luxe for 1 year: $12.99 (renews at $12.99/yr), without WHOIS privacy or auto-renew?"},
 			notWant: []string{"premium"},
 		},
 	}

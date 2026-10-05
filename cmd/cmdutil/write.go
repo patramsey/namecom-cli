@@ -40,6 +40,11 @@ type Write[B any] struct {
 	// be computed from Body so the question describes what is sent.
 	Prompt string
 
+	// Quote, when set, is what the request would charge. --dry-run reports
+	// it: a "quote" field in JSON and YAML, a "Would charge" line in table
+	// mode. It changes nothing else.
+	Quote *output.Quote
+
 	// Spin is the spinner text shown while send runs. Empty shows none, which
 	// is required when send itself may prompt.
 	Spin string
@@ -67,7 +72,11 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	out := Out(cmd)
 
 	if IsDryRun(cmd) {
-		return false, out.DryRun(w.Method, w.Path, previewOf(w))
+		ctx := ""
+		if w.Quote != nil {
+			ctx = PromptContext(cmd)
+		}
+		return false, out.DryRunQuote(w.Method, w.Path, previewOf(w), w.Quote, ctx)
 	}
 
 	if w.Prompt != "" {

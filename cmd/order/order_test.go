@@ -558,8 +558,12 @@ func TestRefund_DeclinedConfirmationDoesNotRefund(t *testing.T) {
 	defer output.StubInteractive(false)()
 
 	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The prompt fetches the order to name its items (#235); only a
+		// write is a refund.
+		if r.Method != http.MethodGet {
+			hits++
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -953,7 +957,7 @@ func TestOrderRows_DateMatchesOtherCommands(t *testing.T) {
 	id, status, created := 1, "success", "2026-04-06T11:39:11Z"
 	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
 	rows := orderRows(out, []*coreapigo.Order{{ID: &id, Status: &status, CreateDate: &created}})
-	if got := rows[0][2]; got != "2026-04-06" {
+	if got := rows[0][0]; got != "2026-04-06" {
 		t.Errorf("DATE = %q, want %q", got, "2026-04-06")
 	}
 }

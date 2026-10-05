@@ -119,7 +119,7 @@ var eligibilityCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code")
-	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "purchase WHOIS privacy with transfer")
+	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "include WHOIS privacy (free) with the transfer")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
 		"which a premium domain's transfer requires; not a cap, see --max-price")
 	createCmd.Flags().Float64Var(&createMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)
@@ -364,6 +364,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Body:    body,
 		Preview: redactTransferAuthCode,
 		Prompt:  transferPrompt(domain, body, quoted),
+		Quote:   cmdutil.ChargeQuote(charged, 0, transferQuoteNote(premium)),
 		Spin:    "Initiating transfer…",
 	}, func(ctx context.Context, body coreapigo.CreateTransferRequest) error {
 		var err error
@@ -595,12 +596,31 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Look the transfer up before asking. The prompt was shown for any name,
+	// so "Cancel transfer of typo.com?" could be answered yes before the API
+	// said there was nothing to cancel (#235); `domain lock` already checks
+	// first. Its status goes in the prompt, so the user sees what they cancel.
+	stop := out.Spin("Fetching transfer…")
+	t, err := client.SDK().Transfers.GetTransfer(cmd.Context(),
+		&coreapigo.GetTransferRequest{DomainName: domain})
+	stop()
+	if err != nil {
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.NotFound(err, fmt.Sprintf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain))
+		}
+		return err
+	}
+	prompt := fmt.Sprintf("Cancel transfer of %s?", domain)
+	if t != nil && t.Status != "" {
+		prompt = fmt.Sprintf("Cancel transfer of %s (status: %s)?", domain, t.Status)
+	}
+
 	// NoBody: the {} sent is the SDK's EmptyObject placeholder
 	// (namedotcom/core-api-go#8), not a body the user supplies.
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/transfers/%s:cancel", domain),
-		Prompt: fmt.Sprintf("Cancel transfer of %s?", domain),
+		Prompt: prompt,
 		Spin:   "Cancelling transfer…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
 		_, err := client.SDK().Transfers.CancelTransfer(ctx,
@@ -729,6 +749,12 @@ func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]strin
 // price body carries when --price set one, and the standard transfer price
 // otherwise; quoting the standard price unconditionally meant the user
 // approved one amount while the request carried another.
+//
+// It said "plus WHOIS privacy" with no price, which read as an extra charge,
+// and never said what the price buys (#235). The SDK documents privacy on a
+// transfer as free, and transferPrice as covering the TLD's minimum term; it
+// does not promise that term is added to the current expiry, so the prompt
+// states only what is documented.
 func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted *float64) string {
 	price := quoted
 	if body.PurchasePrice != nil {
@@ -736,12 +762,26 @@ func transferPrompt(domain string, body coreapigo.CreateTransferRequest, quoted 
 	}
 	priceMsg := ""
 	if price != nil {
-		priceMsg = " for " + output.Money(*price)
-		if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
-			priceMsg += " plus WHOIS privacy"
-		}
+		priceMsg = fmt.Sprintf(" for %s (covers %s)", output.Money(*price), transferTerm)
 	}
-	return fmt.Sprintf("Initiate transfer of %s%s%s?", domain, priceMsg, contactsPromptNote(body.Contacts))
+	if body.PrivacyEnabled != nil && *body.PrivacyEnabled {
+		priceMsg += ", with WHOIS privacy at no charge"
+	}
+	return fmt.Sprintf("Transfer %s in%s%s?", domain, priceMsg, contactsPromptNote(body.Contacts))
+}
+
+// transferTerm says what a transfer price covers, as PricingResponse
+// documents transferPrice: the TLD's minimum transfer/registration term,
+// "typically 1 year". The API does not promise how that term combines with
+// the current expiry, so neither does the CLI.
+const transferTerm = "the TLD's minimum term, typically 1 year"
+
+// transferQuoteNote is the quote note for a transfer's price.
+func transferQuoteNote(premium bool) string {
+	if premium {
+		return "premium; covers " + transferTerm
+	}
+	return "covers " + transferTerm
 }
 
 // contactsFileUsage is the --contacts-file help for both transfer writes.

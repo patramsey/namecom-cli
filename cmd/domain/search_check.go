@@ -128,12 +128,21 @@ func searchPriceLabel(r *coreapigo.SearchResult) string {
 		return fmt.Sprintf("%s flat (%s)", output.Money(price), *pt)
 	}
 	if derefBool(r.Premium) {
-		if r.RenewalPrice != nil {
-			return fmt.Sprintf("%s (renews %s/yr)", output.Money(price), output.Money(*r.RenewalPrice))
-		}
+		// Its renewal price, often far lower, is in the RENEWS column.
 		return output.Money(price)
 	}
 	return output.Money(price) + "/yr"
+}
+
+// searchRenewLabel is the RENEWS cell: what the name costs a year after it is
+// bought. A cheap first year that renews at several times the price is a
+// registrar's best-known surprise, and the JSON carried renewalPrice while
+// the table left it out (#235).
+func searchRenewLabel(out *output.Config, r *coreapigo.SearchResult) string {
+	if !r.Purchasable || r.RenewalPrice == nil {
+		return out.Dim("—")
+	}
+	return output.Money(*r.RenewalPrice) + "/yr"
 }
 
 var searchCmd = &cobra.Command{
@@ -439,7 +448,7 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 	case output.FormatYAML:
 		return out.YAML(results)
 	default:
-		headers := []string{"DOMAIN", "AVAILABILITY", "PRICE", "PREMIUM"}
+		headers := []string{"DOMAIN", "AVAILABILITY", "PRICE", "RENEWS", "PREMIUM"}
 		rows := make([][]string, 0, len(results))
 		for _, r := range results {
 			price := out.Dim("—")
@@ -462,6 +471,7 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 				r.DomainName,
 				out.AvailabilityBadge(r.Purchasable),
 				price,
+				searchRenewLabel(out, r),
 				premium,
 			})
 		}

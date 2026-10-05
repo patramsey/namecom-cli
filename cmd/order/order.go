@@ -195,10 +195,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			out.Empty("order", "")
 			return nil
 		}
-		out.Table(
-			[]string{"ID", "STATUS", "DATE", "TOTAL"},
-			orderRows(out, orders),
-		)
+		orderTable(out, orders)
 		if hasMore {
 			out.Count(len(orders), "order", "newest first — narrow with --since, --domain or --status, or pass --all")
 		} else {
@@ -243,10 +240,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(o)
 	default:
-		out.Table(
-			[]string{"ID", "STATUS", "DATE", "TOTAL"},
-			orderRows(out, []*coreapigo.Order{o}),
-		)
+		orderTable(out, []*coreapigo.Order{o})
 		// Show the line items. Their IDs are the required input to
 		// `order refund --item-ids`, and sharing list's renderer meant a single
 		// order rendered exactly like a list row — leaving no way to discover
@@ -257,8 +251,13 @@ func runGet(cmd *cobra.Command, args []string) error {
 				orderItemRows(out, o.OrderItems, o.Currency),
 				output.Essential("NAME"),
 			)
-			out.Hint("Run 'namecom order refund --order-id " +
-				strconv.Itoa(derefInt(o.ID)) + " --item-ids <ITEM ID>' to refund a refundable item")
+			// Suggested only when there is something to refund: it was shown
+			// for an order whose only item could not be refunded (#235).
+			if ids := refundableIDs(o.OrderItems); len(ids) > 0 {
+				out.Hint("Run 'namecom order refund --order-id " +
+					strconv.Itoa(derefInt(o.ID)) + " --item-ids " + strings.Join(ids, ",") + "' to refund the refundable " +
+					output.PluralNoun(len(ids), "item"))
+			}
 		}
 	}
 	return nil
@@ -294,6 +293,17 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		OrderItemIDs: itemIDs,
 	}
 
+	// The prompt names what is refunded and for how much, which takes the
+	// order. It is fetched only when the question will be asked: --dry-run
+	// never prompts, and --yes answers it unseen.
+	prompt := refundFallbackPrompt(body)
+	if !cmdutil.IsDryRun(cmd) && !cmdutil.IsYes(cmd) {
+		var err error
+		if prompt, err = refundPrompt(cmd, body); err != nil {
+			return err
+		}
+	}
+
 	// The preview is the body itself. It previously printed a hand-rolled
 	// "orderId=… itemIds=…" line beside a nil body, so the preview was a
 	// paraphrase of the request rather than the request. Nothing here is
@@ -307,7 +317,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		Method: "POST",
 		Path:   "/core/v1/refund",
 		Body:   body,
-		Prompt: fmt.Sprintf("Refund order %d, items %v? This cannot be undone.", body.OrderID, body.OrderItemIDs),
+		Prompt: prompt,
 	}, func(ctx context.Context, body coreapigo.RefundRequest) error {
 		var err error
 		result, err = client.SDK().Refunds.ProcessRefund(ctx, &body)
@@ -384,6 +394,70 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// refundPrompt is the confirmation for body, naming each item and the total:
+// "Refund $35.98 for acme.io registration (order 2142141, item 1)? This
+// cannot be undone." It read "Refund order 2142141, items [1]?" — a Go slice,
+// and neither the product nor the amount (#235).
+//
+// An order that does not exist fails here, before the question, as does an
+// item ID the order does not have. Any other failure to fetch the order falls
+// back to the prompt without names: the lookup only words the question, and
+// should not stand between the user and a refund.
+func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, error) {
+	out := cmdutil.Out(cmd)
+	stop := out.Spin("Fetching order…")
+	o, err := cmdutil.APIClient(cmd).SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: body.OrderID})
+	stop()
+	if cmdutil.IsNotFound(err) {
+		return "", cmdutil.NotFound(err, fmt.Sprintf("order %d not found — run 'namecom order list' to see your orders", body.OrderID))
+	}
+	if err != nil || o == nil {
+		return refundFallbackPrompt(body), nil
+	}
+
+	byID := make(map[int]*coreapigo.OrderItem, len(o.OrderItems))
+	for _, it := range o.OrderItems {
+		if it != nil {
+			byID[it.ID] = it
+		}
+	}
+	var total float64
+	descs := make([]string, 0, len(body.OrderItemIDs))
+	for _, id := range body.OrderItemIDs {
+		it, ok := byID[id]
+		if !ok {
+			return "", cmdutil.NewUsageError(fmt.Errorf("order %d has no item %d — run 'namecom order get %d' to see its items",
+				body.OrderID, id, body.OrderID))
+		}
+		total += it.Price
+		desc := "item " + strconv.Itoa(id)
+		if it.Name != nil && *it.Name != "" {
+			desc = *it.Name
+		}
+		if it.Type != "" {
+			desc += " " + strings.ReplaceAll(it.Type, "_", " ")
+		}
+		descs = append(descs, desc)
+	}
+	return fmt.Sprintf("Refund %s for %s (order %d, %s)? This cannot be undone.",
+		formatAmount(total, o.Currency), strings.Join(descs, ", "), body.OrderID, itemList(body.OrderItemIDs)), nil
+}
+
+// refundFallbackPrompt is the refund confirmation without the order's
+// details: "Refund order 2142141, items 1, 2? This cannot be undone."
+func refundFallbackPrompt(body coreapigo.RefundRequest) string {
+	return fmt.Sprintf("Refund order %d, %s? This cannot be undone.", body.OrderID, itemList(body.OrderItemIDs))
+}
+
+// itemList is "item 1" or "items 1, 2".
+func itemList(ids []int) string {
+	s := make([]string, len(ids))
+	for i, id := range ids {
+		s[i] = strconv.Itoa(id)
+	}
+	return output.PluralNoun(len(ids), "item") + " " + strings.Join(s, ", ")
+}
+
 // conflictRefundResult recovers the refund result from a 409. When every item
 // fails the API answers 409 rather than 200, with the same per-item body, and
 // treating that as a plain API error printed the raw JSON instead of each
@@ -416,6 +490,17 @@ func formatAmount(amount float64, currency *string) string {
 	return output.Decimal(amount) + " " + strings.ToUpper(*currency)
 }
 
+// refundableIDs lists the IDs of the items a refund can be requested for.
+func refundableIDs(items []*coreapigo.OrderItem) []string {
+	var ids []string
+	for _, it := range items {
+		if it != nil && it.IsRefundable {
+			ids = append(ids, strconv.Itoa(it.ID))
+		}
+	}
+	return ids
+}
+
 func derefInt(n *int) int {
 	if n == nil {
 		return 0
@@ -444,6 +529,20 @@ func orderItemRows(out *output.Config, items []*coreapigo.OrderItem, currency *s
 	return rows
 }
 
+// orderHeaders are the columns orderRows fills, most important first so a
+// narrow terminal drops the ID before what was bought.
+var orderHeaders = []string{"DATE", "DOMAIN(S)", "TYPE", "TOTAL", "STATUS", "ID"}
+
+// orderTable renders orders with orderHeaders. DOMAIN(S) is never dropped:
+// it is the column that says what each order was for.
+func orderTable(out *output.Config, orders []*coreapigo.Order) {
+	out.Table(orderHeaders, orderRows(out, orders), output.Essential("DOMAIN(S)"))
+}
+
+// orderRows lays out orders under orderHeaders. The table showed only ID,
+// STATUS, DATE and TOTAL, though every order carries its items' names and
+// types, so a history read as a list of amounts with nothing to say what
+// they bought (#235).
 func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 	rows := make([][]string, 0, len(orders))
 	for _, o := range orders {
@@ -463,9 +562,36 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 		if o.FinalAmount != nil {
 			total = formatAmount(*o.FinalAmount, o.Currency)
 		}
-		rows = append(rows, []string{id, status, date, total})
+		names, types := orderSummary(o.OrderItems)
+		rows = append(rows, []string{date, names, types, total, status, id})
 	}
 	return rows
+}
+
+// orderSummary describes an order's items in two cells: the first item's
+// name with a count of the other names ("acme.io +2"), and the distinct item
+// types ("registration, whois_privacy"). A name or type repeated across items
+// — a registration and its privacy for one domain — is counted once.
+func orderSummary(items []*coreapigo.OrderItem) (names, types string) {
+	var ns, ts []string
+	for _, it := range items {
+		if it == nil {
+			continue
+		}
+		if it.Name != nil && *it.Name != "" && !slices.Contains(ns, *it.Name) {
+			ns = append(ns, *it.Name)
+		}
+		if it.Type != "" && !slices.Contains(ts, it.Type) {
+			ts = append(ts, it.Type)
+		}
+	}
+	if len(ns) > 0 {
+		names = ns[0]
+		if len(ns) > 1 {
+			names += fmt.Sprintf(" +%d", len(ns)-1)
+		}
+	}
+	return names, strings.Join(ts, ", ")
 }
 
 func parseID(s string) (int32, error) {

@@ -9,7 +9,69 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Added
+- A dry run of `domain register`, `domain renew` or `transfer create` now
+  says what the real run would charge. Table mode ends with a line on stderr,
+  `Would charge: $39.98 (2 years) · sandbox · profile default`; JSON and YAML
+  add a `quote` object (`total`, `currency`, and `years` or `note` where they
+  apply) beside the unchanged `body`. A renewal's body carried only
+  `{"years": 2}`, and a standard registration's no price at all. **Scripts**
+  reading the dry-run document get one new key; nothing else in it changed.
+
 ### Changed
+- The `domain register` prompt reads as one sentence and states the choices
+  it is sent with: "Register acme.io for 2 years: $35.98 total (renews at
+  $17.99/yr), with WHOIS privacy, without auto-renew?". It read "for 2 years at
+  $35.98 total for 2 years" and never mentioned privacy or auto-renew. The
+  register offer in `domain check` uses the same wording. **Scripts** matching
+  the prompt text (it appears in the non-interactive "pass --yes" error) need
+  updating.
+- The `transfer create` prompt says what the price covers and that privacy
+  is free: "Transfer acme.io in for $12.99 (covers the TLD's minimum term,
+  typically 1 year), with WHOIS privacy at no charge?". It said "plus WHOIS
+  privacy", which read as an extra charge. **Scripts** matching the prompt
+  text need updating.
+- `transfer cancel` looks the transfer up before asking, and fails with
+  not-found (exit 4) without prompting when there is none. The prompt now
+  includes its status: "Cancel transfer of acme.io (status: pending_transfer)?".
+- `order list` and `order get` show what each order bought. The columns are
+  now `DATE | DOMAIN(S) | TYPE | TOTAL | STATUS | ID`, where DOMAIN(S) is the
+  first item's name with a count of the others (`acme.io +2`) and is never
+  hidden to fit the terminal; they were `ID | STATUS | DATE | TOTAL`.
+  `order get` suggests `order refund` only when an item is refundable, and
+  names those items. **Scripts** splitting the plain table by column position
+  need updating; JSON and YAML are unchanged.
+- The `order refund` prompt names what is refunded and for how much:
+  "Refund $35.98 for acme.io registration (order 2142141, item 1)? This
+  cannot be undone." It read "Refund order 2142141, items [1]?". To word it,
+  the command fetches the order when it is about to ask (not under `--yes` or
+  `--dry-run`), and fails before asking when the order does not exist (exit
+  4) or has no such item (exit 2). **Scripts** matching the prompt text need
+  updating.
+- `domain search` and `domain check` have a RENEWS column with the yearly
+  renewal price, between PRICE and PREMIUM, so a cheap first year that renews
+  at much more is visible before buying. A premium name's PRICE cell no
+  longer repeats the renewal price in brackets. **Scripts** splitting the
+  plain table by column position need updating; JSON and YAML are unchanged.
+- `domain pricing` has a heading, `example.org — per term (1 year for most
+  TLDs)`, with `(premium)` after the name for a premium domain. The PRICE
+  column no longer has a `Premium  no` row. **Scripts** reading the table
+  need updating; JSON, YAML and `-q` are unchanged.
+- `domain get` shows three more rows when the API returns them: Renews at
+  (the renewal price), Transfer lock (`until 2026-11-28 (in 2 months)`, while
+  the post-registration or post-transfer lock is in force) and Registrant
+  (name, company, and whether its email is verified). **Scripts** reading the
+  `Key  value` lines by position need updating; JSON and YAML are unchanged.
+- `dns delete` and `url delete` fetch the record first and show it in the
+  prompt — "Delete A www → 1.2.3.4 (TTL 300) from example.com?", "Delete URL
+  forwarding go.example.com → https://acme.io (redirect) from example.com?" —
+  instead of only its ID. A record that does not exist now fails with
+  not-found (exit 4) before any prompt, under `--yes` and `--dry-run` too.
+  **Scripts** matching the prompt text need updating.
+- `dnssec delete` warns, before asking, what removing a DS record can do: if
+  other DS records remain and none matches a key the DNS host signs the zone
+  with, validating resolvers fail to resolve the domain; with none left,
+  validation simply stops. Shown in table mode only, on stderr.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in
