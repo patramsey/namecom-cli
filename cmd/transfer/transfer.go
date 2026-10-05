@@ -118,7 +118,7 @@ var eligibilityCmd = &cobra.Command{
 }
 
 func init() {
-	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code")
+	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
 	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "include WHOIS privacy (free) with the transfer")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
 		"which a premium domain's transfer requires; not a cap, see --max-price")
@@ -127,7 +127,7 @@ func init() {
 	createCmd.Flags().BoolVar(&createWatch, "watch", false, "poll transfer status every 5 minutes until complete or failed")
 	createCmd.Flags().StringVar(&createContactsFile, "contacts-file", "", contactsFileUsage)
 
-	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code")
+	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
 	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
 
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages (full transfer history)")
@@ -277,7 +277,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
 		if !output.IsInteractive() {
-			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
+			return cmdutil.RequiredFlags(true, "auth-code")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -503,7 +503,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 
 	if internalAuthCode == "" {
 		if !output.IsInteractive() {
-			return cmdutil.NewUsageError(errors.New("--auth-code is required (or set interactively in a TTY)"))
+			return cmdutil.RequiredFlags(true, "auth-code")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(

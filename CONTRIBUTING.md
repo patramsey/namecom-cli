@@ -103,8 +103,11 @@ dry-run check, is the bug this repository has fixed most often. `dns import`
 exceptions.
 
 Off a terminal, a confirmation cannot be answered, so the command fails with
-"pass --yes to confirm in non-interactive mode". An `Example` that pipes into
-a write therefore needs `--yes`.
+"confirmation required for … — pass --yes to confirm when not running in a
+terminal" (a usage error, exit 2). An `Example` that pipes into a write
+therefore needs `--yes`. A flag the command would otherwise prompt for is
+documented with `cmdutil.PromptedRequired` and, off a terminal, refused with
+`cmdutil.RequiredFlags`, which also exits 2.
 
 ## Working with the API client
 

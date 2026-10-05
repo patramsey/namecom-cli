@@ -78,8 +78,8 @@ var deleteCmd = &cobra.Command{
 func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "fetch all pages")
 
-	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address (required)")
-	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address")
+	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address "+cmdutil.PromptedRequired)
+	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address "+cmdutil.PromptedRequired)
 
 	cmdutil.GroupCmd(Cmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
@@ -220,7 +220,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	if createEmailTo == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--to is required")
+			return cmdutil.RequiredFlags(true, "to")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -306,7 +306,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	if updateEmailTo == "" {
 		if !output.IsInteractive() {
-			return fmt.Errorf("--to is required")
+			return cmdutil.RequiredFlags(true, "to")
 		}
 		form := huh.NewForm(
 			huh.NewGroup(

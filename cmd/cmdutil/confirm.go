@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/patramsey/namecom-cli/internal/config"
@@ -26,10 +27,7 @@ func Confirm(out *output.Config, yes bool, msg, detail string) (bool, error) {
 		return true, nil
 	}
 	if !output.IsInteractive() {
-		if detail != "" {
-			return false, fmt.Errorf("%s [%s] — pass --yes to confirm in non-interactive mode", msg, detail)
-		}
-		return false, fmt.Errorf("%s — pass --yes to confirm in non-interactive mode", msg)
+		return false, needsYes(msg, detail)
 	}
 	var result bool
 	field := huh.NewConfirm().
@@ -49,6 +47,43 @@ func Confirm(out *output.Config, yes bool, msg, detail string) (bool, error) {
 	}
 	return result, nil
 }
+
+// needsYes is the refusal when a confirmation cannot be asked: no terminal
+// and no --yes. It is a usage error (exit 2), since what is missing is a flag.
+// It used to exit 1 like an API failure, and it read as a question put to
+// nobody — "Delete x? — pass --yes …" (#236). The question is still quoted
+// whole, since it is what --yes would approve: a price, a year count.
+func needsYes(msg, detail string) error {
+	what := `"` + msg + `"`
+	if detail != "" {
+		what += " (" + detail + ")"
+	}
+	return NewUsageError(fmt.Errorf("confirmation required for %s — pass --yes to confirm when not running in a terminal", what))
+}
+
+// RequiredFlags is the usage error (exit 2) for flags a command needs and was
+// not given. prompted says a terminal would have asked for them, which the
+// hint then says, so the error explains why the same command works by hand.
+//
+// url and email create returned a bare error here and exited 1, while
+// transfer create exited 2 for the same situation (#236).
+func RequiredFlags(prompted bool, names ...string) error {
+	quoted := make([]string, len(names))
+	flags := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = fmt.Sprintf("%q", n)
+		flags[i] = "--" + n
+	}
+	err := fmt.Errorf("required flag(s) %s not set", strings.Join(quoted, ", "))
+	if !prompted {
+		return NewUsageError(err)
+	}
+	return NewUsageErrorHint(err, "pass "+joinNames(flags)+", or run in a terminal to be prompted")
+}
+
+// PromptedRequired ends the help of a flag that is required but asked for
+// when the command runs in a terminal.
+const PromptedRequired = "(required; prompted in a terminal)"
 
 // PromptContext describes who a write acts as, for the line under its
 // confirmation: "production · profile work (acme-corp)". A production

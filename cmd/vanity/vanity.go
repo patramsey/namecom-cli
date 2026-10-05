@@ -227,7 +227,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 func vanityLabel(name, hostname, domain string) (string, error) {
 	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
 	if h == "" {
-		return "", fmt.Errorf("%s is required", name)
+		return "", cmdutil.NewUsageError(fmt.Errorf("%s is required", name))
 	}
 	if !strings.Contains(h, ".") {
 		return h, validVanityName(h, domain) // already a bare label

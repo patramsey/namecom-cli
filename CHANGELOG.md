@@ -72,6 +72,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   other DS records remain and none matches a key the DNS host signs the zone
   with, validating resolvers fail to resolve the domain; with none left,
   validation simply stops. Shown in table mode only, on stderr.
+- **Scripts — exit code:** a missing required flag now exits 2 (usage error)
+  everywhere. `url create`, `url update`, `email create` and `email update`
+  without `--to` off a terminal exited 1, as did `vanity-ns create
+  --hostname ""`; `transfer create` already exited 2. The refusal of a write
+  that needs `--yes` off a terminal also exits 2 instead of 1, and is worded
+  as a statement: `confirmation required for "Delete …?" (production · …) —
+  pass --yes to confirm when not running in a terminal`. Flags a terminal
+  prompts for say so in their help: "(required; prompted in a terminal)".
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

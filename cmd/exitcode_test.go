@@ -15,6 +15,7 @@ import (
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // TestExitCode guards the documented exit-code table, which scripts branch on:
@@ -357,5 +358,58 @@ func TestExitCode_OpenTooManyArgs(t *testing.T) {
 	}
 	if got := exitCode(err); got != 2 {
 		t.Errorf("exited %d (%v); want 2", got, err)
+	}
+}
+
+// resetFlags returns the flags of the command args name to their defaults.
+// Subcommand flags are package variables that outlive one Execute, so a value
+// another test passed would otherwise satisfy the flag this test leaves out.
+func resetFlags(t *testing.T, args []string) {
+	t.Helper()
+	c, _, err := rootCmd.Find(args)
+	if err != nil {
+		t.Fatalf("finding %v: %v", args, err)
+	}
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
+}
+
+// TestExitCode_MissingRequiredFlagIsUsage pins #236: a flag a command needs,
+// left out off a terminal, exited 1 from url and email create — even where the
+// help said "(required)" — while transfer create exited 2. Declining to send a
+// write without --yes is a missing flag too, and exited 1 as well.
+func TestExitCode_MissingRequiredFlagIsUsage(t *testing.T) {
+	withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request expected, got %s %s", r.Method, r.URL)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"url", "create", "example.com"}, `"to"`},
+		{[]string{"email", "create", "example.com", "info"}, `"to"`},
+		{[]string{"email", "update", "example.com", "info"}, `"to"`},
+		{[]string{"transfer", "create", "example.com"}, `"auth-code"`},
+		{[]string{"dns", "create", "example.com"}, `"type", "answer"`},
+		{[]string{"order", "refund"}, `"item-ids"`},
+		{[]string{"dns", "delete", "example.com", "123"}, "confirmation required for"},
+		{[]string{"email", "delete", "example.com", "info"}, "pass --yes"},
+	} {
+		t.Run(strings.Join(tc.args[:2], " "), func(t *testing.T) {
+			resetFlags(t, tc.args)
+			err := cmdutil.ClassifyCobraUsage(executeRoot(t, append([]string{"--base-url", srv.URL, "-o", "json"}, tc.args...)...))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("namecom %s: error %v, want one naming %s", strings.Join(tc.args, " "), err, tc.want)
+			}
+			if got := exitCode(err); got != 2 {
+				t.Errorf("namecom %s exited %d (%v); want 2", strings.Join(tc.args, " "), got, err)
+			}
+		})
 	}
 }

@@ -259,7 +259,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// terminal there is no one to ask, so a missing one is a usage error.
 	if missing := missingCreateFlags(); len(missing) > 0 {
 		if !output.IsInteractive() {
-			return cmdutil.NewUsageError(fmt.Errorf("required flag(s) %s not set — pass them, or run in a terminal for the guided form", strings.Join(missing, ", ")))
+			return cmdutil.RequiredFlags(true, missing...)
 		}
 		if err := dnsCreateForm(cmd); err != nil {
 			if errors.Is(err, errFormAborted) {
@@ -271,7 +271,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if createType == "" {
-		return fmt.Errorf("--type is required (A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT)")
+		return cmdutil.NewUsageError(fmt.Errorf("--type is required (A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT)"))
 	}
 	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
@@ -912,10 +912,10 @@ var errFormAborted = errors.New("aborted")
 func missingCreateFlags() []string {
 	var missing []string
 	if strings.TrimSpace(createType) == "" {
-		missing = append(missing, `"type"`)
+		missing = append(missing, "type")
 	}
 	if strings.TrimSpace(createAnswer) == "" {
-		missing = append(missing, `"answer"`)
+		missing = append(missing, "answer")
 	}
 	return missing
 }

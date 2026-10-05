@@ -243,8 +243,9 @@ namecom dns delete acme.io "$ID" --yes
 ```
 
 Commands that change something ask first when run in a terminal. In a script
-or a pipe there is no one to ask, so they stop with *"pass --yes to confirm in
-non-interactive mode"* until you pass `--yes`.
+or a pipe there is no one to ask, so they stop with *"confirmation required
+for … — pass --yes to confirm when not running in a terminal"* and exit 2
+until you pass `--yes`.
 
 ## Output formats
 
