@@ -133,6 +133,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the check too, and still writes nothing. Leading and trailing whitespace is
   trimmed from the username and token; a pasted token with a trailing space
   used to be saved with it.
+- Errors say what to do once. `domain get nope.com` printed its own "run
+  'namecom domain list'" and then a generic "check the domain name or ID"
+  hint; an error that already says what to do now has no `hint:` line (and
+  no `hint` key in the JSON/YAML envelope). `order get`, `email get`,
+  `url get`, `vanity-ns get` and `dnssec get` name what was not found
+  (`order 1 not found — run 'namecom order list' …`) instead of printing
+  `Not Found`; they still exit **4**. Missing credentials read `no
+  credentials configured`, with the fix in the hint alone, and a missing
+  `--profile` is one line, `profile "x" not found in … (available: a, b)`,
+  with `auth login --profile x` in the hint. A script matching the old
+  messages needs updating.
 
 ## [0.4.9] - 2026-10-03
 

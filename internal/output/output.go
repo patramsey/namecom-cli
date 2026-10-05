@@ -682,21 +682,21 @@ func (c *Config) Error(err error) {
 	}
 }
 
+// errorHint returns the "what to do" line for err, or "" when there is none.
+//
+// The outermost error in the chain that has a UserHint decides, even when it
+// returns "". A wrapper that rewrites the message rewrites the advice with it,
+// and an empty hint is how it says the message already carries it:
+// `domain "x" not found — run 'namecom domain list' …` used to be followed by
+// the 404's generic "check the domain name or ID", saying it twice (#234).
 func errorHint(err error) string {
-	if h, ok := err.(hintable); ok {
-		if hint := h.UserHint(); hint != "" {
-			return hint
-		}
-	}
-	// Unwrap to find a hintable cause (e.g. fmt.Errorf("fetching: %w", apiErr)).
+	// Walk to the first hintable cause (e.g. fmt.Errorf("fetching: %w", apiErr)).
 	// The loop stops at a nil cause: *net.DNSError and *json.UnmarshalTypeError
 	// both have an Unwrap that returns nil, and assigning that to err crashed
 	// the err.Error() below on every DNS failure and undecodable response.
-	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
 		if h, ok := cause.(hintable); ok {
-			if hint := h.UserHint(); hint != "" {
-				return hint
-			}
+			return h.UserHint()
 		}
 	}
 	// Network-level failures. Any DNS failure counts, not only "no such host":

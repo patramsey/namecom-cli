@@ -184,6 +184,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	ns, err := client.SDK().VanityNameservers.GetVanityNameserver(cmd.Context(),
 		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: hostname})
 	stop()
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("vanity nameserver %s not found on %s — run 'namecom vanity-ns list %s' to see them", hostname, domain, domain))
+	}
 	if err != nil {
 		return err
 	}

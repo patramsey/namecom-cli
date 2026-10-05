@@ -11,6 +11,7 @@ import (
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
+	"github.com/spf13/cobra"
 )
 
 // TestReportError_AuthHintOnStderrOnce pins issue #163. On exit 3 Execute
@@ -74,6 +75,86 @@ func TestReportError_RestrictedHasNoAuthAdvice(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestReportError_NotFoundSaysWhatToDoOnce pins #234: `domain get nope.com`
+// printed its own "run 'namecom domain list'" and then the 404's generic
+// "check the domain name or ID" hint.
+func TestReportError_NotFoundSaysWhatToDoOnce(t *testing.T) {
+	err := cmdutil.NotFound(&api.APIError{StatusCode: 404, Message: "Not Found"},
+		`domain "nope.com" not found — run 'namecom domain list' to see your domains`)
+	for _, f := range []output.Format{output.FormatTable, output.FormatJSON} {
+		var ew bytes.Buffer
+		cfg := &output.Config{Format: f, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+		if code := reportError(cfg, err); code != 4 {
+			t.Errorf("%s: exit code = %d, want 4", f, code)
+		}
+		if strings.Contains(ew.String(), "hint") {
+			t.Errorf("%s: the message already says what to do; want no hint, got:\n%s", f, ew.String())
+		}
+	}
+}
+
+// TestCredentialErrors_OneLineOneHint pins #234's credential half. With no
+// credentials the message and the hint both said "run 'namecom auth login'",
+// and the hint offered `auth status` even to `auth status` itself. A missing
+// profile spread over four lines with the advice in the middle.
+func TestCredentialErrors_OneLineOneHint(t *testing.T) {
+	tests := []struct {
+		name, config, profile string
+		authStatus            bool
+		wantHint              string // "" means no hint line at all
+		notWant               string
+	}{
+		{name: "nothing configured", wantHint: "auth login"},
+		{name: "missing profile", config: loneProfile, profile: "nope", wantHint: "auth login --profile nope"},
+		{name: "several profiles, no default", config: "profiles:\n  a:\n    username: u\n    token: t\n  b:\n    username: u\n    token: t\n"},
+		{name: "failing token_cmd in auth status", config: "profiles:\n  work:\n    username: u\n    token_cmd: exit 1\n",
+			authStatus: true, wantHint: "token_cmd", notWant: "auth status"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withConfig(t, tt.config)
+			prevGF := gf
+			t.Cleanup(func() { gf = prevGF })
+			gf = globalFlags{profile: tt.profile}
+
+			cmd := &cobra.Command{Use: "list"}
+			if tt.authStatus {
+				cmd = &cobra.Command{Use: "status"}
+				(&cobra.Command{Use: "auth"}).AddCommand(cmd)
+			}
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
+			cmd.SetContext(context.WithValue(context.Background(), cmdutil.KeyOutput, out))
+
+			err := initContext(cmd)
+			if err == nil {
+				t.Fatal("initContext succeeded, want a credential error")
+			}
+			var ew bytes.Buffer
+			out.EWriter = &ew
+			if code := reportError(out, err); code != 3 {
+				t.Errorf("exit code = %d, want 3", code)
+			}
+			lines := strings.Split(strings.TrimRight(ew.String(), "\n"), "\n")
+			wantLines := 1
+			if tt.wantHint != "" {
+				wantLines = 2
+			}
+			if len(lines) != wantLines {
+				t.Fatalf("want %d lines (message, then any hint), got %d:\n%s", wantLines, len(lines), ew.String())
+			}
+			if tt.wantHint != "" && !strings.Contains(lines[1], tt.wantHint) {
+				t.Errorf("hint %q should mention %q", lines[1], tt.wantHint)
+			}
+			if strings.Count(ew.String(), "auth login") > 1 {
+				t.Errorf("'auth login' is suggested more than once:\n%s", ew.String())
+			}
+			if tt.notWant != "" && strings.Contains(ew.String(), tt.notWant) {
+				t.Errorf("should not mention %q:\n%s", tt.notWant, ew.String())
+			}
+		})
 	}
 }
 

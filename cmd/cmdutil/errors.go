@@ -41,17 +41,21 @@ func NewUsageError(err error) error {
 // that failed. Maps to exit code 3.
 type AuthError struct {
 	Err error
-	// Hint, when set, replaces the generic hint below.
-	Hint string
+	// Hint replaces the generic hint when set. custom marks a hint chosen by
+	// the failing path even when it is "", meaning the message already says
+	// what to do (NewAuthErrorHint).
+	Hint   string
+	custom bool
 }
 
 func (e *AuthError) Error() string { return e.Err.Error() }
 func (e *AuthError) Unwrap() error { return e.Err }
 
-// UserHint points at the auth commands. The error renderer prints it with the
-// error, on stderr, in every output format.
+// UserHint points at the auth commands, unless the error was built with its
+// own hint. The error renderer prints it with the error, on stderr, in every
+// output format.
 func (e *AuthError) UserHint() string {
-	if e.Hint != "" {
+	if e.custom || e.Hint != "" {
 		return e.Hint
 	}
 	return "run 'namecom auth status' to check your credentials, or 'namecom auth login' to reconfigure"
@@ -63,6 +67,17 @@ func NewAuthError(err error) error {
 		return nil
 	}
 	return &AuthError{Err: err}
+}
+
+// NewAuthErrorHint is NewAuthError with its own hint in place of the generic
+// one. Pass "" when err's message already says what to do: the generic hint
+// repeated `auth login` after a message that had just suggested it, and
+// offered `auth status` to someone who had just run it (#234).
+func NewAuthErrorHint(err error, hint string) error {
+	if err == nil {
+		return nil
+	}
+	return &AuthError{Err: err, Hint: hint, custom: true}
 }
 
 // RestrictedError wraps a 403 from an operation the API gates behind account

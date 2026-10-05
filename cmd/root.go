@@ -387,12 +387,12 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 				names = append(names, k)
 			}
 			sort.Strings(names)
+			available := "no profiles configured"
 			if len(names) > 0 {
-				return cmdutil.NewAuthError(fmt.Errorf("profile %q not found in %s\n\nAvailable profiles: %s\nRun 'namecom auth login --profile %s' to create it",
-					profileReq, cfgPath, strings.Join(names, ", "), profileReq))
+				available = "available: " + strings.Join(names, ", ")
 			}
-			return cmdutil.NewAuthError(fmt.Errorf("profile %q not found in %s (no profiles configured)\nRun 'namecom auth login --profile %s' to create it",
-				profileReq, cfgPath, profileReq))
+			return cmdutil.NewAuthErrorHint(fmt.Errorf("profile %q not found in %s (%s)", profileReq, cfgPath, available),
+				fmt.Sprintf("run 'namecom auth login --profile %s' to create it", profileReq))
 		}
 	}
 
@@ -411,12 +411,16 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 			//nolint:errorlint // identity, not chain: the bare sentinel means
 			// Resolve had nothing to add, so the friendlier text below applies.
 			if err != config.ErrNoCredentials {
-				return cmdutil.NewAuthError(err)
+				return cmdutil.NewAuthErrorHint(err, "") // its message says what to do
 			}
 			return cmdutil.NotLoggedIn()
 		}
 		// A credential helper that failed is also an auth problem, not a
-		// generic runtime one.
+		// generic runtime one. The default hint suggests `auth status`, which
+		// is no help to someone running it.
+		if isAuthStatus(cmd) {
+			return cmdutil.NewAuthErrorHint(err, "fix the profile's token_cmd, or run 'namecom auth login' to replace it")
+		}
 		return cmdutil.NewAuthError(err)
 	}
 
@@ -538,6 +542,12 @@ func closeDebugLog() {
 		_ = debugLogFile.Close()
 		debugLogFile = nil
 	}
+}
+
+// isAuthStatus reports whether cmd is `namecom auth status`, which builds a
+// client through initContext like any API command.
+func isAuthStatus(cmd *cobra.Command) bool {
+	return cmd.Name() == "status" && cmd.HasParent() && cmd.Parent().Name() == "auth"
 }
 
 // skipClientInit returns true for commands that don't need API credentials.

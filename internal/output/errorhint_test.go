@@ -62,3 +62,46 @@ func TestErrorHint_NilUnwrap(t *testing.T) {
 		})
 	}
 }
+
+type hinted struct {
+	msg, hint string
+	err       error
+}
+
+func (e *hinted) Error() string    { return e.msg }
+func (e *hinted) Unwrap() error    { return e.err }
+func (e *hinted) UserHint() string { return e.hint }
+
+// TestErrorHint_OutermostDecides pins #234: a wrapper whose message already
+// says what to do returned an empty hint, and errorHint walked past it to the
+// generic hint underneath, so the advice was printed twice.
+func TestErrorHint_OutermostDecides(t *testing.T) {
+	inner := &hinted{msg: "Not Found", hint: "generic advice"}
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"empty outer hint suppresses the inner one", &hinted{msg: "order 1 not found — run 'namecom order list'", err: inner}, ""},
+		{"through plain wrapping too", fmt.Errorf("ctx: %w", &hinted{msg: "x", err: inner}), ""},
+		{"outer hint replaces the inner one", &hinted{msg: "x", hint: "specific", err: inner}, "specific"},
+		{"bare inner hint still found", fmt.Errorf("ctx: %w", inner), "generic advice"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errorHint(tt.err); got != tt.want {
+				t.Errorf("errorHint = %q, want %q", got, tt.want)
+			}
+			var ew bytes.Buffer
+			c := &Config{Format: FormatTable, Color: ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+			c.Error(tt.err)
+			want := 0
+			if tt.want != "" {
+				want = 1
+			}
+			if n := strings.Count(ew.String(), "hint:"); n != want {
+				t.Errorf("rendered %d hint lines, want %d:\n%s", n, want, ew.String())
+			}
+		})
+	}
+}

@@ -137,6 +137,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	key, err := client.SDK().DnsseCs.GetDnssec(cmd.Context(),
 		&coreapigo.GetDnssecRequest{DomainName: domain, Digest: args[1]})
 	stop()
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("DNSSEC key %s not found on %s — run 'namecom dnssec list %s' to see its digests", args[1], domain, domain))
+	}
 	if err != nil {
 		return err
 	}
