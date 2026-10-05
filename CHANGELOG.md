@@ -71,6 +71,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   profile saved with `sandbox: true`. An unrecognized value is now a usage
   error (exit **2**) naming the variable and value, and nothing is sent.
   `config show` reports the same error.
+- `auth login` checks the credentials with the API before saving them, and
+  says "Logged in to production as alice (profile default)". Credentials the
+  API rejects are not saved: the command exits **3** and, when the username
+  and the environment look mismatched, says that sandbox credentials are
+  separate and usually end in `-test`. If the API cannot be reached it asks
+  whether to save them unverified; with `--yes` it refuses. `--dry-run` runs
+  the check too, and still writes nothing. Leading and trailing whitespace is
+  trimmed from the username and token; a pasted token with a trailing space
+  used to be saved with it.
 
 ## [0.4.9] - 2026-10-03
 
