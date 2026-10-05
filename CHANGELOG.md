@@ -30,6 +30,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   it was probably meant to be in `error.suggestions`, as full command lines
   (`["namecom dns delete"]`). **Scripts** get one new key; `message` and
   `hint` are unchanged.
+- `namecom help environment` lists every environment variable namecom
+  reads (`NAMECOM_USERNAME`, `NAMECOM_TOKEN`, `NAMECOM_PROFILE`,
+  `NAMECOM_SANDBOX`, `NAMECOM_CONFIG`, `NAMECOM_NO_UPDATE_NOTIFIER`, plus
+  `NO_COLOR`, `CLICOLOR_FORCE` and `BROWSER`) and what overrides each. They
+  were documented only in the README. `--sandbox` now names
+  `NAMECOM_SANDBOX` in its help, as `--profile` and `--token` already did.
 
 ### Changed
 - Help pages show the global flags that apply to the command:

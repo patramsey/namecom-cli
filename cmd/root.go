@@ -143,6 +143,7 @@ var rootSuggestFor = map[string]string{
 	"login":     "auth login",
 	"logout":    "auth logout",
 	"whoami":    "auth status",
+	"env":       "help environment",
 }
 
 // suggestFor adds rootSuggestFor's answer to an unknown top-level command
@@ -231,7 +232,7 @@ func init() {
 	pf.StringVar(&gf.profile, "profile", "", "credentials profile to use (env: NAMECOM_PROFILE)")
 	pf.StringVar(&gf.username, "username", "", "API username (env: NAMECOM_USERNAME)")
 	pf.StringVar(&gf.token, "token", "", "API token (env: NAMECOM_TOKEN)")
-	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com)")
+	pf.BoolVar(&gf.sandbox, "sandbox", false, "use sandbox API (api.dev.name.com) (env: NAMECOM_SANDBOX)")
 	pf.StringVarP(&gf.output, "output", "o", "", "output format: table, json, yaml (default: table in TTY, json otherwise)")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "script output, whatever --output says: lists print one ID/name per line, creates the new ID, other writes nothing")
 	pf.BoolVar(&gf.noHeader, "no-header", false, "omit header row from table output")

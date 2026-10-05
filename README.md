@@ -305,7 +305,7 @@ with it targets `api.dev.name.com`. The sandbox has its own API token,
 separate from your production one. Omit `--profile` to use your default
 (production) profile.
 
-**Environment variables** (useful in CI):
+**Environment variables** (useful in CI; `namecom help environment` lists them all):
 ```bash
 export NAMECOM_USERNAME=yourname
 export NAMECOM_TOKEN=yourtoken
