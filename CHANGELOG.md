@@ -42,6 +42,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   The README's completion instructions now write to directories in your home
   directory instead of `/etc/bash_completion.d` and `${fpath[1]}`, which
   usually need root. `namecom completion` no longer checks for updates.
+- The new-release notice prints the command that upgrades your copy —
+  `brew upgrade namecom` for a Homebrew install, `go install
+  github.com/patramsey/namecom-cli@latest` for one in `GOBIN` or
+  `GOPATH/bin`, or the releases page for a downloaded binary — instead of
+  only pointing at the releases page. `NAMECOM_NO_UPDATE_NOTIFIER=1` turns
+  the notice off, and with it the daily release check.
 
 ### Fixed
 - The `url create` and `url update` forms check the destination as you type

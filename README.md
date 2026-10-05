@@ -308,6 +308,7 @@ export NAMECOM_TOKEN=yourtoken
 export NAMECOM_SANDBOX=true        # target sandbox API (true/false, yes/no, on/off, 1/0)
 export NAMECOM_PROFILE=staging     # select a profile
 export NAMECOM_CONFIG=~/namecom-ci.yaml    # use this file instead of the default
+export NAMECOM_NO_UPDATE_NOTIFIER=1        # never print the "new release" notice
 namecom domain list
 ```
 
