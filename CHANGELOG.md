@@ -104,6 +104,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `on`/`off` in either order, so `namecom domain lock example.com on` works
   like every other command that takes the domain first. Shell completion
   offers `on`/`off` or domains to match.
+- Help shows the booleans whose `false` matters — `domain update --autorenew`,
+  `--privacy` and `--lock`, `domain register --privacy` and `--autorenew` — as
+  `--autorenew=true|false`, and `domain update` has an `=false` example.
+  `--autorenew false` sets the flag to true and leaves `false` as an argument;
+  that mistake now gets a hint naming `--autorenew=false` instead of only
+  "too many arguments".
+- **Scripts — exit code:** `domain list` rejects arguments with exit 2, like
+  the other list commands. `domain list --all false` used to ignore the
+  `false` and list everything.
 - Tables that are too wide for the terminal now cut their longest values
   short with `…` (to no less than 20 characters) before hiding any column, and
   never hide the column that carries the point of the table: the DNS answer in

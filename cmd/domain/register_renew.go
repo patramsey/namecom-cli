@@ -57,6 +57,8 @@ func init() {
 	registerCmd.Flags().IntVar(&registerYears, "years", 1, "number of years to register")
 	registerCmd.Flags().BoolVar(&registerPrivacy, "privacy", false, "enable WHOIS privacy")
 	registerCmd.Flags().BoolVar(&registerAutorenew, "autorenew", false, "enable auto-renewal")
+	// Passing either, even =false, answers the guided form's question.
+	cmdutil.MarkBoolValue(registerCmd.Flags(), "privacy", "autorenew")
 	registerCmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "JSON file with contact data")
 	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "purchase price in USD to send as purchasePrice instead of the quoted one "+
 		"(premium and aftermarket prices are filled in automatically); not a cap, see --max-price")

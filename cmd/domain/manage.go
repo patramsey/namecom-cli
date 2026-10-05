@@ -812,6 +812,7 @@ var updateCmd = &cobra.Command{
 	Use:   "update <domain>",
 	Short: "Update domain settings (autorenew, privacy, lock) in one call",
 	Example: `  namecom domain update example.com --autorenew=true
+  namecom domain update example.com --autorenew=false   # =false: "--autorenew false" is not the same
   namecom domain update example.com --privacy=true --lock=true`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runUpdate,
@@ -955,4 +956,5 @@ func init() {
 	updateCmd.Flags().Bool("autorenew", false, "enable/disable auto-renewal")
 	updateCmd.Flags().Bool("privacy", false, "enable/disable WHOIS privacy")
 	updateCmd.Flags().Bool("lock", false, "enable/disable transfer lock")
+	cmdutil.MarkBoolValue(updateCmd.Flags(), "autorenew", "privacy", "lock")
 }

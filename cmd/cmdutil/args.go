@@ -25,8 +25,11 @@ func ExactArgs(n int) cobra.PositionalArgs {
 		if len(args) > n {
 			// The usage line shows where the rest belongs: `set-ns D ns1 ns2`
 			// is answered with "… set-ns <domain> --ns ns1…,ns2…" (#234).
-			return NewUsageErrorHint(fmt.Errorf("too many arguments — expected: %s", joinNames(names)),
-				"usage: "+cmd.UseLine())
+			hint := strayBoolHint(cmd, args[n:])
+			if hint == "" {
+				hint = "usage: " + cmd.UseLine()
+			}
+			return NewUsageErrorHint(fmt.Errorf("too many arguments — expected: %s", joinNames(names)), hint)
 		}
 		// One or more missing — name only the ones still needed.
 		missing := names
@@ -34,6 +37,67 @@ func ExactArgs(n int) cobra.PositionalArgs {
 			missing = names[len(args):]
 		}
 		return NewUsageError(fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine()))
+	}
+}
+
+// NoArgs is a drop-in for cobra.NoArgs. Cobra reports an argument to a
+// command that takes none as an unknown subcommand, which `domain list --all
+// false` is not.
+func NoArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	hint := strayBoolHint(cmd, args)
+	if hint == "" {
+		hint = "usage: " + cmd.UseLine()
+	}
+	return NewUsageErrorHint(fmt.Errorf("%s takes no arguments, got %q", cmd.CommandPath(), args[0]), hint)
+}
+
+// strayBoolHint explains a "true" or "false" among extra arguments when a
+// boolean flag was passed: `--autorenew false` sets --autorenew to true and
+// leaves "false" as an argument, so `domain update x.com --autorenew false`
+// failed with only "too many arguments" (#236). Empty when that is not what
+// happened.
+func strayBoolHint(cmd *cobra.Command, extra []string) string {
+	val := ""
+	for _, a := range extra {
+		if l := strings.ToLower(a); l == "true" || l == "false" {
+			val = l
+			break
+		}
+	}
+	if val == "" {
+		return ""
+	}
+	// The command's own flags first: a global --yes is a less likely culprit.
+	var local, inherited []string
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if f.Value.Type() != "bool" {
+			return
+		}
+		if cmd.LocalNonPersistentFlags().Lookup(f.Name) != nil {
+			local = append(local, f.Name)
+		} else {
+			inherited = append(inherited, f.Name)
+		}
+	})
+	names := append(local, inherited...)
+	if len(names) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("a true/false value must be joined to its flag with '=': --%s=%s", names[0], val)
+}
+
+// BoolValue is a flag annotation for a boolean whose false is worth passing,
+// such as `domain update --autorenew=false`. Help shows it as
+// --autorenew=true|false, since `--autorenew false` does not do that.
+const BoolValue = "namecom_bool_value"
+
+// MarkBoolValue annotates the named boolean flags of fs with BoolValue.
+func MarkBoolValue(fs *pflag.FlagSet, names ...string) {
+	for _, n := range names {
+		_ = fs.SetAnnotation(n, BoolValue, []string{"true"})
 	}
 }
 

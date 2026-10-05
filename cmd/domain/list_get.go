@@ -27,6 +27,9 @@ var listCmd = &cobra.Command{
   namecom domain list --expiring-before 2026-09-01
   namecom domain list --sort expireDate
   namecom domain list --all -o json | jq -r '.data[].domainName'   # JSON is wrapped in a "data" envelope`,
+	// Without it, cobra let a leaf command take any arguments and ignore
+	// them: `domain list --all false` listed every domain.
+	Args: cmdutil.NoArgs,
 	RunE: runList,
 }
 

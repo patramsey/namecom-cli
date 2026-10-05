@@ -48,7 +48,7 @@ after registering a domain does not mean there is nothing pending.`,
 	Example: `  namecom contact unverified
   namecom contact unverified --all
   namecom contact unverified -q | xargs -I{} namecom contact resend {}`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runUnverified,
 }
 

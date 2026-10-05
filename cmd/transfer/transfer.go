@@ -45,7 +45,7 @@ var listCmd = &cobra.Command{
 	Short: "List transfers",
 	Example: `  namecom transfer list         # active/recent transfers (first page)
   namecom transfer list --all   # full transfer history`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runList,
 }
 

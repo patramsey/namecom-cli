@@ -55,7 +55,7 @@ var listCmd = &cobra.Command{
   namecom order list --domain acme.io                  # orders for one domain
   namecom order list --status success
   namecom order list --all -o json | jq '.data[].id'   # JSON output is wrapped in a "data" envelope`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runList,
 }
 

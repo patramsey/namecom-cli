@@ -357,3 +357,58 @@ func TestNextPage(t *testing.T) {
 		}
 	})
 }
+
+// TestStrayBoolHint pins #236: `--autorenew false` parses as --autorenew plus
+// a stray "false" argument, and the error said only "too many arguments".
+func TestStrayBoolHint(t *testing.T) {
+	newCmd := func(use string) *cobra.Command {
+		root := &cobra.Command{Use: "namecom"}
+		root.PersistentFlags().Bool("yes", false, "")
+		c := &cobra.Command{Use: use, Run: func(*cobra.Command, []string) {}}
+		c.Flags().Bool("autorenew", false, "")
+		c.Flags().String("name", "", "")
+		root.AddCommand(c)
+		return c
+	}
+
+	t.Run("exact args", func(t *testing.T) {
+		c := newCmd("update <domain>")
+		if err := c.ParseFlags([]string{"--yes", "--autorenew", "False"}); err != nil {
+			t.Fatal(err)
+		}
+		err := ExactArgs(1)(c, append([]string{"x.com"}, c.Flags().Args()...))
+		u, ok := errors.AsType[*UsageError](err)
+		if !ok {
+			t.Fatalf("err = %v, want a usage error", err)
+		}
+		if want := "--autorenew=false"; !strings.Contains(u.UserHint(), want) {
+			t.Errorf("hint = %q, want it to suggest %s", u.UserHint(), want)
+		}
+	})
+
+	t.Run("no args", func(t *testing.T) {
+		c := newCmd("list")
+		if err := c.ParseFlags([]string{"--autorenew", "true"}); err != nil {
+			t.Fatal(err)
+		}
+		err := NoArgs(c, c.Flags().Args())
+		u, ok := errors.AsType[*UsageError](err)
+		if !ok || !strings.Contains(u.UserHint(), "--autorenew=true") {
+			t.Errorf("err = %v, want a usage error suggesting --autorenew=true", err)
+		}
+	})
+
+	t.Run("not a boolean mistake", func(t *testing.T) {
+		c := newCmd("update <domain>")
+		if err := c.ParseFlags([]string{"--name", "x", "false"}); err != nil {
+			t.Fatal(err)
+		}
+		err := ExactArgs(1)(c, append([]string{"x.com"}, c.Flags().Args()...))
+		if u, _ := errors.AsType[*UsageError](err); u == nil || !strings.HasPrefix(u.UserHint(), "usage: ") {
+			t.Errorf("with no boolean flag passed, want the usage hint, got %v", err)
+		}
+		if err := NoArgs(newCmd("list"), nil); err != nil {
+			t.Errorf("NoArgs(nil) = %v", err)
+		}
+	})
+}
