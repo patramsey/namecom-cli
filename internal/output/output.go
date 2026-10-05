@@ -424,6 +424,7 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	rows = dashEmpty(rows, 0)
 	if c.Plain {
 		if c.NoHeader {
 			headers = nil
@@ -477,6 +478,39 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(notes, "; ")+
 			" — widen the terminal, pass --wide, or use -o json"))
 	}
+}
+
+// None is what a table shows for a missing value.
+const None = "—"
+
+// dashEmpty returns rows with each empty cell, from column from onward,
+// replaced by None. rows itself is not modified.
+//
+// A missing value was a blank cell in some tables and "—" in others — a
+// missing DNS priority was blank, a missing price in `domain check` a dash
+// (#238). A blank cell also reads as a rendering failure, and in a plain
+// table it vanishes under awk's whitespace splitting, shifting every later
+// field left. Doing it here covers every table without each caller having to
+// remember.
+func dashEmpty(rows [][]string, from int) [][]string {
+	out := make([][]string, len(rows))
+	for i, r := range rows {
+		out[i] = r
+		for j := from; j < len(r); j++ {
+			if strings.TrimSpace(ansi.Strip(r[j])) == "" {
+				if sameBacking(out[i], r) {
+					out[i] = append([]string(nil), r...)
+				}
+				out[i][j] = None
+			}
+		}
+	}
+	return out
+}
+
+// sameBacking reports whether a and b share their first element's storage.
+func sameBacking(a, b []string) bool {
+	return len(a) > 0 && len(b) > 0 && &a[0] == &b[0]
 }
 
 // plainTable prints headers (when non-nil) and rows as columns aligned with
@@ -667,6 +701,7 @@ func (c *Config) KVTable(rows [][]string) {
 	if c.Format == FormatJSON || c.Format == FormatYAML || c.QuietMode {
 		return
 	}
+	rows = dashEmpty(rows, 1)
 	if c.Plain {
 		c.plainTable(nil, rows)
 		return

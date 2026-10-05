@@ -49,3 +49,27 @@ func TestDefaultConfig_PlainWhenPiped(t *testing.T) {
 		t.Error("DefaultConfig().Plain = false with stdout not a terminal")
 	}
 }
+
+// TestTable_MissingValuesAreDashes: a missing value was blank in some tables
+// and "—" in others (#238). Table and KVTable now print "—" for any empty
+// cell, without modifying the caller's rows. In a plain table that also
+// keeps whitespace-split fields from shifting.
+func TestTable_MissingValuesAreDashes(t *testing.T) {
+	rows := [][]string{{"1", "", "x"}, {"2", "  ", ""}}
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}, Plain: true}
+	c.Table([]string{"ID", "HOST", "VALUE"}, rows)
+	want := "ID  HOST  VALUE\n1   —     x\n2   —     —\n"
+	if got := buf.String(); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if rows[0][1] != "" || rows[1][2] != "" {
+		t.Errorf("Table modified the caller's rows: %q", rows)
+	}
+
+	buf.Reset()
+	c.KVTable([][]string{{"Nameservers", ""}})
+	if got := buf.String(); got != "Nameservers  —\n" {
+		t.Errorf("KVTable = %q", got)
+	}
+}

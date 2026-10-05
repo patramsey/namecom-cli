@@ -29,6 +29,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   footer instead of two: `Showing 1–250 of 6,522 domains · --page 2 for more,
   --all for everything`, short enough for 80 columns. JSON and YAML output is
   unchanged.
+- `dns list` shows the PRIORITY column only when an MX or SRV record is
+  listed; it was always empty for A, CNAME and TXT records. Every table now
+  shows a missing value as `—` rather than a blank cell (it was blank in some
+  tables and `—` in others), and `order get` shows REFUNDABLE as `yes`/`no`
+  where a non-refundable item used to show `—`. **Scripts** splitting a plain
+  table on whitespace no longer see later fields shift left when a value is
+  missing.
 - `auth login --help` and the login form say where to create an API token
   (https://www.name.com/account/settings/api) and that sandbox credentials are
   separate, with usernames that usually end in `-test`.

@@ -229,11 +229,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		if listType != "" {
 			// Filtered: single flat table.
-			out.Table(
-				[]string{"ID", "TYPE", "HOST", "ANSWER", "TTL", "PRIORITY"},
-				recordRows(out, records),
-				output.Essential("ANSWER"),
-			)
+			headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
+			if hasPriority(records) {
+				headers = append(headers, "PRIORITY")
+			}
+			out.Table(headers, recordRows(out, records), output.Essential("ANSWER"))
 		} else {
 			// Unfiltered: group by type with section headers.
 			renderGroupedRecords(out, records)
@@ -721,28 +721,52 @@ func fetchAllRecords(cmd *cobra.Command, domain string, all bool) (records []*co
 	return records, hasMore, nextPage, nil
 }
 
+// hasPriority reports whether any of records is a type that has a priority.
+// The PRIORITY column is shown only then: on A, CNAME and TXT records it is
+// always empty, and it took width a long answer needed (#233).
+func hasPriority(records []*coreapigo.Record) bool {
+	for _, r := range records {
+		switch strings.ToUpper(derefStr(r.Type)) {
+		case "MX", "SRV":
+			return true
+		}
+	}
+	return false
+}
+
+// recordRows renders records with a TYPE column, and a PRIORITY column when
+// hasPriority says so.
 func recordRows(out *output.Config, records []*coreapigo.Record) [][]string {
+	withPriority := hasPriority(records)
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
-		id := ""
-		if r.ID != nil {
-			id = strconv.Itoa(*r.ID)
-		}
+		row := recordRow(out, r, withPriority)
+		rows = append(rows, append([]string{row[0], out.TypeBadge(derefStr(r.Type))}, row[1:]...))
+	}
+	return rows
+}
+
+// recordRow is one record's ID, HOST, ANSWER and TTL cells, then PRIORITY if
+// withPriority. A missing value is left empty; Table shows it as "—".
+func recordRow(out *output.Config, r *coreapigo.Record, withPriority bool) []string {
+	id := ""
+	if r.ID != nil {
+		id = strconv.Itoa(*r.ID)
+	}
+	row := []string{
+		out.Dim(id),
+		displayHost(r.Host),
+		derefStr(r.Answer),
+		out.Dim(strconv.FormatInt(r.TTL, 10)),
+	}
+	if withPriority {
 		priority := ""
 		if r.Priority != nil {
 			priority = strconv.FormatInt(*r.Priority, 10)
 		}
-		ttl := strconv.FormatInt(r.TTL, 10)
-		rows = append(rows, []string{
-			out.Dim(id),
-			out.TypeBadge(derefStr(r.Type)),
-			displayHost(r.Host),
-			derefStr(r.Answer),
-			out.Dim(ttl),
-			priority,
-		})
+		row = append(row, priority)
 	}
-	return rows
+	return row
 }
 
 // dnsTypeOrder defines the preferred display order for grouped DNS output.
@@ -771,11 +795,11 @@ func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 		rendered[t] = true
 		label := out.TypeBadge(t)
 		fmt.Fprintf(out.Writer, "\n%s\n", label)
-		out.Table(
-			[]string{"ID", "HOST", "ANSWER", "TTL", "PRIORITY"},
-			recordRowsNoType(out, groups[t]),
-			output.Essential("ANSWER"),
-		)
+		headers := []string{"ID", "HOST", "ANSWER", "TTL"}
+		if hasPriority(groups[t]) {
+			headers = append(headers, "PRIORITY")
+		}
+		out.Table(headers, recordRowsNoType(out, groups[t]), output.Essential("ANSWER"))
 	}
 	for _, t := range dnsTypeOrder {
 		emit(t)
@@ -787,23 +811,10 @@ func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 
 // recordRowsNoType is like recordRows but omits the TYPE column (used in grouped view).
 func recordRowsNoType(out *output.Config, records []*coreapigo.Record) [][]string {
+	withPriority := hasPriority(records)
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
-		id := ""
-		if r.ID != nil {
-			id = strconv.Itoa(*r.ID)
-		}
-		priority := ""
-		if r.Priority != nil {
-			priority = strconv.FormatInt(*r.Priority, 10)
-		}
-		rows = append(rows, []string{
-			out.Dim(id),
-			displayHost(r.Host),
-			derefStr(r.Answer),
-			out.Dim(strconv.FormatInt(r.TTL, 10)),
-			priority,
-		})
+		rows = append(rows, recordRow(out, r, withPriority))
 	}
 	return rows
 }

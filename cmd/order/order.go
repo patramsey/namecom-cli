@@ -430,16 +430,12 @@ func orderItemRows(out *output.Config, items []*coreapigo.OrderItem, currency *s
 		if it.Name != nil {
 			name = *it.Name
 		}
-		refundable := out.Dim("—")
-		if it.IsRefundable {
-			refundable = out.BoolBadge(true)
-		}
 		rows = append(rows, []string{
 			strconv.Itoa(it.ID),
 			name,
 			it.Type,
 			formatAmount(it.Price, currency),
-			refundable,
+			out.BoolBadge(it.IsRefundable),
 		})
 	}
 	return rows
