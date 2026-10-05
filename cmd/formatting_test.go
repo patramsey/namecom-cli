@@ -247,6 +247,22 @@ func TestJQ(t *testing.T) {
 	}
 }
 
+// TestJQ_API: the global --jq filters what `namecom api` prints — the
+// merged document with --paginate — and refuses --include, whose headers
+// are not JSON (#245).
+func TestJQ_API(t *testing.T) {
+	list := map[string]reply{"GET /core/v1/domains": {200, formattingDomains}}
+	stdout, stderr, code := runFormatting(t, list,
+		"api", "/core/v1/domains", "--paginate", "--jq", ".domains[].domainName")
+	if code != 0 || stdout != "a.com\nb.com\n" {
+		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	}
+	stdout, stderr, code = runFormatting(t, list, "api", "/core/v1/domains", "-i", "--jq", ".")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "--include cannot be combined with --jq") {
+		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	}
+}
+
 // TestJQ_UsageErrors: what can be wrong on the command line is a usage error
 // before anything is sent; an expression that fails on the output is one
 // after a read, with nothing printed.

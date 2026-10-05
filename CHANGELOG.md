@@ -221,6 +221,24 @@ parse; table output is unchanged.
   keeps its name and string value. `auth status`'s table gains a Token row,
   masked.
 - The README has a CI section with a GitHub Actions example.
+- `namecom api` takes the flags `gh api` users reach for (#245):
+  - The method may be left out: `namecom api /core/v1/domains` is a GET,
+    and a request with a body is a POST. `namecom api GET /path` still works.
+  - `--paginate` follows `nextPage` and prints one document whose lists hold
+    every page's items, without `nextPage` and `lastPage`; `--jq` filters
+    that merged document. A failed page prints nothing. It is GET only.
+  - `-f key=value` and `-F key=value` build a JSON body: `-f` values are
+    strings, `-F` keeps `true`, `false`, `null` and numbers as JSON and reads
+    `@file` (`@-` for stdin). `a[b]=c` nests and `a[]=x` appends to a list.
+    On a GET or HEAD they are query parameters.
+  - `--input <file>` (or `-` for stdin) reads the body from a file.
+  - `-i`/`--include` prints the response's status line and headers before
+    the body.
+
+  Two ways of giving the body at once, `--paginate` on anything but a GET,
+  and `--include` with `--jq` or `--fields` are usage errors (exit 2).
+  Writes are previewed under `--dry-run` as before, whether or not the
+  method was named.
 
 ### Changed
 - The `domain register` guided form now starts with WHOIS privacy and

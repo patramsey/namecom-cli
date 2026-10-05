@@ -256,6 +256,24 @@ namecom vanity-ns create acme.io --hostname ns2.acme.io --ips 5.6.7.8
 namecom domain set-ns acme.io --ns ns1.acme.io,ns2.acme.io
 ```
 
+**Call an endpoint namecom does not wrap** (`namecom api`, modelled on `gh api`):
+```bash
+namecom api /core/v1/domains/acme.io                      # the method defaults to GET
+namecom api /core/v1/domains --paginate --jq '.domains[].domainName'   # every page as one list
+namecom api /core/v1/domains/acme.io/records -f host=www -f type=A -f answer=1.2.3.4 -F ttl=300 --dry-run
+namecom api PUT /core/v1/domains/acme.io/records/123 --input record.json
+namecom api /core/v1/hello --include                      # status line and headers, then the body
+```
+
+The method is GET, or POST when the request has a body (`--data`, `--input`,
+`-f` or `-F`); name it first to send anything else. `-f key=value` adds a
+string, and `-F key=value` keeps `true`, `false`, `null` and numbers as JSON
+and reads `@file` (or `@-`, stdin). Keys nest as `contact[firstName]=Ada`, and
+`ns[]=x` appends to a list. On a GET the fields are query parameters instead.
+`--paginate` follows `nextPage` and prints one document whose lists hold every
+page's items, without `nextPage` and `lastPage`. Any method but GET and HEAD
+is previewed, not sent, under `--dry-run`.
+
 **Scripting and automation:**
 ```bash
 # List every domain expiring within 60 days (GNU date; on macOS: date -v+60d +%F)
