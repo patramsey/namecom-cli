@@ -9,6 +9,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `dns create` in a terminal opens its guided form again when `--type` or
+  `--answer` is left out. The form had been unreachable: both flags were
+  marked required, so the command failed with `required flag(s) "answer",
+  "type" not set` before it could ask. The form now checks host, answer and
+  priority as you type them (priority must be 0–65535), and Ctrl-C at any
+  step, including the MX/SRV priority step, prints "aborted", sends nothing
+  and exits 0. Without a terminal a missing `--type` or `--answer` is still a
+  usage error (exit **2**); the message now reads `required flag(s) "type",
+  "answer" not set — pass them, or run in a terminal for the guided form`.
+
 ## [0.4.9] - 2026-10-03
 
 One new feature and the last fixes from the bug hunt. `transfer create` and
