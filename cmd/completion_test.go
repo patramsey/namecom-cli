@@ -223,8 +223,8 @@ func TestComplete_FlagValuesAndProfiles(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{[]string{"domain", "list", "-o", ""}, []string{"table", "json", "yaml"}},
-		{[]string{"domain", "list", "--output", ""}, []string{"table", "json", "yaml"}},
+		{[]string{"domain", "list", "-o", ""}, []string{"table", "json", "yaml", "tsv"}},
+		{[]string{"domain", "list", "--output", ""}, []string{"table", "json", "yaml", "tsv"}},
 		{[]string{"status", "--color", ""}, []string{"auto", "always", "never"}},
 		{[]string{"status", "--profile", ""}, []string{"prod", "staging"}},
 		{[]string{"auth", "logout", "--profile", ""}, []string{"prod", "staging"}},

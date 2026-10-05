@@ -41,6 +41,11 @@ const (
 	FormatTable Format = "table"
 	FormatJSON  Format = "json"
 	FormatYAML  Format = "yaml"
+	// FormatTSV is the table as tab-separated values (#241): the same
+	// columns, a header row unless --no-header, no styling, and each cell
+	// escaped so that a row is one line. An object a table shows as fields
+	// and values prints as field<TAB>value rows.
+	FormatTSV Format = "tsv"
 )
 
 // ColorMode maps to --color flag values.
@@ -94,6 +99,9 @@ type Config struct {
 	// TakeWarnings. See Warn.
 	warnMu   sync.Mutex
 	warnings []string
+
+	// filter is the --fields/--jq filter BeginFilter started, if any.
+	filter *Filter
 }
 
 // DefaultConfig returns an output config with defaults resolved from the
@@ -141,6 +149,11 @@ func StubInteractive(v bool) func() {
 
 // ColorEnabled reports whether ANSI colors should be emitted for this config.
 func (c *Config) ColorEnabled() bool {
+	// TSV is for programs, whatever --color says: an escape code would be
+	// part of the value.
+	if c.Format == FormatTSV {
+		return false
+	}
 	switch c.Color {
 	case ColorAlways:
 		return true
@@ -459,6 +472,10 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if c.Format == FormatTSV {
+		c.writeTSV(headers, tsvCells(rows))
+		return
+	}
 	rows = dashEmpty(rows, 0)
 	if c.Plain {
 		if c.NoHeader {
@@ -736,6 +753,10 @@ func (c *Config) KVTable(rows [][]string) {
 	if c.Format == FormatJSON || c.Format == FormatYAML || c.QuietMode {
 		return
 	}
+	if c.Format == FormatTSV {
+		c.writeTSV(nil, tsvCells(rows))
+		return
+	}
 	rows = dashEmpty(rows, 1)
 	if c.Plain {
 		c.plainTable(nil, rows)
@@ -889,7 +910,7 @@ func (c *Config) Results() *Results { return &Results{c: c} }
 
 // Add records one target's outcome.
 func (r *Results) Add(it ResultItem) {
-	if r.c.Format != FormatJSON && r.c.Format != FormatYAML {
+	if r.c.Format == FormatTable {
 		r.c.result(it.Message, it.Changed)
 		return
 	}
@@ -901,11 +922,23 @@ func (r *Results) Add(it ResultItem) {
 // where Add printed them already.
 func (r *Results) Print(summary string) {
 	c := r.c
-	if c.QuietMode || len(r.items) == 0 || (c.Format != FormatJSON && c.Format != FormatYAML) {
+	if c.QuietMode || len(r.items) == 0 || c.Format == FormatTable {
 		return
 	}
 	if len(r.items) == 1 {
 		c.result(r.items[0].Message, r.items[0].Changed)
+		return
+	}
+	if c.Format == FormatTSV {
+		rows := make([][]string, len(r.items))
+		for i, it := range r.items {
+			id := ""
+			if it.ID != 0 {
+				id = strconv.Itoa(it.ID)
+			}
+			rows[i] = []string{it.Domain, id, strconv.FormatBool(it.Changed), it.Message}
+		}
+		c.writeTSV([]string{"domain", "id", "changed", "message"}, rows)
 		return
 	}
 	doc := writeResults{Success: true, Message: summary, Data: r.items}
@@ -953,6 +986,10 @@ func (c *Config) result(msg string, changed bool) {
 		return
 	case FormatYAML:
 		_ = writeYAML(c.Writer, writeResult{Success: true, Changed: changed, Message: msg})
+		return
+	case FormatTSV:
+		// The document's keys and values, as TSV prints any object.
+		c.writeTSV(nil, [][]string{{"success", "true"}, {"changed", strconv.FormatBool(changed)}, {"message", msg}})
 		return
 	}
 	if c.ColorEnabled() {
@@ -1009,6 +1046,11 @@ func (c *Config) Warn(msg string) {
 		c.warnMu.Unlock()
 		return
 	}
+	c.warnLine(msg)
+}
+
+// warnLine prints msg as a "! " line on stderr.
+func (c *Config) warnLine(msg string) {
 	if c.ColorEnabled() {
 		fmt.Fprintln(c.EWriter, styleWarning.Render("!")+" "+msg)
 	} else {
@@ -1033,6 +1075,14 @@ func (c *Config) TakeWarnings() []string {
 func (c *Config) FlushWarnings() {
 	w := c.TakeWarnings()
 	if len(w) == 0 {
+		return
+	}
+	// Kept back while --fields ran the command in JSON mode, for a table or
+	// TSV: they print as they would have.
+	if c.Format != FormatJSON && c.Format != FormatYAML {
+		for _, msg := range w {
+			c.warnLine(msg)
+		}
 		return
 	}
 	doc := struct {
@@ -1155,6 +1205,10 @@ func (c *Config) ErrorWith(err error, info ErrorInfo) {
 		_ = encodeJSON(c.EWriter, env)
 		return
 	}
+	// Warnings kept back while --fields ran the command in JSON mode.
+	for _, w := range c.TakeWarnings() {
+		c.warnLine(w)
+	}
 	// The four status symbols (#238): ✗ for the error and → for the hint, the
 	// next step, as Hint prints it. Without colour the lines read
 	// "error: …" and "  hint: …", the only output that did not use them.
@@ -1247,6 +1301,9 @@ func (c *Config) AvailabilityBadge(purchasable bool) string {
 	if !purchasable {
 		return "taken"
 	}
+	if c.Format == FormatTSV {
+		return "available"
+	}
 	if !c.ColorEnabled() {
 		return "✓ available"
 	}
@@ -1284,6 +1341,11 @@ func (c *Config) ExpiryDate(t *time.Time) string {
 		return ""
 	}
 	date := t.Format("2006-01-02")
+	// TSV is read by programs: the date alone, not a phrase that changes
+	// from one day to the next.
+	if c.Format == FormatTSV {
+		return date
+	}
 	days := time.Until(*t).Hours() / 24
 	rel := relativeTime(days)
 	label := date + " (" + rel + ")"
@@ -1761,9 +1823,14 @@ func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context st
 		return dryRunErr(c.JSON(req))
 	case FormatYAML:
 		return dryRunErr(c.YAML(req))
-	}
-	if err := c.dryRunText([]DryRunRequest{req}); err != nil {
-		return err
+	case FormatTSV:
+		if err := c.dryRunTSV([]DryRunRequest{req}); err != nil {
+			return err
+		}
+	default:
+		if err := c.dryRunText([]DryRunRequest{req}); err != nil {
+			return err
+		}
 	}
 	if q != nil && !c.QuietMode {
 		line := "Would charge: " + q.Summary()
@@ -1795,8 +1862,29 @@ func (c *Config) DryRunAll(reqs []DryRunRequest) error {
 		return dryRunErr(c.JSON(doc))
 	case FormatYAML:
 		return dryRunErr(c.YAML(doc))
+	case FormatTSV:
+		return c.dryRunTSV(all)
 	}
 	return c.dryRunText(all)
+}
+
+// dryRunTSV prints each request as a method, path, body row, the body as
+// compact JSON, under a header of those keys.
+func (c *Config) dryRunTSV(reqs []DryRunRequest) error {
+	rows := make([][]string, len(reqs))
+	for i, r := range reqs {
+		body := ""
+		if r.Body != nil {
+			b, err := json.Marshal(r.Body)
+			if err != nil {
+				return dryRunErr(err)
+			}
+			body = string(unescapeHTML(b))
+		}
+		rows[i] = []string{r.Method, r.Path, body}
+	}
+	c.writeTSV([]string{"method", "path", "body"}, rows)
+	return nil
 }
 
 // dryRunPlan is DryRunAll's document.
@@ -1889,8 +1977,10 @@ func ParseFormat(s string) (Format, error) {
 		return FormatJSON, nil
 	case FormatYAML:
 		return FormatYAML, nil
+	case FormatTSV:
+		return FormatTSV, nil
 	}
-	return "", fmt.Errorf("unknown output format %q; choose table, json, or yaml", s)
+	return "", fmt.Errorf("unknown output format %q; choose table, json, yaml, or tsv", s)
 }
 
 // ParseColorMode validates the --color flag value.

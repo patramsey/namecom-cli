@@ -259,7 +259,7 @@ func TestRootHelp_FlagSections(t *testing.T) {
 	got := renderHelp(t)
 	for heading, flags := range map[string][]string{
 		"Flags:":             {"--dry-run", "--yes", "--help", "--version"},
-		"Output Flags:":      {"--output", "--quiet", "--no-header", "--wide", "--color"},
+		"Output Flags:":      {"--output", "--fields", "--jq", "--quiet", "--no-header", "--wide", "--color"},
 		"Credentials Flags:": {"--profile", "--username", "--token", "--sandbox"},
 		"Advanced Flags:":    {"--timeout", "--debug", "--debug-file", "--idempotency-key", "--base-url"},
 	} {

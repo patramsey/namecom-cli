@@ -66,6 +66,8 @@ type writeLog struct {
 	last *OutcomeUnknownError // nil when the last request was not one
 	// status is last's final HTTP status, or 0 when it got no response.
 	status int
+	// wrote is set once any write has been sent, whatever came of it.
+	wrote bool
 }
 
 // record notes the final result of req: a write's 5xx or post-send failure,
@@ -77,6 +79,7 @@ func (l *writeLog) record(req *http.Request, resp *http.Response, err error) {
 	if !changesState(req.Method) {
 		return
 	}
+	l.wrote = true
 	switch {
 	case err != nil && maybeSent(err):
 	case err == nil && resp != nil && resp.StatusCode >= 500:
@@ -106,6 +109,19 @@ func maybeSent(err error) bool {
 		return false
 	}
 	return !certificateErr(err)
+}
+
+// SentWrite reports whether this client has sent a write — any request but
+// GET and HEAD — whatever its outcome. A --fields or --jq that does not fit
+// the output is not reported as a usage error after one (#241): the change
+// was made, and exit 2 would say the command line stopped it.
+func (c *Client) SentWrite() bool {
+	if c == nil || c.writes == nil {
+		return false
+	}
+	c.writes.mu.Lock()
+	defer c.writes.mu.Unlock()
+	return c.writes.wrote
 }
 
 // OutcomeUnknown returns err wrapped in an *OutcomeUnknownError when it is the
