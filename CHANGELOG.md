@@ -24,7 +24,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   report; `status`'s lists of domains are a JSON array in one cell.
   `domain get` with several domains, or `-`, prints one table — a header row
   and a row per domain — instead of a `field<TAB>value` block per domain, and
-  its transfer lock is a plain date. `dns sync --dry-run` prints the plan as
+  its transfer lock is a plain date. The header names are the field names one
+  domain's rows print, unchanged (`Domain`, `Renews at`, `Transfer lock`), so
+  a script reads the same names for one domain or several. `dns sync --dry-run` prints the plan as
   a row per change (action, type, host, answer, TTL, priority) instead of its
   text report, and a sync with nothing to change prints only its result,
   with `changed` now `false`.

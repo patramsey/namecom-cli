@@ -465,10 +465,10 @@ func TestTSV(t *testing.T) {
 			t.Fatalf("want a header and a row per domain, got:\n%s", stdout)
 		}
 		header := strings.Split(lines[0], "\t")
-		if header[0] != "DOMAIN" || !slices.Contains(header, "RENEWS AT") || !slices.Contains(header, "TRANSFER LOCK") {
+		if header[0] != "Domain" || !slices.Contains(header, "Renews at") || !slices.Contains(header, "Transfer lock") {
 			t.Errorf("want every domain's fields as the header, got %q", lines[0])
 		}
-		if slices.Index(header, "TRANSFER LOCK") > slices.Index(header, "PRIVACY") {
+		if slices.Index(header, "Transfer lock") > slices.Index(header, "Privacy") {
 			t.Errorf("want a field only the second domain has in its place, not last: %q", lines[0])
 		}
 		for i, line := range lines[1:] {
@@ -481,6 +481,19 @@ func TestTSV(t *testing.T) {
 		}
 		if !strings.Contains(lines[2], "\t2099-01-02\t") {
 			t.Errorf("want the transfer lock as a plain date: %q", lines[2])
+		}
+		// A script that switches between one domain and several reads the
+		// same names: the header is one domain's field column, not capitals.
+		one, stderr, code := runFormatting(t, map[string]reply{
+			"GET /core/v1/domains/a.com": {200, `{"domainName":"a.com","locked":true,"renewalPrice":12.99}`},
+		}, "domain", "get", "a.com", "-o", "tsv")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+		}
+		for row := range strings.SplitSeq(strings.TrimSuffix(one, "\n"), "\n") {
+			if field, _, _ := strings.Cut(row, "\t"); !slices.Contains(header, field) {
+				t.Errorf("one domain's field %q is not in the several-domain header %q", field, lines[0])
+			}
 		}
 	})
 	t.Run("the dns sync plan", func(t *testing.T) {
