@@ -27,7 +27,8 @@ var Cmd = &cobra.Command{
 	Short: "Make a raw API request",
 	Long: `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.
 
-The method may be left out: it is GET, or POST when --data, --input, -f or -F
+The method is the first argument, or -X/--method; either way any case will
+do. It may be left out: it is GET, or POST when --data, --input, -f or -F
 gives the request a body. With --paginate it is always GET.
 
 The body is one of:
@@ -62,6 +63,7 @@ and body — instead of sent. GET and HEAD still run.`,
   namecom api /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
   echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records
   namecom api PUT /core/v1/domains/example.com/records/123 --input record.json
+  namecom api -X PATCH /core/v1/domains/example.com -F autorenewEnabled=true --dry-run
   namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 2 {
@@ -91,12 +93,14 @@ var (
 	apiFields   []string
 	apiTyped    []string
 	apiInput    string
+	apiMethod   string
 	apiInclude  bool
 	apiPaginate bool
 )
 
 func init() {
 	f := Cmd.Flags()
+	f.StringVarP(&apiMethod, "method", "X", "", "the HTTP method, in place of the first argument (default GET, or POST with a body)")
 	f.StringVar(&apiBody, "data", "", "request body (JSON); use '-' to read from stdin")
 	f.StringVar(&apiInput, "input", "", "read the request body from a file; use '-' for stdin")
 	f.StringArrayVarP(&apiFields, "raw-field", "f", nil, "add a string parameter, key=value: the JSON body, or the query of a GET")
@@ -106,29 +110,51 @@ func init() {
 	f.BoolVar(&apiPaginate, "paginate", false, "follow nextPage and print every page as one document (GET only)")
 	// Any method but GET or HEAD goes through RunWrite.
 	cmdutil.MarkWrite(Cmd)
+	cmdutil.CompleteFlagValues(Cmd, "method", allowedMethods)
 }
 
-// methodAndPath reads the method and path from args. The method may be left
-// out: then the one argument is the path, and hasBody picks the method.
+// methodAndPath reads the method and path from args and -X. The method may
+// be left out: then the one argument is the path, and hasBody picks the
+// method.
 func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, path string, err error) {
+	// Checked before anything else, including --dry-run. nginx answers an
+	// unknown method with 403, which exited 3 with an `auth login` hint for
+	// what was a typo.
+	flagMethod, err := checkMethod(apiMethod, "-X ")
+	if err != nil {
+		return "", "", err
+	}
 	if len(args) == 1 {
 		if slices.Contains(allowedMethods, strings.ToUpper(args[0])) {
 			return "", "", cmdutil.NewUsageError(fmt.Errorf("path is required — try: %s", cmd.UseLine()))
 		}
-		if hasBody && !apiPaginate {
+		switch {
+		case flagMethod != "":
+			return flagMethod, args[0], nil
+		case hasBody && !apiPaginate:
 			return http.MethodPost, args[0], nil
 		}
 		return http.MethodGet, args[0], nil
 	}
-	method = strings.ToUpper(args[0])
-	// Checked before anything else, including --dry-run. nginx answers an
-	// unknown method with 403, which exited 3 with an `auth login` hint for
-	// what was a typo.
-	if !slices.Contains(allowedMethods, method) {
-		return "", "", cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %q: must be one of %s",
-			args[0], strings.Join(allowedMethods, ", ")))
+	if method, err = checkMethod(args[0], ""); err != nil {
+		return "", "", err
+	}
+	if flagMethod != "" && flagMethod != method {
+		return "", "", cmdutil.NewUsageError(fmt.Errorf("the method is given twice, as %s and as -X %s; use one", args[0], apiMethod))
 	}
 	return method, args[1], nil
+}
+
+// checkMethod returns m in upper case, or a usage error when it is not a
+// method `namecom api` sends. An empty m is no method, and returned as is.
+// how says where m came from, for the message.
+func checkMethod(m, how string) (string, error) {
+	method := strings.ToUpper(m)
+	if m == "" || slices.Contains(allowedMethods, method) {
+		return method, nil
+	}
+	return "", cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %s%q: must be one of %s",
+		how, m, strings.Join(allowedMethods, ", ")))
 }
 
 // checkFlags rejects flags that contradict each other or the method, before

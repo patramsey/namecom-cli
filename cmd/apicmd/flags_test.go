@@ -498,3 +498,79 @@ func TestAPI_IncludePaginate(t *testing.T) {
 		t.Errorf("--include printed the request's Authorization:\n%s", buf.String())
 	}
 }
+
+// TestAPI_MethodFlag pins #270: -X names the method in any case, the same as
+// the first argument. With fields, -X GET sends them as the query.
+func TestAPI_MethodFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		args                []string
+		set                 func()
+		wantMethod, wantURI string
+		wantBody            string
+	}{
+		{"-X post", []string{"/core/v1/x"}, func() { apiMethod = "post"; apiFields = []string{"a=b"} }, "POST", "/core/v1/x", `{"a":"b"}`},
+		{"-X GET with fields", []string{"/core/v1/x"}, func() { apiMethod = "GET"; apiFields = []string{"perPage=2"} }, "GET", "/core/v1/x?perPage=2", ""},
+		{"-X DELETE without a body", []string{"/core/v1/x"}, func() { apiMethod = "Delete"; stdinWith(t, "") }, "DELETE", "/core/v1/x", ""},
+		{"-X matching the argument", []string{"put", "/core/v1/x"}, func() { apiMethod = "PUT"; apiBody = `{}` }, "PUT", "/core/v1/x", `{}`},
+		{"-X GET with --paginate", []string{"/core/v1/x"}, func() { apiMethod = "get"; apiPaginate = true }, "GET", "/core/v1/x", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, got := recordServer(t, `{}`)
+			cmd, _ := apiCmd(t, srv)
+			tc.set()
+			if err := runAPI(cmd, tc.args); err != nil {
+				t.Fatalf("runAPI: %v", err)
+			}
+			if len(*got) != 1 {
+				t.Fatalf("sent %d requests, want 1", len(*got))
+			}
+			r := (*got)[0]
+			if r.method != tc.wantMethod || r.uri != tc.wantURI || r.body != tc.wantBody {
+				t.Errorf("sent %s %s %q, want %s %s %q", r.method, r.uri, r.body, tc.wantMethod, tc.wantURI, tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestAPI_MethodFlagErrors: an unknown -X, -X disagreeing with the first
+// argument, and --paginate with -X other than GET are usage errors, and
+// nothing is sent.
+func TestAPI_MethodFlagErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		set    func()
+		reason string
+	}{
+		{"unknown", []string{"/x"}, func() { apiMethod = "FETCH" }, `-X "FETCH"`},
+		{"disagrees", []string{"GET", "/x"}, func() { apiMethod = "post" }, "given twice"},
+		{"--paginate", []string{"/x"}, func() { apiMethod = "POST"; apiPaginate = true }, "--paginate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, _ := apiCmd(t, refuseAll(t))
+			tc.set()
+			err := runAPI(cmd, tc.args)
+			if !isUsage(err) || !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("err = %v, want a usage error naming %s", err, tc.reason)
+			}
+		})
+	}
+}
+
+// TestAPI_MethodFlagIsAWrite: a write named with -X goes through RunWrite,
+// so --dry-run previews it rather than sending it.
+func TestAPI_MethodFlagIsAWrite(t *testing.T) {
+	cmd, buf := apiCmd(t, refuseAll(t))
+	dryRun(cmd, true)
+	apiMethod = "patch"
+	apiTyped = []string{"autorenewEnabled=true"}
+	if err := runAPI(cmd, []string{"/core/v1/domains/example.com"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	doc := parseDryRun(t, buf)
+	if doc.Method != "PATCH" || doc.Path != "/core/v1/domains/example.com" {
+		t.Errorf("previewed %s %s, want PATCH /core/v1/domains/example.com", doc.Method, doc.Path)
+	}
+	jsonEqual(t, string(doc.Body), `{"autorenewEnabled":true}`)
+}

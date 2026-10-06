@@ -34,6 +34,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   applies to the body alone, as with `gh api -i --jq`. The combination was a
   usage error. With `--paginate`, each page's headers print, then the merged
   body.
+- `namecom api -X`/`--method` names the method, as `gh api` and `curl` do
+  (#270): `namecom api -X DELETE /core/v1/…`. It takes any case and the same
+  methods as the first argument. Giving both is a usage error (exit 2)
+  unless they agree, and so is `--paginate` with `-X` other than GET. With
+  `-X GET`, `-f` and `-F` are query parameters.
 
 ## [0.5.0] - 2026-10-05
 

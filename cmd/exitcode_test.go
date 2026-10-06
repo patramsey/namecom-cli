@@ -318,6 +318,36 @@ func TestExitCode_APIUnknownMethod(t *testing.T) {
 	}
 }
 
+// TestExitCode_APIMethodFlag pins #270 through the root command: -X is
+// parsed, and an unknown -X, -X disagreeing with the method argument, and
+// --paginate with -X POST exit 2 before any request. A write named with -X is
+// previewed under --dry-run, not sent.
+func TestExitCode_APIMethodFlag(t *testing.T) {
+	withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	t.Cleanup(srv.Close)
+	for _, args := range [][]string{
+		{"api", "-X", "FETCH", "/core/v1/hello"},
+		{"api", "GET", "/core/v1/hello", "-X", "post"},
+		{"api", "--method", "POST", "/core/v1/domains", "--paginate"},
+	} {
+		resetFlags(t, args)
+		_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL}, args...)...)
+		if code != 2 {
+			t.Errorf("namecom %s: exit %d, want 2; stderr:\n%s", strings.Join(args, " "), code, stderr)
+		}
+	}
+	args := []string{"api", "-X", "delete", "/core/v1/domains/example.com/records/1", "--data", "", "--dry-run"}
+	resetFlags(t, args)
+	stdout, stderr, code := runContract(t, append([]string{"--base-url", srv.URL}, args...)...)
+	if code != 0 || !strings.Contains(stdout, `"method": "DELETE"`) {
+		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	}
+}
+
 // TestExitCode_ExtraArgsAreUsageErrors pins #187: commands that take no
 // arguments accepted and ignored any, so `namecom status example.com` looked
 // like it reported on that domain.
