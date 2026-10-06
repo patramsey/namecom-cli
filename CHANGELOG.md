@@ -39,6 +39,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
   methods as the first argument. Giving both is a usage error (exit 2)
   unless they agree, and so is `--paginate` with `-X` other than GET. With
   `-X GET`, `-f` and `-F` are query parameters.
+- Purchase confirmations show the account balance. `domain register`,
+  `domain renew`, `transfer create` and the register offered by
+  `domain check` end the line under the prompt with it:
+  `production · profile work (acme-corp) · balance $120.00`. When the
+  balance is below the price, a `!` warning says so before the prompt; the
+  purchase is still offered, since the account may have another way to pay.
+  The balance is looked up alongside the pricing, only when a prompt will be
+  shown — never under `--yes` — and a failed lookup leaves it out without a
+  word (#271).
+- **Scripts:** `--dry-run` of those commands reports the balance too: the
+  `quote` object in JSON and YAML gains a `balance` key (USD), absent when
+  the lookup failed, and the "Would charge" line ends with it.
 
 ## [0.5.0] - 2026-10-05
 

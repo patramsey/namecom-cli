@@ -536,6 +536,8 @@ func checkRegisterServer(t *testing.T, registered *bool) *httptest.Server {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/domains"):
 			*registered = true
 			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
+		case r.URL.Path == "/core/v1/accountinfo/balance":
+			_, _ = w.Write([]byte(`{"balance":5}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -577,6 +579,33 @@ func TestCheck_YesDoesNotAutoPurchase(t *testing.T) {
 	}
 	if registered {
 		t.Error("MONEY BUG: `domain check --yes` registered the domain without an explicit answer")
+	}
+}
+
+// TestCheck_OfferShowsBalance pins #271 for the register offer: its context
+// line names the balance, and a balance below the price ($5.00 against
+// $12.99 here) is warned about before the offer, which is still made.
+func TestCheck_OfferShowsBalance(t *testing.T) {
+	defer output.StubInteractive(true)()
+	var detail string
+	prev := confirm
+	confirm = func(_ *output.Config, _ bool, _, d string) (bool, error) {
+		detail = d
+		return false, nil
+	}
+	t.Cleanup(func() { confirm = prev })
+
+	var registered bool
+	cmd := cmdForCheck(t, checkRegisterServer(t, &registered))
+	if err := runCheck(cmd, []string{"free.com"}); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	if !strings.HasSuffix(detail, "· balance $5.00") {
+		t.Errorf("offer context = %q, want it to end with the balance", detail)
+	}
+	stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
+	if !strings.Contains(stderr, "the account balance ($5.00) is less than this purchase's $12.99") {
+		t.Errorf("no short-balance warning before the offer:\n%s", stderr)
 	}
 }
 

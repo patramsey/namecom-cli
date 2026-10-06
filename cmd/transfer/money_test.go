@@ -14,12 +14,16 @@ import (
 	"github.com/patramsey/namecom-cli/internal/output"
 )
 
-// pricingOnlyServer quotes pricing for GetPricingForDomain and fails the test
-// on any other request.
+// pricingOnlyServer quotes pricing for GetPricingForDomain, and a balance of
+// $120.00 for the balance lookup, and fails the test on any other request.
 func pricingOnlyServer(t *testing.T, pricing string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/core/v1/accountinfo/balance" {
+			_, _ = w.Write([]byte(`{"balance":120}`))
+			return
+		}
 		if !strings.Contains(r.URL.Path, "getPricing") {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -52,7 +56,7 @@ func TestTransferDryRun_StatesTheCharge(t *testing.T) {
 			stdout := out.Writer.(*bytes.Buffer).String()
 			if format == output.FormatTable {
 				stderr := out.EWriter.(*bytes.Buffer).String()
-				want := "Would charge: $12.99 (covers the TLD's minimum term, typically 1 year) · production"
+				want := "Would charge: $12.99 (covers the TLD's minimum term, typically 1 year) · production · balance $120.00"
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr lacks %q:\n%s", want, stderr)
 				}
@@ -64,8 +68,9 @@ func TestTransferDryRun_StatesTheCharge(t *testing.T) {
 			if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 				t.Fatalf("not one JSON document: %v\n%s", err, stdout)
 			}
-			if doc.Quote == nil || doc.Quote.Total != 12.99 || doc.Quote.Currency != "USD" || doc.Quote.Years != 0 {
-				t.Errorf("quote = %+v, want $12.99 USD with no year count:\n%s", doc.Quote, stdout)
+			if doc.Quote == nil || doc.Quote.Total != 12.99 || doc.Quote.Currency != "USD" || doc.Quote.Years != 0 ||
+				doc.Quote.Balance == nil || *doc.Quote.Balance != 120 {
+				t.Errorf("quote = %+v, want $12.99 USD with no year count and a $120 balance:\n%s", doc.Quote, stdout)
 			}
 		})
 	}
