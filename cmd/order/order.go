@@ -127,7 +127,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	// Auto-paginate when any filter is active — results will be small.
 	filtered := cmd.Flags().Changed("domain") || cmd.Flags().Changed("since") ||
 		cmd.Flags().Changed("until") || cmd.Flags().Changed("status")
-	autoPage := listAll || filtered
+	autoPage := cmdutil.AutoPage(cmd, listAll) || filtered
 
 	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
 		return err
@@ -170,10 +170,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			break
 		}
-		// --quiet returns before the "showing the newest orders" hint, so
-		// stopping early would truncate silently. Page fully whenever the
-		// caller cannot be told there is more — see cmd/contact/contact.go.
-		if !autoPage && !out.QuietMode {
+		if !autoPage {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -190,6 +187,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		out.PrintQuiet(ids)
+		if hasMore {
+			cmdutil.QuietMorePages(out, nextPage)
+		}
 		return nil
 	}
 

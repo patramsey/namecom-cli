@@ -30,6 +30,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a row per change (action, type, host, answer, TTL, priority) instead of its
   text report, and a sync with nothing to change prints only its result,
   with `changed` now `false`.
+- `-q` on a paged list honours `--page` and `--limit` (#277). It fetched
+  every page regardless, so `order list -q --limit 1` walked the whole
+  history one order per request, and `--page 3 -q` printed every page.
+  An explicit `--page` or `--limit` now fetches that one page, as it does
+  without `-q`, and when there are more, `--page N for more` goes to stderr;
+  stdout is still one ID per line. `-q` alone still prints every page. This
+  covers `domain`, `order`, `dns`, `email`, `url`, `vanity-ns` and
+  `transfer list`, and `contact unverified`. **Scripts:** `dns list -q`
+  without `--page` or `--limit` now prints every record, not just the first
+  page, as the other lists already did.
 
 - `namecom api --include` works with `--jq` and `--fields` (#269). The status
   line and headers print as they came, ahead of the body, and the filter

@@ -163,10 +163,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		if !ok {
 			break
 		}
-		// --quiet returns before the "showing first page" hint, so stopping
-		// early would truncate silently. Page fully whenever the caller cannot
-		// be told there is more — see cmd/contact/contact.go.
-		if !listAll && !out.QuietMode {
+		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
+		if !cmdutil.AutoPage(cmd, listAll) {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -183,6 +181,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			}
 		}
 		out.PrintQuiet(ids)
+		if hasMore {
+			cmdutil.QuietMorePages(out, nextPage)
+		}
 		return nil
 	}
 

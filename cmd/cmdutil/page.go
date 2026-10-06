@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +47,29 @@ func PerPage(limit int) *int {
 // matching the footer `domain list` already printed.
 func MorePages(next int) string {
 	return fmt.Sprintf("--page %d for more, --all for everything", next)
+}
+
+// AutoPage reports whether a paged list fetches every page rather than one:
+// with --all, or with --quiet when neither --page nor --limit was given.
+// A list may also page fully for its own reasons, such as a filter.
+//
+// --quiet pages fully by default because the table's "--page N for more"
+// footer is not printed under it, so one page would truncate silently (#99).
+// It used to do so even with --page or --limit, so `order list -q --limit 1`
+// fetched the whole history one order per request (#277). Those flags ask
+// for one page, and get it; QuietMorePages says there is more.
+func AutoPage(cmd *cobra.Command, all bool) bool {
+	if all {
+		return true
+	}
+	return Out(cmd).QuietMode && !cmd.Flags().Changed("page") && !cmd.Flags().Changed("limit")
+}
+
+// QuietMorePages is MorePages for a --quiet list that stopped before its last
+// page. It goes to stderr whatever the format, so stdout stays one value per
+// line, as Footer would print it if quiet mode printed footers.
+func QuietMorePages(out *output.Config, next int) {
+	fmt.Fprintln(out.EWriter, out.Dim(MorePages(next)))
 }
 
 // Int32Page narrows the SDK's *int page number to the *int32 the output

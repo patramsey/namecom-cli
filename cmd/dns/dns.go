@@ -221,8 +221,9 @@ func runList(cmd *cobra.Command, args []string) error {
 	// --type and --host filter client-side, so they must see every page:
 	// filtering only page 1 silently reports "no records" for a zone that
 	// has them. Matches `domain list` and `order list`, which auto-page
-	// whenever a filter is set.
-	autoPage := listAll || filtered
+	// whenever a filter is set. So does --quiet without --page or --limit —
+	// see cmdutil.AutoPage.
+	autoPage := cmdutil.AutoPage(cmd, listAll) || filtered
 	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
 		return err
 	}
@@ -266,6 +267,13 @@ func runList(cmd *cobra.Command, args []string) error {
 			}
 		}
 		out.PrintQuiet(ids)
+		if hasMore {
+			next := listPage + 1
+			if nextPage != nil {
+				next = *nextPage
+			}
+			cmdutil.QuietMorePages(out, next)
+		}
 		return nil
 	}
 

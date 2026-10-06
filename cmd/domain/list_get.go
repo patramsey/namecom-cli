@@ -112,10 +112,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	// When a filter is active, auto-paginate — results are small and the user
 	// expects to see everything matching, not just the first page.
-	// --quiet also auto-paginates: it returns before the "Showing first page"
-	// hint, so stopping early would truncate silently — see
-	// cmd/contact/contact.go.
-	autoPage := listAll || isFiltered(cmd) || out.QuietMode
+	// So does --quiet without --page or --limit — see cmdutil.AutoPage.
+	autoPage := cmdutil.AutoPage(cmd, listAll) || isFiltered(cmd)
 
 	spin := out.StartSpinner("Fetching domains…")
 
@@ -228,6 +226,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 			names = append(names, d.DomainName)
 		}
 		out.PrintQuiet(names)
+		if hasMore {
+			nextPage := listPage + 1
+			if lastResult.NextPage != nil {
+				nextPage = *lastResult.NextPage
+			}
+			cmdutil.QuietMorePages(out, nextPage)
+		}
 		return nil
 	}
 
