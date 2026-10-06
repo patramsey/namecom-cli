@@ -39,6 +39,7 @@ func stubLoginAnswers(t *testing.T, username, token string, sandboxAnswer bool) 
 	}
 	t.Cleanup(func() { askLogin = prev })
 	t.Cleanup(output.StubInteractive(true))
+	stubOpenTokenPage(t, false)
 	stubRetryLogin(t, false)
 	stubReplaceProfile(t, true)
 	prevGF := gf

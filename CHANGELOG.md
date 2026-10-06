@@ -9,6 +9,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Added
+- `auth login` asks "Open the API token page in your browser?" before the
+  form (default No), so someone without a token need not copy the URL out of
+  the terminal. Yes opens it with the browser `namecom open` uses; if none
+  opens, the URL is printed as a warning and the form follows. It is not
+  asked with `--with-token` or `--token-cmd`, under `--yes`, `--dry-run`,
+  `-q` or a structured `-o`, or off a terminal. The sandbox has no separate
+  token page, so `--sandbox` opens the same one. (#272)
+
 ## [0.5.0] - 2026-10-05
 
 The result of a UX and automation review (#247). One documented JSON
