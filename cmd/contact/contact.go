@@ -124,11 +124,8 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			break
 		}
-		// --quiet is for scripting, and the "showing first page" hint lives in
-		// the table branch that quiet mode returns before reaching — so stopping
-		// early here truncates silently. Page fully whenever the caller cannot
-		// be told there is more.
-		if !listAll && !out.QuietMode {
+		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
+		if !cmdutil.AutoPage(cmd, listAll) {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -142,6 +139,9 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			ids = append(ids, strconv.FormatInt(c.VerificationID, 10))
 		}
 		out.PrintQuiet(ids)
+		if hasMore {
+			cmdutil.QuietMorePages(out, nextPage)
+		}
 		return nil
 	}
 
