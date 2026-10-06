@@ -45,6 +45,11 @@ type Write[B any] struct {
 	// mode. It changes nothing else.
 	Quote *output.Quote
 
+	// Balance, when set, is the account-balance lookup a purchase started
+	// with StartBalance. The confirmation line and the dry-run quote carry
+	// the balance when it arrived; a failed lookup leaves both as they were.
+	Balance *Balance
+
 	// Spin is the spinner text shown while send runs. Empty shows none, which
 	// is required when send itself may prompt.
 	Spin string
@@ -71,15 +76,26 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 	out := Out(cmd)
 
 	if IsDryRun(cmd) {
-		ctx := ""
-		if w.Quote != nil {
-			ctx = AccountContext(cmd)
+		ctx, quote := "", w.Quote
+		if quote != nil {
+			q := *quote
+			q.Balance = w.Balance.Wait()
+			quote = &q
+			ctx = withBalance(cmd, AccountContext(cmd), &q.Total, q.Balance)
 		}
-		return false, out.DryRunQuote(w.Method, w.Path, previewOf(w), w.Quote, ctx)
+		return false, out.DryRunQuote(w.Method, w.Path, previewOf(w), quote, ctx)
 	}
 
 	if w.Prompt != "" {
-		if err := ConfirmWrite(cmd, w.Prompt); err != nil {
+		detail := PromptContext(cmd)
+		if w.Balance != nil {
+			var total *float64
+			if w.Quote != nil {
+				total = &w.Quote.Total
+			}
+			detail = PurchaseContext(cmd, total, w.Balance.Wait())
+		}
+		if err := confirmDetail(cmd, w.Prompt, detail); err != nil {
 			return false, err
 		}
 	}
@@ -159,7 +175,12 @@ func RunWrites[B any](cmd *cobra.Command, prompt string, writes []Write[B], send
 // it, so it stubs RunWrite's and RunWrites' prompts too.
 // A command calling it must handle --dry-run first: a dry run never prompts.
 func ConfirmWrite(cmd *cobra.Command, prompt string) error {
-	ok, err := confirmFunc(Out(cmd), IsYes(cmd), prompt, PromptContext(cmd))
+	return confirmDetail(cmd, prompt, PromptContext(cmd))
+}
+
+// confirmDetail is ConfirmWrite with the line under the question supplied.
+func confirmDetail(cmd *cobra.Command, prompt, detail string) error {
+	ok, err := confirmFunc(Out(cmd), IsYes(cmd), prompt, detail)
 	if err != nil {
 		return err
 	}

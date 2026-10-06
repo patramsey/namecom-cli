@@ -199,6 +199,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// 1-year price and then sends it alongside years:N, which CreateDomainRequest
 	// explicitly warns against ("If passing purchasePrice make sure to adjust it
 	// accordingly").
+	// The account balance is fetched alongside, for the confirmation (#271).
+	balance := cmdutil.StartBalance(cmd)
 	stop := out.Spin("Checking pricing for " + domainName + "…")
 	pricingYears := registerYears
 	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
@@ -295,11 +297,12 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// --dry-run unusable in CI.
 	var created *coreapigo.CreateDomainResponse
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateDomainRequest]{
-		Method: "POST",
-		Path:   "/core/v1/domains",
-		Body:   body,
-		Prompt: registerPrompt(domainName, body, pricing),
-		Quote:  registerChargeQuote(body, pricing, charged),
+		Method:  "POST",
+		Path:    "/core/v1/domains",
+		Body:    body,
+		Prompt:  registerPrompt(domainName, body, pricing),
+		Quote:   registerChargeQuote(body, pricing, charged),
+		Balance: balance,
 	}, func(ctx context.Context, body coreapigo.CreateDomainRequest) error {
 		if claim != nil {
 			renderClaimsNotice(out, claim)
@@ -592,6 +595,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	// Fetch pricing to show renewal cost before charging. Quote the same term
 	// the request body will carry, so the price we show and the price we send
 	// can't diverge on multi-year renewals.
+	balance := cmdutil.StartBalance(cmd) // for the confirmation (#271)
 	stop := out.Spin("Checking renewal pricing for " + domainName + "…")
 	pricingYears := renewYears
 	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
@@ -635,11 +639,12 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	// non-interactive shell for an action it will never perform.
 	var renewed *coreapigo.RenewDomainResponse
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DomainsRenewDomainBody]{
-		Method: "POST",
-		Path:   fmt.Sprintf("/core/v1/domains/%s:renew", domainName),
-		Body:   body,
-		Prompt: renewPrompt(domainName, body, pricing.RenewalPrice),
-		Quote:  cmdutil.ChargeQuote(charged, years, premiumNote(pricing.GetPremium())),
+		Method:  "POST",
+		Path:    fmt.Sprintf("/core/v1/domains/%s:renew", domainName),
+		Body:    body,
+		Prompt:  renewPrompt(domainName, body, pricing.RenewalPrice),
+		Quote:   cmdutil.ChargeQuote(charged, years, premiumNote(pricing.GetPremium())),
+		Balance: balance,
 	}, func(ctx context.Context, body coreapigo.DomainsRenewDomainBody) error {
 		var err error
 		renewed, err = client.SDK().Domains.RenewDomain(ctx, &body)

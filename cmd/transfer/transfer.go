@@ -325,6 +325,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// the transfer — fall back to an unpriced prompt.
 	var quoted *float64
 	premium := false
+	balance := cmdutil.StartBalance(cmd) // for the confirmation (#271)
 	if pricing, perr := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domain}); perr == nil {
 		quoted = pricing.TransferPrice
@@ -377,6 +378,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Preview: redactTransferAuthCode,
 		Prompt:  transferPrompt(domain, body, quoted),
 		Quote:   cmdutil.ChargeQuote(charged, 0, transferQuoteNote(premium)),
+		Balance: balance,
 		Spin:    "Initiating transfer…",
 	}, func(ctx context.Context, body coreapigo.CreateTransferRequest) error {
 		var err error

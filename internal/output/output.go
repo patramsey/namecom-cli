@@ -1830,6 +1830,10 @@ type Quote struct {
 	Years int `json:"years,omitempty"`
 	// Note qualifies the total: "premium", "aftermarket_b, flat price".
 	Note string `json:"note,omitempty"`
+	// Balance is the account balance in USD when the lookup succeeded, so a
+	// script can see whether the account covers Total. Absent, not 0, when
+	// it is unknown.
+	Balance *float64 `json:"balance,omitempty"`
 }
 
 // Summary is the quote as one phrase: "$39.98 (2 years)".

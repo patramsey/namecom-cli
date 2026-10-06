@@ -492,8 +492,15 @@ func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []*corea
 		return nil
 	}
 	r := results[0]
+	// The balance, on the offer's context line (#271). It is fetched only now
+	// that there is an offer to show it on, rather than with every check of a
+	// single name.
+	stop := out.Spin("Checking account balance…")
+	balance := cmdutil.LookupBalance(cmd).Wait()
+	stop()
+	detail := cmdutil.PurchaseContext(cmd, r.PurchasePrice, balance)
 	// Deliberately passing false, not cmdutil.IsYes(cmd) — see the doc comment.
-	ok, err := confirm(out, false, checkRegisterPrompt(r), cmdutil.PromptContext(cmd))
+	ok, err := confirm(out, false, checkRegisterPrompt(r), detail)
 	if err != nil {
 		return err
 	}

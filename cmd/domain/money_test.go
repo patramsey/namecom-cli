@@ -29,6 +29,8 @@ func purchaseQuoteServer(t *testing.T, pricing string) *httptest.Server {
 			_, _ = w.Write([]byte(pricing))
 		case strings.Contains(r.URL.Path, "claims"):
 			_, _ = w.Write([]byte(`{"domain":"acme.io","claimsProcessActive":false,"claimId":null,"claims":[]}`))
+		case r.URL.Path == "/core/v1/accountinfo/balance":
+			_, _ = w.Write([]byte(`{"balance":120}`))
 		default:
 			t.Errorf("a dry run sent %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -87,7 +89,8 @@ func TestPurchaseDryRun_StatesTheCharge(t *testing.T) {
 				t.Fatalf("dry run: %v", err)
 			}
 			stderr := out.EWriter.(*bytes.Buffer).String()
-			if want := "Would charge: $39.98 (2 years) · sandbox"; !strings.Contains(stderr, want) {
+			// The balance the stub reports, after who pays (#271).
+			if want := "Would charge: $39.98 (2 years) · sandbox · balance $120.00"; !strings.Contains(stderr, want) {
 				t.Errorf("stderr lacks %q:\n%s", want, stderr)
 			}
 			if stdout := out.Writer.(*bytes.Buffer).String(); strings.Contains(stdout, "Would charge") {
@@ -114,7 +117,17 @@ func TestPurchaseDryRun_StatesTheCharge(t *testing.T) {
 				t.Fatalf("dry run is not one JSON document: %v\n%s", err, out.Writer)
 			}
 			want := output.Quote{Total: 39.98, Currency: "USD", Years: 2}
-			if !doc.DryRun || len(doc.Body) == 0 || doc.Quote == nil || *doc.Quote != want {
+			if !doc.DryRun || len(doc.Body) == 0 || doc.Quote == nil {
+				t.Fatalf("dry run = %s, want the body and quote %+v", out.Writer, want)
+			}
+			// The quote carries the balance too, for a script to compare
+			// (#271).
+			got := *doc.Quote
+			if got.Balance == nil || *got.Balance != 120 {
+				t.Errorf("quote balance = %v, want 120:\n%s", got.Balance, out.Writer)
+			}
+			got.Balance = nil
+			if got != want {
 				t.Errorf("dry run = %s, want the body and quote %+v", out.Writer, want)
 			}
 		})

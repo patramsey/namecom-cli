@@ -377,6 +377,8 @@ func TestRegister_DryRunMakesReadsButNeverWrites(t *testing.T) {
 		case strings.Contains(r.URL.Path, "claims"):
 			claimsChecked = true
 			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
+		case r.URL.Path == "/core/v1/accountinfo/balance":
+			_, _ = w.Write([]byte(`{"balance":120}`)) // for the dry run's quote (#271)
 		default:
 			created = true
 			t.Error("CreateDomain must never be called in dry-run mode")
@@ -2309,6 +2311,8 @@ func TestRegister_DryRunPreviewsTheRealBody(t *testing.T) {
 			_, _ = w.Write([]byte(`{"domain":"example.com","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 		case strings.Contains(r.URL.Path, "getPricing"):
 			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case r.URL.Path == "/core/v1/accountinfo/balance":
+			_, _ = w.Write([]byte(`{"balance":120}`)) // for the dry run's quote (#271)
 		default:
 			created = true
 			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
