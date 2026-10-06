@@ -340,12 +340,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 		}
 		return out.YAML(fetched[0])
 	default:
+		titles := make([]string, len(fetched))
+		objs := make([][][]string, len(fetched))
 		for i, d := range fetched {
-			if i > 0 {
-				fmt.Fprintln(out.Writer)
-			}
-			out.Title(d.DomainName)
-			out.KVTable(domainRows(out, d, time.Now()))
+			titles[i], objs[i] = d.DomainName, domainRows(out, d, time.Now())
+		}
+		if list {
+			out.KVTables(titles, objs)
+		} else {
+			out.Title(titles[0])
+			out.KVTable(objs[0])
 		}
 		// The next step is about one domain; for several it would repeat.
 		if len(fetched) == 1 {
@@ -374,7 +378,11 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 	)
 	// An expiry in the past is a lock that has already lifted.
 	if t := d.TransferLockExpiresAt; t != nil && t.After(now) {
-		rows = append(rows, []string{"Transfer lock", "until " + t.Format("2006-01-02") + " (" + output.Relative(*t) + ")"})
+		lock := "until " + t.Format("2006-01-02") + " (" + output.Relative(*t) + ")"
+		if out.Format == output.FormatTSV {
+			lock = t.Format("2006-01-02") // a date, as TSV prints Expires
+		}
+		rows = append(rows, []string{"Transfer lock", lock})
 	}
 	rows = append(rows, []string{"Privacy", out.BoolBadge(d.PrivacyEnabled)})
 	if d.Contacts != nil {

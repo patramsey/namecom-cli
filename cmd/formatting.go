@@ -20,8 +20,12 @@ Formats (-o, --output):
   tsv     The table's columns as tab-separated values, with a header row
           unless --no-header. No colour, a date without "(in 3 months)",
           and an empty cell where a table shows "—". A command that shows one
-          object prints it as field<TAB>value rows; a write prints its
-          result's keys the same way; a dry run prints method, path and body.
+          object prints it as field<TAB>value rows (status and version name
+          the fields as -o json does, and a list in a value is a JSON array);
+          several objects (domain get a.com b.com) are one table, a row
+          each. A write prints its result's keys as field<TAB>value
+          rows; a dry run prints method, path and body, and dns sync's plan
+          a row per change: action, type, host, answer, TTL, priority.
 
   In TSV a cell's backslash, tab, line feed and carriage return are written
   \\, \t, \n and \r, so every row is one line.

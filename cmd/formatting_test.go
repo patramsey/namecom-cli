@@ -3,6 +3,9 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -401,6 +404,94 @@ func TestTSV(t *testing.T) {
 		want := "method\tpath\tbody\nPOST\t/core/v1/domains/example.com/records\t"
 		if code != 0 || !strings.HasPrefix(stdout, want) {
 			t.Errorf("exit %d, want %q…, got:\n%s", code, want, stdout)
+		}
+	})
+	t.Run("status is field and value rows", func(t *testing.T) {
+		stdout, stderr, code := runFormatting(t, map[string]reply{
+			"GET /core/v1/domains":             {200, `{"domains":[{"domainName":"a.com","expireDate":"2000-01-02T00:00:00Z"}],"totalCount":3}`},
+			"GET /core/v1/accountinfo/balance": {200, `{"balance":142.5}`},
+			"GET /core/v1/transfers":           {200, `{"transfers":[{"domainName":"t.com","status":"pending_transfer"}]}`},
+		}, "status", "-o", "tsv")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+		}
+		for _, want := range []string{"domainsTotal\t3\n", "balance\t142.5\n", "pendingTransfers\t1\n", "pendingTransferDomains\t[\"t.com\"]\n"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("want %q in:\n%s", want, stdout)
+			}
+		}
+		for line := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n") {
+			if strings.Count(line, "\t") != 1 {
+				t.Errorf("want field<TAB>value, got %q in:\n%s", line, stdout)
+			}
+		}
+	})
+	t.Run("version is field and value rows", func(t *testing.T) {
+		stdout, stderr, code := runFormatting(t, nil, "version", "-o", "tsv")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+		}
+		info := gatherBuildInfo()
+		for _, want := range []string{"version\t" + info.Version + "\n", "dirty\t", "go\t" + info.Go + "\n", "os\t" + info.OS + "\n", "arch\t" + info.Arch + "\n"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("want %q in:\n%s", want, stdout)
+			}
+		}
+		if strings.Contains(stdout, "namecom ") {
+			t.Errorf("want rows, not the text report:\n%s", stdout)
+		}
+	})
+	t.Run("several domains are one table", func(t *testing.T) {
+		stdout, stderr, code := runFormatting(t, map[string]reply{
+			"GET /core/v1/domains/a.com": {200, `{"domainName":"a.com","locked":true,"renewalPrice":12.99}`},
+			"GET /core/v1/domains/b.com": {200, `{"domainName":"b.com","transferLockExpiresAt":"2099-01-02T00:00:00Z"}`},
+		}, "domain", "get", "a.com", "b.com", "-o", "tsv")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+		}
+		lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("want a header and a row per domain, got:\n%s", stdout)
+		}
+		header := strings.Split(lines[0], "\t")
+		if header[0] != "DOMAIN" || !slices.Contains(header, "RENEWS AT") || !slices.Contains(header, "TRANSFER LOCK") {
+			t.Errorf("want every domain's fields as the header, got %q", lines[0])
+		}
+		if slices.Index(header, "TRANSFER LOCK") > slices.Index(header, "PRIVACY") {
+			t.Errorf("want a field only the second domain has in its place, not last: %q", lines[0])
+		}
+		for i, line := range lines[1:] {
+			if cells := strings.Split(line, "\t"); len(cells) != len(header) {
+				t.Errorf("row %d has %d cells for %d columns: %q", i, len(cells), len(header), line)
+			}
+		}
+		if !strings.HasPrefix(lines[1], "a.com\t") || !strings.HasPrefix(lines[2], "b.com\t") {
+			t.Errorf("want a row per domain, in order:\n%s", stdout)
+		}
+		if !strings.Contains(lines[2], "\t2099-01-02\t") {
+			t.Errorf("want the transfer lock as a plain date: %q", lines[2])
+		}
+	})
+	t.Run("the dns sync plan", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "example.com.zone")
+		zone := "$ORIGIN example.com.\n$TTL 300\nwww 3600 IN A 192.0.2.1\napi IN A 192.0.2.7\n@ IN MX 10 mail\n"
+		if err := os.WriteFile(file, []byte(zone), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stdout, stderr, code := runFormatting(t, map[string]reply{"GET /core/v1/domains/example.com/records": {200, `{"records":[` +
+			`{"id":2,"host":"www","type":"A","answer":"192.0.2.1","ttl":300},` +
+			`{"id":3,"host":"","type":"MX","answer":"mail.example.com","ttl":300,"priority":10},` +
+			`{"id":4,"host":"old","type":"TXT","answer":"remove me","ttl":300}],"totalCount":3}`}},
+			"dns", "sync", "example.com", "--file", file, "--prune", "--dry-run", "-o", "tsv")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+		}
+		want := "ACTION\tTYPE\tHOST\tANSWER\tTTL\tPRIORITY\n" +
+			"create\tA\tapi\t192.0.2.7\t300\t\n" +
+			"update\tA\twww\t192.0.2.1\t3600\t\n" +
+			"delete\tTXT\told\tremove me\t300\t\n"
+		if stdout != want {
+			t.Errorf("got:\n%s\nwant:\n%s", stdout, want)
 		}
 	})
 	t.Run("-q still wins", func(t *testing.T) {

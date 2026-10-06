@@ -45,6 +45,8 @@ func renderVersion(out *output.Config, info buildInfo) error {
 		return out.JSON(info)
 	case output.FormatYAML:
 		return out.YAML(info)
+	case output.FormatTSV:
+		return out.TSVObject(info)
 	default:
 		commit := info.Commit
 		if commit == "" {

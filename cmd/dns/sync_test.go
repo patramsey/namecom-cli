@@ -335,6 +335,22 @@ func TestDNSSync_EmptyFileDoesNotPrune(t *testing.T) {
 	}
 }
 
+// TestDNSSync_NothingToChangeTSV: with nothing to change, -o tsv prints the
+// result's rows alone. An empty plan's header row before them would read as
+// one table (#268). And they say nothing changed: it was Success, which
+// printed changed<TAB>true.
+func TestDNSSync_NothingToChangeTSV(t *testing.T) {
+	_, srv := newFakeZone(t, fakeRecord{ID: 1, Host: "www", Type: "A", Answer: "192.0.2.1", TTL: 300})
+	file := writeFile(t, "example.com.zone", "$ORIGIN example.com.\n$TTL 300\nwww IN A 192.0.2.1\n")
+	stdout, _, err := runSyncFile(t, srv, runOpts{format: output.FormatTSV}, file, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "success\ttrue\nchanged\tfalse\n"; !strings.HasPrefix(stdout, want) {
+		t.Errorf("got:\n%s\nwant %q…", stdout, want)
+	}
+}
+
 func TestDNSSync_UnknownDomainIsNotFound(t *testing.T) {
 	_, srv := newFakeZone(t)
 	cmd, _, _ := commandFor(t, srv, runOpts{yes: true})

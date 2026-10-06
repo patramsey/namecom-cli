@@ -260,6 +260,8 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		return out.JSON(summary)
 	case output.FormatYAML:
 		return out.YAML(summary)
+	case output.FormatTSV:
+		return out.TSVObject(summary)
 	default:
 		renderStatus(out, summary)
 	}

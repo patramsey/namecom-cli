@@ -17,6 +17,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   asked with `--with-token` or `--token-cmd`, under `--yes`, `--dry-run`,
   `-q` or a structured `-o`, or off a terminal. The sandbox has no separate
   token page, so `--sandbox` opens the same one. (#272)
+### Fixed
+- `-o tsv` now covers the outputs it missed. **Scripts**: each of these
+  changes what `-o tsv` prints. `status` and `version` print
+  `field<TAB>value` rows, keyed by their JSON names, instead of their text
+  report; `status`'s lists of domains are a JSON array in one cell.
+  `domain get` with several domains, or `-`, prints one table — a header row
+  and a row per domain — instead of a `field<TAB>value` block per domain, and
+  its transfer lock is a plain date. `dns sync --dry-run` prints the plan as
+  a row per change (action, type, host, answer, TTL, priority) instead of its
+  text report, and a sync with nothing to change prints only its result,
+  with `changed` now `false`.
 
 ## [0.5.0] - 2026-10-05
 

@@ -743,6 +743,60 @@ func tableWidth(widths []int) int {
 	return total
 }
 
+// KVTables renders several objects that KVTable shows one at a time, such as
+// `domain get a.com b.com`. In a table each is a KVTable under its title,
+// with a blank line between them. In TSV they are one table, as a list is
+// (#268): a header row of their fields — in the order first seen, in
+// capitals like every table's headers — and a row per object, empty where an
+// object lacks a field. Field<TAB>value blocks, one per object, could not be
+// read as a list.
+func (c *Config) KVTables(titles []string, objs [][][]string) {
+	if c.Format != FormatTSV {
+		for i, rows := range objs {
+			if i > 0 && c.Format == FormatTable && !c.QuietMode {
+				fmt.Fprintln(c.Writer)
+			}
+			c.Title(titles[i])
+			c.KVTable(rows)
+		}
+		return
+	}
+	if c.QuietMode {
+		return
+	}
+	// A field one object has and an earlier one lacks goes after the field
+	// before it in that object, not at the end, so that objects whose rows
+	// are the same fields with some left out keep that order.
+	var fields []string
+	for _, rows := range objs {
+		at := 0
+		for _, r := range rows {
+			if i := slices.Index(fields, r[0]); i >= 0 {
+				at = i + 1
+				continue
+			}
+			fields = slices.Insert(fields, at, r[0])
+			at++
+		}
+	}
+	col := make(map[string]int, len(fields))
+	for i, f := range fields {
+		col[f] = i
+	}
+	headers := make([]string, len(fields))
+	for i, f := range fields {
+		headers[i] = strings.ToUpper(f)
+	}
+	table := make([][]string, len(objs))
+	for i, rows := range objs {
+		table[i] = make([]string, len(fields))
+		for _, r := range rows {
+			table[i][col[r[0]]] = r[1]
+		}
+	}
+	c.writeTSV(headers, tsvCells(table))
+}
+
 // KVTable renders a headerless two-column key-value table with styled field names.
 func (c *Config) KVTable(rows [][]string) {
 	// Structured modes get their data from the caller's own JSON/YAML encoding;

@@ -225,6 +225,32 @@ func (c *Config) fieldTable(w io.Writer, doc any, fields []string) error {
 	return nil
 }
 
+// TSVObject prints v, which must encode as a JSON object, as field<TAB>value
+// rows: its JSON keys, in order, and each value as --fields puts it in a cell.
+// It is -o tsv for a command that shows one object without a field table of
+// its own — `status`, `version` — whose text report a program cannot read
+// (#268). The field names are the ones --fields and -o json use.
+func (c *Config) TSVObject(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	docs, err := decodeOrdered(b)
+	if err != nil {
+		return err
+	}
+	obj, ok := docs[0].(*object)
+	if len(docs) != 1 || !ok {
+		return fmt.Errorf("TSVObject: %s is not a JSON object", b)
+	}
+	rows := make([][]string, len(obj.keys))
+	for i, k := range obj.keys {
+		rows[i] = []string{k, cellString(obj.vals[k])}
+	}
+	c.writeTSV(nil, rows)
+	return nil
+}
+
 // cellString is a JSON value as a table cell: a string as itself, null as
 // nothing, a number or boolean as JSON writes it, and an object or array as
 // compact JSON.
