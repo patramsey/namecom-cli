@@ -246,9 +246,8 @@ func TestAPI_Input(t *testing.T) {
 	})
 }
 
-// TestAPI_ConflictingFlags: flags that would each give the body, --paginate
-// on anything but GET, and --include with a JSON filter are usage errors,
-// and nothing is sent.
+// TestAPI_ConflictingFlags: flags that would each give the body, and
+// --paginate on anything but GET, are usage errors, and nothing is sent.
 func TestAPI_ConflictingFlags(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -261,8 +260,6 @@ func TestAPI_ConflictingFlags(t *testing.T) {
 		{"--data and -F", []string{"/x"}, func(*cobra.Command) { apiBody = "{}"; apiTyped = []string{"a=1"} }, "--data"},
 		{"--paginate POST", []string{"POST", "/x"}, func(*cobra.Command) { apiPaginate = true }, "--paginate"},
 		{"--paginate HEAD", []string{"HEAD", "/x"}, func(*cobra.Command) { apiPaginate = true }, "--paginate"},
-		{"--include --jq", []string{"/x"}, func(cmd *cobra.Command) { apiInclude = true; setGlobal(t, cmd, "jq", ".") }, "--jq"},
-		{"--include --fields", []string{"/x"}, func(cmd *cobra.Command) { apiInclude = true; setGlobal(t, cmd, "fields", "a") }, "--fields"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd, _ := apiCmd(t, refuseAll(t))
@@ -272,17 +269,6 @@ func TestAPI_ConflictingFlags(t *testing.T) {
 				t.Errorf("err = %v, want a usage error naming %s", err, tc.reason)
 			}
 		})
-	}
-}
-
-// setGlobal hangs cmd under a root with the global flag name set to val.
-func setGlobal(t *testing.T, cmd *cobra.Command, name, val string) {
-	t.Helper()
-	root := &cobra.Command{Use: "namecom"}
-	root.PersistentFlags().String(name, "", "")
-	root.AddCommand(cmd)
-	if err := root.PersistentFlags().Set(name, val); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -441,4 +427,150 @@ func TestAPI_Include(t *testing.T) {
 	if strings.Contains(got, "Authorization") || strings.Contains(got, "YWxpY2U6czNjcmV0") || strings.Contains(got, "s3cret") {
 		t.Errorf("--include printed the credential:\n%s", got)
 	}
+}
+
+// includeServer answers every request with {"ok":true} and an X-Request-Id
+// header.
+func includeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "abc")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAPI_IncludeWithJQ pins #269: with --jq or --fields, the status line and
+// headers still print, unfiltered and first, and the filter applies to the
+// body alone.
+func TestAPI_IncludeWithJQ(t *testing.T) {
+	cmd, buf := apiCmd(t, includeServer(t))
+	code, err := output.CompileJQ(".ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := cmdutil.Out(cmd)
+	out.BeginFilter(&output.Filter{JQ: code})
+	apiInclude = true
+	if err := runAPI(cmd, []string{"/core/v1/hello"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	if err := out.EndFilter(false); err != nil {
+		t.Fatalf("EndFilter: %v", err)
+	}
+	got := buf.String()
+	head, body, ok := strings.Cut(got, "\n\n")
+	if !ok || body != "true\n" {
+		t.Fatalf("want headers, a blank line, then the filtered body; got:\n%s", got)
+	}
+	if !strings.HasPrefix(head, "HTTP/1.1 200 OK\n") || !strings.Contains(head, "\nX-Request-Id: abc") {
+		t.Errorf("head = %q", head)
+	}
+	if strings.Contains(got, "Authorization") || strings.Contains(got, "YWxpY2U6czNjcmV0") {
+		t.Errorf("--include printed the credential:\n%s", got)
+	}
+}
+
+// TestAPI_IncludePaginate pins what --include --paginate prints: each page's
+// status line and headers, in the order fetched, then the one merged body.
+func TestAPI_IncludePaginate(t *testing.T) {
+	srv, _ := pagedServer(t)
+	cmd, buf := apiCmd(t, srv)
+	apiInclude, apiPaginate = true, true
+	if err := runAPI(cmd, []string{"/core/v1/domains"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	parts := strings.Split(buf.String(), "\n\n")
+	if len(parts) != 4 {
+		t.Fatalf("want three heads and a body; got:\n%s", buf.String())
+	}
+	for i, head := range parts[:3] {
+		if !strings.HasPrefix(head, "HTTP/1.1 200 OK\n") || !strings.Contains(head, "Content-Type: application/json") {
+			t.Errorf("head %d = %q", i+1, head)
+		}
+	}
+	if parts[3] != mergedDomains {
+		t.Errorf("body = %s\nwant %s", parts[3], mergedDomains)
+	}
+	if strings.Contains(buf.String(), "Authorization") {
+		t.Errorf("--include printed the request's Authorization:\n%s", buf.String())
+	}
+}
+
+// TestAPI_MethodFlag pins #270: -X names the method in any case, the same as
+// the first argument. With fields, -X GET sends them as the query.
+func TestAPI_MethodFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		args                []string
+		set                 func()
+		wantMethod, wantURI string
+		wantBody            string
+	}{
+		{"-X post", []string{"/core/v1/x"}, func() { apiMethod = "post"; apiFields = []string{"a=b"} }, "POST", "/core/v1/x", `{"a":"b"}`},
+		{"-X GET with fields", []string{"/core/v1/x"}, func() { apiMethod = "GET"; apiFields = []string{"perPage=2"} }, "GET", "/core/v1/x?perPage=2", ""},
+		{"-X DELETE without a body", []string{"/core/v1/x"}, func() { apiMethod = "Delete"; stdinWith(t, "") }, "DELETE", "/core/v1/x", ""},
+		{"-X matching the argument", []string{"put", "/core/v1/x"}, func() { apiMethod = "PUT"; apiBody = `{}` }, "PUT", "/core/v1/x", `{}`},
+		{"-X GET with --paginate", []string{"/core/v1/x"}, func() { apiMethod = "get"; apiPaginate = true }, "GET", "/core/v1/x", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, got := recordServer(t, `{}`)
+			cmd, _ := apiCmd(t, srv)
+			tc.set()
+			if err := runAPI(cmd, tc.args); err != nil {
+				t.Fatalf("runAPI: %v", err)
+			}
+			if len(*got) != 1 {
+				t.Fatalf("sent %d requests, want 1", len(*got))
+			}
+			r := (*got)[0]
+			if r.method != tc.wantMethod || r.uri != tc.wantURI || r.body != tc.wantBody {
+				t.Errorf("sent %s %s %q, want %s %s %q", r.method, r.uri, r.body, tc.wantMethod, tc.wantURI, tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestAPI_MethodFlagErrors: an unknown -X, -X disagreeing with the first
+// argument, and --paginate with -X other than GET are usage errors, and
+// nothing is sent.
+func TestAPI_MethodFlagErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		set    func()
+		reason string
+	}{
+		{"unknown", []string{"/x"}, func() { apiMethod = "FETCH" }, `-X "FETCH"`},
+		{"disagrees", []string{"GET", "/x"}, func() { apiMethod = "post" }, "given twice"},
+		{"--paginate", []string{"/x"}, func() { apiMethod = "POST"; apiPaginate = true }, "--paginate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, _ := apiCmd(t, refuseAll(t))
+			tc.set()
+			err := runAPI(cmd, tc.args)
+			if !isUsage(err) || !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("err = %v, want a usage error naming %s", err, tc.reason)
+			}
+		})
+	}
+}
+
+// TestAPI_MethodFlagIsAWrite: a write named with -X goes through RunWrite,
+// so --dry-run previews it rather than sending it.
+func TestAPI_MethodFlagIsAWrite(t *testing.T) {
+	cmd, buf := apiCmd(t, refuseAll(t))
+	dryRun(cmd, true)
+	apiMethod = "patch"
+	apiTyped = []string{"autorenewEnabled=true"}
+	if err := runAPI(cmd, []string{"/core/v1/domains/example.com"}); err != nil {
+		t.Fatalf("runAPI: %v", err)
+	}
+	doc := parseDryRun(t, buf)
+	if doc.Method != "PATCH" || doc.Path != "/core/v1/domains/example.com" {
+		t.Errorf("previewed %s %s, want PATCH /core/v1/domains/example.com", doc.Method, doc.Path)
+	}
+	jsonEqual(t, string(doc.Body), `{"autorenewEnabled":true}`)
 }

@@ -262,17 +262,21 @@ namecom api /core/v1/domains/acme.io                      # the method defaults 
 namecom api /core/v1/domains --paginate --jq '.domains[].domainName'   # every page as one list
 namecom api /core/v1/domains/acme.io/records -f host=www -f type=A -f answer=1.2.3.4 -F ttl=300 --dry-run
 namecom api PUT /core/v1/domains/acme.io/records/123 --input record.json
+namecom api -X DELETE /core/v1/domains/acme.io/records/123 --dry-run
 namecom api /core/v1/hello --include                      # status line and headers, then the body
+namecom api /core/v1/domains -i --jq '.totalCount'       # headers as they came, then the filtered body
 ```
 
 The method is GET, or POST when the request has a body (`--data`, `--input`,
-`-f` or `-F`); name it first to send anything else. `-f key=value` adds a
-string, and `-F key=value` keeps `true`, `false`, `null` and numbers as JSON
-and reads `@file` (or `@-`, stdin). Keys nest as `contact[firstName]=Ada`, and
-`ns[]=x` appends to a list. On a GET the fields are query parameters instead.
+`-f` or `-F`); name it first, or with `-X`/`--method`, to send anything
+else. `-f key=value` adds a string, and `-F key=value` keeps `true`, `false`,
+`null` and numbers as JSON and reads `@file` (or `@-`, stdin). Keys nest as
+`contact[firstName]=Ada`, and `ns[]=x` appends to a list. On a GET the fields are query parameters instead.
 `--paginate` follows `nextPage` and prints one document whose lists hold every
-page's items, without `nextPage` and `lastPage`. Any method but GET and HEAD
-is previewed, not sent, under `--dry-run`.
+page's items, without `nextPage` and `lastPage`. `--include` prints the
+status line and headers ahead of the body, and `--jq` and `--fields` filter
+the body alone. Any method but GET and HEAD is previewed, not sent, under
+`--dry-run`.
 
 **Scripting and automation:**
 ```bash

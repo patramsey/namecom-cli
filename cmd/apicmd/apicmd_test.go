@@ -38,7 +38,7 @@ func apiCmd(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) 
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
 	t.Cleanup(func() {
-		apiBody, apiHeaders, apiInput = "", nil, ""
+		apiBody, apiHeaders, apiInput, apiMethod = "", nil, "", ""
 		apiFields, apiTyped = nil, nil
 		apiInclude, apiPaginate = false, false
 	})
