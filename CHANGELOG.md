@@ -9,6 +9,39 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+The result of a UX and automation review (#247). One documented JSON
+contract and a new exit code for writes whose outcome is unknown; `--jq`,
+`--fields` and `-o tsv` on every command; `dns sync`, and DNS commands that
+can be run again safely; bulk input (`-` for stdin, several domains or record
+IDs, `domain check` of any length); non-interactive `auth login` and
+`NAMECOM_BASE_URL` for CI; `namecom api` with `--paginate` and field flags;
+price previews and `--max-price`; and clearer prompts, errors, tables and
+help throughout.
+
+**This release changes what scripts see.** Read "Breaking for scripts"
+first, then the entries below marked **Scripts**. In short:
+
+- **JSON and YAML:** lists are always `{"data": [...]}`, keys are camelCase,
+  writes report `changed`, the error envelope has a `type` and carries the
+  hint (the top-level `hint` is deprecated), and warnings are part of the
+  JSON on stderr.
+- **Exit codes:** **6** for a write whose outcome is unknown; **2** for a
+  missing required flag and for a write refused for want of `--yes`; **1**
+  for a declined or cancelled prompt, which exited 0; **3** for `config show`
+  without credentials.
+- **New confirmations:** `domain lock off`, `domain privacy off`,
+  `domain autorenew on` and `off`, and the matching `domain update` flags ask
+  first, so scripts need `--yes`.
+- **Premium prices:** premium, aftermarket, expiring and backorder purchases
+  need `--accept-premium`; `--yes` alone no longer buys at those prices.
+- **`NAMECOM_SANDBOX`:** an unrecognized value is an error. `yes` used to
+  count as false and send requests to production.
+- **Table mode:** a piped table is plain text, hints and counts go to stderr,
+  error lines use `✗` and `→`, and several prompts and success messages are
+  reworded.
+
 ### Breaking for scripts
 
 JSON and YAML output now follow one documented contract — see "JSON
@@ -270,6 +303,9 @@ parse; table output is unchanged.
   says CAA is read-only through the API, and `--profile` on `auth login`
   and `auth logout` says it overrides the global `--profile`.
 - The `--limit` help on `url list` reads "forwarding entries per page".
+- Dependencies: `golang.org/x/net` 0.59.0 and `golang.org/x/text` 0.42.0.
+  `github.com/itchyny/gojq` (MIT) is new, for `--jq`, and adds about 0.8 MB
+  to the binary.
 - The `domain register` prompt reads as one sentence and states the choices
   it is sent with: "Register acme.io for 2 years: $35.98 total (renews at
   $17.99/yr), with WHOIS privacy, without auto-renew?". It read "for 2 years at
@@ -534,8 +570,8 @@ parse; table output is unchanged.
   marked required, so the command failed with `required flag(s) "answer",
   "type" not set` before it could ask. The form now checks host, answer and
   priority as you type them (priority must be 0–65535), and Ctrl-C at any
-  step, including the MX/SRV priority step, prints "aborted", sends nothing
-  and exits 0. Without a terminal a missing `--type` or `--answer` is still a
+  step, including the MX/SRV priority step, sends nothing and exits 1 as an
+  abort (see Changed). Without a terminal a missing `--type` or `--answer` is still a
   usage error (exit **2**); the message now reads `required flag(s) "type",
   "answer" not set — pass them, or run in a terminal for the guided form`.
 - `namecom api` reads a piped stdin as the request body when `--data` is not
@@ -557,24 +593,24 @@ parse; table output is unchanged.
   which environment, profile and account it acts on, for example
   `production · profile work (acme-corp)`. A production purchase used to read
   only "Register x?", with nothing to say which account would pay. The
-  "pass --yes to confirm in non-interactive mode" error carries the same text
-  in brackets, so a script matching that message exactly will see it change.
+  refusal off a terminal carries the same text in brackets, so a script matching that message exactly will see it change.
 - Domain setting changes now confirm according to their risk.
   `domain lock off`, `domain privacy off`, `domain autorenew off` and
   `domain autorenew on` (which commits the account to future renewal charges)
   ask first, and so do the matching `domain update` flags; each prompt says
   what the change does. `domain privacy on` and `domain update --privacy=true`
   no longer ask, since they never charge. **Scripts that run any of the newly
-  prompted changes must now pass `--yes`**, or they stop with "pass --yes to
-  confirm in non-interactive mode". A change the domain already has still
+  prompted changes must now pass `--yes`**, or they stop with
+  "confirmation required … — pass --yes to confirm when not running in a
+  terminal" (exit **2**). A change the domain already has still
   sends nothing and does not ask. `domain update --autorenew`,
   `--privacy=false` and `--lock=false` read the domain first to decide whether
   to ask.
 - `domain register`, `domain renew` and `transfer create` take
   `--max-price <amount>`. It refuses, before anything is bought, a price
   above the amount (the total for the term), exiting **2** with both figures
-  in the message. It refuses too when no price could be quoted, and under
-  `--dry-run`. `--price` was described as a way to cap what you pay, but it
+  in the message. It refuses too when no price could be quoted. Under
+  `--dry-run` it previews the request and warns instead (see Changed). `--price` was described as a way to cap what you pay, but it
   is only sent as `purchasePrice`; its help now says so and points at
   `--max-price`.
 - Premium, aftermarket, expiring and backorder purchases, premium renewals
@@ -606,8 +642,7 @@ parse; table output is unchanged.
   `url get`, `vanity-ns get`, `dnssec get`, `domain lock`, `autorenew`,
   `privacy`, `contacts get` and `update` name what was not found
   (`order 1 not found — run 'namecom order list' …`) instead of printing
-  `Not Found`; they still exit **4**. Missing credentials read `no
-  credentials configured`, with the fix in the hint alone, and a missing
+  `Not Found`; they still exit **4**. A missing
   `--profile` is one line, `profile "x" not found in … (available: a, b)`,
   with `auth login --profile x` in the hint. A script matching the old
   messages needs updating.
@@ -1826,7 +1861,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.4.9...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/patramsey/namecom-cli/compare/v0.4.9...v0.5.0
 [0.4.9]: https://github.com/patramsey/namecom-cli/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/patramsey/namecom-cli/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/patramsey/namecom-cli/compare/v0.4.6...v0.4.7
