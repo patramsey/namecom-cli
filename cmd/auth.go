@@ -149,6 +149,9 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if nonInteractive {
 		a, verifiedAs, verifyErr, err = loginFromFlags(cmd, sandbox)
 	} else {
+		if err := offerTokenPage(cmd, sandbox); err != nil {
+			return err
+		}
 		a, verifiedAs, verifyErr, err = loginFromForm(cmd, sandbox)
 	}
 	if err != nil {
@@ -267,6 +270,55 @@ func checkLoginFlags(nonInteractive bool) error {
 // NAMECOM_BASE_URL, as API commands choose it.
 func loginBaseURL() (raw, source string) {
 	return config.BaseURLOverride(config.Overrides{BaseURL: gf.baseURL})
+}
+
+// offerTokenPage asks whether to open the API token page before the form, so
+// someone without a token need not copy the URL out of the terminal (#272).
+// Only a person at a terminal is asked: not under --yes or --dry-run, which
+// promise not to ask, nor with -q or a structured -o, whose output is for a
+// script. A browser that will not open is a warning with the URL, not a
+// failure: the form still follows.
+//
+// name.com has no separate sandbox token page that we know of, so --sandbox
+// opens the same one, with a reminder that its credentials are separate.
+func offerTokenPage(cmd *cobra.Command, sandbox bool) error {
+	out := cmdutil.Out(cmd)
+	if cmdutil.IsYes(cmd) || cmdutil.IsDryRun(cmd) || out.QuietMode ||
+		out.Format != output.FormatTable || !output.IsInteractive() {
+		return nil
+	}
+	detail := apiSettingsURL
+	if sandbox {
+		detail += " · sandbox credentials are separate from production ones"
+	}
+	open, err := askOpenTokenPage("Open the API token page in your browser?", detail)
+	if err != nil {
+		return cmdutil.FormError(err)
+	}
+	if !open {
+		return nil
+	}
+	if err := openBrowser(apiSettingsURL); err != nil {
+		out.Warn(fmt.Sprintf("could not open a browser (%v); open %s to create a token", err, apiSettingsURL))
+		return nil
+	}
+	out.Hint("Opening " + apiSettingsURL)
+	return nil
+}
+
+// askOpenTokenPage asks offerTokenPage's question, defaulting to No. Not
+// cmdutil.Confirm: that reports Ctrl-C as "No", and here No means "carry on to
+// the form", so a cancel has to come back as huh.ErrUserAborted to end the
+// command. Replaceable in tests.
+var askOpenTokenPage = func(msg, detail string) (bool, error) {
+	var open bool
+	err := huh.NewForm(huh.NewGroup(huh.NewConfirm().
+		Title(msg).
+		Description(detail).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&open))).Run()
+	return open, err
 }
 
 // loginFromForm asks for the credentials and checks them, offering the form
