@@ -9,38 +9,19 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
-### Added
-- `auth login` asks "Open the API token page in your browser?" before the
-  form (default No), so someone without a token need not copy the URL out of
-  the terminal. Yes opens it with the browser `namecom open` uses; if none
-  opens, the URL is printed as a warning and the form follows. It is not
-  asked with `--with-token` or `--token-cmd`, under `--yes`, `--dry-run`,
-  `-q` or a structured `-o`, or off a terminal. The sandbox has no separate
-  token page, so `--sandbox` opens the same one. (#272)
-### Fixed
-- `-o tsv` now covers the outputs it missed. **Scripts**: each of these
-  changes what `-o tsv` prints. `status` and `version` print
-  `field<TAB>value` rows, keyed by their JSON names, instead of their text
-  report; `status`'s lists of domains are a JSON array in one cell.
-  `domain get` with several domains, or `-`, prints one table — a header row
-  and a row per domain — instead of a `field<TAB>value` block per domain, and
-  its transfer lock is a plain date. The header names are the field names one
-  domain's rows print, unchanged (`Domain`, `Renews at`, `Transfer lock`), so
-  a script reads the same names for one domain or several. `dns sync --dry-run` prints the plan as
-  a row per change (action, type, host, answer, TTL, priority) instead of its
-  text report, and a sync with nothing to change prints only its result,
-  with `changed` now `false`.
-- `-q` on a paged list honours `--page` and `--limit` (#277). It fetched
-  every page regardless, so `order list -q --limit 1` walked the whole
-  history one order per request, and `--page 3 -q` printed every page.
-  An explicit `--page` or `--limit` now fetches that one page, as it does
-  without `-q`, and when there are more, `--page N for more` goes to stderr;
-  stdout is still one ID per line. `-q` alone still prints every page. This
-  covers `domain`, `order`, `dns`, `email`, `url`, `vanity-ns` and
-  `transfer list`, and `contact unverified`. **Scripts:** `dns list -q`
-  without `--page` or `--limit` now prints every record, not just the first
-  page, as the other lists already did.
+## [0.5.1] - 2026-10-05
 
+Follow-ups to 0.5.0. `namecom api` gains `-X` and works with `-i` and `--jq`
+together; purchase prompts show the account balance; `auth login` offers to
+open the token page. Fixes `-q` on lists, which ignored `--page` and
+`--limit` and could walk an entire history one item per request.
+
+Output a script might notice: `-o tsv` now covers `status`, `version`,
+several-domain `domain get` and the `dns sync` plan; `dns list -q` prints
+every page, as the other lists do; and dry-run `quote` objects gain
+`balance`.
+
+### Added
 - `namecom api --include` works with `--jq` and `--fields` (#269). The status
   line and headers print as they came, ahead of the body, and the filter
   applies to the body alone, as with `gh api -i --jq`. The combination was a
@@ -63,6 +44,37 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - **Scripts:** `--dry-run` of those commands reports the balance too: the
   `quote` object in JSON and YAML gains a `balance` key (USD), absent when
   the lookup failed, and the "Would charge" line ends with it.
+- `auth login` asks "Open the API token page in your browser?" before the
+  form (default No), so someone without a token need not copy the URL out of
+  the terminal. Yes opens it with the browser `namecom open` uses; if none
+  opens, the URL is printed as a warning and the form follows. It is not
+  asked with `--with-token` or `--token-cmd`, under `--yes`, `--dry-run`,
+  `-q` or a structured `-o`, or off a terminal. The sandbox has no separate
+  token page, so `--sandbox` opens the same one. (#272)
+
+### Fixed
+- `-o tsv` now covers the outputs it missed. **Scripts**: each of these
+  changes what `-o tsv` prints. `status` and `version` print
+  `field<TAB>value` rows, keyed by their JSON names, instead of their text
+  report; `status`'s lists of domains are a JSON array in one cell.
+  `domain get` with several domains, or `-`, prints one table — a header row
+  and a row per domain — instead of a `field<TAB>value` block per domain, and
+  its transfer lock is a plain date. The header names are the field names one
+  domain's rows print, unchanged (`Domain`, `Renews at`, `Transfer lock`), so
+  a script reads the same names for one domain or several (#268).
+  `dns sync --dry-run` prints the plan as a row per change (action, type, host, answer, TTL, priority) instead of its
+  text report, and a sync with nothing to change prints only its result,
+  with `changed` now `false`.
+- `-q` on a paged list honours `--page` and `--limit` (#277). It fetched
+  every page regardless, so `order list -q --limit 1` walked the whole
+  history one order per request, and `--page 3 -q` printed every page.
+  An explicit `--page` or `--limit` now fetches that one page, as it does
+  without `-q`, and when there are more, `--page N for more` goes to stderr;
+  stdout is still one ID per line. `-q` alone still prints every page. This
+  covers `domain`, `order`, `dns`, `email`, `url`, `vanity-ns` and
+  `transfer list`, and `contact unverified`. **Scripts:** `dns list -q`
+  without `--page` or `--limit` now prints every record, not just the first
+  page, as the other lists already did.
 
 ## [0.5.0] - 2026-10-05
 
@@ -1916,7 +1928,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/patramsey/namecom-cli/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/patramsey/namecom-cli/compare/v0.4.9...v0.5.0
 [0.4.9]: https://github.com/patramsey/namecom-cli/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/patramsey/namecom-cli/compare/v0.4.7...v0.4.8
