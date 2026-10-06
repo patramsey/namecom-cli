@@ -746,10 +746,12 @@ func tableWidth(widths []int) int {
 // KVTables renders several objects that KVTable shows one at a time, such as
 // `domain get a.com b.com`. In a table each is a KVTable under its title,
 // with a blank line between them. In TSV they are one table, as a list is
-// (#268): a header row of their fields — in the order first seen, in
-// capitals like every table's headers — and a row per object, empty where an
-// object lacks a field. Field<TAB>value blocks, one per object, could not be
-// read as a list.
+// (#268): a header row of their fields, in the order first seen, and a row
+// per object, empty where an object lacks a field. Field<TAB>value blocks,
+// one per object, could not be read as a list. The header is the field names
+// exactly as one object's field<TAB>value rows print them, not capitalised
+// like a list's headers, so a script reads the same names whether it asked
+// for one object or several.
 func (c *Config) KVTables(titles []string, objs [][][]string) {
 	if c.Format != FormatTSV {
 		for i, rows := range objs {
@@ -783,10 +785,6 @@ func (c *Config) KVTables(titles []string, objs [][][]string) {
 	for i, f := range fields {
 		col[f] = i
 	}
-	headers := make([]string, len(fields))
-	for i, f := range fields {
-		headers[i] = strings.ToUpper(f)
-	}
 	table := make([][]string, len(objs))
 	for i, rows := range objs {
 		table[i] = make([]string, len(fields))
@@ -794,7 +792,7 @@ func (c *Config) KVTables(titles []string, objs [][][]string) {
 			table[i][col[r[0]]] = r[1]
 		}
 	}
-	c.writeTSV(headers, tsvCells(table))
+	c.writeTSV(fields, tsvCells(table))
 }
 
 // KVTable renders a headerless two-column key-value table with styled field names.

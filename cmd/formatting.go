@@ -23,7 +23,8 @@ Formats (-o, --output):
           object prints it as field<TAB>value rows (status and version name
           the fields as -o json does, and a list in a value is a JSON array);
           several objects (domain get a.com b.com) are one table, a row
-          each. A write prints its result's keys as field<TAB>value
+          each, headed by the same field names one object's rows use.
+          A write prints its result's keys as field<TAB>value
           rows; a dry run prints method, path and body, and dns sync's plan
           a row per change: action, type, host, answer, TTL, priority.
 
