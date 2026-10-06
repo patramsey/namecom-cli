@@ -84,6 +84,18 @@ func (c *Config) BeginFilter(f *Filter) {
 	c.filter = f
 }
 
+// Unfiltered is the writer for output that is not part of the document
+// --fields and --jq filter: the one the command would have printed to while
+// a filter runs, and Writer otherwise. It is written to at once, so what goes
+// to it comes before the filtered document, which EndFilter prints after the
+// command returns. `api --include` prints its headers to it (#269).
+func (c *Config) Unfiltered() io.Writer {
+	if c.filter != nil {
+		return c.filter.out
+	}
+	return c.Writer
+}
+
 // EndFilter filters what the command printed since BeginFilter and prints
 // it, and puts c back in the format that was asked for, so that warnings and
 // errors after it come out in that format too. Nothing is printed when the

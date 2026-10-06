@@ -29,6 +29,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   text report, and a sync with nothing to change prints only its result,
   with `changed` now `false`.
 
+- `namecom api --include` works with `--jq` and `--fields` (#269). The status
+  line and headers print as they came, ahead of the body, and the filter
+  applies to the body alone, as with `gh api -i --jq`. The combination was a
+  usage error. With `--paginate`, each page's headers print, then the merged
+  body.
+
 ## [0.5.0] - 2026-10-05
 
 The result of a UX and automation review (#247). One documented JSON

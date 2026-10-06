@@ -49,13 +49,16 @@ stdin when stdin is a pipe or a file; an empty stdin sends no body.
 list in it is every page's items end to end, and nextPage and lastPage are
 gone. The global --jq filters that merged document.
 
---include prints the response status line and headers before the body.
+--include prints the response status line and headers before the body; with
+--paginate, those of each page, then the merged body. --jq and --fields
+filter the body alone.
 
 With --dry-run, any method other than GET or HEAD is printed — method, path,
 and body — instead of sent. GET and HEAD still run.`,
 	Example: `  namecom api /core/v1/domains
   namecom api /core/v1/domains --paginate --jq '.domains[].domainName'
   namecom api GET /core/v1/domains/example.com --include
+  namecom api /core/v1/domains --include --jq '.totalCount'
   namecom api /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
   echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records
   namecom api PUT /core/v1/domains/example.com/records/123 --input record.json
@@ -130,7 +133,7 @@ func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, pat
 
 // checkFlags rejects flags that contradict each other or the method, before
 // anything is read or sent.
-func checkFlags(cmd *cobra.Command, method string, dataSet bool) error {
+func checkFlags(method string, dataSet bool) error {
 	hasFields := len(apiFields)+len(apiTyped) > 0
 	switch {
 	case apiInput != "" && dataSet:
@@ -142,15 +145,6 @@ func checkFlags(cmd *cobra.Command, method string, dataSet bool) error {
 	case apiPaginate && method != http.MethodGet:
 		return cmdutil.NewUsageError(fmt.Errorf("--paginate follows the pages of a GET, not a %s", method))
 	}
-	// --jq and --fields read what the command prints as JSON, and a status
-	// line and headers are not.
-	if apiInclude {
-		for _, name := range []string{"jq", "fields"} {
-			if f := cmd.Flag(name); f != nil && f.Changed {
-				return cmdutil.NewUsageError(fmt.Errorf("--include cannot be combined with --%s, which filters a JSON document", name))
-			}
-		}
-	}
 	return nil
 }
 
@@ -161,7 +155,7 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkFlags(cmd, method, dataSet); err != nil {
+	if err := checkFlags(method, dataSet); err != nil {
 		return err
 	}
 	out := cmdutil.Out(cmd)
@@ -263,8 +257,10 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return nil, fmt.Errorf("reading response: %w", err)
 		}
+		// The head goes around --jq and --fields, which filter the body
+		// alone: it is not JSON (#269).
 		if apiInclude {
-			writeHead(out.Writer, resp)
+			writeHead(out.Unfiltered(), resp)
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {

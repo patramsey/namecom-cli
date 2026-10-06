@@ -251,8 +251,8 @@ func TestJQ(t *testing.T) {
 }
 
 // TestJQ_API: the global --jq filters what `namecom api` prints — the
-// merged document with --paginate — and refuses --include, whose headers
-// are not JSON (#245).
+// merged document with --paginate — and, with --include, the body alone
+// (#245, #269).
 func TestJQ_API(t *testing.T) {
 	list := map[string]reply{"GET /core/v1/domains": {200, formattingDomains}}
 	stdout, stderr, code := runFormatting(t, list,
@@ -260,9 +260,20 @@ func TestJQ_API(t *testing.T) {
 	if code != 0 || stdout != "a.com\nb.com\n" {
 		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
 	}
-	stdout, stderr, code = runFormatting(t, list, "api", "/core/v1/domains", "-i", "--jq", ".")
-	if code != 2 || stdout != "" || !strings.Contains(stderr, "--include cannot be combined with --jq") {
-		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	// --include prints the head straight to stdout, ahead of the filtered
+	// body (#269).
+	for _, tc := range []struct {
+		filter []string
+		body   string
+	}{
+		{[]string{"--jq", ".domains[].domainName"}, "a.com\nb.com\n"},
+		{[]string{"--fields", "totalCount", "-o", "tsv"}, "totalCount\n2\n"},
+	} {
+		stdout, stderr, code = runFormatting(t, list, append([]string{"api", "/core/v1/domains", "-i"}, tc.filter...)...)
+		head, body, _ := strings.Cut(stdout, "\n\n")
+		if code != 0 || !strings.HasPrefix(head, "HTTP/1.1 200 OK\n") || body != tc.body {
+			t.Errorf("%v: exit %d, stdout %q, stderr:\n%s", tc.filter, code, stdout, stderr)
+		}
 	}
 }
 
