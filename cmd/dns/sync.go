@@ -3,6 +3,7 @@ package dns
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -148,10 +149,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		case output.FormatJSON, output.FormatYAML:
 			return printResult(out, &syncResult{Domain: domain, Applied: []syncChange{}, Unchanged: plan.Unchanged})
 		}
-		if err := printPlan(out, plan); err != nil {
-			return err
+		// In TSV, an empty plan's header row before the result's rows would
+		// read as one table; the result alone says nothing changed.
+		if out.Format == output.FormatTable {
+			if err := printPlan(out, plan); err != nil {
+				return err
+			}
 		}
-		out.Success(fmt.Sprintf("%s already matches the file: nothing to change", domain))
+		out.Unchanged(fmt.Sprintf("%s already matches the file: nothing to change", domain))
 		return nil
 	}
 
@@ -293,6 +298,10 @@ func printPlan(out *output.Config, p *syncPlan) error {
 	if out.QuietMode {
 		return nil
 	}
+	if out.Format == output.FormatTSV {
+		out.Table([]string{"ACTION", "TYPE", "HOST", "ANSWER", "TTL", "PRIORITY"}, planRows(p))
+		return nil
+	}
 	w := out.Writer
 	verb := "Plan"
 	if p.DryRun {
@@ -328,6 +337,30 @@ func printPlan(out *output.Config, p *syncPlan) error {
 		}
 	}
 	return nil
+}
+
+// planRows is a row per change of p, as -o tsv prints the plan (#268): the
+// action, then the record as the change leaves it. Records the plan leaves
+// alone are not changes, and have no row.
+func planRows(p *syncPlan) [][]string {
+	row := func(action string, r planRecord) []string {
+		priority := ""
+		if r.Priority != nil {
+			priority = strconv.FormatInt(*r.Priority, 10)
+		}
+		return []string{action, r.Type, displayHost(&r.Host), r.Answer, strconv.FormatInt(r.TTL, 10), priority}
+	}
+	rows := make([][]string, 0, p.changes())
+	for _, r := range p.Creates {
+		rows = append(rows, row("create", r))
+	}
+	for _, u := range p.Updates {
+		rows = append(rows, row("update", u.planRecord))
+	}
+	for _, r := range p.Deletes {
+		rows = append(rows, row("delete", r))
+	}
+	return rows
 }
 
 // sameNameKept returns the answer of a live record left beside c — same host
