@@ -27,10 +27,12 @@ func bulkNames(n int) []string {
 // chunkServer answers ZoneCheck and CheckAvailability for names, replying to
 // each request in reverse order so only matching by name can put the rows
 // back in order. Every 40th name is available, and omit names one the server
-// leaves out of its reply. It records the names each request carried.
+// leaves out of its reply. It records the names each request carried, and
+// the path it went to.
 type chunkServer struct {
 	mu       sync.Mutex
 	requests [][]string
+	paths    []string
 	omit     string
 }
 
@@ -42,8 +44,8 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 			_, _ = fmt.Sscanf(name, "name%03d.com", &n)
 			return n%40 == 0
 		}
-		switch {
-		case r.URL.Path == "/core/v1/zonecheck" || r.URL.Path == "/core/v1/domains:checkAvailability":
+		switch r.URL.Path {
+		case "/core/v1/zonecheck", "/core/v1/domains:checkAvailability":
 			var body struct {
 				DomainNames []string `json:"domainNames"`
 			}
@@ -52,6 +54,7 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 			}
 			s.mu.Lock()
 			s.requests = append(s.requests, body.DomainNames)
+			s.paths = append(s.paths, r.URL.Path)
 			s.mu.Unlock()
 			if len(body.DomainNames) > maxCheckNames {
 				http.Error(w, `{"message":"number of items must be less than or equal to 50"}`, http.StatusBadRequest)
@@ -72,9 +75,6 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 			} else {
 				_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: reg})
 			}
-		case strings.HasSuffix(r.URL.Path, ":getPricing"):
-			price := 12.99
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -86,7 +86,8 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 // with the SDK's "number of items must be less than or equal to 50". It now
 // sends requests of at most 50 names — 50, 50 and 20, in order — and renders
 // one row per name in the order given, on both the ZoneCheck and the
-// registry path.
+// registry path. On the ZoneCheck path each chunk's available names then go
+// to the registry together, one request per chunk that has any (#294).
 func TestCheck_ChunksLongLists(t *testing.T) {
 	for _, authoritative := range []bool{false, true} {
 		t.Run(fmt.Sprintf("authoritative=%v", authoritative), func(t *testing.T) {
@@ -101,9 +102,19 @@ func TestCheck_ChunksLongLists(t *testing.T) {
 				t.Fatalf("runCheck: %v", err)
 			}
 
-			var sizes []int
+			// The first pass is ZoneCheck, or the registry when authoritative;
+			// on the ZoneCheck path the registry pass follows each chunk.
+			first := "/core/v1/zonecheck"
+			if authoritative {
+				first = "/core/v1/domains:checkAvailability"
+			}
+			var sizes, registry []int
 			var sent []string
-			for _, req := range s.requests {
+			for i, req := range s.requests {
+				if s.paths[i] != first {
+					registry = append(registry, len(req))
+					continue
+				}
 				sizes = append(sizes, len(req))
 				sent = append(sent, req...)
 			}
@@ -112,6 +123,11 @@ func TestCheck_ChunksLongLists(t *testing.T) {
 			}
 			if !slices.Equal(sent, names) {
 				t.Error("the requests did not carry every name once, in order")
+			}
+			// name000 and name040, then name080: the available names, one
+			// registry request per chunk that has any.
+			if want := []int{2, 1}; !authoritative && !slices.Equal(registry, want) {
+				t.Errorf("registry request sizes = %v, want %v", registry, want)
 			}
 
 			var got []*coreapigo.SearchResult

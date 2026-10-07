@@ -628,19 +628,27 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	// so "Cancel transfer of typo.com?" could be answered yes before the API
 	// said there was nothing to cancel (#235); `domain lock` already checks
 	// first. Its status goes in the prompt, so the user sees what they cancel.
-	stop := out.Spin("Fetching transfer…")
-	t, err := client.SDK().Transfers.GetTransfer(cmd.Context(),
-		&coreapigo.GetTransferRequest{DomainName: domain})
-	stop()
-	if err != nil {
-		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("transfer of %q not found", domain), "run 'namecom transfer list' to see active transfers")
-		}
-		return err
+	// A dry run looks too, so one for a missing transfer fails as the cancel
+	// would. With no prompt to show — --yes, or no terminal to ask in — the
+	// cancel is sent alone and its own 404 says the same (#294).
+	notFound := func(err error) error {
+		return cmdutil.NotFound(err, fmt.Sprintf("transfer of %q not found", domain), "run 'namecom transfer list' to see active transfers")
 	}
 	prompt := fmt.Sprintf("Cancel transfer of %s?", domain)
-	if t != nil && t.Status != "" {
-		prompt = fmt.Sprintf("Cancel transfer of %s (status: %s)?", domain, t.Status)
+	if cmdutil.IsDryRun(cmd) || (!cmdutil.IsYes(cmd) && output.IsInteractive()) {
+		stop := out.Spin("Fetching transfer…")
+		t, err := client.SDK().Transfers.GetTransfer(cmd.Context(),
+			&coreapigo.GetTransferRequest{DomainName: domain})
+		stop()
+		if err != nil {
+			if cmdutil.IsNotFound(err) {
+				return notFound(err)
+			}
+			return err
+		}
+		if t != nil && t.Status != "" {
+			prompt = fmt.Sprintf("Cancel transfer of %s (status: %s)?", domain, t.Status)
+		}
 	}
 
 	// NoBody: the {} sent is the SDK's EmptyObject placeholder
@@ -655,6 +663,9 @@ func runCancel(cmd *cobra.Command, args []string) error {
 			&coreapigo.CancelTransferRequest{DomainName: domain, Body: &coreapigo.EmptyObject{}})
 		return api.FromSDKError(err)
 	})
+	if cmdutil.IsNotFound(err) {
+		return notFound(err)
+	}
 	if err != nil || !sent {
 		return err
 	}
