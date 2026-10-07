@@ -101,7 +101,7 @@ func TestAPI_PaginateProgress(t *testing.T) {
 
 // TestAPI_PaginateMaxPages: --paginate with a small perPage walked every page
 // one request at a time — 6,500 of them for -f perPage=1 on a large account —
-// with nothing to bound or announce it (ISSUE-06). --max-pages, 100 unless
+// with nothing to bound or announce it (#312). --max-pages, 100 unless
 // given, bounds it: when the first page's lastPage is over the limit no other
 // page is fetched, a list with no lastPage stops at the limit, and either is a
 // usage error (exit 2) with nothing printed. 0 is no limit.

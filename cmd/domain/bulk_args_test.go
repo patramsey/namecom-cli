@@ -238,7 +238,7 @@ func missingFirst() []string {
 
 // TestGet_MissingDomainStopsTheRest: `domain get` with one missing domain
 // prints only the error, yet went on to read every other domain it was
-// given (ISSUE-06) — for `domain list -q | domain get -`, thousands of
+// given (#312) — for `domain list -q | domain get -`, thousands of
 // requests whose results were thrown away. With the first of twelve missing,
 // the five reads in flight when its 404 comes back are the only requests,
 // and nothing reaches stdout.
@@ -259,7 +259,7 @@ func TestGet_MissingDomainStopsTheRest(t *testing.T) {
 
 // TestToggle_MissingDomainStopsTheRest: a toggle reads every domain before
 // changing any, and stops at a missing one; the reads after it are spared
-// too (ISSUE-06).
+// too (#312).
 func TestToggle_MissingDomainStopsTheRest(t *testing.T) {
 	srv, requests := heldNotFound(t)
 	err := runAutorenew(withRootFlags(t, baseCmd(t, srv)), append([]string{"on"}, missingFirst()...))

@@ -42,7 +42,7 @@ func TestFetchEach(t *testing.T) {
 }
 
 // TestFetchEach_StopsAtFirstFailure: every caller gives up on the first
-// failure, yet every item was still read (ISSUE-06) — `domain list -q |
+// failure, yet every item was still read (#312) — `domain list -q |
 // domain get -` with the first name missing read all 6,500 to print one
 // error. The failure cancels the reads in flight and starts no more: here
 // item 0 fails once items 0–4 are all in flight, so exactly those five are

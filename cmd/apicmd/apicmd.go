@@ -116,7 +116,7 @@ var (
 )
 
 // defaultMaxPages is --max-pages when it is not given: 100,000 items at the
-// default perPage, and a bound on the walk a small perPage starts (ISSUE-06).
+// default perPage, and a bound on the walk a small perPage starts (#312).
 const defaultMaxPages = 100
 
 func init() {
@@ -463,7 +463,7 @@ func (e *methodError) UserHint() string { return e.hint }
 //
 // maxPages, when not 0, bounds the walk. A perPage of 1 on a large account
 // was thousands of requests, one at a time, with nothing to say so
-// (ISSUE-06). When the first page's lastPage puts the walk over the limit, no
+// (#312). When the first page's lastPage puts the walk over the limit, no
 // other page is fetched; a list that gives no lastPage is stopped when it
 // reaches the limit. Either way it is a usage error, so nothing is printed.
 func paginate(ctx context.Context, target string, body []byte,
