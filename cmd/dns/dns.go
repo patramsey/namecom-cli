@@ -171,7 +171,7 @@ func init() {
 	listCmd.Flags().StringVar(&listHost, "host", "", "filter by host (@ for the apex; www or www.example.com)")
 
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT; CAA is read-only through the API (required; prompted in a terminal)")
-	createCmd.Flags().StringVar(&createHost, "host", "@", "hostname relative to the zone (@ for apex)")
+	createCmd.Flags().StringVar(&createHost, "host", "@", "host: www or www.example.com (@ or the domain for the apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required; prompted in a terminal)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
 	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records")
@@ -181,7 +181,7 @@ func init() {
 	// runCreate makes them a usage error itself when there is no terminal.
 
 	updateCmd.Flags().StringVar(&updateType, "type", "", "new record type")
-	updateCmd.Flags().StringVar(&updateHost, "host", "", "new host")
+	updateCmd.Flags().StringVar(&updateHost, "host", "", "new host: www or www.example.com (@ or the domain for the apex)")
 	updateCmd.Flags().StringVar(&updateAnswer, "answer", "", "new answer/value")
 	updateCmd.Flags().Int64Var(&updateTTL, "ttl", 0, "new TTL in seconds")
 	updateCmd.Flags().Int64Var(&updatePriority, "priority", 0, "new priority")
@@ -293,10 +293,17 @@ func runList(cmd *cobra.Command, args []string) error {
 				if listType != "" {
 					noun = strings.ToUpper(listType) + " record"
 				}
-				if listHost != "" {
-					noun += " at " + displayHost(&listHost)
+				hint := fmt.Sprintf("Run 'namecom dns list %s' to see every record", domain)
+				if listHost == "" {
+					out.Empty(noun, hint)
+					return nil
 				}
-				out.Empty(noun, fmt.Sprintf("Run 'namecom dns list %s' to see every record", domain))
+				// Not out.Empty, which pluralises the last word: "No DNS
+				// record at wwws found." (#285).
+				if out.Format == output.FormatTable && !out.QuietMode {
+					fmt.Fprintln(out.EWriter, out.Dim("No "+output.PluralNoun(2, noun)+" at "+displayHost(&listHost)+" found."))
+					out.Hint(hint)
+				}
 				return nil
 			}
 			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
@@ -341,7 +348,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if !output.IsInteractive() {
 			return cmdutil.RequiredFlags(true, missing...)
 		}
-		if err := dnsCreateForm(cmd); err != nil {
+		if err := dnsCreateForm(cmd, domain); err != nil {
 			return err
 		}
 	}
@@ -352,7 +359,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
 	}
-	host, err := asciiHost(createHost)
+	host, err := zoneHost(createHost, domain)
 	if err != nil {
 		return err
 	}
@@ -451,6 +458,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Nothing to change is a usage error, as it is for `domain update`, and
+	// is caught before the record is fetched.
+	changed := false
+	for _, f := range []string{"type", "host", "answer", "ttl", "priority"} {
+		changed = changed || cmd.Flags().Changed(f)
+	}
+	if !changed {
+		return cmdutil.NewUsageError(errors.New("nothing to update — pass at least one of --type, --host, --answer, --ttl, --priority"))
+	}
 	if cmd.Flags().Changed("priority") {
 		if err := cmdutil.ValidPriority(updatePriority); err != nil {
 			return err
@@ -499,7 +515,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
 	}
 	if cmd.Flags().Changed("host") {
-		host, err := asciiHost(updateHost)
+		host, err := zoneHost(updateHost, domain)
 		if err != nil {
 			return err
 		}
@@ -538,6 +554,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body.TTL = &updateTTL
 	}
+	name := fmt.Sprintf("%s %s (id %d)", string(body.Type), recordName(derefStr(body.Host), domain), id)
+
+	// The flags ask for what the record already is: nothing is sent, under
+	// --dry-run too. The PUT used to be sent anyway and reported as "no
+	// values changed", with nothing in JSON to tell it from a change (#285).
+	changes := recordChanges(current, body)
+	if len(changes) == 0 {
+		return printUpdated(out, current, false, name+" already has these values: nothing to change")
+	}
+
 	var updated *coreapigo.Record
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.DNSUpdateRecordBody]{
 		Method: "PUT",
@@ -548,23 +574,31 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		updated, err = client.SDK().DNS.UpdateRecord(ctx, &body)
 		return api.FromSDKError(err)
 	})
-	if err != nil || !sent || out.Quiet() {
+	if err != nil || !sent {
 		return err
 	}
+	return printUpdated(out, updated, true, "Updated "+name+": "+strings.Join(changes, ", "))
+}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(updated)
-	case output.FormatYAML:
-		return out.YAML(updated)
-	default:
-		name := fmt.Sprintf("%s %s (id %d)", string(body.Type), recordName(derefStr(body.Host), domain), id)
-		if changes := recordChanges(current, body); len(changes) > 0 {
-			out.Success("Updated " + name + ": " + strings.Join(changes, ", "))
-		} else {
-			out.Success("Updated " + name + ": no values changed")
-		}
+// printUpdated prints the record `dns update` changed, or found already as
+// asked: in JSON and YAML the record with "changed", so a script can tell a
+// no-op from a change, and otherwise msg. --quiet prints nothing.
+func printUpdated(out *output.Config, rec *coreapigo.Record, changed bool, msg string) error {
+	if out.Quiet() {
+		return nil
 	}
+	switch out.Format {
+	case output.FormatJSON, output.FormatYAML:
+		doc, err := output.WithChanged(rec, changed)
+		if err != nil {
+			return err
+		}
+		if out.Format == output.FormatYAML {
+			return out.YAML(doc)
+		}
+		return out.JSON(doc)
+	}
+	out.Success(msg)
 	return nil
 }
 
@@ -907,7 +941,9 @@ func recordSummary(r *coreapigo.Record) string {
 // recordChanges describes what an update changes, "answer 192.0.2.1 →
 // 192.0.2.2", one entry per field whose value differs. The success line used
 // to say only "Updated record 12345", which named neither the record nor the
-// change (#238).
+// change (#238). A host or answer spelled differently but meaning the same
+// record — "WWW", a trailing dot the API strips — is not a change, so an
+// update that only respells the record sends nothing (#285).
 func recordChanges(current *coreapigo.Record, body coreapigo.DNSUpdateRecordBody) []string {
 	var changes []string
 	add := func(field, was, now string) {
@@ -915,9 +951,14 @@ func recordChanges(current *coreapigo.Record, body coreapigo.DNSUpdateRecordBody
 			changes = append(changes, fmt.Sprintf("%s %s → %s", field, orNone(was), orNone(now)))
 		}
 	}
-	add("type", strings.ToUpper(derefStr(current.Type)), strings.ToUpper(string(body.Type)))
-	add("host", displayHost(current.Host), displayHost(body.Host))
-	add("answer", derefStr(current.Answer), body.Answer)
+	rtype := strings.ToUpper(string(body.Type))
+	add("type", strings.ToUpper(derefStr(current.Type)), rtype)
+	if normHost(derefStr(current.Host)) != normHost(derefStr(body.Host)) {
+		add("host", displayHost(current.Host), displayHost(body.Host))
+	}
+	if normAnswer(rtype, derefStr(current.Answer)) != normAnswer(rtype, body.Answer) {
+		add("answer", derefStr(current.Answer), body.Answer)
+	}
 	add("ttl", strconv.FormatInt(current.TTL, 10), strconv.FormatInt(derefInt64(body.TTL), 10))
 	prio := func(p *int64) string {
 		if p == nil {
@@ -1078,7 +1119,7 @@ func runFormStep(f *huh.Form) error {
 	return nil
 }
 
-func dnsCreateForm(cmd *cobra.Command) error {
+func dnsCreateForm(cmd *cobra.Command, domain string) error {
 	typeOptions := []huh.Option[string]{
 		huh.NewOption("A — IPv4 address", "A"),
 		huh.NewOption("AAAA — IPv6 address", "AAAA"),
@@ -1109,7 +1150,7 @@ func dnsCreateForm(cmd *cobra.Command) error {
 				Title("Host (@ for apex)").
 				Value(&createHost).
 				Validate(func(s string) error {
-					_, err := asciiHost(s)
+					_, err := zoneHost(s, domain)
 					return err
 				}),
 			huh.NewInput().
@@ -1120,7 +1161,7 @@ func dnsCreateForm(cmd *cobra.Command) error {
 						return fmt.Errorf("answer is required")
 					}
 					if createType != "" {
-						_, err := asciiAnswer(createType, createHost, s)
+						_, err := asciiAnswer(createType, relHost(createHost, domain), s)
 						return err
 					}
 					return nil

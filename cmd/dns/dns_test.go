@@ -1969,6 +1969,9 @@ func TestDNSNotFound_KeepsExitCodeUnderFriendlyMessage(t *testing.T) {
 	})
 	t.Run("dns update on an unknown record", func(t *testing.T) {
 		cmd := cmdForUpdate(t, notFoundServer(t))
+		if err := cmd.ParseFlags([]string{"--ttl", "600"}); err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
 		err := runUpdate(cmd, []string{"example.com", "42"})
 		assertFriendlyNotFound(t, err, "record 42 not found on example.com")
 	})

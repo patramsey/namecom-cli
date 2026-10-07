@@ -68,6 +68,12 @@ func normAnswer(rtype, a string) string {
 		if parts, ok := parseQuotedTXT(a); ok {
 			return strings.Join(parts, "")
 		}
+		// The API stores a `"` as `\"` (#284), so the stored form of a
+		// value with quotes never matched the value as sent.
+		a = unescapeStoredTXT(a)
+		if parts, ok := parseQuotedTXT(a); ok {
+			return strings.Join(parts, "")
+		}
 	case "CAA":
 		f := strings.SplitN(strings.TrimSpace(a), " ", 3)
 		if len(f) == 3 {
@@ -79,6 +85,25 @@ func normAnswer(rtype, a string) string {
 		}
 	}
 	return a
+}
+
+// unescapeStoredTXT undoes the escaping the API applies to a TXT value it
+// stores: `\"` is read as `"`, and `\\` as `\` so that an escaped backslash
+// before a quote reads right. Any other backslash is left as it is. Both sides of a comparison go through it, so a value spelled
+// either way — as typed, or as `dns export` writes what the API holds —
+// matches the stored record. See docs/upstream/name-com-api-txt-escaping.md.
+func unescapeStoredTXT(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\') {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // typeHasPriority reports whether records of rtype carry a priority the API

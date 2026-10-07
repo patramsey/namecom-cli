@@ -46,6 +46,8 @@ type fakeZone struct {
 	writes []string
 	// sent is every mutating request in full: "POST /path {body}".
 	sent []string
+	// requests is every request, reads included: "GET /path".
+	requests []string
 	// fail, when set, decides whether a write is refused with a 422.
 	fail func(method string, r fakeRecord) bool
 }
@@ -101,6 +103,7 @@ func (z *fakeZone) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
 	}
 
+	z.requests = append(z.requests, req.Method+" "+req.URL.Path)
 	raw, _ := io.ReadAll(req.Body)
 	var body fakeRecord
 	if req.Method == http.MethodPost || req.Method == http.MethodPut {
@@ -248,4 +251,12 @@ func (z *fakeZone) sentLog() []string {
 	z.mu.Lock()
 	defer z.mu.Unlock()
 	return append([]string(nil), z.sent...)
+}
+
+// requestLog is every request the zone has served, reads included, so a test
+// can pin how many a command sends.
+func (z *fakeZone) requestLog() []string {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	return append([]string(nil), z.requests...)
 }

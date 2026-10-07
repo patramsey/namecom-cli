@@ -21,6 +21,11 @@ The first two, #3 and #4, were never worked around in this repository. What a
 mitigation would have looked like, and what each was measured to cost, is
 recorded in [`core-api-go-mitigations.md`](core-api-go-mitigations.md).
 
+One note is about the name.com API itself rather than the SDK, and was not
+filed: [`name-com-api-txt-escaping.md`](name-com-api-txt-escaping.md), on the
+API storing a TXT value's quotes escaped, which `dns sync` and the other
+matching commands now allow for.
+
 Later issues — [#9] through [#13] — were filed straight to the tracker, with
 the reproduction in the issue rather than a report here. One of them is worked
 around: see [#12] below.
