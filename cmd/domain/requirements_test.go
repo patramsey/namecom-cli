@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -107,14 +108,41 @@ func TestDomainRequirements_CanonicalizesTLDIntoPath(t *testing.T) {
 	}
 }
 
-func TestDomainRequirements_EmptyTLDRejectedWithoutCallingAPI(t *testing.T) {
-	cmd := cmdWithOutput(t, neverCalledServer(t), tableOut(&bytes.Buffer{}))
-	err := runRequirements(cmd, []string{"   "})
-	if err == nil {
-		t.Fatal("expected an error for a blank TLD, got nil")
+// TestDomainRequirements_BadTLDIsUsageError pins #313: "", "a b" and "."
+// reached the API (or failed as an "api" error, exit 1). Each is a usage
+// error before any request.
+func TestDomainRequirements_BadTLDIsUsageError(t *testing.T) {
+	for arg, want := range map[string]string{
+		"   ": "tld is required",
+		"a b": "must not contain spaces",
+		".":   "is not a TLD",
+		"..":  "is not a TLD",
+		"fr.": "is not a TLD",
+		"f/r": "must not contain",
+	} {
+		t.Run(arg, func(t *testing.T) {
+			cmd := cmdWithOutput(t, neverCalledServer(t), tableOut(&bytes.Buffer{}))
+			err := runRequirements(cmd, []string{arg})
+			if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+				t.Fatalf("want a usage error, got %v", err)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %q, want it to contain %q", err, want)
+			}
+		})
 	}
-	if !strings.Contains(err.Error(), "tld is required") {
-		t.Errorf("error should say the TLD is required, got: %v", err)
+}
+
+// TestDomainRequirements_LeadingDotIsDropped pins #313: ".fr" was sent as is
+// and came back not found. `domain list --tld .io` accepts the dot, and so
+// does this.
+func TestDomainRequirements_LeadingDotIsDropped(t *testing.T) {
+	srv, reqPath := jsonServer(t, http.StatusOK, requirementsBody)
+	if err := runRequirements(cmdWithOutput(t, srv, tableOut(&bytes.Buffer{})), []string{".FR"}); err != nil {
+		t.Fatalf("runRequirements: %v", err)
+	}
+	if got, want := reqPath(), "/core/v1/domaininfo/requirements/fr"; got != want {
+		t.Errorf("request path = %q, want %q", got, want)
 	}
 }
 
@@ -421,8 +449,8 @@ func TestDomainClaims_APIError(t *testing.T) {
 	}
 }
 
-// TestDomainRequirements_NotFoundKeepsExitCode: an unknown TLD gets a hint
-// about the leading dot, and must still exit 4. The hint was built with
+// TestDomainRequirements_NotFoundKeepsExitCode: an unknown TLD gets a hint,
+// and must still exit 4. The hint was built with
 // fmt.Errorf, which kept the text and dropped the 404.
 func TestDomainRequirements_NotFoundKeepsExitCode(t *testing.T) {
 	srv, _ := jsonServer(t, http.StatusNotFound, `{"message":"Not Found"}`)

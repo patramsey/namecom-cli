@@ -33,7 +33,11 @@ func TestRefundArgs_OrderIDAsArgument(t *testing.T) {
 		{"ID alone", nil, []string{"12345"}, "refund --order-id 12345 --item-ids <item-ids>"},
 		{"ID with item IDs", []string{"--item-ids", "7,8"}, []string{"12345"}, "refund --order-id 12345 --item-ids 7,8"},
 		{"not a number", nil, []string{"abc"}, ""},
-		{"--order-id given too", []string{"--order-id", "1"}, []string{"12345"}, ""},
+		{"a number and not", nil, []string{"12345", "abc"}, ""},
+		// #313: two IDs fell back to the generic "takes no arguments".
+		{"order and item IDs", nil, []string{"12345", "6789"}, "refund --order-id 12345 --item-ids 6789"},
+		{"order and item IDs, more items in the flag", []string{"--item-ids", "7"}, []string{"12345", "6789"}, "refund --order-id 12345 --item-ids 6789,7"},
+		{"--order-id given too", []string{"--order-id", "1"}, []string{"12345"}, "refund --order-id 1 --item-ids 12345"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := refundArgs(build(t, tc.flags...), tc.args)

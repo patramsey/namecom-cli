@@ -149,7 +149,7 @@ func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, pat
 	}
 	if len(args) == 1 {
 		if slices.Contains(allowedMethods, strings.ToUpper(args[0])) {
-			return "", "", cmdutil.NewUsageError(fmt.Errorf("path is required — try: %s", cmd.UseLine()))
+			return "", "", cmdutil.NewUsageErrorHint(errors.New("path is required"), "usage: "+cmd.UseLine())
 		}
 		switch {
 		case flagMethod != "":

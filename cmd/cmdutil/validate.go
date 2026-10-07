@@ -32,6 +32,18 @@ func ValidDate(s, flagName string) error {
 	return nil
 }
 
+// ValidDateRange checks that the date passed as --fromFlag is not later than
+// the one passed as --toFlag. Both ends of a range are inclusive, so a range
+// that runs backwards can match nothing; it used to be sent anyway and
+// answered with an empty list (#313). Either may be empty for an open end.
+// Call it after ValidDate: YYYY-MM-DD dates order as strings.
+func ValidDateRange(from, fromFlag, to, toFlag string) error {
+	if from != "" && to != "" && from > to {
+		return usagef("--%s %s is later than --%s %s — no date can match both", fromFlag, from, toFlag, to)
+	}
+	return nil
+}
+
 var validDNSTypes = map[string]bool{
 	"A": true, "AAAA": true, "ANAME": true, "CAA": true,
 	"CNAME": true, "MX": true, "NS": true, "SRV": true, "TXT": true,
@@ -485,6 +497,33 @@ func DomainArg(args []string, n int) (string, error) {
 		return "", err
 	}
 	return d, nil
+}
+
+// TLDArg normalizes and checks a TLD given as an argument or flag value,
+// named what in errors: trimmed, lowercased and converted to punycode as
+// CanonicalDomain does, with a leading dot dropped, since `.fr` is how a TLD
+// is often written. `domain requirements ""`, "a b" and "." reached the API,
+// and ".fr" was sent as is and came back not found (#313).
+func TLDArg(s, what string) (string, error) {
+	if strings.TrimSpace(s) == "" {
+		return "", usagef("%s is required", what)
+	}
+	tld := strings.TrimPrefix(CanonicalDomain(s), ".")
+	if strings.ContainsAny(tld, " \t") {
+		return "", usagef("%s %q must not contain spaces", what, s)
+	}
+	if tld == "" || strings.HasPrefix(tld, ".") || strings.HasSuffix(tld, ".") || strings.Contains(tld, "..") {
+		return "", usagef("%s %q is not a TLD — expected one such as com, fr or co.uk", what, s)
+	}
+	for i := 0; i < len(tld); i++ {
+		if c := tld[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
+			return "", usagef("%s %q must not contain %q", what, s, tld[i:i+1])
+		}
+	}
+	if !isASCII(tld) {
+		return "", usagef("%s %q is not a valid internationalized TLD", what, s)
+	}
+	return tld, nil
 }
 
 // OnOffArg parses the on|off positional argument of the domain toggles

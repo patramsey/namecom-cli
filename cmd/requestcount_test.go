@@ -341,6 +341,14 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/domains?page=1&tld=com",
 			},
 		},
+		"domain list --tld with a space": {
+			args: []string{"domain", "list", "--tld", "c om"},
+			code: 2,
+		},
+		"domain list, reversed date range": {
+			args: []string{"domain", "list", "--expiring-after", "2027-01-01", "--expiring-before", "2026-01-01"},
+			code: 2,
+		},
 		"domain get": {
 			args: []string{"domain", "get", "example.com"},
 			want: []string{
@@ -461,6 +469,16 @@ func TestRequestCounts(t *testing.T) {
 			want: []string{
 				"GET /core/v1/domaininfo/requirements/fr",
 			},
+		},
+		"domain requirements .fr": {
+			args: []string{"domain", "requirements", ".fr"},
+			want: []string{
+				"GET /core/v1/domaininfo/requirements/fr",
+			},
+		},
+		"domain requirements .": {
+			args: []string{"domain", "requirements", "."},
+			code: 2,
 		},
 		"domain lock on, already": {
 			args: []string{"domain", "lock", "on", "example.com", "--yes"},
@@ -940,6 +958,21 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/transfers/external/out/example.com:cancel",
 			},
 		},
+		"transfer cancel-outbound --dry-run": {
+			args: []string{"transfer", "cancel-outbound", "example.com", "--dry-run"},
+			why:  "the GET fails a dry run for a domain not in the account, as the cancel would (#313); no endpoint reports an outbound transfer itself",
+			want: []string{
+				"GET /core/v1/domains/example.com",
+			},
+		},
+		"transfer cancel-outbound --dry-run, not in the account": {
+			args:   []string{"transfer", "cancel-outbound", "example.com", "--dry-run"},
+			routes: map[string]reply{"GET /core/v1/domains/example.com": notFound},
+			code:   4,
+			want: []string{
+				"GET /core/v1/domains/example.com",
+			},
+		},
 		"transfer eligibility": {
 			args: []string{"transfer", "eligibility", "example.com"},
 			want: []string{
@@ -968,6 +1001,10 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/orders?dir=desc&page=1&perPage=1000",
 			},
 		},
+		"order list, reversed date range": {
+			args: []string{"order", "list", "--since", "2027-01-01", "--until", "2026-01-01"},
+			code: 2,
+		},
 		"order get": {
 			args: []string{"order", "get", "1"},
 			want: []string{
@@ -979,6 +1016,10 @@ func TestRequestCounts(t *testing.T) {
 			want: []string{
 				"POST /core/v1/refund",
 			},
+		},
+		"order refund, IDs as arguments": {
+			args: []string{"order", "refund", "1", "2"},
+			code: 2,
 		},
 		"order refund, no terminal": {
 			args: []string{"order", "refund", "--order-id", "1", "--item-ids", "2"},

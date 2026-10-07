@@ -687,6 +687,24 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A dry run reads the domain, so one for a name not in this account fails
+	// not_found, as the cancel would, rather than previewing it (#313). The
+	// API has no read for an outbound transfer, so a dry run for a domain
+	// that is here but not leaving still passes. A real run lets the cancel
+	// itself refuse: the GET would be a second request for the same answer.
+	if cmdutil.IsDryRun(cmd) {
+		stop := out.Spin("Fetching domain…")
+		_, err := client.SDK().Domains.GetDomain(cmd.Context(),
+			&coreapigo.GetDomainRequest{DomainName: domain})
+		stop()
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.DomainNotFound(err, domain)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
 	var result *coreapigo.CancelTransferOutResponse
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "POST",

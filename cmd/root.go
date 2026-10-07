@@ -351,6 +351,7 @@ func init() {
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
 	rootCmd.SetHelpFunc(styledHelp)
+	rootCmd.SetHelpCommand(helpCommand)
 }
 
 func persistentPreRunE(cmd *cobra.Command, _ []string) error {

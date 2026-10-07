@@ -260,6 +260,34 @@ func TestErrorOutput_ArgCountHonoursOutputFlag(t *testing.T) {
 	}
 }
 
+// TestMissingArgument_UsageInHint pins #313: a missing argument put the
+// usage line in error.message ("domain is required — try: …") and left
+// error.hint empty, where an extra argument or an unknown flag puts its.
+func TestMissingArgument_UsageInHint(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args          []string
+		message, hint string
+	}{
+		{[]string{"dns", "list"}, "domain is required", "usage: namecom dns list <domain> [flags]"},
+		{[]string{"dns", "delete", "example.com"}, "id is required", "usage: namecom dns delete <domain> <id> [<id>...] [flags]"},
+		{[]string{"order", "get"}, "id is required", "usage: namecom order get <id> [flags]"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			_, stderr, code := runContract(t, append(tc.args, "-o", "json")...)
+			var env struct {
+				Error struct{ Type, Message, Hint string } `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+				t.Fatalf("stderr is not the error envelope: %v\n%s", err, stderr)
+			}
+			if code != 2 || env.Error.Type != "usage" || env.Error.Message != tc.message || env.Error.Hint != tc.hint {
+				t.Errorf("exit %d, error %+v; want exit 2, usage %q, hint %q", code, env.Error, tc.message, tc.hint)
+			}
+		})
+	}
+}
+
 // TestErrorOutput_EarlyFailureHonoursOutputFlag pins the follow-up noted on
 // #247: when cobra fails before it parses flags — an unknown top-level
 // command, or an unknown flag placed before -o — -o was ignored, so

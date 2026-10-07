@@ -123,6 +123,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 		d, _ := time.Parse("2006-01-02", listExpiringBefore)
 		expireEnd = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
+	if err := cmdutil.ValidDateRange(listExpiringAfter, "expiring-after", listExpiringBefore, "expiring-before"); err != nil {
+		return err
+	}
+	tld := ""
+	if listTLD != "" {
+		if tld, err = cmdutil.TLDArg(listTLD, "--tld"); err != nil {
+			return err
+		}
+	}
 
 	spin := out.StartSpinner("Fetching domains…")
 
@@ -139,8 +148,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			f := filterToWildcard(listFilter)
 			p.DomainName = &f
 		}
-		if listTLD != "" {
-			tld := strings.TrimPrefix(listTLD, ".")
+		if tld != "" {
 			p.Tld = &tld
 		}
 		if listExpiringAfter != "" {

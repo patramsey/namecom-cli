@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -375,6 +377,64 @@ func TestRootHelp_ListsExitCodes(t *testing.T) {
 		if !strings.Contains(rootCmd.Long, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, rootCmd.Long)
 		}
+	}
+}
+
+// TestHelpCommand_UnknownTopic pins #313: `namecom help bogus` printed
+// "Unknown help topic" and cobra's unstyled usage and exited 0, and
+// `help dns lsit` printed the dns help and exited 0. Both are usage errors
+// with suggestions, as `namecom dns lsit` is; known topics still print help.
+func TestHelpCommand_UnknownTopic(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args       []string
+		message    string
+		suggestion string // "" for none
+	}{
+		{[]string{"help", "bogus"}, `unknown command "bogus" for "namecom help"`, ""},
+		{[]string{"help", "domian"}, `unknown command "domian" for "namecom help"`, "namecom help domain"},
+		{[]string{"help", "records"}, `unknown command "records" for "namecom help"`, "namecom help dns"},
+		{[]string{"help", "domain", "bogus"}, `unknown command "bogus" for "namecom help domain"`, ""},
+		{[]string{"help", "dns", "lsit"}, `unknown command "lsit" for "namecom help dns"`, "namecom help dns list"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			stdout, stderr, code := runContract(t, append(tc.args, "-o", "json")...)
+			if code != 2 {
+				t.Errorf("exit = %d, want 2", code)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want nothing: no help for an unknown topic", stdout)
+			}
+			var env struct {
+				Error struct {
+					Type        string   `json:"type"`
+					Message     string   `json:"message"`
+					Hint        string   `json:"hint"`
+					Suggestions []string `json:"suggestions"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+				t.Fatalf("stderr is not the error envelope: %v\n%s", err, stderr)
+			}
+			if env.Error.Type != "usage" || env.Error.Message != tc.message {
+				t.Errorf("error = %+v, want usage %q", env.Error, tc.message)
+			}
+			if tc.suggestion != "" && !slices.Contains(env.Error.Suggestions, tc.suggestion) {
+				t.Errorf("suggestions = %v, want %q", env.Error.Suggestions, tc.suggestion)
+			}
+			if env.Error.Hint == "" {
+				t.Error("no hint")
+			}
+		})
+	}
+
+	for _, args := range [][]string{{"help"}, {"help", "dns"}, {"help", "dns", "list"}, {"help", "dns", "list", "example.com"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout, stderr, code := runContract(t, args...)
+			if code != 0 || !strings.Contains(stdout, "Usage:") {
+				t.Errorf("exit %d, stdout:\n%s\nstderr:\n%s\nwant help and exit 0", code, stdout, stderr)
+			}
+		})
 	}
 }
 

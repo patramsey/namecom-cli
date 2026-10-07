@@ -63,6 +63,24 @@ func TestValidDate(t *testing.T) {
 	}
 }
 
+// TestValidDateRange pins #313: a range that runs backwards can match
+// nothing, and was sent anyway. Equal ends are one day, and either end may
+// be open.
+func TestValidDateRange(t *testing.T) {
+	for _, r := range [][2]string{{"2026-01-01", "2027-01-01"}, {"2026-01-01", "2026-01-01"}, {"", "2026-01-01"}, {"2026-01-01", ""}, {"", ""}} {
+		if err := ValidDateRange(r[0], "since", r[1], "until"); err != nil {
+			t.Errorf("ValidDateRange(%q, %q) = %v, want nil", r[0], r[1], err)
+		}
+	}
+	err := ValidDateRange("2027-01-01", "since", "2026-01-01", "until")
+	if _, ok := errors.AsType[*UsageError](err); !ok {
+		t.Fatalf("reversed range: got %v, want a usage error", err)
+	}
+	if want := "--since 2027-01-01 is later than --until 2026-01-01"; !strings.Contains(err.Error(), want) {
+		t.Errorf("message = %q, want it to contain %q", err, want)
+	}
+}
+
 func TestValidDNSType(t *testing.T) {
 	ok := []string{"A", "AAAA", "ANAME", "CAA", "CNAME", "MX", "NS", "SRV", "TXT", "a", "mx"}
 	for _, s := range ok {
