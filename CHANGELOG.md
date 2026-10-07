@@ -38,13 +38,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--max-pages`.
 - `dns create`, `dns update`, `dns list` and a `dns import`/`dns sync` JSON
   file refuse a `--host` (or host) ending in a dot that is not in the zone,
-  with exit 2 before any request (ISSUE-03). The trailing dot makes the name
+  with exit 2 before any request (#309). The trailing dot makes the name
   absolute, but 0.5.2 dropped it, so `--host sweep.example.org.` on
   example.com created `sweep.example.org.example.com`. That includes a bare
   `www.`; write `www`. `--host .example.com` now says it has an empty label,
   not that `--host` is empty. `dns update --host` checks the host before
   fetching the record.
-- DNS record values (ISSUE-04). `dns create` of an MX or SRV record without
+- DNS record values (#310). `dns create` of an MX or SRV record without
   `--priority` is a usage error (exit 2) before any request, `--dry-run`
   included. It used to warn that the priority was 0, send none, and fail at
   the API (exit 1). `--priority` on any other type is a usage error too: the
