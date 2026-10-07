@@ -70,6 +70,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   with `"changed": true` and `{"warnings": […]}` on stderr). If not, it is a
   `conflict` error (still exit 1; the JSON type was `api`) whose hint names
   them. Only that error costs the extra request.
+- `url update` whose flags ask for what the forwarding already is sends
+  nothing, under `--dry-run` too, and says `already has these values:
+  nothing to change` (ISSUE-06). It sent the PATCH anyway and printed "no
+  values changed". **Scripts:** `url update -o json` now prints the entry
+  with `"changed": true`, or `false` for a no-op, as `dns update` does.
 - `url create --host` reads a host as `dns create` does (ISSUE-03): `www`,
   `www.example.com` and `www.example.com.` all forward www, and
   `example.com` is the apex. A fully qualified host was sent as typed and

@@ -797,6 +797,13 @@ func TestRequestCounts(t *testing.T) {
 				"PATCH /core/v1/urlforwarding/example.com/7",
 			},
 		},
+		"url update, nothing to change": {
+			args: []string{"url", "update", "example.com", "7", "--to", "https://example.org", "--yes"},
+			why:  "the read-modify-write's GET shows the forwarding already has these values, so no PATCH is sent (ISSUE-06)",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com/7",
+			},
+		},
 		"url delete": {
 			args: []string{"url", "delete", "example.com", "7", "--yes"},
 			why:  "the GET shows the forwarding in the prompt and decides the apex A-record note after the delete (#286)",

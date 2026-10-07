@@ -561,6 +561,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		out.Warn(fmt.Sprintf(`the forwarding keeps its title and meta, which %s does not use — pass --title "" --meta "" to clear them`, fwdTypeStr))
 	}
 
+	// The flags ask for what the forwarding already is: nothing is sent,
+	// under --dry-run too, as `dns update` does. The PATCH used to be sent
+	// anyway and reported as "no values changed", with nothing in JSON to
+	// tell it from a change. The GET above is all it takes.
+	changes := urlChanges(current, body)
+	if len(changes) == 0 {
+		return printUpdated(out, current, false,
+			fmt.Sprintf("URL forwarding %d (%s) already has these values: nothing to change", id, displayHost(current.Host)))
+	}
+
 	var entry *coreapigo.URLForwardingResponse
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.URLForwardingUpdate]{
 		Method: "PATCH",
@@ -573,21 +583,32 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			&coreapigo.UpdateURLForwardingByIDRequest{DomainName: domain, ID: id, Body: &body})
 		return err
 	})
-	if err != nil {
+	if err != nil || !sent {
 		return err
 	}
-	if !sent || out.Quiet() {
+	return printUpdated(out, entry, true,
+		fmt.Sprintf("Updated URL forwarding %d (%s): %s", id, displayHost(current.Host), strings.Join(changes, ", ")))
+}
+
+// printUpdated prints the forwarding `url update` changed, or found already
+// as asked: in JSON and YAML the entry with "changed", so a script can tell
+// a no-op from a change, and otherwise msg. --quiet prints nothing.
+func printUpdated(out *output.Config, entry *coreapigo.URLForwardingResponse, changed bool, msg string) error {
+	if out.Quiet() {
 		return nil
 	}
-
 	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(entry)
-	case output.FormatYAML:
-		return out.YAML(entry)
-	default:
-		out.Success(urlUpdateLine(id, current, body))
+	case output.FormatJSON, output.FormatYAML:
+		doc, err := output.WithChanged(entry, changed)
+		if err != nil {
+			return err
+		}
+		if out.Format == output.FormatYAML {
+			return out.YAML(doc)
+		}
+		return out.JSON(doc)
 	}
+	out.Success(msg)
 	return nil
 }
 
@@ -714,10 +735,10 @@ func derefStr(p *string) string {
 	return *p
 }
 
-// urlUpdateLine names the forwarding an update changed and what changed:
-// "Updated URL forwarding 7 (go.example.com): forwards to https://a → https://b".
-// It said only "Updated URL forwarding 7" (#238).
-func urlUpdateLine(id int, current *coreapigo.URLForwardingResponse, body coreapigo.URLForwardingUpdate) string {
+// urlChanges lists what an update changes on the forwarding, as "forwards
+// to https://a → https://b", for the line that names it (#238). An empty
+// list means the update would change nothing.
+func urlChanges(current *coreapigo.URLForwardingResponse, body coreapigo.URLForwardingUpdate) []string {
 	var changes []string
 	add := func(field, was, now string) {
 		if was != now {
@@ -730,23 +751,13 @@ func urlUpdateLine(id int, current *coreapigo.URLForwardingResponse, body coreap
 			changes = append(changes, fmt.Sprintf("%s %s → %s", field, was, now))
 		}
 	}
-	str := func(p *string) string {
-		if p == nil {
-			return ""
-		}
-		return *p
-	}
-	add("forwards to", current.ForwardsTo, str(body.ForwardsTo))
+	add("forwards to", current.ForwardsTo, derefStr(body.ForwardsTo))
 	if body.Type != nil {
 		add("type", string(current.Type), string(*body.Type))
 	}
-	add("title", str(current.Title), str(body.Title))
-	add("meta", str(current.Meta), str(body.Meta))
-	line := fmt.Sprintf("Updated URL forwarding %d (%s)", id, displayHost(current.Host))
-	if len(changes) == 0 {
-		return line + ": no values changed"
-	}
-	return line + ": " + strings.Join(changes, ", ")
+	add("title", derefStr(current.Title), derefStr(body.Title))
+	add("meta", derefStr(current.Meta), derefStr(body.Meta))
+	return changes
 }
 
 func urlRows(entries []*coreapigo.URLForwardingResponse) [][]string {
