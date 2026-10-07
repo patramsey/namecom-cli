@@ -48,23 +48,35 @@ stdin when stdin is a pipe or a file; an empty stdin sends no body.
 
 --paginate follows nextPage until the last page and prints one document: each
 list in it is every page's items end to end, and nextPage and lastPage are
-gone. The global --jq filters that merged document.
+gone. The global --jq filters that merged document. It asks for 1000 items
+a page, the most the API serves, unless the path or -f sets perPage, and in
+a terminal it shows on stderr which page it is fetching.
+
+The response body is printed as received. -o json or table only chooses how
+an error is printed; -o yaml, -o tsv and -q do not apply, and are usage
+errors.
 
 --include prints the response status line and headers before the body; with
 --paginate, those of each page, then the merged body. --jq and --fields
 filter the body alone.
 
-With --dry-run, any method other than GET or HEAD is printed — method, path,
-and body — instead of sent. GET and HEAD still run.`,
+Any method other than GET or HEAD is a write, and is confirmed as other
+writes are: a question in a terminal, and --yes when not in one. A POST
+inferred from a body says so, in the question and in a warning: to send -f
+fields as a GET's query, pass -X GET. With --dry-run, a write is printed —
+method, path, and body — instead of sent. GET and HEAD still run.`,
 	Example: `  namecom api /core/v1/domains
+  namecom api /core/v1/domains -X GET -f perPage=1000
   namecom api /core/v1/domains --paginate --jq '.domains[].domainName'
   namecom api GET /core/v1/domains/example.com --include
   namecom api /core/v1/domains --include --jq '.totalCount'
-  namecom api /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
-  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records
+  namecom api POST /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
   namecom api PUT /core/v1/domains/example.com/records/123 --input record.json
   namecom api -X PATCH /core/v1/domains/example.com -F autorenewEnabled=true --dry-run
-  namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run`,
+  namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run
+
+  # In a script, skip the confirmation:
+  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records --yes`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 2 {
 			return cmdutil.ExactArgs(2)(cmd, args)
@@ -110,6 +122,7 @@ func init() {
 	f.BoolVar(&apiPaginate, "paginate", false, "follow nextPage and print every page as one document (GET only)")
 	// Any method but GET or HEAD goes through RunWrite.
 	cmdutil.MarkWrite(Cmd)
+	cmdutil.MarkRawOutput(Cmd)
 	cmdutil.CompleteFlagValues(Cmd, "method", allowedMethods)
 }
 
@@ -145,6 +158,24 @@ func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, pat
 	return method, args[1], nil
 }
 
+// inferredFrom names the flag that made method POST when neither an argument
+// nor -X gave a method, and is "" when the method was given. nargs is the
+// number of arguments: with two, the first is the method.
+func inferredFrom(nargs int, method string, dataSet bool) string {
+	if nargs != 1 || apiMethod != "" || method != http.MethodPost {
+		return ""
+	}
+	switch {
+	case len(apiFields) > 0:
+		return "-f"
+	case len(apiTyped) > 0:
+		return "-F"
+	case dataSet:
+		return "--data"
+	}
+	return "--input"
+}
+
 // checkMethod returns m in upper case, or a usage error when it is not a
 // method `namecom api` sends. An empty m is no method, and returned as is.
 // how says where m came from, for the message.
@@ -155,6 +186,20 @@ func checkMethod(m, how string) (string, error) {
 	}
 	return "", cmdutil.NewUsageError(fmt.Errorf("unknown HTTP method %s%q: must be one of %s",
 		how, m, strings.Join(allowedMethods, ", ")))
+}
+
+// checkOutput rejects the output flags api cannot honour. It prints the
+// body as received, so -o yaml, -o tsv and -q were ignored without a word
+// (#293). JSON and table mode stay: they choose how an error is printed.
+func checkOutput(out *output.Config) error {
+	const why = "api prints the response body as received; use --jq or --fields to pick from it"
+	switch {
+	case out.QuietMode:
+		return cmdutil.NewUsageError(errors.New("--quiet does not apply to api: " + why))
+	case out.Format == output.FormatYAML, out.Format == output.FormatTSV:
+		return cmdutil.NewUsageError(fmt.Errorf("-o %s does not apply to api: %s", out.Format, why))
+	}
+	return nil
 }
 
 // checkFlags rejects flags that contradict each other or the method, before
@@ -175,6 +220,9 @@ func checkFlags(method string, dataSet bool) error {
 }
 
 func runAPI(cmd *cobra.Command, args []string) error {
+	if err := checkOutput(cmdutil.Out(cmd)); err != nil {
+		return err
+	}
 	dataSet := apiBody != "" || cmd.Flags().Changed("data")
 	hasBody := dataSet || apiInput != "" || len(apiFields)+len(apiTyped) > 0
 	method, rawPath, err := methodAndPath(cmd, args, hasBody)
@@ -319,7 +367,19 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 
 	if apiPaginate {
-		return paginate(cmd.Context(), u, body, do, out.Writer)
+		// A walk asks for the largest page the API serves, unless the
+		// path or -f chose a size, and shows its progress in a terminal:
+		// at a small perPage it was hundreds of silent requests (#290).
+		if u, err = withPageSize(u); err != nil {
+			return fmt.Errorf("building URL: %w", err)
+		}
+		// --include prints each page's head as it comes, which is progress
+		// enough and would land in the middle of the line.
+		var progress io.Writer
+		if progressTTY() && !apiInclude {
+			progress = out.EWriter
+		}
+		return paginate(cmd.Context(), u, body, do, out.Writer, progress)
 	}
 	// Reads still run under --dry-run, as the flag's help promises. Every
 	// other method is previewed: a raw passthrough cannot tell whether a POST
@@ -336,8 +396,24 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	if len(body) > 0 {
 		payload = rawBody(body)
 	}
+	// A write confirms like every other write: a question in a terminal,
+	// --yes off one (#282). It used to go straight out, so adding -f to a
+	// list's path to page it sent an unconfirmed POST to that path — for
+	// /core/v1/domains, a registration. The question says when the method
+	// was inferred, since that is the surprise; so does a warning, which a
+	// dry run and --yes print too.
+	label := method
+	if from := inferredFrom(len(args), method, dataSet); from != "" {
+		label += " (inferred from " + from + ")"
+		hint := "; pass -X POST to say so"
+		if from == "-f" || from == "-F" {
+			hint = "; pass -X GET to send the fields as query parameters instead"
+		}
+		out.Warn(label + hint)
+	}
 	_, err = cmdutil.RunWrite(cmd, cmdutil.Write[any]{
 		Method: method, Path: parsed.RequestURI(), Body: payload,
+		Prompt: fmt.Sprintf("Send %s %s?", label, parsed.RequestURI()),
 	}, func(ctx context.Context, b any) error {
 		rb, _ := b.(rawBody) // nil for NoBody
 		return send(ctx, rb)
@@ -349,11 +425,32 @@ func runAPI(cmd *cobra.Command, args []string) error {
 // merged into one document. A reply that is not a JSON object has no pages,
 // and is printed as it came. Nothing is printed when a page fails: half a
 // list would read as all of it.
+//
+// When progress is not nil, each page after the first is announced on it —
+// "Fetching page 12 of 183…" — on one line, cleared at the end.
 func paginate(ctx context.Context, target string, body []byte,
-	do func(context.Context, string, []byte) ([]byte, error), w io.Writer) error {
+	do func(context.Context, string, []byte) ([]byte, error), w, progress io.Writer) error {
 	var merged pages
 	seen := map[int]bool{startPage(target): true}
+	// The line is cleared before anything else is printed — the document,
+	// or the error — since stdout may be the same terminal.
+	shown := false
+	endProgress := func() {
+		if shown {
+			fmt.Fprint(progress, "\r\033[K")
+			shown = false
+		}
+	}
+	defer endProgress()
 	for n := 1; ; n++ {
+		if progress != nil && n > 1 {
+			shown = true
+			of := ""
+			if merged.last > 0 {
+				of = fmt.Sprintf(" of %d", merged.last)
+			}
+			fmt.Fprintf(progress, "\rFetching page %d%s…\033[K", n, of)
+		}
 		page, err := do(ctx, target, body)
 		if err != nil {
 			return err
@@ -378,6 +475,7 @@ func paginate(ctx context.Context, target string, body []byte,
 			return fmt.Errorf("building URL: %w", err)
 		}
 	}
+	endProgress()
 	doc, err := merged.bytes()
 	if err != nil {
 		return err
@@ -385,6 +483,10 @@ func paginate(ctx context.Context, target string, body []byte,
 	_, err = fmt.Fprintf(w, "%s\n", doc)
 	return err
 }
+
+// progressTTY reports whether --paginate shows its progress: when stderr is
+// a terminal. A variable so tests can say it is.
+var progressTTY = output.IsStderrTTY
 
 // writeHead prints resp's status line and headers, sorted by name, then a
 // blank line, as `curl -i` and `gh api -i` do. They are the response's

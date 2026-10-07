@@ -23,6 +23,29 @@ type pages struct {
 	keys   []string
 	vals   map[string]json.RawMessage
 	arrays map[string][]json.RawMessage
+	// last is the latest page's lastPage, or 0 when it gave none. It is
+	// for the progress line only.
+	last int
+}
+
+// maxPerPage is the largest page the API serves.
+const maxPerPage = "1000"
+
+// withPageSize returns target asking for maxPerPage items a page, unless it
+// already names a perPage.
+func withPageSize(target string) (string, error) {
+	u, err := url.Parse(target)
+	if err != nil {
+		return "", err
+	}
+	if u.Query().Has("perPage") {
+		return target, nil
+	}
+	if u.RawQuery != "" {
+		u.RawQuery += "&"
+	}
+	u.RawQuery += "perPage=" + maxPerPage
+	return u.String(), nil
 }
 
 // add merges one page and returns its nextPage, or 0 when it has none.
@@ -55,6 +78,7 @@ func (p *pages) add(page []byte) (next int, err error) {
 				return 0, fmt.Errorf("nextPage is %s, not a page number", raw)
 			}
 		case key == "lastPage":
+			p.last, _ = strconv.Atoi(string(raw))
 		case raw[0] == '[' && !scalar:
 			var items []json.RawMessage
 			if err := json.Unmarshal(raw, &items); err != nil {

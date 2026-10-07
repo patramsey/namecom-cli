@@ -33,6 +33,19 @@ func markKind(kind string, cmds []*cobra.Command) {
 	}
 }
 
+// RawOutputAnnotation marks a command that prints what it received as it
+// received it, `namecom api`, where --quiet does not apply. Help leaves it
+// out of the command's global flags (#293).
+const RawOutputAnnotation = "namecom_raw_output"
+
+// MarkRawOutput marks cmd as printing its output as received.
+func MarkRawOutput(cmd *cobra.Command) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[RawOutputAnnotation] = "true"
+}
+
 // Kind returns cmd's kind: KindWrite, KindList, or "" for a read.
 func Kind(cmd *cobra.Command) string { return cmd.Annotations[KindAnnotation] }
 
