@@ -179,7 +179,7 @@ func warnTransferLocked(out *output.Config, domain string, d *coreapigo.DomainRe
 // own "Not Found" does not say what was missing (#234).
 func domainError(err error, domainName string) error {
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domainName))
+		return cmdutil.DomainNotFound(err, domainName)
 	}
 	return api.FromSDKError(err)
 }
@@ -785,7 +785,7 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	result, err := client.SDK().Domains.GetAuthCodeForDomain(cmd.Context(),
 		&coreapigo.GetAuthCodeForDomainRequest{DomainName: domain})
 	if err != nil {
-		return err
+		return domainError(err, domain)
 	}
 
 	// --quiet prints just the code, so it can be captured directly:

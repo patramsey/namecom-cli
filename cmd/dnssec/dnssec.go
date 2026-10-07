@@ -107,6 +107,9 @@ func runList(cmd *cobra.Command, args []string) error {
 		&coreapigo.ListDnsseCsRequest{DomainName: domain})
 	stop()
 	if err != nil {
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.DomainNotFound(err, domain)
+		}
 		return api.FromSDKError(err)
 	}
 	result.Dnssec = cmdutil.NonNil(result.Dnssec)
@@ -291,7 +294,8 @@ func runDelete(cmd *cobra.Command, args []string) error {
 // not say what was missing.
 func keyError(err error, domain, digest string) error {
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("DNSSEC key %s not found on %s — run 'namecom dnssec list %s' to see its digests", digest, domain, domain))
+		return cmdutil.NotFound(err, fmt.Sprintf("DNSSEC key %s not found on %s", digest, domain),
+			fmt.Sprintf("run 'namecom dnssec list %s' to see its keys", domain))
 	}
 	return api.FromSDKError(err)
 }

@@ -243,7 +243,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain))
+			return cmdutil.NotFound(err, fmt.Sprintf("transfer of %q not found", domain), "run 'namecom transfer list' to see active transfers")
 		}
 		return err
 	}
@@ -634,7 +634,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("no transfer found for %q — run 'namecom transfer list' to see active transfers", domain))
+			return cmdutil.NotFound(err, fmt.Sprintf("transfer of %q not found", domain), "run 'namecom transfer list' to see active transfers")
 		}
 		return err
 	}

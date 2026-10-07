@@ -106,7 +106,7 @@ func TestEmailDelete_PromptShowsTheTarget(t *testing.T) {
 				t.Errorf("sent %d requests, want 1 (the GET)", got)
 			}
 			if tc.wantPrompt == "" {
-				if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "mailbox info@example.com not found — run 'namecom email list example.com'") {
+				if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "mailbox info@example.com not found") {
 					t.Errorf("runDelete = %v, want not-found naming the mailbox", err)
 				}
 				if len(prompts) != 0 {
@@ -125,7 +125,7 @@ func TestEmailDelete_PromptShowsTheTarget(t *testing.T) {
 // missing mailbox said only "Not Found". They now name it and the list
 // command, as dns and url do, and still exit 4.
 func TestEmail_NotFoundNamesTheMailbox(t *testing.T) {
-	const want = "mailbox nosuchbox@example.com not found — run 'namecom email list example.com'"
+	const want = "mailbox nosuchbox@example.com not found"
 	for _, tc := range []struct {
 		name string
 		run  func(*httptest.Server) error

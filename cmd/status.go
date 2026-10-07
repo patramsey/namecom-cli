@@ -20,7 +20,7 @@ var statusCmd = &cobra.Command{
 	Long:  `Show domain counts, domains expired or expiring within 30 days, pending transfers, and the account balance.`,
 	Example: `  namecom status
   namecom status --profile staging`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runStatus,
 }
 

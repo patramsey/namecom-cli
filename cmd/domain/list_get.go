@@ -316,7 +316,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		stop()
 		if err != nil {
 			if cmdutil.IsNotFound(err) {
-				return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+				return cmdutil.DomainNotFound(err, domain)
 			}
 			return err
 		}

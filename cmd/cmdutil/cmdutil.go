@@ -5,6 +5,7 @@ package cmdutil
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/config"
@@ -89,24 +90,33 @@ func IsNotFound(err error) bool {
 	return errors.As(api.NormalizeError(err), &apiErr) && apiErr.StatusCode == 404
 }
 
-// NotFound replaces a not-found error's message with a friendlier one while
+// NotFound replaces a not-found error's message with one that names what was
+// missing, and its hint with the command that lists what there is, while
 // keeping the error underneath, so the command still exits 4.
 //
 // Five commands turned a detected 404 into fmt.Errorf("… not found — run …").
 // The message improved and the classification was thrown away: exitCode found
-// no *api.APIError in a plain string error and returned 1.
-func NotFound(err error, msg string) error {
-	return &notFoundError{msg: msg, err: api.NormalizeError(err)}
+// no *api.APIError in a plain string error and returned 1. The advice then
+// stayed in the message, where the JSON envelope's error.hint could not carry
+// it (#291): msg says what is missing, hint what to run.
+func NotFound(err error, msg, hint string) error {
+	return &notFoundError{msg: msg, hint: hint, err: api.NormalizeError(err)}
+}
+
+// DomainNotFound is NotFound for a domain the account does not have, in the
+// one wording every command uses for it.
+func DomainNotFound(err error, domain string) error {
+	return NotFound(err, fmt.Sprintf("domain %q not found", domain), "run 'namecom domain list' to see your domains")
 }
 
 type notFoundError struct {
-	msg string
-	err error
+	msg  string
+	hint string
+	err  error
 }
 
 func (e *notFoundError) Error() string { return e.msg }
 func (e *notFoundError) Unwrap() error { return e.err }
 
-// UserHint is empty: the message names the object and says what to do, and
-// the 404's generic hint underneath would only repeat it.
-func (e *notFoundError) UserHint() string { return "" }
+// UserHint replaces the 404's generic "check the name or ID for typos".
+func (e *notFoundError) UserHint() string { return e.hint }

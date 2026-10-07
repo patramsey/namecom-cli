@@ -115,7 +115,7 @@ func TestTransferCancel_ChecksTheTransferFirst(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 		err := runCancel(cmdForTransferGet(t, srv), []string{"typo.com"})
-		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `no transfer found for "typo.com"`) {
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `transfer of "typo.com" not found`) {
 			t.Errorf("runCancel = %v, want a not-found error naming the domain", err)
 		}
 		if len(prompts) != 0 {

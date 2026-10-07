@@ -10,6 +10,43 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- Mistakes caught before any request is sent are usage errors (exit 2), not
+  API failures (exit 1) (#291): a vanity nameserver hostname outside its
+  domain (`vanity-ns get example.com ns1.other.com`, and the same in
+  `create`, `update` and `delete`), and `config use` with a profile the
+  config does not have, which now lists the profiles there are.
+  **Scripts**: these now exit 2 with a JSON error envelope of type `usage`,
+  where they exited 1 with type `api`.
+- A not-found error names what is missing and puts what to run in the hint
+  (#291). `domain get`, `url get`, `email get`, `order get`, `transfer get`,
+  `dnssec get`, `vanity-ns get` and `dns update`/`delete` folded the advice
+  into the message (`domain "x" not found — run 'namecom domain list' …`)
+  and left `error.hint` empty; `dns export`, `email list`, `url list`,
+  `dnssec list`, `vanity-ns list` and `domain auth-code` said only "Not
+  Found" or "Domain not found." with "check the name or ID for typos". Every
+  one now says, for example, `domain "x" not found` with the hint `run
+  'namecom domain list' to see your domains`; in a table that is the `✗`
+  line and the `→` line. **Scripts**: `error.message` for these no longer
+  contains the advice, which is in `error.hint`, and `transfer get` and
+  `transfer cancel` say `transfer of "x" not found` where they said `no
+  transfer found for "x"`. The exit code is still 4.
+- `--jq` with `-o table` or `-o tsv`, and `-q` with `--fields`, printed
+  their usage error as the JSON envelope when stdout was not a terminal,
+  though `-o` had asked for text (#291). They now print the `✗` line, as
+  other usage errors do. **Scripts**: with `-o table` or `-o tsv`, stderr
+  for these is no longer JSON.
+- An unknown flag before the command, as in `namecom --bogus domain list`,
+  is reported as `unknown flag: --bogus` (#291). It said `unknown command
+  "list" for "namecom"`, naming the word after the one cobra had taken as
+  the flag's value. An argument to `status`, `version`, `auth
+  login`/`status`/`logout`, `config list-profiles` or `config show` says
+  `namecom status takes no arguments, got "extra"`, as other commands do,
+  rather than `unknown command "extra"`. Both still exit 2.
+- The API's "Method Not Allowed", as a 405 or as the 404 it gives `POST
+  /core/v1/orders`, no longer gets the hint "check the name or ID for
+  typos" (#291). It says the path does not accept that method, and for a
+  `namecom api` call that `-f` or `-F` made a POST, to pass `-X GET`. The
+  exit code and `error.type` still follow the status.
 - `email create` for a mailbox that already exists reported "Created … →
   <your --to>" and exited 0, though the API had changed nothing and the
   mailbox still forwarded to its old address (#283). It now fails (exit 1)

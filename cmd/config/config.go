@@ -27,7 +27,7 @@ var listProfilesCmd = &cobra.Command{
 	Aliases: []string{"profiles", "ls"},
 	Short:   "List all configured credential profiles",
 	Example: `  namecom config list-profiles`,
-	Args:    cobra.NoArgs,
+	Args:    cmdutil.NoArgs,
 	RunE:    runListProfiles,
 }
 
@@ -46,7 +46,7 @@ var showCmd = &cobra.Command{
 	Short: "Show resolved credentials for the active profile",
 	Example: `  namecom config show
   namecom config show --profile sandbox`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runShow,
 }
 
@@ -181,7 +181,19 @@ func runUse(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	if _, ok := cfgFile.Profiles[profile]; !ok {
-		return fmt.Errorf("profile %q not found — run 'namecom config list-profiles' to see available profiles", profile)
+		// A usage error: the argument names nothing in the config, and no
+		// request is involved. It was typed "api", exit 1 (#291).
+		names := make([]string, 0, len(cfgFile.Profiles))
+		for k := range cfgFile.Profiles {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		available := "no profiles configured"
+		if len(names) > 0 {
+			available = "available: " + strings.Join(names, ", ")
+		}
+		return cmdutil.NewUsageErrorHint(fmt.Errorf("profile %q not found (%s)", profile, available),
+			fmt.Sprintf("run 'namecom auth login --profile %s' to create it", profile))
 	}
 	if cmdutil.IsDryRun(cmd) {
 		PreviewChange(out, Change{

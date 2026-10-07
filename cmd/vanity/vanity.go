@@ -128,6 +128,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
+			// The API's own "Domain not found." does not name it (#291).
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.DomainNotFound(err, domain)
+			}
 			return api.FromSDKError(err)
 		}
 		all = append(all, cmdutil.NonNil(result.VanityNameservers)...)
@@ -237,7 +241,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 // Found" does not say what was missing.
 func vanityError(err error, domain, hostname string) error {
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("vanity nameserver %s not found on %s — run 'namecom vanity-ns list %s' to see them", hostname, domain, domain))
+		return cmdutil.NotFound(err, fmt.Sprintf("vanity nameserver %s not found on %s", hostname, domain),
+			fmt.Sprintf("run 'namecom vanity-ns list %s' to see its vanity nameservers", domain))
 	}
 	return api.FromSDKError(err)
 }
@@ -277,11 +282,11 @@ func vanityLabel(name, hostname, domain string) (string, error) {
 	}
 	suffix := "." + domain
 	if !strings.HasSuffix(h, suffix) {
-		return "", fmt.Errorf("%s %q must be a subdomain of %s (e.g. ns1.%s)", name, hostname, domain, domain)
+		return "", cmdutil.NewUsageError(fmt.Errorf("%s %q must be a subdomain of %s (e.g. ns1.%s)", name, hostname, domain, domain))
 	}
 	label := strings.TrimSuffix(h, suffix)
 	if label == "" {
-		return "", fmt.Errorf("%s %q must include a subdomain (e.g. ns1.%s)", name, hostname, domain)
+		return "", cmdutil.NewUsageError(fmt.Errorf("%s %q must include a subdomain (e.g. ns1.%s)", name, hostname, domain))
 	}
 	return label, validVanityName(label, domain)
 }

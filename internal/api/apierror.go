@@ -67,9 +67,21 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("HTTP %d", e.StatusCode)
 }
 
+// MethodNotAllowed reports whether the API refused the request's method
+// rather than its path: a 405, or a 404 whose message says "Method Not
+// Allowed", as the API answers POST /core/v1/orders (#282). Its hint was the
+// 404's "check the name or ID for typos", which is no help (#291).
+func (e *APIError) MethodNotAllowed() bool {
+	return e.StatusCode == http.StatusMethodNotAllowed ||
+		(e.StatusCode == http.StatusNotFound && strings.EqualFold(strings.TrimSpace(e.Message), "Method Not Allowed"))
+}
+
 // UserHint returns an actionable next-step hint for display alongside the
 // error, chosen by status and by whether the request was a write (#234).
 func (e *APIError) UserHint() string {
+	if e.MethodNotAllowed() {
+		return "the path exists but does not accept this method — check which method the API documents for it"
+	}
 	switch e.StatusCode {
 	case 401:
 		hint := "the API rejected the username or token — run 'namecom auth login' to replace them"

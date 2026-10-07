@@ -65,7 +65,7 @@ func findRecord(cmd *cobra.Command, domain, rtype, host, answer string) (*coreap
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return nil, cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+			return nil, cmdutil.DomainNotFound(err, domain)
 		}
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
 	}); err != nil {
 		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+			return cmdutil.DomainNotFound(err, domain)
 		}
 		return err
 	}

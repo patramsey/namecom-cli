@@ -249,7 +249,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+			return cmdutil.DomainNotFound(err, domain)
 		}
 		return err
 	}
@@ -512,7 +512,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		// instead of 4.
 		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
+			return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
+				fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
 		}
 		return err
 	}
@@ -669,7 +670,8 @@ func runDelete(cmd *cobra.Command, args []string) error {
 					absent = append(absent, id)
 					continue
 				}
-				return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s — run 'namecom dns list %s' to see record IDs", id, domain, domain))
+				return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
+					fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
 			}
 			return err
 		}
@@ -744,6 +746,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	records, _, _, err := fetchRecords(cmd, domain, 1, nil, true)
 	if err != nil {
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.DomainNotFound(err, domain)
+		}
 		return err
 	}
 
@@ -848,7 +853,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		stop()
 		if err != nil {
 			if cmdutil.IsNotFound(err) {
-				return cmdutil.NotFound(err, fmt.Sprintf("domain %q not found — run 'namecom domain list' to see your domains", domain))
+				return cmdutil.DomainNotFound(err, domain)
 			}
 			return err
 		}

@@ -403,7 +403,8 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	// was inferred, since that is the surprise; so does a warning, which a
 	// dry run and --yes print too.
 	label := method
-	if from := inferredFrom(len(args), method, dataSet); from != "" {
+	from := inferredFrom(len(args), method, dataSet)
+	if from != "" {
 		label += " (inferred from " + from + ")"
 		hint := "; pass -X POST to say so"
 		if from == "-f" || from == "-F" {
@@ -418,8 +419,23 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		rb, _ := b.(rawBody) // nil for NoBody
 		return send(ctx, rb)
 	})
+	// A list path refuses the POST that -f made of it (#291).
+	if apiErr, ok := errors.AsType[*api.APIError](err); ok && apiErr.MethodNotAllowed() && (from == "-f" || from == "-F") {
+		return &methodError{err: err, hint: from + " made this a POST, which this path does not accept; pass -X GET to send the fields as query parameters"}
+	}
 	return err
 }
+
+// methodError gives an API error a hint of its own, keeping the error, and so
+// its exit code and details, underneath.
+type methodError struct {
+	err  error
+	hint string
+}
+
+func (e *methodError) Error() string    { return e.err.Error() }
+func (e *methodError) Unwrap() error    { return e.err }
+func (e *methodError) UserHint() string { return e.hint }
 
 // paginate GETs target and each nextPage after it, and prints the pages
 // merged into one document. A reply that is not a JSON object has no pages,

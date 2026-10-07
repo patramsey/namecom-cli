@@ -161,6 +161,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
+			// The API's own "Domain not found." does not name it (#291).
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.DomainNotFound(err, domain)
+			}
 			return api.FromSDKError(err)
 		}
 		all = append(all, cmdutil.NonNil(result.URLForwarding)...)
@@ -243,7 +247,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s — run 'namecom url list %s' to see forwarding IDs", id, domain, domain))
+		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
+			fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
 	}
 	if err != nil {
 		return err
@@ -575,7 +580,8 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s — run 'namecom url list %s' to see forwarding IDs", id, domain, domain))
+		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
+			fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
 	}
 	if err != nil {
 		return err

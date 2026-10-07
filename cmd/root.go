@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/patramsey/namecom-cli/internal/update"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Use the shared context keys from cmdutil so subpackages can retrieve values
@@ -137,7 +139,7 @@ func Execute() {
 // the outcome on stderr: the error, or on success any warnings JSON and YAML
 // modes kept back (#240). Execute is this plus os.Exit, so tests call run.
 func run() int {
-	err := suggestFor(cmdutil.ClassifyCobraUsage(rootCmd.Execute()))
+	err := suggestFor(misparsedFlag(cmdutil.ClassifyCobraUsage(rootCmd.Execute()), os.Args[1:]))
 	// --fields and --jq print the command's output once it has returned,
 	// failed or not: `dns sync` prints a document when a change fails. The
 	// command's own error is the one reported.
@@ -187,6 +189,54 @@ func suggestFor(err error) error {
 		}
 	}
 	return cmdutil.UnknownCommand(u.Word, u.Path, suggestions)
+}
+
+// misparsedFlag reports an unknown flag typed before the subcommand as the
+// unknown flag, not as the unknown command cobra makes of it (#291).
+//
+// To find the subcommand, cobra skips each flag and, unless it is a known
+// boolean, the word after it as its value. An unknown `--bogus` therefore
+// swallows the command name: `namecom --bogus domain list` failed with
+// `unknown command "list" for "namecom"`, and `--bogus -o json domain list`
+// with `unknown command "json"`. When args hold a flag the root does not
+// know, that flag is the mistake.
+func misparsedFlag(err error, args []string) error {
+	u, ok := errors.AsType[*cmdutil.UnknownCommandError](err)
+	// Without the word in args, these are not the arguments cobra parsed.
+	if !ok || u.Path != rootCmd.CommandPath() || !slices.Contains(args, u.Word) {
+		return err
+	}
+	// Find failed before cobra added these, and before it merged the
+	// persistent flags into Flags(); both are idempotent.
+	rootCmd.InitDefaultHelpFlag()
+	rootCmd.InitDefaultVersionFlag()
+	flags := rootCmd.Flags()
+	flags.AddFlagSet(rootCmd.PersistentFlags())
+	// Up to the first word that is not a flag or a known flag's value: an
+	// unknown flag after it is not what cobra misread.
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		var f *pflag.Flag
+		switch {
+		case a == "--" || !strings.HasPrefix(a, "-") || a == "-":
+			return err
+		case strings.HasPrefix(a, "--"):
+			name, _, _ := strings.Cut(a[2:], "=")
+			if f = flags.Lookup(name); f == nil {
+				return cmdutil.FlagError(rootCmd, fmt.Errorf("unknown flag: --%s", name))
+			}
+		default:
+			if f = flags.ShorthandLookup(a[1:2]); f == nil {
+				return cmdutil.FlagError(rootCmd, fmt.Errorf("unknown shorthand flag: %q in %s", a[1], a))
+			}
+		}
+		// `-o json` and `--output json`: skip the value. `-ojson` and
+		// `--output=json` carry it, and a boolean takes none.
+		if !strings.Contains(a, "=") && f.NoOptDefVal == "" && (strings.HasPrefix(a, "--") || len(a) == 2) {
+			i++
+		}
+	}
+	return err
 }
 
 // checksForUpdates reports whether an invocation with these arguments looks
@@ -489,7 +539,18 @@ func errorOutput() *output.Config {
 	if out, _, err := buildOutputConfig(); err == nil {
 		return out
 	}
-	return output.DefaultConfig()
+	// The flags do not go together — `--jq … -o table`, `-q --fields` — but
+	// a valid -o and --color still say how to show that (#291). Only a bad
+	// value for one of them leaves its default.
+	out := output.DefaultConfig()
+	if f, err := output.ParseFormat(gf.output); gf.output != "" && err == nil {
+		out.Format = f
+	}
+	if cm, err := output.ParseColorMode(gf.color); gf.color != "auto" && err == nil {
+		out.Color = cm
+	}
+	out.ApplyColorProfile()
+	return out
 }
 
 // scanOutputFlag returns the value of the last -o/--output in args, in any

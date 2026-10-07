@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -532,6 +534,20 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode: 2,
 		},
 		{
+			// A check made before any request is how the command was
+			// invoked, not an API failure (#291).
+			name:     "vanity-ns hostname outside the domain",
+			args:     []string{"vanity-ns", "get", "example.com", "ns1.other.com"},
+			wantType: output.ErrorTypeUsage,
+			wantCode: 2,
+		},
+		{
+			name:     "config use for a profile that does not exist",
+			args:     []string{"config", "use", "nosuch", "--dry-run"},
+			wantType: output.ErrorTypeUsage,
+			wantCode: 2,
+		},
+		{
 			name:     "confirmation required",
 			args:     []string{"dns", "delete", "example.com", "42"},
 			routes:   map[string]reply{"GET /core/v1/domains/example.com/records/42": {200, `{"id":42,"type":"A","answer":"192.0.2.1"}`}},
@@ -572,6 +588,64 @@ func TestJSONContract_Errors(t *testing.T) {
 				if list, _ := doc["warnings"].([]any); len(list) == 0 {
 					t.Errorf("the --base-url warning should be in the envelope's warnings, got:\n%s", stderr)
 				}
+			}
+		})
+	}
+}
+
+// TestJSONContract_NotFoundHint pins #291: a not-found error names what is
+// missing in error.message and says what to run in error.hint. The advice was
+// folded into the message, with no hint, for the commands that named the
+// object, and the domain-scoped lists said only "Not Found" or "Domain not
+// found." with the generic hint. Each sends one request, as before.
+func TestJSONContract_NotFoundHint(t *testing.T) {
+	withConfig(t, loneProfile)
+	domainMsg, domainHint := `domain "example.com" not found`, "run 'namecom domain list' to see your domains"
+	tests := []struct {
+		args      []string
+		msg, hint string
+	}{
+		{[]string{"domain", "get", "example.com"}, domainMsg, domainHint},
+		{[]string{"domain", "auth-code", "example.com"}, domainMsg, domainHint},
+		{[]string{"dns", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"dns", "export", "example.com"}, domainMsg, domainHint},
+		{[]string{"email", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"url", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"dnssec", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"vanity-ns", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"url", "get", "example.com", "7"}, "URL forwarding 7 not found on example.com",
+			"run 'namecom url list example.com' to see its forwarding IDs"},
+		{[]string{"email", "get", "example.com", "info"}, "mailbox info@example.com not found",
+			"run 'namecom email list example.com' to see its mailboxes"},
+		{[]string{"dnssec", "get", "example.com", "ABCD"}, "DNSSEC key ABCD not found on example.com",
+			"run 'namecom dnssec list example.com' to see its keys"},
+		{[]string{"vanity-ns", "get", "example.com", "ns1.example.com"}, "vanity nameserver ns1.example.com not found on example.com",
+			"run 'namecom vanity-ns list example.com' to see its vanity nameservers"},
+		{[]string{"order", "get", "12"}, "order 12 not found", "run 'namecom order list' to see your orders"},
+		{[]string{"transfer", "get", "example.com"}, `transfer of "example.com" not found`,
+			"run 'namecom transfer list' to see active transfers"},
+	}
+	for _, tc := range tests {
+		t.Run(strings.Join(tc.args[:2], " "), func(t *testing.T) {
+			resetFlags(t, tc.args)
+			var n atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				n.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			}))
+			t.Cleanup(srv.Close)
+			_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "-o", "json"}, tc.args...)...)
+			if code != 4 {
+				t.Errorf("exit %d, want 4", code)
+			}
+			if got := n.Load(); got != 1 {
+				t.Errorf("sent %d requests, want 1", got)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			if e["type"] != output.ErrorTypeNotFound || e["message"] != tc.msg || e["hint"] != tc.hint {
+				t.Errorf("want type not_found, message %q, hint %q; got:\n%s", tc.msg, tc.hint, stderr)
 			}
 		})
 	}
@@ -684,5 +758,82 @@ func TestJSONContract_UnknownCommandSuggestions(t *testing.T) {
 	list, _ := e["suggestions"].([]any)
 	if e["type"] != output.ErrorTypeUsage || len(list) == 0 || list[0] != "namecom dns" {
 		t.Errorf(`want type usage and suggestions ["namecom dns", …], got:\n%s`, stderr)
+	}
+}
+
+// TestJSONContract_APIMethodNotAllowed pins #291's 405 item, from #282:
+// `namecom api /core/v1/orders -f …` sends a POST, which the API answers
+// with 404 "Method Not Allowed", and the hint said to check the name or ID
+// for typos. It now says -f made the POST and to pass -X GET; with the
+// method given, the hint is about the method. One request either way.
+func TestJSONContract_APIMethodNotAllowed(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args       []string
+		status     int
+		wantHint   string
+		wantCode   int
+		wantStatus float64
+	}{
+		{[]string{"api", "/core/v1/orders", "-f", "perPage=1", "--yes"}, 404, "pass -X GET", 4, 404},
+		{[]string{"api", "/core/v1/orders", "-f", "perPage=1", "--yes"}, 405, "pass -X GET", 1, 405},
+		{[]string{"api", "-X", "DELETE", "/core/v1/orders", "--yes"}, 405, "does not accept this method", 1, 405},
+	} {
+		t.Run(fmt.Sprint(tc.args[2], " ", tc.status), func(t *testing.T) {
+			resetFlags(t, tc.args)
+			var n atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				n.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"message":"Method Not Allowed"}`))
+			}))
+			t.Cleanup(srv.Close)
+			_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "-o", "json"}, tc.args...)...)
+			if code != tc.wantCode {
+				t.Errorf("exit %d, want %d", code, tc.wantCode)
+			}
+			if got := n.Load(); got != 1 {
+				t.Errorf("sent %d requests, want 1", got)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			hint, _ := e["hint"].(string)
+			if !strings.Contains(hint, tc.wantHint) || strings.Contains(hint, "typos") || e["status"] != tc.wantStatus {
+				t.Errorf("want status %v and a hint containing %q, got:\n%s", tc.wantStatus, tc.wantHint, stderr)
+			}
+		})
+	}
+}
+
+// TestJSONContract_WrongTokenNamed pins #291: an unknown flag ahead of the
+// subcommand was reported as an unknown command, naming whatever word cobra
+// had skipped to, and an argument to a command that takes none was an
+// "unknown command" too.
+func TestJSONContract_WrongTokenNamed(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--bogus", "domain", "list"}, "unknown flag: --bogus"},
+		{[]string{"--bogus", "-o", "json", "domain", "list"}, "unknown flag: --bogus"},
+		{[]string{"-Z", "domain", "list"}, `unknown shorthand flag: 'Z' in -Z`},
+		{[]string{"--sandbox", "nosuch"}, `unknown command "nosuch" for "namecom"`},
+		{[]string{"status", "extra"}, `namecom status takes no arguments, got "extra"`},
+		{[]string{"version", "extra"}, `namecom version takes no arguments, got "extra"`},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			prevArgs := os.Args
+			t.Cleanup(func() { os.Args = prevArgs })
+			args := append([]string{"-o", "json"}, tc.args...)
+			os.Args = append([]string{"namecom"}, args...)
+			_, stderr, code := runContract(t, args...)
+			if code != 2 {
+				t.Errorf("exit %d, want 2", code)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			if e["type"] != output.ErrorTypeUsage || e["message"] != tc.want {
+				t.Errorf("want type usage, message %q; got:\n%s", tc.want, stderr)
+			}
+		})
 	}
 }
