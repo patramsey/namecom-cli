@@ -165,9 +165,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 	for {
 		result, err := client.SDK().Transfers.ListTransfers(cmd.Context(),
 			&coreapigo.ListTransfersRequest{Page: &page, PerPage: paging.PerPage})
+		if page == listPage && cmdutil.PageOutOfRange(page, err) {
+			lastResult = &coreapigo.ListTransfersResponse{}
+			break
+		}
 		if err != nil {
 			spin.Stop()
 			return err
+		}
+		if page == listPage && cmdutil.PastLastPage(page, paging.PerPage, len(result.Transfers), result.TotalCount, result.LastPage) {
+			lastResult = &coreapigo.ListTransfersResponse{}
+			break
 		}
 		transfers = append(transfers, cmdutil.NonNil(result.Transfers)...)
 		lastResult = result

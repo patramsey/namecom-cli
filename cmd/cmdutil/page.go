@@ -1,9 +1,13 @@
 package cmdutil
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"strings"
 
+	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -121,6 +125,47 @@ func EmptyPage(out *output.Config, page int, headers []string, noun, hint string
 	}
 	fmt.Fprintln(out.EWriter, out.Dim(fmt.Sprintf("No %s on page %d.", output.PluralNoun(2, noun), page)))
 	out.Hint("That is past the last page; leave out --page to start at the first")
+}
+
+// PastLastPage reports whether the page a list asked for, perPage at a time
+// (nil for the API's default), is past the end of the list, judged from the
+// reply: n items, total the totalCount it reported (0 when it did not) and
+// lastPage (nil or 0 when it did not). The caller then shows an empty page,
+// whatever the reply held.
+//
+// Past the end, the API does not answer with an empty page. Where the list
+// fits on one page, `domain list` and `order list` answer with page 1 again,
+// so a script paging until a page came back empty never stopped. `dns list`
+// detected that from the reply's from, which the API gets wrong: at perPage
+// 1, page 2 says from:1, so a real page was thrown away. Only the count is
+// trusted here. Each test is one a real page cannot fail: no page is past
+// lastPage, page p starts after (p-1)*perPage items, and a page after the
+// first cannot hold every item.
+func PastLastPage(page int, perPage *int, n, total int, lastPage *int) bool {
+	if page <= 1 {
+		return false
+	}
+	if lastPage != nil && *lastPage > 0 && page > *lastPage {
+		return true
+	}
+	if total <= 0 {
+		return false
+	}
+	if perPage != nil && (page-1)*(*perPage) >= total {
+		return true
+	}
+	return n >= total
+}
+
+// PageOutOfRange reports whether err is how the API refuses a page past the
+// end of a list that spans several: a 400, "Page exceeds available pages".
+// For page 2 or later that is an empty page, as PastLastPage makes the other
+// answers, not a failure: `domain list --page 8` past 7 pages exited 1.
+func PageOutOfRange(page int, err error) bool {
+	var apiErr *api.APIError
+	return page > 1 && errors.As(api.NormalizeError(err), &apiErr) &&
+		apiErr.StatusCode == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(apiErr.Message), "page exceeds available pages")
 }
 
 // Int32Page narrows the SDK's *int page number to the *int32 the output

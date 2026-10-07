@@ -70,34 +70,6 @@ func cmdForCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	return cmd
 }
 
-// TestPastLastPage covers the clamp detection behind #290: the records API
-// answers a page past the last with an earlier page.
-func TestPastLastPage(t *testing.T) {
-	two, fiveHundred := 2, 500
-	for _, tc := range []struct {
-		name    string
-		page    int
-		perPage *int
-		from    int
-		want    bool
-	}{
-		{"page 1 is never past the end", 1, &two, 1, false},
-		{"page 3 of 2 starts at 5", 3, &two, 5, false},
-		{"page 3 of 2 answered with page 1", 3, &two, 1, true},
-		{"page 3 of 2 answered with page 2", 3, &two, 3, true},
-		{"page 2 at the default, answered with page 1", 2, nil, 1, true},
-		{"page 2 at the default starts at 501", 2, nil, 501, false},
-		{"page 2 of 500 answered with page 1", 2, &fiveHundred, 1, true},
-		{"from absent is taken at its word", 5, &two, 0, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := pastLastPage(tc.page, tc.perPage, tc.from); got != tc.want {
-				t.Errorf("pastLastPage(%d, %v, %d) = %v, want %v", tc.page, tc.perPage, tc.from, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestDNSCreate_UnknownType(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForCreate(t, srv)

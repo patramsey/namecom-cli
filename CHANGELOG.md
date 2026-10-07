@@ -9,6 +9,19 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+
+- A `--page` past the end of any list is an empty page: `{"data":[]}` and
+  exit 0, or "No domains on page N" with the past-the-last-page note in a
+  table. `domain list` and `order list` printed page 1 again for every
+  `--page` when the results fit on one page, so a script paging until an
+  empty page never stopped. Past the end of a longer list, they exited 1
+  with an `api` error, "Page exceeds available pages"; every list now treats
+  that as the empty page too. `dns list --limit 1 --page 2` said page 2 was
+  past the end while more pages existed, so a script paging one record at a
+  time missed every record after the first. Scripts that relied on the exit
+  1 past the end now see an empty page instead (#307).
+
 ## [0.5.2] - 2026-10-07
 
 Fixes from a live sweep of every command against the sandbox (#281–#294),

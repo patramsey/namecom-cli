@@ -133,6 +133,10 @@ func runList(cmd *cobra.Command, args []string) error {
 	for {
 		result, err := client.SDK().EmailForwardings.ListEmailForwardings(cmd.Context(),
 			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
+		if page == listPage && cmdutil.PageOutOfRange(page, err) {
+			lastResult = &coreapigo.ListEmailForwardingsResponse{}
+			break
+		}
 		if err != nil {
 			spin.Stop()
 			// The API's own "Domain not found." does not name it (#291).
@@ -140,6 +144,11 @@ func runList(cmd *cobra.Command, args []string) error {
 				return cmdutil.DomainNotFound(err, domain)
 			}
 			return api.FromSDKError(err)
+		}
+		// The reply carries no totalCount, so only lastPage can say.
+		if page == listPage && cmdutil.PastLastPage(page, paging.PerPage, len(result.EmailForwarding), 0, result.LastPage) {
+			lastResult = &coreapigo.ListEmailForwardingsResponse{}
+			break
 		}
 		all = append(all, cmdutil.NonNil(result.EmailForwarding)...)
 		lastResult = result

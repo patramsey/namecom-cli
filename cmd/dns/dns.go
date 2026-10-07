@@ -946,7 +946,8 @@ func runImport(cmd *cobra.Command, args []string) error {
 //
 // A start past the last page yields no records. The API answers it with page
 // 1 instead (#290), so a script paging `dns list --page N` until a page came
-// back empty never stopped.
+// back empty never stopped; further past, with a 400. cmdutil.PastLastPage
+// and PageOutOfRange say when.
 func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, err error) {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
@@ -964,10 +965,13 @@ func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, al
 			Page:       &page,
 			PerPage:    perPage,
 		})
+		if page == start && cmdutil.PageOutOfRange(page, err2) {
+			return nil, false, nil, nil
+		}
 		if err2 != nil {
 			return nil, false, nil, api.FromSDKError(err2)
 		}
-		if page == start && pastLastPage(start, perPage, result.From) {
+		if page == start && cmdutil.PastLastPage(start, perPage, len(result.Records), result.TotalCount, result.LastPage) {
 			return nil, false, nil, nil
 		}
 		records = append(records, cmdutil.NonNil(result.Records)...)
@@ -987,23 +991,6 @@ func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, al
 		nextPage = lastNextPage
 	}
 	return records, hasMore, nextPage, nil
-}
-
-// pastLastPage reports whether a records page asked for as page, perPage
-// at a time (nil for the API's default), came back as an earlier page, which
-// is how the API answers a page past the last. Page p starts at record
-// (p-1)*perPage+1, and at least at record p whatever the page size, so a
-// page that starts before that is not the one asked for. from is 0 when the
-// response did not say, and is then taken at its word.
-func pastLastPage(page int, perPage *int, from int) bool {
-	if page <= 1 || from <= 0 {
-		return false
-	}
-	first := page
-	if perPage != nil {
-		first = (page-1)*(*perPage) + 1
-	}
-	return from < first
 }
 
 // recordName is the name a record answers to: host joined to the domain, or
