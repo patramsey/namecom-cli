@@ -1913,6 +1913,9 @@ func (c *Config) DryRun(method, path string, body any) error {
 // q is DryRun exactly.
 func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context string) error {
 	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body, Quote: q}
+	if c.filter != nil {
+		c.filter.dryRun = true
+	}
 	switch c.Format {
 	case FormatJSON:
 		return dryRunErr(c.JSON(req))

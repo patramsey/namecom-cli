@@ -106,6 +106,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `pendingTransferDomains` is `null` when the transfers lookup failed (when
   `pendingTransfers` is absent), and in `-o tsv` an empty list is `[]`
   rather than an empty cell.
+- `-o tsv` prints one shape per command whether or not `--fields` is given.
+  **Scripts**: `url get`, `email get` and `order get` print field<TAB>value
+  rows with the `-o json` keys, as they did with `--fields`, rather than a
+  header and a row; `order get`'s items are a JSON array in the
+  `orderItems` row, where they were a second table in the same stream. A
+  dry run with `--fields` prints a header and a row, as it does without.
+  `open --dry-run -o tsv` prints the `url`, `opened` and `dryRun` rows
+  rather than the text line.
 
 ## [0.5.2] - 2026-10-07
 

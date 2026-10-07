@@ -295,6 +295,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return out.JSON(o)
 	case output.FormatYAML:
 		return out.YAML(o)
+	case output.FormatTSV:
+		// One object is field<TAB>value rows, the -o json keys, with the
+		// items as a JSON array in the orderItems cell. It printed the order
+		// as a list row, then the items as a second table in the same
+		// stream, which with --no-header could not be told apart.
+		return out.TSVObject(o)
 	default:
 		orderTable(out, []*coreapigo.Order{o})
 		// Show the line items. Their IDs are the required input to

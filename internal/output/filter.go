@@ -40,6 +40,10 @@ type Filter struct {
 	// the first document has been looked at.
 	known []string
 	noted bool
+
+	// dryRun is set when the document is one request a --dry-run previewed,
+	// which TSV prints as a list (see fieldTable).
+	dryRun bool
 }
 
 // FilterError is a --fields or --jq that does not fit the command's output:
@@ -177,7 +181,7 @@ func (c *Config) renderFiltered(w *bytes.Buffer, raw []byte, f *Filter) error {
 		case FormatYAML:
 			err = writeYAML(w, doc)
 		default:
-			err = c.fieldTable(w, doc, f.Fields)
+			err = c.fieldTable(w, doc, f.Fields, f.dryRun)
 		}
 		if err != nil {
 			return err
@@ -225,12 +229,20 @@ func runJQ(w io.Writer, code *gojq.Code, doc any) error {
 //   - one object is field<TAB>value rows, as a command that shows one object
 //     prints it. It was a one-row table, so --fields changed the layout of
 //     `domain get` from rows to columns.
-func (c *Config) fieldTable(w io.Writer, doc any, fields []string) error {
+//
+// A dry run's request is one object, but TSV prints a dry run as a list —
+// method, path and body columns — so with dryRun set it is a list of one
+// there, and keeps that shape with --fields. It was field<TAB>value rows
+// with --fields and a header and a row without.
+func (c *Config) fieldTable(w io.Writer, doc any, fields []string, dryRun bool) error {
 	prev := c.Writer
 	c.Writer = w
 	defer func() { c.Writer = prev }()
 
 	items, isList := listItems(doc)
+	if !isList && dryRun && c.Format == FormatTSV {
+		items, isList = []any{doc}, true
+	}
 	if !isList {
 		obj, _ := doc.(*object)
 		rows := make([][]string, len(fields))

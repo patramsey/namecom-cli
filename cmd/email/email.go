@@ -243,6 +243,10 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return out.JSON(entry)
 	case output.FormatYAML:
 		return out.YAML(entry)
+	case output.FormatTSV:
+		// One object is field<TAB>value rows, the -o json keys, as it is
+		// with --fields: it was the list's header and one row.
+		return out.TSVObject(entry)
 	default:
 		out.Table(
 			[]string{"MAILBOX", "FORWARDS TO"},
