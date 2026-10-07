@@ -377,11 +377,21 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	})
+	recovered := false
+	if err != nil && host == "@" && isDuplicateRecord(err) {
+		entry, err = createdAnyway(cmd, body, err)
+		recovered = err == nil
+	}
 	if err != nil {
 		return err
 	}
 	if !sent {
 		return nil
+	}
+	if recovered {
+		out.Warn(fmt.Sprintf("the API answered 400 Duplicate Record, but the forwarding was created (id %d). "+
+			"The apex of %s likely has A records left by deleted forwardings: see 'namecom dns list %s --host @ --type A', "+
+			"and remove the ones you don't need with 'namecom dns delete %s <id>'", *entry.ID, domain, domain, domain))
 	}
 
 	if out.QuietMode {
@@ -393,11 +403,21 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// A recovered create says "changed": true, since the error it recovered
+	// from could read as nothing having been made.
+	var doc any = entry
+	if recovered && (out.Format == output.FormatJSON || out.Format == output.FormatYAML) {
+		withChanged, err := output.WithChanged(entry, true)
+		if err != nil {
+			return err
+		}
+		doc = withChanged
+	}
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(entry)
+		return out.JSON(doc)
 	case output.FormatYAML:
-		return out.YAML(entry)
+		return out.YAML(doc)
 	default:
 		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, host, createForwardsTo))
 	}
@@ -624,6 +644,55 @@ func runDelete(cmd *cobra.Command, args []string) error {
 			domain, domain, domain))
 	}
 	return nil
+}
+
+// isDuplicateRecord reports whether err is the API's 400 "Parameter Value
+// Error - Duplicate Record".
+func isDuplicateRecord(err error) bool {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	return ok && apiErr.StatusCode == 400 &&
+		strings.Contains(apiErr.Details+" "+apiErr.Message, "Duplicate Record")
+}
+
+// createdAnyway is an apex create that the API answered with 400 Duplicate
+// Record. It can store the forwarding and still answer that: name.com picks
+// an A record for the apex, and when its pick matches an A record left by an
+// earlier, deleted forwarding, the forwarding is created and the 400 sent
+// anyway. Reported as a failure, a script retried a write that had landed,
+// or cleaned up one it believed it never made.
+//
+// One list of the domain's forwardings decides it, and only on this error,
+// so a create that succeeds still costs one request. A forwarding on the
+// apex with the destination and type sent is returned as the result. When
+// there is none, cause is returned as a conflict naming the likely culprit;
+// when the list fails, as one saying the outcome is unknown.
+func createdAnyway(cmd *cobra.Command, body coreapigo.URLForwardingInput, cause error) (*coreapigo.URLForwardingResponse, error) {
+	out := cmdutil.Out(cmd)
+	client := cmdutil.APIClient(cmd)
+	domain := body.DomainName
+
+	stop := out.Spin("Checking whether the forwarding was created…")
+	page, perPage := 1, cmdutil.MaxPerPage
+	list, err := client.SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
+		&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: &perPage})
+	stop()
+	if err != nil {
+		return nil, &cmdutil.ConflictError{Err: cause,
+			Hint: fmt.Sprintf("the forwarding may have been created anyway: run 'namecom url list %s' to check", domain)}
+	}
+	var found *coreapigo.URLForwardingResponse
+	for _, f := range cmdutil.NonNil(list.URLForwarding) {
+		if f.ID != nil && displayHost(f.Host) == "@" && f.ForwardsTo == body.ForwardsTo &&
+			string(f.Type) == string(body.Type) && (found == nil || *f.ID > *found.ID) {
+			found = f
+		}
+	}
+	if found == nil {
+		return nil, &cmdutil.ConflictError{Err: cause,
+			Hint: fmt.Sprintf("the apex of %s likely has A records left by deleted forwardings: see 'namecom dns list %s --host @ --type A', and remove the ones you don't need with 'namecom dns delete %s <id>'",
+				domain, domain, domain)}
+	}
+	return found, nil
 }
 
 // maskedOnly is the usage error for a non-empty --title or --meta on a

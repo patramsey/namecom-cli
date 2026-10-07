@@ -761,6 +761,34 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/url/forwarding",
 			},
 		},
+		"url create --dry-run": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--dry-run"},
+			want: nil,
+		},
+		"url create, apex 400 Duplicate Record that landed": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--yes"},
+			routes: map[string]reply{
+				"POST /core/v1/domains/example.com/url/forwarding": {400, `{"message":"Invalid Argument","details":"Parameter Value Error - Duplicate Record"}`},
+				"GET /core/v1/urlforwarding/example.com":           {200, `{"urlForwarding":[{"id":9,"host":"","forwardsTo":"https://example.org","type":"redirect"}],"lastPage":1}`},
+			},
+			why: "the API can store an apex forwarding and still answer 400 Duplicate Record; one list, only on that error, tells which (ISSUE-02)",
+			want: []string{
+				"POST /core/v1/domains/example.com/url/forwarding",
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
+		},
+		"url create, apex 400 Duplicate Record that did not land": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--yes"},
+			routes: map[string]reply{
+				"POST /core/v1/domains/example.com/url/forwarding": {400, `{"message":"Invalid Argument","details":"Parameter Value Error - Duplicate Record"}`},
+				"GET /core/v1/urlforwarding/example.com":           {200, `{"urlForwarding":[],"lastPage":1}`},
+			},
+			code: 1,
+			want: []string{
+				"POST /core/v1/domains/example.com/url/forwarding",
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
+		},
 		"url update": {
 			args: []string{"url", "update", "example.com", "7", "--to", "https://example.net", "--yes"},
 			why:  "read-modify-write: unset flags keep the current values",

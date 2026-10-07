@@ -61,6 +61,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `dns import --skip-existing`, the advice is to fix the record and re-run,
   not to add `--skip-existing`. **Scripts:** MX/SRV creates without
   `--priority`, and `--priority` on other types, now exit 2.
+- An apex `url create` that the API answers with `400 … Duplicate Record`
+  is checked against the domain's forwardings before it is reported
+  (ISSUE-02). The API can store the forwarding and still send that error,
+  when the A record it picks for the apex matches one left by a deleted
+  forwarding. If the forwarding is there, the create succeeds with a warning
+  naming the left-over apex A records as the likely cause (in JSON, the entry
+  with `"changed": true` and `{"warnings": […]}` on stderr). If not, it is a
+  `conflict` error (still exit 1; the JSON type was `api`) whose hint names
+  them. Only that error costs the extra request.
 - `url create --host` reads a host as `dns create` does (ISSUE-03): `www`,
   `www.example.com` and `www.example.com.` all forward www, and
   `example.com` is the apex. A fully qualified host was sent as typed and
