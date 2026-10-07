@@ -9,6 +9,34 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `email create` for a mailbox that already exists reported "Created … →
+  <your --to>" and exited 0, though the API had changed nothing and the
+  mailbox still forwarded to its old address (#283). It now fails (exit 1)
+  with `mailbox info@example.com already forwards to old@example.org`, and
+  suggests the `email update` command. **Scripts**: that case now exits 1
+  with a JSON error envelope of type `conflict`, whose `details` is the
+  existing entry, where it printed the entry and exited 0. The success line
+  shows the address the API stored rather than the `--to` value.
+- Email and URL forwarding say what they do to DNS (#286). name.com adds MX
+  records (`mx3`–`mx8.name.com`) and an SPF record when the first mailbox is
+  created, and an A record for an apex URL forwarding; deleting the
+  forwarding leaves them. `email create`'s and `url create`'s help say so,
+  and `email create`, `email delete` and apex `url delete` print a note on
+  stderr naming the records and the `dns delete` command that removes them.
+  No request is added to find out.
+- `url create` and `url update` accepted `--title` and `--meta` on a
+  redirect or 302 forwarding and stored them, where they do nothing (#286).
+  They are now a usage error (exit 2) unless the forwarding is masked; an
+  empty value is still allowed, to clear one left on a redirect. Switching a
+  masked forwarding to another type warns that its title and meta are kept.
+- `email update` and `email delete` on a missing mailbox said only "Not
+  Found"; they now say `mailbox info@example.com not found — run 'namecom
+  email list example.com' …`, as `dns` and `url` do, and still exit 4
+  (#286). `email get` uses the same wording. The `email delete` prompt says
+  where the mailbox forwards; it fetches the mailbox for that only when it
+  will ask, so `--yes` sends one request as before.
+
 ## [0.5.1] - 2026-10-05
 
 Follow-ups to 0.5.0. `namecom api` gains `-X` and works with `-i` and `--jq`

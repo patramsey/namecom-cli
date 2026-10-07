@@ -74,7 +74,12 @@ The default type, redirect, is a 301 (permanent) redirect; 302 is a temporary
 one. masked keeps the domain in the address bar and shows the destination in
 a frame, with --title and --meta for the page around it.
 
-Forwarding a subdomain replaces that host's A records.`,
+Forwarding a subdomain replaces that host's A records, and deleting the
+forwarding removes them. Forwarding the apex adds an A record for it, which
+deleting the forwarding leaves in place: remove it with 'namecom dns delete'.
+
+--title and --meta apply only to masked forwarding; with another type they
+are a usage error.`,
 	Example: `  namecom url create example.com --to https://new-site.com
   namecom url create example.com --host www --to https://new-site.com --type 302
   namecom url create example.com --to https://new-site.com --type masked --title "My Site"`,
@@ -316,6 +321,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidURLForwardingType(createType, "type"); err != nil {
 		return err
 	}
+	if err := maskedOnly(createType, createTitle, createMeta); err != nil {
+		return err
+	}
 
 	// DomainName is the path parameter, not a body field — it is tagged
 	// `json:"-"`. SDK v1.33.5 dropped the CreateURLForwardingRequest wrapper
@@ -388,6 +396,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	id, err := parseID(args[1])
 	if err != nil {
 		return err
+	}
+
+	// A --type that is not masked rules out --title and --meta before the
+	// GET; without --type, the current type decides, below.
+	if cmd.Flags().Changed("type") {
+		if err := maskedOnly(updateType, updateTitle, updateMeta); err != nil {
+			return err
+		}
 	}
 
 	// Fetch current entry so unset flags preserve existing values (type, title, meta).
@@ -463,6 +479,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("type") || formRan {
 		fwdTypeStr = updateType
 	}
+	if err := maskedOnly(fwdTypeStr, updateTitle, updateMeta); err != nil {
+		return err
+	}
 
 	// No host key is sent. SDK v1.33.5 introduced URLForwardingUpdate, where
 	// Host is *string with omitempty and documented as "Omit this field to keep
@@ -494,6 +513,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("meta") {
 		body.Meta = &updateMeta
+	}
+
+	// Leaving masked keeps the stored title and meta, so switching back
+	// restores them; a redirect does not use them (#286).
+	if string(current.Type) == "masked" && fwdTypeStr != "masked" &&
+		(derefStr(body.Title) != "" || derefStr(body.Meta) != "") {
+		out.Warn(fmt.Sprintf(`the forwarding keeps its title and meta, which %s does not use — pass --title "" --meta "" to clear them`, fwdTypeStr))
 	}
 
 	var entry *coreapigo.URLForwardingResponse
@@ -571,7 +597,32 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
+	// The API removes a subdomain forwarding's A records with it, but not the
+	// one it added at the apex (#286).
+	if current != nil && displayHost(current.Host) == "@" {
+		out.Note(fmt.Sprintf("the A record name.com added at the apex of %s for this forwarding stays — remove it with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
+			domain, domain, domain))
+	}
 	return nil
+}
+
+// maskedOnly is the usage error for a non-empty --title or --meta on a
+// forwarding that is not masked: they were sent and stored on a redirect,
+// where they do nothing (#286). An empty value is allowed, so a title left
+// on a redirect can still be cleared.
+func maskedOnly(fwdType, title, meta string) error {
+	if fwdType == "masked" || (title == "" && meta == "") {
+		return nil
+	}
+	return cmdutil.NewUsageErrorHint(fmt.Errorf("--title and --meta apply only to masked forwarding, not %s", fwdType),
+		"add --type masked, or leave out --title and --meta")
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // urlUpdateLine names the forwarding an update changed and what changed:
