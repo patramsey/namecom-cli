@@ -302,6 +302,20 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		EmailTo:    createEmailTo,
 	}
 
+	// A dry run checks for a mailbox that already forwards elsewhere, which
+	// the real create reports as a conflict below, so the preview does not
+	// promise a create that would fail (#292). The real run learns it from
+	// the create's own response and spends no GET.
+	if cmdutil.IsDryRun(cmd) {
+		current, err := fetchMailbox(cmd, domain, mailbox)
+		if err != nil && !cmdutil.IsNotFound(err) {
+			return api.FromSDKError(err)
+		}
+		if err == nil && current != nil && current.EmailTo != "" && !strings.EqualFold(current.EmailTo, createEmailTo) {
+			return alreadyForwards(domain, mailbox, current, createEmailTo)
+		}
+	}
+
 	var entry *coreapigo.EmailForwarding
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateEmailForwardingRequest]{
 		Method: "POST",
@@ -332,11 +346,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if !strings.EqualFold(to, createEmailTo) {
-		return &cmdutil.ConflictError{
-			Err:     fmt.Errorf("mailbox %s@%s already forwards to %s: nothing was changed", box, domain, to),
-			Hint:    fmt.Sprintf("run 'namecom email update %s %s --to %s' to forward it to %s instead", domain, box, createEmailTo, createEmailTo),
-			Details: entry,
-		}
+		return alreadyForwards(domain, box, entry, createEmailTo)
 	}
 
 	// The mailbox is what get, update and delete take.
@@ -347,18 +357,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(entry)
+		err = out.JSON(entry)
 	case output.FormatYAML:
-		return out.YAML(entry)
+		err = out.YAML(entry)
 	default:
 		// From the response, so the line shows what the API stored.
 		out.Success(fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
-		// Said rather than checked: a DNS list would be a second request on
-		// every create, to report records the help already describes.
-		out.Note(fmt.Sprintf("name.com adds MX records (%s) and the SPF record %q to %s if they are missing — run 'namecom dns list %s --host @' to see them",
-			forwardingMX, forwardingSPF, domain, domain))
 	}
-	return nil
+	// Said rather than checked: a DNS list would be a second request on
+	// every create, to report records the help already describes. A warning
+	// in JSON and YAML, where a note printed nothing.
+	cmdutil.SideEffectNote(out, fmt.Sprintf("name.com adds MX records (%s) and the SPF record %q to %s if they are missing — run 'namecom dns list %s --host @' to see them",
+		forwardingMX, forwardingSPF, domain, domain))
+	return err
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -407,6 +418,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		EmailTo:    updateEmailTo,
 	}
 
+	// A dry run checks that the mailbox exists, as the real PUT's 404 would
+	// (#292). The real run spends no GET: the PUT says so itself.
+	if cmdutil.IsDryRun(cmd) {
+		if _, err := fetchMailbox(cmd, domain, mailbox); err != nil {
+			return mailboxErr(err, mailbox, domain)
+		}
+	}
+
 	// The mailbox is escaped as the SDK escapes it, so --dry-run shows the
 	// path that is sent (#187); a "/" in it used to preview unescaped.
 	var entry *coreapigo.EmailForwarding
@@ -448,20 +467,15 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	mailbox := args[1]
 
 	// The prompt says where the mailbox forwards, as url and dns delete say
-	// what they remove (#286). That takes a GET, so it is made only when the
-	// prompt will be shown: --yes, --dry-run and a script without a terminal
-	// send what they did before. A missing mailbox fails here, before asking.
+	// what they remove (#286), and a dry run checks that the mailbox exists,
+	// as the real DELETE's 404 would (#292). That takes a GET, so it is made
+	// only for those two: --yes and a script without a terminal send what
+	// they did before. A missing mailbox fails here, before asking.
 	prompt := fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain)
-	if !cmdutil.IsYes(cmd) && !cmdutil.IsDryRun(cmd) && output.IsInteractive() {
-		stop := out.Spin("Fetching email forwarding…")
-		current, err := client.SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
-			&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: mailbox})
-		stop()
-		if cmdutil.IsNotFound(err) {
-			return mailboxNotFound(err, mailbox, domain)
-		}
+	if cmdutil.IsDryRun(cmd) || (!cmdutil.IsYes(cmd) && output.IsInteractive()) {
+		current, err := fetchMailbox(cmd, domain, mailbox)
 		if err != nil {
-			return api.FromSDKError(err)
+			return mailboxErr(err, mailbox, domain)
 		}
 		if current != nil && current.EmailTo != "" {
 			prompt = fmt.Sprintf("Delete forwarding %s@%s → %s?", mailbox, domain, current.EmailTo)
@@ -488,9 +502,38 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	// The API leaves the records it added for forwarding (#286). Whether
 	// another mailbox still needs them is not known without a list, so this
 	// says what stays and how to remove it rather than offering to.
-	out.Note(fmt.Sprintf("the MX and SPF records name.com added for forwarding stay on %s — once no mailbox forwards, remove them with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
+	cmdutil.SideEffectNote(out, fmt.Sprintf("the MX and SPF records name.com added for forwarding stay on %s — once no mailbox forwards, remove them with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
 		domain, domain, domain))
 	return nil
+}
+
+// fetchMailbox gets one mailbox's forwarding, for a delete's prompt or a dry
+// run's check of its target.
+func fetchMailbox(cmd *cobra.Command, domain, mailbox string) (*coreapigo.EmailForwarding, error) {
+	stop := cmdutil.Out(cmd).Spin("Fetching email forwarding…")
+	defer stop()
+	return cmdutil.APIClient(cmd).SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
+		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: mailbox})
+}
+
+// mailboxErr is fetchMailbox's error as a command returns it: a 404 as
+// mailboxNotFound, anything else normalized.
+func mailboxErr(err error, mailbox, domain string) error {
+	if cmdutil.IsNotFound(err) {
+		return mailboxNotFound(err, mailbox, domain)
+	}
+	return api.FromSDKError(err)
+}
+
+// alreadyForwards is the conflict of a create for a mailbox that already
+// forwards elsewhere (#283): from the create's response, or from a dry run's
+// GET.
+func alreadyForwards(domain, box string, entry *coreapigo.EmailForwarding, want string) error {
+	return &cmdutil.ConflictError{
+		Err:     fmt.Errorf("mailbox %s@%s already forwards to %s: nothing was changed", box, domain, entry.EmailTo),
+		Hint:    fmt.Sprintf("run 'namecom email update %s %s --to %s' to forward it to %s instead", domain, box, want, want),
+		Details: entry,
+	}
 }
 
 // mailboxNotFound is the not-found error for a mailbox, worded as dns and

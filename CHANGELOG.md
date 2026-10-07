@@ -75,6 +75,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
   nothing to change` (ISSUE-06). It sent the PATCH anyway and printed "no
   values changed". **Scripts:** `url update -o json` now prints the entry
   with `"changed": true`, or `false` for a no-op, as `dns update` does.
+- `email update --dry-run` and `email delete --dry-run` check that the
+  mailbox exists, and `email create --dry-run` checks for one that already
+  forwards elsewhere, each with one GET (ISSUE-07). They previewed the
+  request and exited 0 where the real command exits 4 (not found) or 1
+  (conflict). The real commands send what they did before.
+- The notes about the DNS records forwarding adds or leaves — the apex A
+  record a `url delete` leaves, the MX and SPF records of `email create` and
+  `email delete` — printed only in a table. In JSON and YAML they are now
+  warnings, in `{"warnings": […]}` on stderr (ISSUE-07).
+- `url update` of a missing forwarding ID says `URL forwarding N not found
+  on <domain>` and how to list the IDs, as `url get` and `url delete` do,
+  rather than the API's own message (ISSUE-07).
 - `url create --host` reads a host as `dns create` does (ISSUE-03): `www`,
   `www.example.com` and `www.example.com.` all forward www, and
   `example.com` is the apex. A fully qualified host was sent as typed and

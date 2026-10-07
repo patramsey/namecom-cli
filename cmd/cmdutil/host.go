@@ -3,6 +3,8 @@ package cmdutil
 import (
 	"fmt"
 	"strings"
+
+	"github.com/patramsey/namecom-cli/internal/output"
 )
 
 // ZoneHost is a --host value in the form the API takes, validated and with
@@ -62,4 +64,20 @@ func relZoneHost(h, domain string) (string, error) {
 			fmt.Sprintf("a trailing dot makes a name absolute; without it, %q is a host under %s", t, domain))
 	}
 	return t, nil
+}
+
+// SideEffectNote tells the user about DNS records name.com adds or leaves
+// for a forwarding: a dim note in a table, and a warning in every other
+// format, so that JSON and YAML carry it in {"warnings": […]} on stderr. As
+// a plain Note it printed only in a table, and a script never learned of the
+// apex A record a deleted forwarding leaves. --quiet prints nothing.
+func SideEffectNote(out *output.Config, msg string) {
+	if out.QuietMode {
+		return
+	}
+	if out.Format == output.FormatTable {
+		out.Note(msg)
+		return
+	}
+	out.Warn(msg)
 }

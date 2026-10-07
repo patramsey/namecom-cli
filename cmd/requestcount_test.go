@@ -720,10 +720,31 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/email/forwarding",
 			},
 		},
+		"email create --dry-run": {
+			args: []string{"email", "create", "example.com", "info", "--to", "you@example.org", "--dry-run"},
+			why:  "a dry run checks for a mailbox that already forwards elsewhere, which the real create reports as a conflict from its own response (ISSUE-07)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
 		"email update": {
 			args: []string{"email", "update", "example.com", "info", "--to", "new@example.org", "--yes"},
 			want: []string{
 				"PUT /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email update --dry-run": {
+			args: []string{"email", "update", "example.com", "info", "--to", "new@example.org", "--dry-run"},
+			why:  "a dry run checks the mailbox exists, as the real PUT's 404 would (ISSUE-07)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email delete --dry-run": {
+			args: []string{"email", "delete", "example.com", "info", "--dry-run"},
+			why:  "a dry run checks the mailbox exists, as the real DELETE's 404 would (ISSUE-07)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
 			},
 		},
 		"email delete": {

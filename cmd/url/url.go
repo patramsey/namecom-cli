@@ -256,8 +256,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
-			fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
+		return forwardingNotFound(err, id, domain)
 	}
 	if err != nil {
 		return err
@@ -450,6 +449,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	current, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	getStop()
+	if cmdutil.IsNotFound(err) {
+		return forwardingNotFound(err, id, domain)
+	}
 	if err != nil {
 		return err
 	}
@@ -633,8 +635,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
-			fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
+		return forwardingNotFound(err, id, domain)
 	}
 	if err != nil {
 		return err
@@ -659,12 +660,21 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
 	// The API removes a subdomain forwarding's A records with it, but not the
-	// one it added at the apex (#286).
+	// one it added at the apex (#286). Left behind, such records are what makes
+	// a later apex create answer 400 Duplicate Record, so JSON says so too.
 	if current != nil && displayHost(current.Host) == "@" {
-		out.Note(fmt.Sprintf("the A record name.com added at the apex of %s for this forwarding stays — remove it with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
+		cmdutil.SideEffectNote(out, fmt.Sprintf("the A record name.com added at the apex of %s for this forwarding stays — remove it with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
 			domain, domain, domain))
 	}
 	return nil
+}
+
+// forwardingNotFound is the not-found error for a forwarding ID, the same
+// for get, update and delete. update showed the API's own "URL forwarding
+// entry not found.", which names neither the ID nor the domain.
+func forwardingNotFound(err error, id int, domain string) error {
+	return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
+		fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
 }
 
 // isDuplicateRecord reports whether err is the API's 400 "Parameter Value
