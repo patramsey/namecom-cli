@@ -44,7 +44,7 @@ all: set NAMECOM_USERNAME and NAMECOM_TOKEN instead.`,
   namecom auth login --profile sandbox --sandbox
   echo "$NAMECOM_TOKEN" | namecom auth login --username alice --with-token
   namecom auth login --username alice --token-cmd 'op read op://vault/namecom/token'`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runAuthLogin,
 }
 
@@ -53,7 +53,7 @@ var authStatusCmd = &cobra.Command{
 	Short: "Verify credentials by calling the API hello endpoint",
 	Example: `  namecom auth status
   namecom auth status --profile staging`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runAuthStatus,
 }
 
@@ -62,7 +62,7 @@ var authLogoutCmd = &cobra.Command{
 	Short: "Remove credentials for the active profile",
 	Example: `  namecom auth logout
   namecom auth logout --profile staging`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runAuthLogout,
 }
 

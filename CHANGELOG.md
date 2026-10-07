@@ -35,6 +35,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   though `-o` had asked for text (#291). They now print the `✗` line, as
   other usage errors do. **Scripts**: with `-o table` or `-o tsv`, stderr
   for these is no longer JSON.
+- An unknown flag before the command, as in `namecom --bogus domain list`,
+  is reported as `unknown flag: --bogus` (#291). It said `unknown command
+  "list" for "namecom"`, naming the word after the one cobra had taken as
+  the flag's value. An argument to `status`, `version`, `auth
+  login`/`status`/`logout`, `config list-profiles` or `config show` says
+  `namecom status takes no arguments, got "extra"`, as other commands do,
+  rather than `unknown command "extra"`. Both still exit 2.
 - `email create` for a mailbox that already exists reported "Created … →
   <your --to>" and exited 0, though the API had changed nothing and the
   mailbox still forwarded to its old address (#283). It now fails (exit 1)

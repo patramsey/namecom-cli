@@ -27,7 +27,7 @@ var listProfilesCmd = &cobra.Command{
 	Aliases: []string{"profiles", "ls"},
 	Short:   "List all configured credential profiles",
 	Example: `  namecom config list-profiles`,
-	Args:    cobra.NoArgs,
+	Args:    cmdutil.NoArgs,
 	RunE:    runListProfiles,
 }
 
@@ -46,7 +46,7 @@ var showCmd = &cobra.Command{
 	Short: "Show resolved credentials for the active profile",
 	Example: `  namecom config show
   namecom config show --profile sandbox`,
-	Args: cobra.NoArgs,
+	Args: cmdutil.NoArgs,
 	RunE: runShow,
 }
 

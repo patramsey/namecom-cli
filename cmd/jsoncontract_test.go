@@ -759,3 +759,36 @@ func TestJSONContract_UnknownCommandSuggestions(t *testing.T) {
 		t.Errorf(`want type usage and suggestions ["namecom dns", …], got:\n%s`, stderr)
 	}
 }
+
+// TestJSONContract_WrongTokenNamed pins #291: an unknown flag ahead of the
+// subcommand was reported as an unknown command, naming whatever word cobra
+// had skipped to, and an argument to a command that takes none was an
+// "unknown command" too.
+func TestJSONContract_WrongTokenNamed(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--bogus", "domain", "list"}, "unknown flag: --bogus"},
+		{[]string{"--bogus", "-o", "json", "domain", "list"}, "unknown flag: --bogus"},
+		{[]string{"-Z", "domain", "list"}, `unknown shorthand flag: 'Z' in -Z`},
+		{[]string{"--sandbox", "nosuch"}, `unknown command "nosuch" for "namecom"`},
+		{[]string{"status", "extra"}, `namecom status takes no arguments, got "extra"`},
+		{[]string{"version", "extra"}, `namecom version takes no arguments, got "extra"`},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			prevArgs := os.Args
+			t.Cleanup(func() { os.Args = prevArgs })
+			args := append([]string{"-o", "json"}, tc.args...)
+			os.Args = append([]string{"namecom"}, args...)
+			_, stderr, code := runContract(t, args...)
+			if code != 2 {
+				t.Errorf("exit %d, want 2", code)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			if e["type"] != output.ErrorTypeUsage || e["message"] != tc.want {
+				t.Errorf("want type usage, message %q; got:\n%s", tc.want, stderr)
+			}
+		})
+	}
+}
