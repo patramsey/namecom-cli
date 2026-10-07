@@ -10,6 +10,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
 ## [Unreleased]
 
 ### Fixed
+- Mistakes caught before any request is sent are usage errors (exit 2), not
+  API failures (exit 1) (#291): a vanity nameserver hostname outside its
+  domain (`vanity-ns get example.com ns1.other.com`, and the same in
+  `create`, `update` and `delete`), and `config use` with a profile the
+  config does not have, which now lists the profiles there are.
+  **Scripts**: these now exit 2 with a JSON error envelope of type `usage`,
+  where they exited 1 with type `api`.
 - `email create` for a mailbox that already exists reported "Created … →
   <your --to>" and exited 0, though the API had changed nothing and the
   mailbox still forwarded to its old address (#283). It now fails (exit 1)

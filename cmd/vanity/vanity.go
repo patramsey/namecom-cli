@@ -277,11 +277,11 @@ func vanityLabel(name, hostname, domain string) (string, error) {
 	}
 	suffix := "." + domain
 	if !strings.HasSuffix(h, suffix) {
-		return "", fmt.Errorf("%s %q must be a subdomain of %s (e.g. ns1.%s)", name, hostname, domain, domain)
+		return "", cmdutil.NewUsageError(fmt.Errorf("%s %q must be a subdomain of %s (e.g. ns1.%s)", name, hostname, domain, domain))
 	}
 	label := strings.TrimSuffix(h, suffix)
 	if label == "" {
-		return "", fmt.Errorf("%s %q must include a subdomain (e.g. ns1.%s)", name, hostname, domain)
+		return "", cmdutil.NewUsageError(fmt.Errorf("%s %q must include a subdomain (e.g. ns1.%s)", name, hostname, domain))
 	}
 	return label, validVanityName(label, domain)
 }

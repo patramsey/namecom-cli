@@ -532,6 +532,20 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode: 2,
 		},
 		{
+			// A check made before any request is how the command was
+			// invoked, not an API failure (#291).
+			name:     "vanity-ns hostname outside the domain",
+			args:     []string{"vanity-ns", "get", "example.com", "ns1.other.com"},
+			wantType: output.ErrorTypeUsage,
+			wantCode: 2,
+		},
+		{
+			name:     "config use for a profile that does not exist",
+			args:     []string{"config", "use", "nosuch", "--dry-run"},
+			wantType: output.ErrorTypeUsage,
+			wantCode: 2,
+		},
+		{
 			name:     "confirmation required",
 			args:     []string{"dns", "delete", "example.com", "42"},
 			routes:   map[string]reply{"GET /core/v1/domains/example.com/records/42": {200, `{"id":42,"type":"A","answer":"192.0.2.1"}`}},
