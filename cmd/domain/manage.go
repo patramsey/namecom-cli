@@ -78,16 +78,16 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 
 	res := out.Results()
 	var pending []string
-	// Read together; the first failure, in the order given, is reported.
-	currents, errs := cmdutil.FetchEach(cmd.Context(), domains,
-		func(_ context.Context, d string) (*coreapigo.DomainResponsePayload, error) {
-			return toggleCurrent(cmd, d)
+	// Read together; the first failure stops the rest and is reported.
+	currents, err := cmdutil.FetchEach(cmd.Context(), domains,
+		func(ctx context.Context, d string) (*coreapigo.DomainResponsePayload, error) {
+			return toggleCurrent(ctx, cmd, d)
 		})
+	if err != nil {
+		return err
+	}
 	for i, d := range domains {
-		current, err := currents[i], errs[i]
-		if err != nil {
-			return err
-		}
+		current := currents[i]
 		if current != nil && tg.get(current) == enable {
 			res.Add(output.ResultItem{Domain: d, Message: fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d)})
 			continue
@@ -161,8 +161,8 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 //
 // A response with no domain object is not evidence of anything, so it is nil
 // and the PATCH goes ahead as before.
-func toggleCurrent(cmd *cobra.Command, domainName string) (*coreapigo.DomainResponsePayload, error) {
-	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(),
+func toggleCurrent(ctx context.Context, cmd *cobra.Command, domainName string) (*coreapigo.DomainResponsePayload, error) {
+	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(ctx,
 		&coreapigo.GetDomainRequest{DomainName: domainName})
 	if err != nil {
 		return nil, domainError(err, domainName)

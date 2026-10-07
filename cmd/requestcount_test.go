@@ -290,6 +290,22 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/orders?perPage=1000",
 			},
 		},
+		"api --paginate, over --max-pages": {
+			args:   []string{"api", "/core/v1/orders", "--paginate", "-f", "perPage=1"},
+			routes: map[string]reply{"GET /core/v1/orders": {200, `{"orders":[],"totalCount":6522,"nextPage":2,"lastPage":6522}`}},
+			code:   2,
+			why:    "page 1's lastPage says the walk is 6522 pages, over the default --max-pages 100, so no other page is fetched",
+			want: []string{
+				"GET /core/v1/orders?perPage=1",
+			},
+		},
+		"api --paginate --max-pages 0": {
+			args:   []string{"api", "/core/v1/orders", "--paginate", "--max-pages", "0", "-f", "perPage=2"},
+			routes: map[string]reply{"GET /core/v1/orders": {200, `{"orders":[],"totalCount":2,"lastPage":1}`}},
+			want: []string{
+				"GET /core/v1/orders?perPage=2",
+			},
+		},
 
 		// domain
 		"domain list": {
