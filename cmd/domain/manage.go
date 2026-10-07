@@ -79,13 +79,16 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 	res := out.Results()
 	var pending []string
 	for _, d := range domains {
-		already, err := toggleAlreadySet(cmd, d, enable, tg.get)
+		current, err := toggleCurrent(cmd, d)
 		if err != nil {
 			return err
 		}
-		if already {
+		if current != nil && tg.get(current) == enable {
 			res.Add(output.ResultItem{Domain: d, Message: fmt.Sprintf("%s is already %s for %s; nothing to change", tg.label, onOff(enable), d)})
 			continue
+		}
+		if tg.field == "lock" && !enable && current != nil {
+			warnTransferLocked(out, d, current)
 		}
 		pending = append(pending, d)
 	}
@@ -141,8 +144,8 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 	return nil
 }
 
-// toggleAlreadySet reads the domain and reports whether the setting get
-// returns already equals want, in which case the toggle sends nothing.
+// toggleCurrent reads the domain, so a toggle can leave alone one already in
+// the requested state.
 //
 // The PATCH is not idempotent in practice: during the 60-day transfer lock
 // after a registration or transfer the API refuses any body carrying `locked`,
@@ -151,15 +154,25 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 // change. It runs under --dry-run too, which then reports the same outcome
 // instead of previewing a request that would not be made.
 //
-// A response with no domain object is not evidence of anything, so it reports
-// false and the PATCH goes ahead as before.
-func toggleAlreadySet(cmd *cobra.Command, domainName string, want bool, get func(*coreapigo.DomainResponsePayload) bool) (bool, error) {
+// A response with no domain object is not evidence of anything, so it is nil
+// and the PATCH goes ahead as before.
+func toggleCurrent(cmd *cobra.Command, domainName string) (*coreapigo.DomainResponsePayload, error) {
 	d, err := cmdutil.APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(),
 		&coreapigo.GetDomainRequest{DomainName: domainName})
 	if err != nil {
-		return false, domainError(err, domainName)
+		return nil, domainError(err, domainName)
 	}
-	return d != nil && get(d) == want, nil
+	return d, nil
+}
+
+// warnTransferLocked warns, before an unlock is previewed or confirmed, that
+// the domain d is inside its 60-day transfer lock and the registry will refuse
+// it. The GET that read d was made anyway; the date was in it, unused (#287).
+func warnTransferLocked(out *output.Config, domain string, d *coreapigo.DomainResponsePayload) {
+	if t := d.TransferLockExpiresAt; t != nil && t.After(time.Now()) {
+		out.Warn(fmt.Sprintf("%s is in its 60-day transfer lock until %s — the registry will refuse to unlock it before then",
+			domain, lockDate(t.Format(time.RFC3339))))
+	}
 }
 
 // domainError names the domain when fetching it found nothing: the API's
@@ -906,15 +919,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return cmdutil.NewUsageError(errors.New("nothing to update — pass at least one of --autorenew, --privacy, --lock"))
 	}
 
-	unlocking := req.Locked != nil && !*req.Locked
-
 	// Each flag asks what its toggle command asks (#227): two routes to the
 	// same change should not differ in whether they pause. The current state
-	// decides whether a flag is a change at all, so it is read only when a flag
-	// that prompts was passed. Without the read, a script restating
-	// --autorenew=true would need --yes for a change that is not one. With no
-	// domain in the response, every flag is treated as a change.
-	risky := unlocking || req.AutorenewEnabled != nil || (req.PrivacyEnabled != nil && !*req.PrivacyEnabled)
+	// decides whether a flag is a change at all, so it is read when a flag
+	// that prompts was passed, or --lock: during the 60-day transfer lock the
+	// API refuses any body carrying `locked`, even an unchanged true, and
+	// takes the rest of the PATCH down with it (#287). Without the read, a
+	// script restating --autorenew=true would need --yes for a change that is
+	// not one. With no domain in the response, every flag is treated as a
+	// change.
+	risky := req.Locked != nil || req.AutorenewEnabled != nil || (req.PrivacyEnabled != nil && !*req.PrivacyEnabled)
 	var current *coreapigo.DomainResponsePayload
 	if risky {
 		current, err = client.SDK().Domains.GetDomain(cmd.Context(),
@@ -923,22 +937,43 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			return domainError(err, domain)
 		}
 	}
-	var prompts []string
+	// A field already in the requested state is left out of the body, as the
+	// toggles leave out a domain already set (#287), and named in the result.
+	// When every field is, nothing is sent.
+	var prompts, unchanged []string
 	for _, f := range []struct {
-		name string
-		want *bool
-		was  func(*coreapigo.DomainResponsePayload) bool
+		name  string
+		label string
+		want  **bool
+		was   func(*coreapigo.DomainResponsePayload) bool
 	}{
-		{"lock", req.Locked, func(d *coreapigo.DomainResponsePayload) bool { return d.Locked }},
-		{"privacy", req.PrivacyEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled }},
-		{"autorenew", req.AutorenewEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled }},
+		{"lock", "lock", &req.Locked, func(d *coreapigo.DomainResponsePayload) bool { return d.Locked }},
+		{"privacy", "privacy", &req.PrivacyEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled }},
+		{"autorenew", "auto-renew", &req.AutorenewEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled }},
 	} {
-		if f.want == nil || (current != nil && f.was(current) == *f.want) {
+		want := *f.want
+		if want == nil {
 			continue
 		}
-		if p := togglePrompt(domain, f.name, *f.want); p != "" {
+		if current != nil && f.was(current) == *want {
+			unchanged = append(unchanged, f.label+" "+onOff(*want))
+			*f.want = nil
+			continue
+		}
+		if p := togglePrompt(domain, f.name, *want); p != "" {
 			prompts = append(prompts, p)
 		}
+	}
+	if req.AutorenewEnabled == nil && req.PrivacyEnabled == nil && req.Locked == nil {
+		out.Unchanged(fmt.Sprintf("%s already has %s; nothing to change", domain, strings.Join(unchanged, ", ")))
+		return nil
+	}
+	if len(unchanged) > 0 {
+		out.Note(fmt.Sprintf("%s already has %s; not sending it", domain, strings.Join(unchanged, ", ")))
+	}
+	unlocking := req.Locked != nil && !*req.Locked
+	if unlocking && current != nil {
+		warnTransferLocked(out, domain, current)
 	}
 	prompt := strings.Join(prompts, " ")
 	wasLocked := current == nil || current.Locked

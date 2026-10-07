@@ -111,6 +111,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   the end of any list says so, rather than suggesting you create the first
   item. `contact unverified` under `--limit` shows
   `Showing 1–1 of 2 unverified contacts`, as `domain list` does.
+- `domain update` leaves out a flag that restates the domain's current
+  setting (#287). `--lock=true` on a domain already locked was sent, and
+  during the 60-day transfer lock the API refuses any body carrying `locked`,
+  so the other changes in the same command failed with it. `--lock` now
+  reads the domain first, as `domain lock` does; when every flag is unchanged
+  nothing is sent and the result reports `"changed": false`. `domain update
+  --lock=false` and `domain lock off` warn, before the prompt or dry-run
+  preview, when the domain is inside its transfer lock and the unlock will be
+  refused.
 
 ## [0.5.1] - 2026-10-05
 
