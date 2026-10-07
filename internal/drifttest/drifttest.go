@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -106,7 +107,10 @@ func AssertRequest(t *testing.T, want Request, build Build, run Run, args []stri
 	t.Helper()
 
 	var gotMethod, gotPath, gotBody string
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		b, _ := io.ReadAll(r.Body)
 		gotMethod, gotPath, gotBody = r.Method, r.URL.Path, string(b)
 		w.Header().Set("Content-Type", "application/json")
@@ -118,6 +122,7 @@ func AssertRequest(t *testing.T, want Request, build Build, run Run, args []stri
 	if err := run(cmd, args); err != nil {
 		t.Fatalf("live invocation failed: %v", err)
 	}
+	srv.Close() // every handler has returned before the recorded values are read
 	if gotMethod == "" {
 		t.Fatal("no request was made")
 	}
@@ -138,7 +143,10 @@ func AssertDryRunMatches(t *testing.T, build Build, run Run, args []string, stub
 	printed, _ := dryRunLine(t, build, run, args, stubResponse)
 
 	var last string
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		last = r.Method + " " + r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(stubResponse))
@@ -149,6 +157,7 @@ func AssertDryRunMatches(t *testing.T, build Build, run Run, args []string, stub
 	if err := run(cmd, args); err != nil {
 		t.Fatalf("live invocation failed: %v", err)
 	}
+	srv.Close() // every handler has returned before the recorded values are read
 	if last == "" {
 		t.Fatal("no request was made")
 	}
@@ -173,7 +182,10 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	t.Helper()
 
 	var wrote string
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		// Reads during a dry run are legitimate — see the package comment. Only
 		// a write means the flag was ignored.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !isQueryPOST(r.URL.Path) {
@@ -188,6 +200,7 @@ func dryRunLine(t *testing.T, build Build, run Run, args []string, stubResponse 
 	if err := run(cmd, args); err != nil {
 		t.Fatalf("dry-run invocation failed: %v", err)
 	}
+	srv.Close() // every handler has returned before the recorded values are read
 	buf, ok := cmdutil.Out(cmd).Writer.(*bytes.Buffer)
 	if !ok {
 		t.Fatal("output writer is not a *bytes.Buffer")
@@ -268,7 +281,10 @@ func assertDryRunBody(t *testing.T, build Build, run Run, args []string, stubRes
 	printed := dryRunBody(t, build, run, args, stubResponse)
 
 	var sent string
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		b, _ := io.ReadAll(r.Body)
 		sent = string(b)
 		w.Header().Set("Content-Type", "application/json")
@@ -280,6 +296,7 @@ func assertDryRunBody(t *testing.T, build Build, run Run, args []string, stubRes
 	if err := run(cmd, args); err != nil {
 		t.Fatalf("live invocation failed: %v", err)
 	}
+	srv.Close() // every handler has returned before the recorded values are read
 	if len(redacted) > 0 {
 		sent = redact(t, sent, redacted)
 	}
