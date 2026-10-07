@@ -44,6 +44,7 @@ func apiCmd(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) 
 		apiBody, apiHeaders, apiInput, apiMethod = "", nil, "", ""
 		apiFields, apiTyped = nil, nil
 		apiInclude, apiPaginate = false, false
+		apiMaxPages = defaultMaxPages
 	})
 	return cmd, &buf
 }

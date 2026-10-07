@@ -50,7 +50,11 @@ stdin when stdin is a pipe or a file; an empty stdin sends no body.
 list in it is every page's items end to end, and nextPage and lastPage are
 gone. The global --jq filters that merged document. It asks for 1000 items
 a page, the most the API serves, unless the path or -f sets perPage, and in
-a terminal it shows on stderr which page it is fetching.
+a terminal it shows on stderr which page it is fetching. It fetches at most
+--max-pages pages (100; 0 for no limit): when the first page's lastPage says
+the list is longer, or a list that gives no lastPage runs past the limit,
+it stops, prints nothing on stdout, and exits 2 naming the page count. A
+larger perPage is the usual fix.
 
 The response body is printed as received. -o json or table only chooses how
 an error is printed; -o yaml, -o tsv and -q do not apply, and are usage
@@ -108,7 +112,12 @@ var (
 	apiMethod   string
 	apiInclude  bool
 	apiPaginate bool
+	apiMaxPages int
 )
+
+// defaultMaxPages is --max-pages when it is not given: 100,000 items at the
+// default perPage, and a bound on the walk a small perPage starts (ISSUE-06).
+const defaultMaxPages = 100
 
 func init() {
 	f := Cmd.Flags()
@@ -120,6 +129,7 @@ func init() {
 	f.StringArrayVar(&apiHeaders, "header", nil, "additional headers: 'Name: Value'")
 	f.BoolVarP(&apiInclude, "include", "i", false, "print the response status line and headers before the body")
 	f.BoolVar(&apiPaginate, "paginate", false, "follow nextPage and print every page as one document (GET only)")
+	f.IntVar(&apiMaxPages, "max-pages", defaultMaxPages, "with --paginate, the most pages to fetch; 0 for no limit")
 	// Any method but GET or HEAD goes through RunWrite.
 	cmdutil.MarkWrite(Cmd)
 	cmdutil.MarkRawOutput(Cmd)
@@ -231,6 +241,12 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 	if err := checkFlags(method, dataSet); err != nil {
 		return err
+	}
+	switch {
+	case apiMaxPages < 0:
+		return cmdutil.NewUsageError(fmt.Errorf("--max-pages must be 0 (no limit) or more, not %d", apiMaxPages))
+	case cmd.Flags().Changed("max-pages") && !apiPaginate:
+		return cmdutil.NewUsageError(errors.New("--max-pages only applies with --paginate"))
 	}
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
@@ -379,7 +395,7 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		if progressTTY() && !apiInclude {
 			progress = out.EWriter
 		}
-		return paginate(cmd.Context(), u, body, do, out.Writer, progress)
+		return paginate(cmd.Context(), u, body, do, out.Writer, progress, apiMaxPages)
 	}
 	// Reads still run under --dry-run, as the flag's help promises. Every
 	// other method is previewed: a raw passthrough cannot tell whether a POST
@@ -444,10 +460,17 @@ func (e *methodError) UserHint() string { return e.hint }
 //
 // When progress is not nil, each page after the first is announced on it —
 // "Fetching page 12 of 183…" — on one line, cleared at the end.
+//
+// maxPages, when not 0, bounds the walk. A perPage of 1 on a large account
+// was thousands of requests, one at a time, with nothing to say so
+// (ISSUE-06). When the first page's lastPage puts the walk over the limit, no
+// other page is fetched; a list that gives no lastPage is stopped when it
+// reaches the limit. Either way it is a usage error, so nothing is printed.
 func paginate(ctx context.Context, target string, body []byte,
-	do func(context.Context, string, []byte) ([]byte, error), w, progress io.Writer) error {
+	do func(context.Context, string, []byte) ([]byte, error), w, progress io.Writer, maxPages int) error {
 	var merged pages
-	seen := map[int]bool{startPage(target): true}
+	start := startPage(target)
+	seen := map[int]bool{start: true}
 	// The line is cleared before anything else is printed — the document,
 	// or the error — since stdout may be the same terminal.
 	shown := false
@@ -482,6 +505,16 @@ func paginate(ctx context.Context, target string, body []byte,
 		if next == 0 {
 			break
 		}
+		if maxPages > 0 {
+			if total := merged.last - start + 1; n == 1 && total > maxPages {
+				return tooManyPages(fmt.Errorf("--paginate: this list is %d pages at perPage=%s, more than --max-pages %d",
+					total, pageSize(target), maxPages))
+			}
+			if n >= maxPages {
+				return tooManyPages(fmt.Errorf("--paginate: there are more pages after %d at perPage=%s, the --max-pages limit",
+					n, pageSize(target)))
+			}
+		}
 		// A page already fetched would loop for ever.
 		if seen[next] {
 			return fmt.Errorf("--paginate: the API gave page %d as the next page again; stopping", next)
@@ -498,6 +531,21 @@ func paginate(ctx context.Context, target string, body []byte,
 	}
 	_, err = fmt.Fprintf(w, "%s\n", doc)
 	return err
+}
+
+// tooManyPages is err, a walk longer than --max-pages, as a usage error
+// with the two ways round it.
+func tooManyPages(err error) error {
+	return cmdutil.NewUsageErrorHint(err, fmt.Sprintf(
+		"raise perPage (the API serves up to %s a page), or pass --max-pages with a higher limit, or 0 for none", maxPerPage))
+}
+
+// pageSize is the perPage target asks for.
+func pageSize(target string) string {
+	if u, err := url.Parse(target); err == nil && u.Query().Has("perPage") {
+		return u.Query().Get("perPage")
+	}
+	return maxPerPage
 }
 
 // progressTTY reports whether --paginate shows its progress: when stderr is

@@ -28,6 +28,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `autorenew`, `privacy`) and `dns delete` given several targets stop the
   same way. When two fail at once, the error reported is the first to come
   back, which may not be the first in the order given.
+- `api --paginate` is bounded by a new `--max-pages` flag (default 100, `0`
+  for no limit). With a small `perPage`, a walk over a large account was
+  thousands of requests, one at a time. When the first page's `lastPage`
+  puts the walk over the limit, no other page is fetched; a list that gives
+  no `lastPage` stops at the limit. Either way nothing is printed on stdout
+  and the exit code is 2, with an error naming the page count and suggesting
+  a larger `perPage`. A script that walks more than 100 pages needs
+  `--max-pages`.
 
 ## [0.5.2] - 2026-10-07
 

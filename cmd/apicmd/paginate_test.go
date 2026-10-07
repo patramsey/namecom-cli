@@ -2,7 +2,12 @@ package apicmd
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -91,5 +96,101 @@ func TestAPI_PaginateProgress(t *testing.T) {
 		if !strings.HasSuffix(got, "\r\033[K") {
 			t.Errorf("progress line not cleared: %q", got)
 		}
+	}
+}
+
+// TestAPI_PaginateMaxPages: --paginate with a small perPage walked every page
+// one request at a time — 6,500 of them for -f perPage=1 on a large account —
+// with nothing to bound or announce it (ISSUE-06). --max-pages, 100 unless
+// given, bounds it: when the first page's lastPage is over the limit no other
+// page is fetched, a list with no lastPage stops at the limit, and either is a
+// usage error (exit 2) with nothing printed. 0 is no limit.
+func TestAPI_PaginateMaxPages(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		max      int
+		requests int
+		err      string // "" for success
+	}{
+		{"over the limit by lastPage", 2, 1, "--paginate: this list is 3 pages at perPage=2, more than --max-pages 2"},
+		{"at the limit", 3, 3, ""},
+		{"no limit", 0, 3, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, uris := pagedServer(t)
+			cmd, buf := apiCmd(t, srv)
+			apiPaginate, apiFields, apiMaxPages = true, []string{"perPage=2"}, tc.max
+			err := runAPI(cmd, []string{"/core/v1/domains"})
+			if len(*uris) != tc.requests {
+				t.Errorf("sent %d requests, want %d: %q", len(*uris), tc.requests, *uris)
+			}
+			if tc.err == "" {
+				if err != nil || buf.String() != mergedDomains {
+					t.Errorf("runAPI = %v, printed %s", err, buf.String())
+				}
+				return
+			}
+			if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok || err.Error() != tc.err {
+				t.Errorf("runAPI = %v, want the usage error %q", err, tc.err)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("printed %s, want nothing", buf.String())
+			}
+		})
+	}
+}
+
+// TestAPI_PaginateMaxPagesWithoutLastPage: a list that never says how long
+// it is is stopped when the walk reaches --max-pages.
+func TestAPI_PaginateMaxPagesWithoutLastPage(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"items":[%d],"nextPage":%d}`, page, max(page, 1)+1)
+	}))
+	t.Cleanup(srv.Close)
+	cmd, buf := apiCmd(t, srv)
+	apiPaginate, apiMaxPages = true, 4
+	err := runAPI(cmd, []string{"/core/v1/items"})
+	want := "--paginate: there are more pages after 4 at perPage=1000, the --max-pages limit"
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok || err.Error() != want {
+		t.Errorf("runAPI = %v, want the usage error %q", err, want)
+	}
+	if requests != 4 {
+		t.Errorf("sent %d requests, want 4", requests)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("printed %s, want nothing", buf.String())
+	}
+}
+
+// TestAPI_MaxPagesChecked: --max-pages is checked before any request.
+func TestAPI_MaxPagesChecked(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		paginate bool
+		max      int
+	}{
+		{"negative", true, -1},
+		{"without --paginate", false, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, uris := pagedServer(t)
+			cmd, _ := apiCmd(t, srv)
+			cmd.Flags().IntVar(&apiMaxPages, "max-pages", defaultMaxPages, "")
+			if err := cmd.Flags().Set("max-pages", strconv.Itoa(tc.max)); err != nil {
+				t.Fatal(err)
+			}
+			apiPaginate = tc.paginate
+			err := runAPI(cmd, []string{"/core/v1/domains"})
+			if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+				t.Errorf("runAPI = %v, want a usage error", err)
+			}
+			if len(*uris) != 0 {
+				t.Errorf("sent %q, want nothing", *uris)
+			}
+		})
 	}
 }
