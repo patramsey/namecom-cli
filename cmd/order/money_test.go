@@ -68,6 +68,8 @@ func TestRefundPrompt_NamesItemsAndAmount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var prompts []string
 			defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
+			// The order is read only when the prompt can be shown.
+			defer output.StubInteractive(true)()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					t.Errorf("refund sent without a yes: %s %s", r.Method, r.URL)

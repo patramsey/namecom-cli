@@ -99,9 +99,35 @@ func ptr[T any](v T) *T { return &v }
 // POST said there was no transfer. It now looks the transfer up first: a
 // missing one fails with not-found before any prompt, and a real one's status
 // is in the question.
+//
+// The lookup is for the prompt, so with none to show it is not made (#294):
+// under --yes the cancel is sent alone, and its 404 gives the same error.
 func TestTransferCancel_ChecksTheTransferFirst(t *testing.T) {
 	var prompts []string
 	defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return false })()
+	defer output.StubInteractive(true)()
+
+	t.Run("--yes, missing", func(t *testing.T) {
+		// The stub ignores --yes; this one answers as --yes would.
+		defer cmdutil.StubConfirm(func(string) bool { return true })()
+		var sent []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sent = append(sent, r.Method+" "+r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}))
+		t.Cleanup(srv.Close)
+		cmd := cmdForTransferGet(t, srv)
+		cmd.PersistentFlags().Bool("yes", true, "")
+		err := runCancel(cmd, []string{"typo.com"})
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `transfer of "typo.com" not found`) {
+			t.Errorf("runCancel = %v, want a not-found error naming the domain", err)
+		}
+		if want := []string{"POST /core/v1/transfers/typo.com:cancel"}; strings.Join(sent, ",") != strings.Join(want, ",") {
+			t.Errorf("sent %q, want only %q", sent, want)
+		}
+	})
 
 	t.Run("missing", func(t *testing.T) {
 		prompts = nil

@@ -31,6 +31,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   order. Independent lookups within one command are sent together too:
   `domain pricing`'s price and availability, and `domain register`'s price
   and trademark-claims check.
+- `transfer cancel` and `order refund` read the transfer or order only to
+  word their confirmation, so they no longer read it when there is no
+  confirmation to show (#294): `transfer cancel --yes` sends the cancel
+  alone, and a missing transfer is still reported as `transfer of "x" not
+  found` (exit 4), from the cancel's own reply. Without a terminal and
+  without `--yes`, both now stop at needing `--yes` before any request.
+  `transfer cancel --dry-run` still checks that the transfer exists.
 
 ### Fixed
 - Mistakes caught before any request is sent are usage errors (exit 2), not

@@ -802,9 +802,19 @@ func TestRequestCounts(t *testing.T) {
 		"transfer cancel": {
 			args: []string{"transfer", "cancel", "example.org", "--yes"},
 			want: []string{
-				"GET /core/v1/transfers/example.org",
 				"POST /core/v1/transfers/example.org:cancel",
 			},
+		},
+		"transfer cancel --dry-run": {
+			args: []string{"transfer", "cancel", "example.org", "--dry-run"},
+			why:  "the GET fails a dry run for a missing transfer, as the cancel would",
+			want: []string{
+				"GET /core/v1/transfers/example.org",
+			},
+		},
+		"transfer cancel, no terminal": {
+			args: []string{"transfer", "cancel", "example.org"},
+			code: 2,
 		},
 		"transfer cancel, prompted": {
 			args:     []string{"transfer", "cancel", "example.org"},
@@ -859,6 +869,10 @@ func TestRequestCounts(t *testing.T) {
 			want: []string{
 				"POST /core/v1/refund",
 			},
+		},
+		"order refund, no terminal": {
+			args: []string{"order", "refund", "--order-id", "1", "--item-ids", "2"},
+			code: 2,
 		},
 		"order refund, prompted": {
 			args:     []string{"order", "refund", "--order-id", "1", "--item-ids", "2"},
