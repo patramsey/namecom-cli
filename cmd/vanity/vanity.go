@@ -126,6 +126,10 @@ func runList(cmd *cobra.Command, args []string) error {
 	for {
 		result, err := client.SDK().VanityNameservers.ListVanityNameservers(cmd.Context(),
 			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
+		if page == listPage && cmdutil.PageOutOfRange(page, err) {
+			lastResult = &coreapigo.ListVanityNameserversResponse{}
+			break
+		}
 		if err != nil {
 			spin.Stop()
 			// The API's own "Domain not found." does not name it (#291).
@@ -133,6 +137,11 @@ func runList(cmd *cobra.Command, args []string) error {
 				return cmdutil.DomainNotFound(err, domain)
 			}
 			return api.FromSDKError(err)
+		}
+		// The reply carries no totalCount, so only lastPage can say.
+		if page == listPage && cmdutil.PastLastPage(page, paging.PerPage, len(result.VanityNameservers), 0, result.LastPage) {
+			lastResult = &coreapigo.ListVanityNameserversResponse{}
+			break
 		}
 		all = append(all, cmdutil.NonNil(result.VanityNameservers)...)
 		lastResult = result

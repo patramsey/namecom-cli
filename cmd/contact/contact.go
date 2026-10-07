@@ -113,9 +113,17 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	for {
 		result, err := client.SDK().ContactVerification.UnverifiedContactsList(cmd.Context(),
 			&coreapigo.UnverifiedContactsListRequest{Page: &page, PerPage: paging.PerPage})
+		if page == listPage && cmdutil.PageOutOfRange(page, err) {
+			lastResult = &coreapigo.UnverifiedContactsResponse{}
+			break
+		}
 		if err != nil {
 			spin.Stop()
 			return err
+		}
+		if page == listPage && cmdutil.PastLastPage(page, paging.PerPage, len(result.UnverifiedContacts), result.TotalCount, &result.LastPage) {
+			lastResult = &coreapigo.UnverifiedContactsResponse{}
+			break
 		}
 		// Fresh variable per page — see cmd/dns/dns.go for why reusing one
 		// decode target both corrupts earlier pages and never terminates.

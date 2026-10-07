@@ -1,9 +1,72 @@
 package cmdutil
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"testing"
+
+	"github.com/patramsey/namecom-cli/internal/api"
 )
+
+// TestPastLastPage covers the rule every paged list uses for a page past the
+// end. The API answers one with page 1 again, so each case past the end is
+// a reply a real page could not be; the from field, which the API gets wrong
+// at perPage 1, is not consulted.
+func TestPastLastPage(t *testing.T) {
+	one, two := 1, 2
+	for _, tc := range []struct {
+		name     string
+		page     int
+		perPage  *int
+		n, total int
+		lastPage *int
+		want     bool
+	}{
+		{"page 1 is never past the end", 1, &two, 2, 2, nil, false},
+		{"page 2 answered with all 5 of a one-page list", 2, nil, 5, 5, nil, true},
+		{"page 2 at --limit 5 of 5", 2, intPtr(5), 5, 5, nil, true},
+		{"page 2 of 1 a page, 6 in all", 2, &one, 1, 6, intPtr(6), false},
+		{"page 3 of 2 a page, 6 in all", 3, &two, 2, 6, nil, false},
+		{"page 4 of 2 a page, 6 in all", 4, &two, 2, 6, nil, true},
+		{"page past lastPage", 5, nil, 0, 0, intPtr(4), true},
+		{"page at lastPage", 4, nil, 1, 0, intPtr(4), false},
+		{"no count and no lastPage is taken at its word", 5, &two, 2, 0, nil, false},
+		{"page 2 of 1000 at the default page size", 2, nil, 500, 1000, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PastLastPage(tc.page, tc.perPage, tc.n, tc.total, tc.lastPage); got != tc.want {
+				t.Errorf("PastLastPage(%d, %v, %d, %d, %v) = %v, want %v", tc.page, tc.perPage, tc.n, tc.total, tc.lastPage, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPageOutOfRange: only the API's 400 for a page past the end, and only
+// past page 1, is an empty page.
+func TestPageOutOfRange(t *testing.T) {
+	outOfRange := &api.APIError{StatusCode: 400, Message: "Page exceeds available pages"}
+	for _, tc := range []struct {
+		name string
+		page int
+		err  error
+		want bool
+	}{
+		{"past the end", 8, outOfRange, true},
+		{"wrapped", 8, fmt.Errorf("listing: %w", outOfRange), true},
+		{"page 1", 1, outOfRange, false},
+		{"another 400", 8, &api.APIError{StatusCode: 400, Message: "perPage exceeds maximum of 1000"}, false},
+		{"a 500", 8, &api.APIError{StatusCode: 500, Message: "Page exceeds available pages"}, false},
+		{"no error", 8, nil, false},
+		{"not an API error", 8, errors.New("Page exceeds available pages"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PageOutOfRange(tc.page, tc.err); got != tc.want {
+				t.Errorf("PageOutOfRange(%d, %v) = %v, want %v", tc.page, tc.err, got, tc.want)
+			}
+		})
+	}
+}
 
 // TestInt32Page covers the narrowing that eight command packages used to carry
 // a private copy of, none of them tested. The out-of-range cases are the point:

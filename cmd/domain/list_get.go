@@ -154,9 +154,15 @@ func runList(cmd *cobra.Command, _ []string) error {
 
 	// Fetch page 1 first to discover LastPage.
 	lastResult, err = client.SDK().Domains.ListDomains(ctx, buildParams(listPage))
-	if err != nil {
+	pastEnd := cmdutil.PageOutOfRange(listPage, err)
+	if err != nil && !pastEnd {
 		spin.Stop()
 		return api.FromSDKError(err)
+	}
+	// Past the end, the API answers with page 1 again, or a 400 when there
+	// are several pages: either way, an empty page.
+	if pastEnd || cmdutil.PastLastPage(listPage, paging.PerPage, len(lastResult.Domains), lastResult.TotalCount, lastResult.LastPage) {
+		lastResult = &coreapigo.ListDomainsResponse{}
 	}
 	domains = append(domains, cmdutil.NonNil(lastResult.Domains)...)
 

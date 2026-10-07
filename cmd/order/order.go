@@ -191,9 +191,18 @@ func runList(cmd *cobra.Command, _ []string) error {
 			req.OrderStatus = &s
 		}
 		result, err := client.SDK().Orders.ListOrders(cmd.Context(), req)
+		if page == listPage && cmdutil.PageOutOfRange(page, err) {
+			lastResult = &coreapigo.ListOrdersResponse{}
+			break
+		}
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
+		}
+		// Past the end, the API answers with page 1 again: an empty page.
+		if page == listPage && cmdutil.PastLastPage(page, paging.PerPage, len(result.Orders), result.TotalCount, result.LastPage) {
+			lastResult = &coreapigo.ListOrdersResponse{}
+			break
 		}
 		orders = append(orders, cmdutil.NonNil(result.Orders)...)
 		lastResult = result
