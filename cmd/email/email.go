@@ -16,6 +16,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// The DNS records name.com adds to a domain for email forwarding, seen in the
+// sandbox (#286). The API adds them itself; the CLI only says so.
+const (
+	forwardingMX  = "mx3.name.com–mx8.name.com"
+	forwardingSPF = "v=spf1 a mx ~all"
+)
+
 // Cmd is the `namecom email` parent command.
 var Cmd = &cobra.Command{
 	Use:   "email",
@@ -56,7 +63,13 @@ var createCmd = &cobra.Command{
 part before the @: info, for info@example.com.
 
 A mailbox that already forwards elsewhere is left as it is, and create fails
-(exit 1) naming where it forwards; 'namecom email update' changes it.`,
+(exit 1) naming where it forwards; 'namecom email update' changes it.
+
+To deliver forwarded mail, name.com adds DNS records to <domain> when they
+are missing: MX records for ` + forwardingMX + ` and the SPF record "` + forwardingSPF + `".
+On a domain that already receives mail elsewhere, such as Google Workspace or
+Microsoft 365, these compete with its own MX records. Deleting the mailbox
+leaves them; 'namecom dns delete' removes them.`,
 	Example: `  namecom email create example.com info --to you@gmail.com
   namecom email create example.com support --to team@example.com`,
 	Args:              cmdutil.ExactArgs(2),
@@ -195,7 +208,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: args[1]})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("email forwarding %s@%s not found — run 'namecom email list %s' to see its forwardings", args[1], domain, domain))
+		return mailboxNotFound(err, args[1], domain)
 	}
 	if err != nil {
 		return api.FromSDKError(err)
@@ -325,6 +338,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	default:
 		// From the response, so the line shows what the API stored.
 		out.Success(fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
+		// Said rather than checked: a DNS list would be a second request on
+		// every create, to report records the help already describes.
+		out.Note(fmt.Sprintf("name.com adds MX records (%s) and the SPF record %q to %s if they are missing — run 'namecom dns list %s --host @' to see them",
+			forwardingMX, forwardingSPF, domain, domain))
 	}
 	return nil
 }
@@ -388,6 +405,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		entry, err = client.SDK().EmailForwardings.UpdateEmailForwarding(ctx, &body)
 		return api.FromSDKError(err)
 	})
+	if cmdutil.IsNotFound(err) {
+		return mailboxNotFound(err, mailbox, domain)
+	}
 	if err != nil || !sent || out.Quiet() {
 		return err
 	}
@@ -412,21 +432,56 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	mailbox := args[1]
 
+	// The prompt says where the mailbox forwards, as url and dns delete say
+	// what they remove (#286). That takes a GET, so it is made only when the
+	// prompt will be shown: --yes, --dry-run and a script without a terminal
+	// send what they did before. A missing mailbox fails here, before asking.
+	prompt := fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain)
+	if !cmdutil.IsYes(cmd) && !cmdutil.IsDryRun(cmd) && output.IsInteractive() {
+		stop := out.Spin("Fetching email forwarding…")
+		current, err := client.SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
+			&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: mailbox})
+		stop()
+		if cmdutil.IsNotFound(err) {
+			return mailboxNotFound(err, mailbox, domain)
+		}
+		if err != nil {
+			return api.FromSDKError(err)
+		}
+		if current != nil && current.EmailTo != "" {
+			prompt = fmt.Sprintf("Delete forwarding %s@%s → %s?", mailbox, domain, current.EmailTo)
+		}
+	}
+
 	// Escaped as the SDK escapes it, so --dry-run shows the path sent (#187).
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
 		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding/%s", domain, url.PathEscape(mailbox)),
-		Prompt: fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain),
+		Prompt: prompt,
 		Spin:   "Deleting email forwarding…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
 		return api.FromSDKError(client.SDK().EmailForwardings.DeleteEmailForwarding(ctx,
 			&coreapigo.DeleteEmailForwardingRequest{DomainName: domain, EmailBox: mailbox}))
 	})
+	if cmdutil.IsNotFound(err) {
+		return mailboxNotFound(err, mailbox, domain)
+	}
 	if err != nil || !sent {
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted forwarding for %s@%s", mailbox, domain))
+	// The API leaves the records it added for forwarding (#286). Whether
+	// another mailbox still needs them is not known without a list, so this
+	// says what stays and how to remove it rather than offering to.
+	out.Note(fmt.Sprintf("the MX and SPF records name.com added for forwarding stay on %s — once no mailbox forwards, remove them with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
+		domain, domain, domain))
 	return nil
+}
+
+// mailboxNotFound is the not-found error for a mailbox, worded as dns and
+// url word theirs (#286). It still exits 4.
+func mailboxNotFound(err error, mailbox, domain string) error {
+	return cmdutil.NotFound(err, fmt.Sprintf("mailbox %s@%s not found — run 'namecom email list %s' to see its mailboxes", mailbox, domain, domain))
 }
 
 func emailRows(entries []*coreapigo.EmailForwarding) [][]string {
