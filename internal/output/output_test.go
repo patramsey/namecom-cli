@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	coreapigo "github.com/namedotcom/core-api-go"
 	"gopkg.in/yaml.v3"
 )
@@ -1027,6 +1028,35 @@ func TestTableFitsTerminalWidth(t *testing.T) {
 			t.Errorf("dropped columns that fit:\n%s", got)
 		}
 	})
+}
+
+// TestTableShortensDateWithoutLosingDirection pins #293: at 80 columns a
+// deadline cut to "2026-07-19 (3 month…" lost "ago", so an overdue one read
+// as still ahead. A date that must be shortened loses its whole relative
+// phrase, coloured or not; any other cell is still cut with "…".
+func TestTableShortensDateWithoutLosingDirection(t *testing.T) {
+	headers := []string{"DOMAIN", "DEADLINE"}
+	rows := [][]string{{"a-rather-long-domain-name-for-this.com", "2026-07-19 (3 months ago)"}}
+	for _, color := range []ColorMode{ColorNever, ColorAlways} {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Color: color, Writer: &buf, EWriter: &buf, MaxWidth: 50}
+		cells := rows
+		if color == ColorAlways {
+			// Off a TTY lipgloss renders no escapes, so write them by hand.
+			cells = [][]string{{rows[0][0], "\x1b[1;31m" + rows[0][1] + "\x1b[0m"}}
+		}
+		c.Table(headers, cells)
+		got := ansi.Strip(buf.String())
+		if !strings.Contains(got, "2026-07-19 ") || strings.Contains(got, "(3 month") || strings.Contains(got, "2026-07-19 (") {
+			t.Errorf("color %v: want the date alone, without a cut relative phrase:\n%s", color, got)
+		}
+		if !strings.Contains(got, "a-rather-long-domain…") {
+			t.Errorf("color %v: want the domain cut with …:\n%s", color, got)
+		}
+	}
+	if got := shortenCell("2026-07-19 (3 months ago)", 8); got != "2026-07…" {
+		t.Errorf("narrower than the date: %q, want it cut with …", got)
+	}
 }
 
 // TestTableEssentialColumns: a DNS answer, the widest column, was the first

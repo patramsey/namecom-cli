@@ -78,8 +78,9 @@ func TestDelete_DryRunOfMissingKey(t *testing.T) {
 
 		cmd := withDryRun(t, cmdWithYes(t, srv), true)
 		err := runDelete(cmd, []string{"example.com", "abc123"})
-		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "abc123") {
-			t.Fatalf("want not found naming the digest, got %v", err)
+		// "DS record", as the help says, not "DNSSEC key" (#293).
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "DS record abc123 not found") {
+			t.Fatalf("want not found naming the DS record's digest, got %v", err)
 		}
 		if got := strings.Join(requests, " "); got != "GET" {
 			t.Errorf("requests = %q, want one GET", got)
@@ -87,6 +88,8 @@ func TestDelete_DryRunOfMissingKey(t *testing.T) {
 	})
 
 	t.Run("real run", func(t *testing.T) {
+		var prompt string
+		defer cmdutil.StubConfirm(func(p string) bool { prompt = p; return true })()
 		var requests []string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requests = append(requests, r.Method)
@@ -101,6 +104,9 @@ func TestDelete_DryRunOfMissingKey(t *testing.T) {
 		}
 		if got := strings.Join(requests, " "); got != "DELETE" {
 			t.Errorf("requests = %q, want the DELETE alone", got)
+		}
+		if want := "Remove DS record abc123 from example.com?"; prompt != want {
+			t.Errorf("prompt = %q, want %q", prompt, want)
 		}
 	})
 }

@@ -41,8 +41,9 @@ Formats (-o, --output):
   A write prints its result's keys (success, changed, message) as one
   object, and a write to several targets a row each; a read never prints
   them. A dry run prints method, path and body as a list, and dns sync's
-  plan a row per change: action, type, host, answer, TTL, priority. dns export writes a file, JSON or a zone file, so -o table,
-  -o tsv and -q are usage errors there.
+  plan a row per change: action, type, host, answer, TTL, priority.
+  dns export writes a file, JSON or a zone file, so -o table, -o tsv and
+  -q are usage errors there.
 
   In TSV a cell's backslash, tab, line feed and carriage return are written
   \\, \t, \n and \r, so every row is one line.

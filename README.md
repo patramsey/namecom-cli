@@ -284,8 +284,8 @@ in a warning; pass `-X GET` to send the fields as a query instead.
 
 **Scripting and automation:**
 ```bash
-# List every domain expiring within 60 days (GNU date; on macOS: date -v+60d +%F)
-namecom domain list --all --expiring-before "$(date -d '+60 days' +%F)" -q
+# List every domain expiring within 60 days (BSD/macOS date, then GNU date)
+namecom domain list --all --expiring-before "$(date -v+60d +%F 2>/dev/null || date -d '+60 days' +%F)" -q
 
 # Bulk-create an A record across all domains
 namecom domain list --all -q | xargs -I{} namecom dns create {} --type A --answer 1.2.3.4
@@ -320,10 +320,33 @@ For commands that take one domain, run `xargs` without `-P` (one process
 at a time); `-P 2` already reaches the account's limit, and anything else
 using the same account shares it.
 
-Commands that change something ask first when run in a terminal. In a script
-or a pipe there is no one to ask, so they stop with *"confirmation required
-for … — pass --yes to confirm when not running in a terminal"* and exit 2
-until you pass `--yes`.
+**Confirmations.** Writes that are hard to undo ask first when run in a
+terminal:
+
+- deletes: `dns delete`, `email delete`, `url delete`, `vanity-ns delete`,
+  `dnssec delete`
+- anything that charges, refunds or moves a domain: `domain register`,
+  `domain renew`, `transfer create`, `transfer internal-in`,
+  `transfer cancel`, `transfer cancel-outbound`, `order refund`
+- `domain set-ns`, `domain contacts set`, `domain lock off`,
+  `domain privacy off`, `domain autorenew on` and `off`, and `domain update`
+  making any of those three changes
+- `dns sync` with changes to apply, `auth login` replacing a saved profile,
+  and `namecom api` with any method but GET and HEAD
+
+In a script or a pipe there is no one to ask, so these stop with
+*"confirmation required for … — pass --yes to confirm when not running in a
+terminal"* and exit 2 until you pass `--yes`. Every other write runs without
+asking, in a terminal or not: `dns create`, `dns update`, `dns import`,
+`email create` and `update`, `url create` and `update`, `vanity-ns create`
+and `update`, `dnssec create`, `domain lock on`, `domain privacy on`,
+`contact resend` and `verify`, `auth logout` and `config use`. Any write can
+be previewed first with `--dry-run`.
+
+**Paging.** A `list` prints one page: 1 to 1000 items with `--limit` (the
+API's page size without it) from `--page`, filtered or not, and its footer —
+or `nextPage` in JSON — says when there are more. `--all` fetches every page,
+1000 items a request, and so does `-q` without `--page` or `--limit`.
 
 ## Output formats
 
@@ -463,7 +486,16 @@ of them is a breaking change and is called out in the
   several requests — `dns import`, a toggle or `dns delete` over several
   targets — prints `{"dryRun": true, "data": [ … ]}`; `dns sync --dry-run`
   adds its plan (`creates`, `updates`, `deletes`, `kept`, `unchanged`)
-  beside that `data`.
+  beside that `data`. A dry run that would only change the config file —
+  `auth login`, `auth logout`, `config use` — prints
+  `{"dryRun": true, "config", "action", "profile", "default"}`, where
+  `auth logout`'s `default` is the profile that would be the default
+  afterwards and `defaultSource` says whether the file's `default:` key
+  names it (`config`) or the profiles left imply it (`implied`).
+  `open --dry-run` prints `{"url", "opened": false, "dryRun": true}`.
+- **`domain check`** gives each name `purchasable`: `true`, `false` for a
+  taken name, or `null` when the registry did not answer for it (the table
+  says `unknown`).
 - **`dns sync`** prints what it did: `{"domain", "changed", "applied": [ … ],
   "unchanged"}`. When a change fails, that document still goes to stdout,
   with `failed` (and `outcomeUnknown: true` when it may have gone through)
@@ -652,7 +684,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `--fields` | | Keep only these keys of each list item, or of the object, in this order — see [Picking fields, jq, and TSV](#picking-fields-jq-and-tsv) |
 | `--jq` | | Filter the JSON output with a jq expression; strings print unquoted |
 | `-q, --quiet` | | Script output: lists print one ID or name per line, creates the new ID, other writes nothing — see [Output formats](#output-formats) |
-| `-y, --yes` | | Skip all confirmation prompts; required for writes when not in a terminal |
+| `-y, --yes` | | Skip all confirmation prompts; required, when not in a terminal, for the writes that confirm — see [Confirmations](#workflows) |
 | `--dry-run` | | Print the request a write would send, without sending it — a JSON document in JSON mode. Reads are unaffected |
 | `--profile` | | Use a named credential profile |
 | `--sandbox` | | Target the sandbox API (`api.dev.name.com`) |

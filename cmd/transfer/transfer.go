@@ -730,7 +730,21 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Table(eligibilityTable(result))
+		// atName is true for a domain in any name.com account, this one
+		// included, and the hint sent the owner to transfer in a domain they
+		// already hold (#293). Only a table shows the hint, so only a table
+		// asks: a 404 is the expected answer, and any other failure leaves the
+		// hint as it was.
+		mine := false
+		if result.AtName && out.Format == output.FormatTable {
+			_, gerr := client.SDK().Domains.GetDomain(cmd.Context(), &coreapigo.GetDomainRequest{DomainName: domain})
+			mine = gerr == nil
+		}
+		out.Table(eligibilityTable(result, mine))
+		if mine {
+			out.Note(fmt.Sprintf("%s is already in this account — there is nothing to transfer in", domain))
+			return nil
+		}
 		if result.AtName {
 			// supportsInternalTransfer is a TLD-level flag. The spec is explicit
 			// that it "does not reflect per-account allowlist eligibility" — so
@@ -749,10 +763,13 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 // beside "SUPPORTS INTERNAL yes", which read as a contradiction (#238): the
 // second is a TLD-level flag that matters only for a domain already at
 // name.com. REGISTERED AT says where the domain is, and the TLD column
-// appears only when it applies.
-func eligibilityTable(r *coreapigo.TransferEligibilityResponse) ([]string, [][]string) {
+// appears only when it applies. mine says the domain is in this account.
+func eligibilityTable(r *coreapigo.TransferEligibilityResponse, mine bool) ([]string, [][]string) {
 	if !r.AtName {
 		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "another registrar"}}
+	}
+	if mine {
+		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "name.com (this account)"}}
 	}
 	internal := "yes"
 	if !r.SupportsInternalTransfer {

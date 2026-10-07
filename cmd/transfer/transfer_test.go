@@ -726,16 +726,22 @@ func TestWatchTransfer_ProgressDoesNotCorruptStructuredOutput(t *testing.T) {
 // ---- transfer eligibility ---------------------------------------------------
 
 // eligibilityServer serves a fixed eligibility response and records the request
-// path, so tests can assert both what was rendered and what was asked for.
+// path, so tests can assert both what was rendered and what was asked for. A
+// domain GET is a 404: the domain is in another account.
 func eligibilityServer(t *testing.T, body string) (*httptest.Server, func() string) {
 	t.Helper()
 	var mu sync.Mutex
 	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/core/v1/domains/") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
 		mu.Lock()
 		path = r.URL.Path
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
@@ -852,6 +858,60 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			}
 			if !strings.Contains(got, "example.com") {
 				t.Errorf("table should show the domain, got:\n%s", got)
+			}
+		})
+	}
+}
+
+// atName is true for a domain in any name.com account, this one included.
+// For the owner's own domain the hint recommended internal-in (#293); a table
+// now asks for the domain, and says it is already here. Only a table asks:
+// JSON, YAML and TSV send the one eligibility request, as before.
+func TestTransferEligibility_DomainAlreadyInThisAccount(t *testing.T) {
+	for _, tt := range []struct {
+		format   output.Format
+		requests []string
+	}{
+		{output.FormatTable, []string{"/core/v1/transfers/eligibility/example.com", "/core/v1/domains/example.com"}},
+		{output.FormatJSON, []string{"/core/v1/transfers/eligibility/example.com"}},
+		{output.FormatTSV, []string{"/core/v1/transfers/eligibility/example.com"}},
+	} {
+		t.Run(string(tt.format), func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasPrefix(r.URL.Path, "/core/v1/domains/") {
+					_, _ = w.Write([]byte(`{"domainName":"example.com"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"domainName":"example.com","atName":true,"supportsInternalTransfer":true}`))
+			}))
+			t.Cleanup(srv.Close)
+			var stdout bytes.Buffer
+			cmd := cmdForEligibility(t, srv, tt.format, &stdout)
+			if err := runEligibility(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runEligibility: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if strings.Join(paths, " ") != strings.Join(tt.requests, " ") {
+				t.Errorf("requests = %v, want %v", paths, tt.requests)
+			}
+			if tt.format != output.FormatTable {
+				return
+			}
+			got := stdout.String() + cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
+			for _, want := range []string{"name.com (this account)", "already in this account"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("output missing %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, "internal-in") || strings.Contains(got, "transfer create") {
+				t.Errorf("output recommends a transfer of a domain already here:\n%s", got)
 			}
 		})
 	}

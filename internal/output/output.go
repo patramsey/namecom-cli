@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -680,7 +681,7 @@ func (c *Config) fitColumns(headers []string, rows [][]string, essential map[str
 			}
 			v := r[i]
 			if lipgloss.Width(v) > widths[k] {
-				v = ansi.Truncate(v, widths[k], "…")
+				v = shortenCell(v, widths[k])
 				truncated = true
 			}
 			nr = append(nr, v)
@@ -688,6 +689,21 @@ func (c *Config) fitColumns(headers []string, rows [][]string, essential map[str
 		outRows = append(outRows, nr)
 	}
 	return outHeaders, outRows, dropped, truncated
+}
+
+// datedCell matches a cell ExpiryDate writes: a date, then its relative
+// phrase in parentheses ("2026-07-19 (3 months ago)").
+var datedCell = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \(.*\)$`)
+
+// shortenCell cuts v to width columns with "…". A date with its relative
+// phrase loses the whole phrase instead: cut, "2026-07-19 (3 month…" lost
+// "ago", and an overdue deadline read as a future one (#293).
+func shortenCell(v string, width int) string {
+	const date = len("2006-01-02")
+	if datedCell.MatchString(ansi.Strip(v)) && width >= date {
+		return ansi.Truncate(v, date, "")
+	}
+	return ansi.Truncate(v, width, "…")
 }
 
 // shrinkToFit narrows the widest column a character at a time until the table

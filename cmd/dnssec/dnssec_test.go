@@ -100,8 +100,8 @@ func TestDNSSECList_Empty(t *testing.T) {
 		t.Fatal("output writer is not a *bytes.Buffer")
 	}
 	got := buf.String()
-	if !strings.Contains(got, "No DNSSEC keys found") {
-		t.Errorf("empty-state output should contain %q, got:\n%s", "No DNSSEC keys found", got)
+	if !strings.Contains(got, "No DS records found") {
+		t.Errorf("empty-state output should contain %q, got:\n%s", "No DS records found", got)
 	}
 	if !strings.Contains(got, "dnssec create") {
 		t.Errorf("empty-state output should contain %q, got:\n%s", "dnssec create", got)

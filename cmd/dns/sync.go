@@ -42,12 +42,12 @@ sent, and the error says what was applied and what was not; fix the problem
 and run sync again — it picks up from the live state.
 
 Safety:
-  Without --prune nothing is deleted.
-  --prune deletes records not in the file, except NS records at the apex
-    (the zone's delegation) and CAA records (which the API cannot
+  - Without --prune nothing is deleted.
+  - --prune deletes records not in the file, except NS records at the
+    apex (the zone's delegation) and CAA records (which the API cannot
     recreate). Those are never changed or deleted by --prune.
-  --prune-all is --prune that also changes and deletes those.
-  A file with no records is refused with --prune or --prune-all.`,
+  - --prune-all is --prune that also changes and deletes those.
+  - A file with no records is refused with --prune or --prune-all.`,
 	Example: `  namecom dns export example.com > example.json        # snapshot, then edit
   namecom dns sync example.com --file example.json --dry-run
   namecom dns sync example.com --file example.json

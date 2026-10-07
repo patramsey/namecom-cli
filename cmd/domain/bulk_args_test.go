@@ -183,6 +183,13 @@ func TestGet_SeveralDomains(t *testing.T) {
 	}
 }
 
+// The help says what TestGet_SeveralDomains pins: it said "an array" (#293).
+func TestGet_HelpNamesTheListShape(t *testing.T) {
+	if !strings.Contains(getCmd.Long, `{"data": [...]}`) || strings.Contains(getCmd.Long, "an array") {
+		t.Errorf("domain get --help should give the {\"data\": [...]} shape:\n%s", getCmd.Long)
+	}
+}
+
 // TestCheck_NamesFromStdin: `domain check -` reads the names from stdin
 // rather than failing "-" as a domain name (#244).
 func TestCheck_NamesFromStdin(t *testing.T) {
