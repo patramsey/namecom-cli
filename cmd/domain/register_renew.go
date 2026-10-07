@@ -592,6 +592,17 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A dry run reads the domain first, so one for a domain not in this
+	// account fails not_found, as the renewal would, rather than quoting a
+	// price for it (#292). A real run lets the renewal itself refuse: the GET
+	// would be a second request for the same answer.
+	if cmdutil.IsDryRun(cmd) {
+		if _, err := client.SDK().Domains.GetDomain(cmd.Context(),
+			&coreapigo.GetDomainRequest{DomainName: domainName}); err != nil {
+			return domainError(err, domainName)
+		}
+	}
+
 	// Fetch pricing to show renewal cost before charging. Quote the same term
 	// the request body will carry, so the price we show and the price we send
 	// can't diverge on multi-year renewals.

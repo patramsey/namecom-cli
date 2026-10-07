@@ -731,13 +731,25 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 	}
 	if cmdutil.IsDryRun(cmd) {
 		// --dry-run describes the removal and keeps the file; it used to
-		// delete the profile.
-		configcmd.PreviewChange(out, configcmd.Change{
+		// delete the profile. It names the default that results, which with
+		// the `default:` key cleared may be implied by the profiles left:
+		// "default": "" read as no default while another profile would be
+		// used (#292).
+		change := configcmd.Change{
 			Action:  "remove_profile",
 			Profile: profile,
 			Default: cfgFile.Default,
 			Summary: fmt.Sprintf("remove profile %q", profile),
-		})
+		}
+		if change.Default != "" {
+			change.DefaultSource = "config"
+		} else if change.Default = config.ImpliedDefault(cfgFile); change.Default != "" {
+			change.DefaultSource = "implied"
+		}
+		if change.Default != "" {
+			change.Summary += fmt.Sprintf(" (leaving %q as the default)", change.Default)
+		}
+		configcmd.PreviewChange(out, change)
 		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {

@@ -31,6 +31,9 @@ func purchaseQuoteServer(t *testing.T, pricing string) *httptest.Server {
 			_, _ = w.Write([]byte(`{"domain":"acme.io","claimsProcessActive":false,"claimId":null,"claims":[]}`))
 		case r.URL.Path == "/core/v1/accountinfo/balance":
 			_, _ = w.Write([]byte(`{"balance":120}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/core/v1/domains/acme.io":
+			// renew's dry run checks the domain is in the account (#292).
+			_, _ = w.Write([]byte(`{"domainName":"acme.io"}`))
 		default:
 			t.Errorf("a dry run sent %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)

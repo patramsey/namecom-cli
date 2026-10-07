@@ -386,14 +386,21 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A trailing dot and any case are accepted and dropped, as vanity-ns
+	// accepts them: `NS1.Example.org.` was refused here and taken there
+	// (#292). A nameserver listed twice is refused rather than sent; it is
+	// more likely a typo for a second one than meant.
 	ns := strings.Split(setNSList, ",")
+	seen := make(map[string]bool, len(ns))
 	for i := range ns {
-		ns[i] = strings.TrimSpace(ns[i])
-	}
-	for i, n := range ns {
-		if err := cmdutil.ValidNameserver(n, i); err != nil {
+		ns[i] = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(ns[i]), "."))
+		if err := cmdutil.ValidNameserver(ns[i], i); err != nil {
 			return err
 		}
+		if seen[ns[i]] {
+			return cmdutil.NewUsageError(fmt.Errorf("nameserver %s is listed twice in --ns", ns[i]))
+		}
+		seen[ns[i]] = true
 	}
 	// DomainName is the path parameter and is not marshaled, so previewing
 	// this value previews exactly the body sent.

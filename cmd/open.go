@@ -54,14 +54,34 @@ func runOpen(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// --dry-run reports the URL and opens nothing: it reported "opened": true
+	// and launched the browser (#292).
+	if cmdutil.IsDryRun(cmd) {
+		return renderOpenDryRun(cmdutil.Out(cmd), target)
+	}
 	return renderOpen(cmdutil.Out(cmd), target, openBrowser(target))
+}
+
+// renderOpenDryRun is renderOpen for a browser that was not launched: the
+// URL, with "opened": false and "dryRun": true in JSON and YAML.
+func renderOpenDryRun(out *output.Config, target string) error {
+	res := openResult{URL: target, DryRun: true}
+	switch out.Format {
+	case output.FormatJSON:
+		return out.JSON(res)
+	case output.FormatYAML:
+		return out.YAML(res)
+	}
+	fmt.Fprintf(out.Writer, "%s would open %s\n", out.Amber("dry-run:"), target)
+	return nil
 }
 
 // openResult is the JSON/YAML shape of `namecom open`. The URL is always in it:
 // a script asking for the link should get it whether or not a browser opened.
 type openResult struct {
-	URL    string `json:"url"    yaml:"url"`
-	Opened bool   `json:"opened" yaml:"opened"`
+	URL    string `json:"url"              yaml:"url"`
+	Opened bool   `json:"opened"           yaml:"opened"`
+	DryRun bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 }
 
 // renderOpen reports the outcome of handing target to a browser. Failing to

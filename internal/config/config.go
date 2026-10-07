@@ -441,6 +441,11 @@ func Identity(f *File, ov Overrides) (Credentials, error) {
 	return creds, nil
 }
 
+// ImpliedDefault is the profile f selects when nothing names one — no
+// --profile, no NAMECOM_PROFILE and no `default:` key — or "" when none is
+// implied. See impliedDefault.
+func ImpliedDefault(f *File) string { return impliedDefault(f) }
+
 // impliedDefault names the profile to use when nothing selected one: no
 // --profile, no NAMECOM_PROFILE, and no top-level `default:` key in the file.
 //

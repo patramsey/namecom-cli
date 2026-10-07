@@ -129,6 +129,30 @@ Releases before `0.2.0` predate this file. Their notes are on the
   told apart from a taken name, and `--exit-status` finding a name
   unavailable reports error type `unavailable` instead of `api` (still exit
   1).
+- Dry runs check their target where the real command would fail, and some
+  write commands check their input more strictly (#292). Under `--dry-run`,
+  `vanity-ns update` and `vanity-ns delete` of a nameserver that does not
+  exist, and `dnssec delete` of a digest the domain does not have, fail
+  `not_found` (exit 4); `domain renew` of a domain not in the account fails
+  `not_found` instead of quoting a charge; and `transfer create` of a domain
+  already in the account is a usage error (exit 2). Each makes one read, and
+  only under `--dry-run`; a real run still sends the write alone.
+  `vanity-ns create`/`update --ips` takes only IPv4 and IPv6 addresses.
+  `dnssec create` takes a `--key-tag` of 0–65535 and a hexadecimal
+  `--digest` of the length its `--digest-type` produces (40, 64, 64 or 96
+  characters for types 1–4). `domain set-ns` accepts a trailing dot and any
+  case, as `vanity-ns` does, and refuses a nameserver listed twice.
+  `order refund 12345` is a usage error whose hint is the command with
+  `--order-id`; it was reported as an unknown command.
+- `open --dry-run` prints the URL and opens nothing (#292). It launched the
+  browser and reported `"opened": true`. **Scripts:** its JSON is now
+  `{"url": …, "opened": false, "dryRun": true}`.
+- `auth logout --dry-run` names the profile that would be the default
+  afterwards (#292). Removing the default profile with one other left
+  previewed `"default": ""`, though the one left becomes the implied default.
+  **Scripts:** `default` now holds that profile, and a new `defaultSource`
+  key says `config` (the file's `default:` key) or `implied`; the table line
+  ends `(leaving "prod" as the default)`.
 
 ## [0.5.1] - 2026-10-05
 

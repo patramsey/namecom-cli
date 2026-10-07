@@ -1,0 +1,106 @@
+package dnssec
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+)
+
+// sha256Digest is a well-formed digest for digest type 2 (SHA-256).
+const sha256Digest = "2BB183AF5F22588179A53B0A98631FAD1A292118B3A6E8D4C0C6F9CC6E7F4A1D"
+
+// TestCreate_ValidatesKey pins #292: a key tag of 99999999 and a digest of
+// "xyz" were previewed and sent. The key tag is 16-bit, and the digest is hex
+// of the length its type produces; both are refused before any request.
+func TestCreate_ValidatesKey(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		keyTag     int32
+		digestType int32
+		digest     string
+		ok         bool
+	}{
+		{"valid SHA-256", 12345, 2, sha256Digest, true},
+		{"valid SHA-1", 0, 1, strings.Repeat("a", 40), true},
+		{"valid SHA-384", 65535, 4, strings.Repeat("F", 96), true},
+		{"unknown type, hex", 1, 99, "abcd", true},
+		{"key tag too large", 99999999, 2, sha256Digest, false},
+		{"negative key tag", -1, 2, sha256Digest, false},
+		{"not hex", 1, 2, "xyz", false},
+		{"empty", 1, 2, "", false},
+		{"SHA-256 too short", 1, 2, "abc123", false},
+		{"SHA-1 given a SHA-256 digest", 1, 1, sha256Digest, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"digest":"x"}`))
+			}))
+			t.Cleanup(srv.Close)
+			cmd := withDryRun(t, cmdForCreate(t, srv), true)
+			createAlgorithm, createDigest, createDigestType, createKeyTag = 13, tc.digest, tc.digestType, tc.keyTag
+
+			err := runCreate(cmd, []string{"example.com"})
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("want success, got %v", err)
+				}
+			} else if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+				t.Fatalf("want a usage error, got %v", err)
+			}
+			if requests != 0 {
+				t.Errorf("a dry run of create sends nothing, got %d requests", requests)
+			}
+		})
+	}
+}
+
+// TestDelete_DryRunOfMissingKey pins #292: `dnssec delete D <digest>
+// --dry-run` for a domain with no such DS record previewed the delete, with
+// the DS warning, and exited 0. The dry run reads the key — one GET — and
+// fails not_found as the delete would. A real run sends the delete alone.
+func TestDelete_DryRunOfMissingKey(t *testing.T) {
+	t.Run("dry run", func(t *testing.T) {
+		var requests []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests = append(requests, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		cmd := withDryRun(t, cmdWithYes(t, srv), true)
+		err := runDelete(cmd, []string{"example.com", "abc123"})
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "abc123") {
+			t.Fatalf("want not found naming the digest, got %v", err)
+		}
+		if got := strings.Join(requests, " "); got != "GET" {
+			t.Errorf("requests = %q, want one GET", got)
+		}
+	})
+
+	t.Run("real run", func(t *testing.T) {
+		var requests []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests = append(requests, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		cmd := withDryRun(t, cmdWithYes(t, srv), false)
+		if err := runDelete(cmd, []string{"example.com", "abc123"}); err != nil {
+			t.Fatalf("runDelete: %v", err)
+		}
+		if got := strings.Join(requests, " "); got != "DELETE" {
+			t.Errorf("requests = %q, want the DELETE alone", got)
+		}
+	})
+}

@@ -120,7 +120,7 @@ func TestDryRunMatchesRealRequest_DNSSEC(t *testing.T) {
 			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {
 				cmd := cmdForCreate(t, srv)
 				if err := cmd.ParseFlags([]string{
-					"--algorithm", "8", "--digest", "ABC123",
+					"--algorithm", "8", "--digest", sha256Digest,
 					"--digest-type", "2", "--key-tag", "1",
 				}); err != nil {
 					t.Fatalf("ParseFlags: %v", err)

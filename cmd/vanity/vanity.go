@@ -4,6 +4,7 @@ package vanity
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -204,11 +205,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 	ns, err := client.SDK().VanityNameservers.GetVanityNameserver(cmd.Context(),
 		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: hostname})
 	stop()
-	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("vanity nameserver %s not found on %s — run 'namecom vanity-ns list %s' to see them", hostname, domain, domain))
-	}
 	if err != nil {
-		return err
+		return vanityError(err, domain, hostname)
 	}
 	if err := cmdutil.RequireField("the nameserver's hostname", ns.Hostname); err != nil {
 		return err
@@ -230,6 +228,31 @@ func runGet(cmd *cobra.Command, args []string) error {
 			[]string{"HOSTNAME", "IPS"},
 			vanityRows([]*coreapigo.VanityNameserverResponse{ns}),
 		)
+	}
+	return nil
+}
+
+// vanityError names the nameserver when the API found none: its own "Not
+// Found" does not say what was missing.
+func vanityError(err error, domain, hostname string) error {
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("vanity nameserver %s not found on %s — run 'namecom vanity-ns list %s' to see them", hostname, domain, domain))
+	}
+	return api.FromSDKError(err)
+}
+
+// dryRunExists reads the nameserver under --dry-run, so a dry run of update
+// or delete fails as the real request would — not_found, exit 4 — instead of
+// previewing a change to a nameserver that is not there (#292). A real run
+// sends the write alone and lets the API refuse it: one request, not two.
+func dryRunExists(cmd *cobra.Command, domain, hostname string) error {
+	if !cmdutil.IsDryRun(cmd) {
+		return nil
+	}
+	_, err := cmdutil.APIClient(cmd).SDK().VanityNameservers.GetVanityNameserver(cmd.Context(),
+		&coreapigo.GetVanityNameserverRequest{DomainName: domain, Hostname: hostname})
+	if err != nil {
+		return vanityError(err, domain, hostname)
 	}
 	return nil
 }
@@ -295,7 +318,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ips := splitIPs(createIPs)
+	ips, err := parseIPs(createIPs)
+	if err != nil {
+		return err
+	}
 	body := coreapigo.CreateVanityNameserverBody{
 		DomainName: domain,
 		Hostname:   label,
@@ -350,7 +376,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ips := splitIPs(updateIPs)
+	ips, err := parseIPs(updateIPs)
+	if err != nil {
+		return err
+	}
+	if err := dryRunExists(cmd, domain, hostname); err != nil {
+		return err
+	}
 	body := coreapigo.UpdateVanityNameserverBody{
 		DomainName: domain,
 		Hostname:   hostname,
@@ -395,6 +427,9 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := dryRunExists(cmd, domain, hostname); err != nil {
+		return err
+	}
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
 		Path:   fmt.Sprintf("/core/v1/domains/%s/vanity_nameservers/%s", domain, hostname),
@@ -443,6 +478,19 @@ func splitIPs(s string) []string {
 		}
 	}
 	return ips
+}
+
+// parseIPs is splitIPs, refusing an entry that is not an IPv4 or IPv6
+// address as `dns create` refuses one (#292). "999.1.1.1" was previewed and
+// sent.
+func parseIPs(s string) ([]string, error) {
+	ips := splitIPs(s)
+	for _, ip := range ips {
+		if net.ParseIP(ip) == nil {
+			return nil, cmdutil.NewUsageError(fmt.Errorf("--ips: %q is not an IPv4 or IPv6 address", ip))
+		}
+	}
+	return ips, nil
 }
 
 // derefStr returns the value behind a *string, or "" when it is nil.
