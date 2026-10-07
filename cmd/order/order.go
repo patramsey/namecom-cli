@@ -233,8 +233,14 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	foot := cmdutil.Page("order", listPage, len(orders), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	if hasMore {
+		foot.Notes = []string{"newest first"}
+		foot.Narrow = narrowFlags(cmd)
+	}
 	switch out.Format {
 	case output.FormatJSON:
+		out.ListFooter(foot) // for a table --fields prints
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
@@ -252,13 +258,28 @@ func runList(cmd *cobra.Command, _ []string) error {
 			return nil
 		}
 		orderTable(out, orders)
-		if hasMore {
-			out.Count(len(orders), "order", "newest first · "+cmdutil.MorePages(nextPage)+", or narrow with --since, --domain or --status")
-		} else {
-			out.Count(len(orders), "order")
-		}
+		out.ListFooter(foot)
 	}
 	return nil
+}
+
+// narrowFlags names the order list filters not already given, for the
+// footer of a list with more pages: "--since, --domain or --status". It
+// suggested all three even when they were set.
+func narrowFlags(cmd *cobra.Command) string {
+	var flags []string
+	for _, f := range []string{"since", "domain", "status"} {
+		if !cmd.Flags().Changed(f) {
+			flags = append(flags, "--"+f)
+		}
+	}
+	switch len(flags) {
+	case 0:
+		return ""
+	case 1:
+		return flags[0]
+	}
+	return strings.Join(flags[:len(flags)-1], ", ") + " or " + flags[len(flags)-1]
 }
 
 func runGet(cmd *cobra.Command, args []string) error {

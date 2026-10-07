@@ -1113,6 +1113,11 @@ func (c *Config) Hint(msg string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
 	}
+	// Wrapped to the terminal, continuation lines under the text rather than
+	// the arrow.
+	if c.MaxWidth > 2 && ansi.StringWidth(msg)+2 > c.MaxWidth {
+		msg = strings.Join(wrapWords(msg, c.MaxWidth-2), "\n  ")
+	}
 	if c.ColorEnabled() {
 		arrow := styleDim.Render("→")
 		fmt.Fprintln(c.EWriter, arrow+" "+styleDim.Render(msg))
@@ -2040,9 +2045,12 @@ func (c *Config) Count(n int, noun string, notes ...string) {
 }
 
 // Footer prints parts as one dim line on stderr, joined with " · ". Only in
-// table mode, and not in quiet mode. Count is the usual caller; a list whose
-// count reads differently ("Showing 1–250 of 6,522 domains") calls it
-// directly. It goes to stderr for the reason Hint does.
+// table mode, and not in quiet mode. Count is the usual caller; a paged list
+// calls ListFooter. It goes to stderr for the reason Hint does.
+//
+// A line wider than the terminal breaks between parts, and a part wider
+// than the terminal between words: `order list`'s footer was 111 columns,
+// and wrapped mid-word at 80.
 func (c *Config) Footer(parts ...string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
@@ -2053,9 +2061,135 @@ func (c *Config) Footer(parts ...string) {
 			kept = append(kept, p)
 		}
 	}
-	if len(kept) > 0 {
-		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(kept, " · ")))
+	if len(kept) == 0 {
+		return
 	}
+	for _, line := range c.packParts(kept, " · ") {
+		fmt.Fprintln(c.EWriter, c.Dim(line))
+	}
+}
+
+// packParts joins parts with sep into lines no wider than MaxWidth, breaking
+// only between parts, and between words within a part too wide for a line
+// of its own. With no MaxWidth it is one line.
+func (c *Config) packParts(parts []string, sep string) []string {
+	if c.MaxWidth <= 0 {
+		return []string{strings.Join(parts, sep)}
+	}
+	var lines []string
+	cur := ""
+	for _, p := range parts {
+		switch {
+		case cur == "":
+			cur = p
+		case ansi.StringWidth(cur+sep+p) <= c.MaxWidth:
+			cur += sep + p
+		default:
+			lines = append(lines, cur)
+			cur = p
+		}
+		if ansi.StringWidth(cur) > c.MaxWidth {
+			wrapped := wrapWords(cur, c.MaxWidth)
+			lines = append(lines, wrapped[:len(wrapped)-1]...)
+			cur = wrapped[len(wrapped)-1]
+		}
+	}
+	return append(lines, cur)
+}
+
+// wrapWords breaks s into lines no wider than width, between words only: a
+// word wider than width has a line of its own. Not ansi.Wordwrap, which
+// also breaks after a hyphen, and so split a flag from its "--".
+func wrapWords(s string, width int) []string {
+	var lines []string
+	cur := ""
+	for _, w := range strings.Fields(s) {
+		switch {
+		case cur == "":
+			cur = w
+		case ansi.StringWidth(cur)+1+ansi.StringWidth(w) <= width:
+			cur += " " + w
+		default:
+			lines = append(lines, cur)
+			cur = w
+		}
+	}
+	return append(lines, cur)
+}
+
+// MorePages is the note under a list that stopped before its last page.
+func MorePages(next int) string {
+	return fmt.Sprintf("--page %d for more, --all for everything", next)
+}
+
+// ListPage is the page of a list a command printed, as its footer
+// describes it. ListFooter prints it.
+type ListPage struct {
+	// Noun names one item, as Plural takes it: "domain", "record".
+	Noun string
+	// Page is the page asked for, from 1. An empty page past the first is
+	// past the end of the list, and its footer says so, as
+	// cmdutil.EmptyPage does.
+	Page int
+	// Count is how many items were printed.
+	Count int
+	// From and To are the positions of the first and last item in the whole
+	// list, and Total its length, as the API reports them. Zero when it does
+	// not, or when they would mislead: a list filtered after it was fetched,
+	// or every page fetched from one past the first.
+	From, To, Total int
+	// Notes go after the count: "newest first".
+	Notes []string
+	// Next is the page after this one, or 0 when this is the last.
+	Next int
+	// Narrow names the flags that would narrow the list, offered after Next
+	// ("--since or --domain"). Only flags not already given belong here.
+	Narrow string
+}
+
+// parts is the footer's parts: "Showing 1–2 of 6,522 domains" when the page
+// is part of a longer list whose length is known, else "2 domains"; then
+// the notes and the page to ask for next.
+func (p ListPage) parts() []string {
+	if p.Count == 0 && p.Page > 1 && p.Next == 0 {
+		return []string{fmt.Sprintf("No %s on page %d", PluralNoun(2, p.Noun), p.Page),
+			"that is past the last page; leave out --page to start at the first"}
+	}
+	count := Plural(p.Count, p.Noun)
+	switch {
+	case p.Total > p.Count && p.From > 0 && p.To >= p.From:
+		count = fmt.Sprintf("Showing %s–%s of %s", Thousands(p.From), Thousands(p.To), Plural(p.Total, p.Noun))
+	case p.Total > p.Count:
+		count = Thousands(p.Count) + " of " + Plural(p.Total, p.Noun)
+	}
+	parts := append([]string{count}, p.Notes...)
+	if p.Next > 0 {
+		more := MorePages(p.Next)
+		if p.Narrow != "" {
+			more += ", or narrow with " + p.Narrow
+		}
+		parts = append(parts, more)
+	}
+	return parts
+}
+
+// ListFooter prints the footer under a page of a list, the one footer every
+// paged list uses. Lists said the same thing four ways — "2 orders",
+// "Showing 1–2 of 6,522 domains", "2 of 9,122 results" with --fields — and
+// dropped the "of N" on the last page, which read as the total.
+//
+// A command calls it after its table, and also in its JSON branch: when
+// --fields is printing a table, the command runs in JSON mode, and the
+// footer is kept for EndFilter to print under the filtered table. It prints
+// nothing in any other format.
+func (c *Config) ListFooter(p ListPage) {
+	if f := c.filter; f != nil {
+		if f.format == FormatTable {
+			f.page = &p
+		}
+		return
+	}
+	c.Footer(p.parts()...)
 }
 
 // Dim returns text rendered in a muted/gray style.

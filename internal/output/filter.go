@@ -44,6 +44,10 @@ type Filter struct {
 	// dryRun is set when the document is one request a --dry-run previewed,
 	// which TSV prints as a list (see fieldTable).
 	dryRun bool
+
+	// page is the footer the command gave ListFooter, for a list --fields
+	// prints as a table.
+	page *ListPage
 }
 
 // FilterError is a --fields or --jq that does not fit the command's output:
@@ -131,10 +135,19 @@ func (c *Config) EndFilter(wrote bool) error {
 		return nil
 	}
 
-	var rendered bytes.Buffer
+	// What rendering says on stderr — a table's footer, its "columns hidden"
+	// note — is held until the table is out. It went first, so the paging
+	// footer of a --fields table printed above the table.
+	var rendered, notes bytes.Buffer
+	ew := c.EWriter
+	c.EWriter = &notes
 	err := c.renderFiltered(&rendered, raw, f)
+	c.EWriter = ew
 	if err == nil {
-		_, err = c.Writer.Write(rendered.Bytes())
+		if _, err = c.Writer.Write(rendered.Bytes()); err != nil {
+			return err
+		}
+		_, err = c.EWriter.Write(notes.Bytes())
 		return err
 	}
 	if !wrote {
@@ -181,7 +194,7 @@ func (c *Config) renderFiltered(w *bytes.Buffer, raw []byte, f *Filter) error {
 		case FormatYAML:
 			err = writeYAML(w, doc)
 		default:
-			err = c.fieldTable(w, doc, f.Fields, f.dryRun)
+			err = c.fieldTable(w, doc, f.Fields, f.dryRun, f.page)
 		}
 		if err != nil {
 			return err
@@ -234,7 +247,7 @@ func runJQ(w io.Writer, code *gojq.Code, doc any) error {
 // method, path and body columns — so with dryRun set it is a list of one
 // there, and keeps that shape with --fields. It was field<TAB>value rows
 // with --fields and a header and a row without.
-func (c *Config) fieldTable(w io.Writer, doc any, fields []string, dryRun bool) error {
+func (c *Config) fieldTable(w io.Writer, doc any, fields []string, dryRun bool, page *ListPage) error {
 	prev := c.Writer
 	c.Writer = w
 	defer func() { c.Writer = prev }()
@@ -279,16 +292,23 @@ func (c *Config) fieldTable(w io.Writer, doc any, fields []string, dryRun bool) 
 	if len(rows) > 0 {
 		c.Table(fields, rows)
 	}
-	c.listFooter(doc, len(rows))
+	c.listFooter(doc, len(rows), page)
 	return nil
 }
 
 // listFooter prints the footer of a list --fields shows as a table: how many
 // items there are, of how many, and the page to ask for next. The command ran
 // in JSON mode, which prints no footer, so a list cut short by --limit looked
-// whole (#289). The document does not name what it lists, so the noun is
-// "result"; "--page N for more" is what cmdutil.MorePages says.
-func (c *Config) listFooter(doc any, n int) {
+// whole (#289). A command that gave ListFooter its page gets that footer,
+// worded as it is without --fields. For one that did not, the document does
+// not name what it lists, so the noun is "result".
+func (c *Config) listFooter(doc any, n int, page *ListPage) {
+	if page != nil {
+		p := *page
+		p.Count = n
+		c.Footer(p.parts()...)
+		return
+	}
 	count := Plural(n, "result")
 	var more string
 	if obj, ok := doc.(*object); ok {
@@ -298,7 +318,9 @@ func (c *Config) listFooter(doc any, n int) {
 			}
 		}
 		if np, ok := obj.vals["nextPage"].(json.Number); ok {
-			more = "--page " + np.String() + " for more, --all for everything"
+			if next, err := np.Int64(); err == nil {
+				more = MorePages(int(next))
+			}
 		}
 	}
 	c.Footer(count, more)

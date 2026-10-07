@@ -251,8 +251,17 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	next := 0
+	if hasMore {
+		next = listPage + 1
+		if lastResult.NextPage != nil {
+			next = *lastResult.NextPage
+		}
+	}
+	foot := cmdutil.Page("domain", listPage, len(domains), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, next)
 	switch out.Format {
 	case output.FormatJSON:
+		out.ListFooter(foot) // for a table --fields prints
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
@@ -286,23 +295,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 			})
 		}
 		out.Table(headers, rows)
-		// One footer, short enough for 80 columns. --filter and --tld are in
-		// the help; the footer only says how to see the rest.
-		switch {
-		case hasMore && lastResult.TotalCount > 0:
-			nextPage := listPage + 1
-			if lastResult.NextPage != nil {
-				nextPage = *lastResult.NextPage
-			}
-			out.Footer(
-				cmdutil.Showing(lastResult.From, lastResult.To, lastResult.TotalCount, "domain"),
-				cmdutil.MorePages(nextPage),
-			)
-		case hasMore:
-			out.Count(len(domains), "domain", cmdutil.MorePages(listPage+1))
-		default:
-			out.Count(len(domains), "domain")
-		}
+		// One footer. --filter and --tld are in the help; the footer only
+		// says how to see the rest.
+		out.ListFooter(foot)
 	}
 	return nil
 }

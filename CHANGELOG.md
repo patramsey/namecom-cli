@@ -114,6 +114,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   dry run with `--fields` prints a header and a row, as it does without.
   `open --dry-run -o tsv` prints the `url`, `opened` and `dryRun` rows
   rather than the text line.
+- Paged lists print one footer, worded the same everywhere: `Showing 1–2 of
+  9,122 orders` on every page when the API gives a total, the last page
+  included, where `order list`, `dns list` and `transfer list` said only "2
+  orders" and the last page of `domain list` "1 domain". With `--fields` in
+  a table, the footer comes after the table, not before it, and names the
+  items rather than "results". `order list` no longer suggests narrowing
+  with `--status` or `--domain` when they are given, and footers and hints
+  wrap to the terminal. **Scripts**: `dns list` and `transfer list` JSON
+  and YAML now carry `total`, as the other counted lists do (`dns list`
+  leaves it out under `--type` or `--host`, which filter after fetching).
 
 ## [0.5.2] - 2026-10-07
 

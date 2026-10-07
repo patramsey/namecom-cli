@@ -186,22 +186,28 @@ func TestTSVShape_DomainGetBatch(t *testing.T) {
 }
 
 // TestFields_Footer: --fields in a table keeps the list's footer on stderr,
-// so a list cut short by --limit says there is more (#289).
+// so a list cut short by --limit says there is more (#289), in the words it
+// has without --fields: it said "2 of 6,522 results".
 func TestFields_Footer(t *testing.T) {
-	stdout, stderr, code, n := runCounted(t, map[string]reply{"GET /core/v1/domains": {200,
-		`{"domains":[{"domainName":"a.com"},{"domainName":"b.com"}],"nextPage":2,"totalCount":6522}`}},
-		"domain", "list", "--limit", "2", "--fields", "domainName", "-o", "table")
+	routes := map[string]reply{"GET /core/v1/domains": {200,
+		`{"domains":[{"domainName":"a.com"},{"domainName":"b.com"}],"from":1,"to":2,"nextPage":2,"lastPage":3262,"totalCount":6522}`}}
+	stdout, stderr, code, n := runCounted(t, routes, "domain", "list", "--limit", "2", "--fields", "domainName", "-o", "table")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr:\n%s", code, stderr)
 	}
 	if stdout != "domainName\na.com\nb.com\n" {
 		t.Errorf("stdout:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "2 of 6,522 results · --page 2 for more") {
-		t.Errorf("want the paging footer on stderr, got:\n%s", stderr)
+	const want = "Showing 1–2 of 6,522 domains · --page 2 for more, --all for everything\n"
+	if withoutWarnings(stderr) != want {
+		t.Errorf("stderr:\n%q\nwant:\n%q", stderr, want)
 	}
 	if n != 1 {
 		t.Errorf("sent %d requests, want 1", n)
+	}
+	_, plain, _, _ := runCounted(t, routes, "domain", "list", "--limit", "2", "-o", "table")
+	if withoutWarnings(plain) != want {
+		t.Errorf("without --fields:\n%q\nwant:\n%q", plain, want)
 	}
 }
 

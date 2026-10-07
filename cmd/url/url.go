@@ -206,8 +206,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	foot := cmdutil.Page("URL forwarding", listPage, len(all), true, 0, 0, 0, nextPage) // the API gives this list no total
 	switch out.Format {
 	case output.FormatJSON:
+		out.ListFooter(foot) // for a table --fields prints
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
@@ -229,11 +231,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			headers,
 			urlRows(all),
 		)
-		if hasMore {
-			out.Count(len(all), "URL forwarding", cmdutil.MorePages(nextPage))
-		} else {
-			out.Count(len(all), "URL forwarding")
-		}
+		out.ListFooter(foot)
 	}
 	return nil
 }
