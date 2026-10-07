@@ -99,6 +99,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   code as a bare `NO`, which Ruby's `YAML.load` and PyYAML read back as
   `false`. **Scripts**: those values are now `"NO"`, `"yes"` and so on; a
   YAML 1.2 parser reads the same strings as before.
+- `status -o json` always has `expiringDomains` and
+  `pendingTransferDomains`, `[]` when there are none; they were left out, so
+  `status --jq '.pendingTransferDomains[]'` failed with "cannot iterate over:
+  null" on an account with no pending transfers. **Scripts**:
+  `pendingTransferDomains` is `null` when the transfers lookup failed (when
+  `pendingTransfers` is absent), and in `-o tsv` an empty list is `[]`
+  rather than an empty cell.
 
 ## [0.5.2] - 2026-10-07
 
