@@ -762,6 +762,10 @@ func errorInfo(err error) output.ErrorInfo {
 		info.Type = output.ErrorTypeAborted
 		return info
 	}
+	if _, ok := errors.AsType[*cmdutil.ConflictError](err); ok {
+		info.Type = output.ErrorTypeConflict
+		return info
+	}
 	if isAPI {
 		switch {
 		case apiErr.StatusCode == 401, apiErr.StatusCode == 403:

@@ -155,6 +155,26 @@ func AsRestricted(err error, operation, program string) error {
 	return err
 }
 
+// ConflictError reports that a create found what it was to create already
+// there, when the API said so with a success: `email create` for an existing
+// mailbox answers 200 with the existing entry, unchanged (#283). It exits 1,
+// as the API's own conflicts do, and the JSON error envelope says
+// "conflict". Details, when set, is printed as the envelope's "details".
+type ConflictError struct {
+	Err     error
+	Hint    string
+	Details any
+}
+
+func (e *ConflictError) Error() string { return e.Err.Error() }
+func (e *ConflictError) Unwrap() error { return e.Err }
+
+// UserHint returns Hint, the command that makes the change instead.
+func (e *ConflictError) UserHint() string { return e.Hint }
+
+// ErrorDetails returns Details for the JSON error envelope.
+func (e *ConflictError) ErrorDetails() any { return e.Details }
+
 // cobraUsagePrefixes are the messages cobra produces for invocation mistakes it
 // validates itself, after our own hooks have run.
 //

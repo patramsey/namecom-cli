@@ -516,6 +516,16 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode:   1,
 		},
 		{
+			// The API answers a create for an existing mailbox with 200 and
+			// the entry unchanged (#283): a conflict, with no status.
+			name: "email create on an existing mailbox",
+			args: []string{"email", "create", "example.com", "info", "--to", "new@example.org", "--yes"},
+			routes: map[string]reply{"POST /core/v1/domains/example.com/email/forwarding": {200,
+				`{"domainName":"example.com","emailBox":"info","emailTo":"old@example.org"}`}},
+			wantType: output.ErrorTypeConflict,
+			wantCode: 1,
+		},
+		{
 			name:     "usage",
 			args:     []string{"domain", "get"},
 			wantType: output.ErrorTypeUsage,

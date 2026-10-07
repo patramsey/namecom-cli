@@ -53,7 +53,10 @@ var createCmd = &cobra.Command{
 	Aliases: []string{"add"},
 	Short:   "Create an email forwarding entry",
 	Long: `Forward mail sent to <mailbox>@<domain> to another address. <mailbox> is the
-part before the @: info, for info@example.com.`,
+part before the @: info, for info@example.com.
+
+A mailbox that already forwards elsewhere is left as it is, and create fails
+(exit 1) naming where it forwards; 'namecom email update' changes it.`,
 	Example: `  namecom email create example.com info --to you@gmail.com
   namecom email create example.com support --to team@example.com`,
 	Args:              cmdutil.ExactArgs(2),
@@ -286,12 +289,30 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// The mailbox is what get, update and delete take.
-	if out.QuietMode {
-		box := mailbox
-		if entry != nil && entry.EmailBox != "" {
+	// The API answers a create for a mailbox that already exists with 200 and
+	// the existing entry, unchanged (#283). The response is the only sign, so
+	// it is compared with the request rather than spending a GET up front. A
+	// mailbox that already forwarded to the same address reads as a success:
+	// it is then forwarding where it was asked to.
+	box, to := mailbox, createEmailTo
+	if entry != nil {
+		if entry.EmailBox != "" {
 			box = entry.EmailBox
 		}
+		if entry.EmailTo != "" {
+			to = entry.EmailTo
+		}
+	}
+	if !strings.EqualFold(to, createEmailTo) {
+		return &cmdutil.ConflictError{
+			Err:     fmt.Errorf("mailbox %s@%s already forwards to %s: nothing was changed", box, domain, to),
+			Hint:    fmt.Sprintf("run 'namecom email update %s %s --to %s' to forward it to %s instead", domain, box, createEmailTo, createEmailTo),
+			Details: entry,
+		}
+	}
+
+	// The mailbox is what get, update and delete take.
+	if out.QuietMode {
 		out.Quiet(box)
 		return nil
 	}
@@ -302,7 +323,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(entry)
 	default:
-		out.Success(fmt.Sprintf("Created forwarding %s@%s → %s", mailbox, domain, createEmailTo))
+		// From the response, so the line shows what the API stored.
+		out.Success(fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
 	}
 	return nil
 }

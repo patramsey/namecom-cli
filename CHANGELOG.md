@@ -9,6 +9,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Fixed
+- `email create` for a mailbox that already exists reported "Created … →
+  <your --to>" and exited 0, though the API had changed nothing and the
+  mailbox still forwarded to its old address (#283). It now fails (exit 1)
+  with `mailbox info@example.com already forwards to old@example.org`, and
+  suggests the `email update` command. **Scripts**: that case now exits 1
+  with a JSON error envelope of type `conflict`, whose `details` is the
+  existing entry, where it printed the entry and exited 0. The success line
+  shows the address the API stored rather than the `--to` value.
+
 ## [0.5.1] - 2026-10-05
 
 Follow-ups to 0.5.0. `namecom api` gains `-X` and works with `-i` and `--jq`
