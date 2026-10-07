@@ -91,19 +91,33 @@ func TestReportError_RestrictedHasNoAuthAdvice(t *testing.T) {
 
 // TestReportError_NotFoundSaysWhatToDoOnce pins #234: `domain get nope.com`
 // printed its own "run 'namecom domain list'" and then the 404's generic
-// "check the domain name or ID" hint.
+// "check the domain name or ID" hint. Since #291 that advice is the hint
+// rather than part of the message, so JSON carries it in error.hint.
 func TestReportError_NotFoundSaysWhatToDoOnce(t *testing.T) {
-	err := cmdutil.NotFound(&api.APIError{StatusCode: 404, Message: "Not Found"},
-		`domain "nope.com" not found — run 'namecom domain list' to see your domains`)
-	for _, f := range []output.Format{output.FormatTable, output.FormatJSON} {
-		var ew bytes.Buffer
-		cfg := &output.Config{Format: f, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
-		if code := reportError(cfg, err); code != 4 {
-			t.Errorf("%s: exit code = %d, want 4", f, code)
-		}
-		if strings.Contains(ew.String(), "hint") {
-			t.Errorf("%s: the message already says what to do; want no hint, got:\n%s", f, ew.String())
-		}
+	err := cmdutil.DomainNotFound(&api.APIError{StatusCode: 404, Message: "Not Found"}, "nope.com")
+
+	var ew bytes.Buffer
+	cfg := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &ew}
+	if code := reportError(cfg, err); code != 4 {
+		t.Errorf("table: exit code = %d, want 4", code)
+	}
+	if want := "✗ domain \"nope.com\" not found\n→ run 'namecom domain list' to see your domains\n"; ew.String() != want {
+		t.Errorf("table: got:\n%s\nwant:\n%s", ew.String(), want)
+	}
+
+	ew.Reset()
+	cfg.Format = output.FormatJSON
+	if code := reportError(cfg, err); code != 4 {
+		t.Errorf("json: exit code = %d, want 4", code)
+	}
+	var doc struct {
+		Error struct{ Message, Hint string }
+	}
+	if jerr := json.Unmarshal(ew.Bytes(), &doc); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, ew.String())
+	}
+	if doc.Error.Message != `domain "nope.com" not found` || doc.Error.Hint != "run 'namecom domain list' to see your domains" {
+		t.Errorf("json: want the message and hint apart, got:\n%s", ew.String())
 	}
 }
 

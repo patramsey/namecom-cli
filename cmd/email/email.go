@@ -135,6 +135,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
+			// The API's own "Domain not found." does not name it (#291).
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.DomainNotFound(err, domain)
+			}
 			return api.FromSDKError(err)
 		}
 		all = append(all, cmdutil.NonNil(result.EmailForwarding)...)
@@ -483,7 +487,8 @@ func runDelete(cmd *cobra.Command, args []string) error {
 // mailboxNotFound is the not-found error for a mailbox, worded as dns and
 // url word theirs (#286). It still exits 4.
 func mailboxNotFound(err error, mailbox, domain string) error {
-	return cmdutil.NotFound(err, fmt.Sprintf("mailbox %s@%s not found — run 'namecom email list %s' to see its mailboxes", mailbox, domain, domain))
+	return cmdutil.NotFound(err, fmt.Sprintf("mailbox %s@%s not found", mailbox, domain),
+		fmt.Sprintf("run 'namecom email list %s' to see its mailboxes", domain))
 }
 
 func emailRows(entries []*coreapigo.EmailForwarding) [][]string {

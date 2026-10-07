@@ -193,7 +193,7 @@ func TestExitCode_SDKNotFound(t *testing.T) {
 		{"raw SDK 404", sdkErr},
 		{"wrapped SDK 404", fmt.Errorf("fetching domain: %w", sdkErr)},
 		{"friendly not-found message over an SDK 404",
-			cmdutil.NotFound(sdkErr, `domain "example.com" not found`)},
+			cmdutil.DomainNotFound(sdkErr, "example.com")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestNormalizeError_Message(t *testing.T) {
 		{"raw SDK 404", sdkErr, "Not Found"},
 		{"context around it is kept", fmt.Errorf("fetching domain: %w", sdkErr), "fetching domain: Not Found"},
 		{"friendly message is kept verbatim",
-			cmdutil.NotFound(sdkErr, `domain "example.com" not found`), `domain "example.com" not found`},
+			cmdutil.DomainNotFound(sdkErr, "example.com"), `domain "example.com" not found`},
 		{"non-API error is untouched", errors.New("boom"), "boom"},
 	}
 	for _, tc := range tests {

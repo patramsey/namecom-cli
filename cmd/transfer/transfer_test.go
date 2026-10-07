@@ -1061,7 +1061,7 @@ func TestTransferGet_NotFoundKeepsExitCode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a not-found error, got nil")
 	}
-	if want := `no transfer found for "example.com"`; !strings.Contains(err.Error(), want) {
+	if want := `transfer of "example.com" not found`; !strings.Contains(err.Error(), want) {
 		t.Errorf("message = %q, want it to contain %q", err.Error(), want)
 	}
 	if !cmdutil.IsNotFound(err) {

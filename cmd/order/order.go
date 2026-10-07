@@ -265,7 +265,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	o, err := client.SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: int(id)})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("order %d not found — run 'namecom order list' to see your orders", id))
+		return cmdutil.NotFound(err, fmt.Sprintf("order %d not found", id), "run 'namecom order list' to see your orders")
 	}
 	if err != nil {
 		return err
@@ -456,7 +456,7 @@ func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, err
 	o, err := cmdutil.APIClient(cmd).SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: body.OrderID})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return "", cmdutil.NotFound(err, fmt.Sprintf("order %d not found — run 'namecom order list' to see your orders", body.OrderID))
+		return "", cmdutil.NotFound(err, fmt.Sprintf("order %d not found", body.OrderID), "run 'namecom order list' to see your orders")
 	}
 	if err != nil || o == nil {
 		return refundFallbackPrompt(body), nil

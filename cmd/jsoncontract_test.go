@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/internal/output"
@@ -586,6 +587,64 @@ func TestJSONContract_Errors(t *testing.T) {
 				if list, _ := doc["warnings"].([]any); len(list) == 0 {
 					t.Errorf("the --base-url warning should be in the envelope's warnings, got:\n%s", stderr)
 				}
+			}
+		})
+	}
+}
+
+// TestJSONContract_NotFoundHint pins #291: a not-found error names what is
+// missing in error.message and says what to run in error.hint. The advice was
+// folded into the message, with no hint, for the commands that named the
+// object, and the domain-scoped lists said only "Not Found" or "Domain not
+// found." with the generic hint. Each sends one request, as before.
+func TestJSONContract_NotFoundHint(t *testing.T) {
+	withConfig(t, loneProfile)
+	domainMsg, domainHint := `domain "example.com" not found`, "run 'namecom domain list' to see your domains"
+	tests := []struct {
+		args      []string
+		msg, hint string
+	}{
+		{[]string{"domain", "get", "example.com"}, domainMsg, domainHint},
+		{[]string{"domain", "auth-code", "example.com"}, domainMsg, domainHint},
+		{[]string{"dns", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"dns", "export", "example.com"}, domainMsg, domainHint},
+		{[]string{"email", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"url", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"dnssec", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"vanity-ns", "list", "example.com"}, domainMsg, domainHint},
+		{[]string{"url", "get", "example.com", "7"}, "URL forwarding 7 not found on example.com",
+			"run 'namecom url list example.com' to see its forwarding IDs"},
+		{[]string{"email", "get", "example.com", "info"}, "mailbox info@example.com not found",
+			"run 'namecom email list example.com' to see its mailboxes"},
+		{[]string{"dnssec", "get", "example.com", "ABCD"}, "DNSSEC key ABCD not found on example.com",
+			"run 'namecom dnssec list example.com' to see its keys"},
+		{[]string{"vanity-ns", "get", "example.com", "ns1.example.com"}, "vanity nameserver ns1.example.com not found on example.com",
+			"run 'namecom vanity-ns list example.com' to see its vanity nameservers"},
+		{[]string{"order", "get", "12"}, "order 12 not found", "run 'namecom order list' to see your orders"},
+		{[]string{"transfer", "get", "example.com"}, `transfer of "example.com" not found`,
+			"run 'namecom transfer list' to see active transfers"},
+	}
+	for _, tc := range tests {
+		t.Run(strings.Join(tc.args[:2], " "), func(t *testing.T) {
+			resetFlags(t, tc.args)
+			var n atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				n.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			}))
+			t.Cleanup(srv.Close)
+			_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "-o", "json"}, tc.args...)...)
+			if code != 4 {
+				t.Errorf("exit %d, want 4", code)
+			}
+			if got := n.Load(); got != 1 {
+				t.Errorf("sent %d requests, want 1", got)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			if e["type"] != output.ErrorTypeNotFound || e["message"] != tc.msg || e["hint"] != tc.hint {
+				t.Errorf("want type not_found, message %q, hint %q; got:\n%s", tc.msg, tc.hint, stderr)
 			}
 		})
 	}

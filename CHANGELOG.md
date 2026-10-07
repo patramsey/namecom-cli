@@ -17,6 +17,19 @@ Releases before `0.2.0` predate this file. Their notes are on the
   config does not have, which now lists the profiles there are.
   **Scripts**: these now exit 2 with a JSON error envelope of type `usage`,
   where they exited 1 with type `api`.
+- A not-found error names what is missing and puts what to run in the hint
+  (#291). `domain get`, `url get`, `email get`, `order get`, `transfer get`,
+  `dnssec get`, `vanity-ns get` and `dns update`/`delete` folded the advice
+  into the message (`domain "x" not found — run 'namecom domain list' …`)
+  and left `error.hint` empty; `dns export`, `email list`, `url list`,
+  `dnssec list`, `vanity-ns list` and `domain auth-code` said only "Not
+  Found" or "Domain not found." with "check the name or ID for typos". Every
+  one now says, for example, `domain "x" not found` with the hint `run
+  'namecom domain list' to see your domains`; in a table that is the `✗`
+  line and the `→` line. **Scripts**: `error.message` for these no longer
+  contains the advice, which is in `error.hint`, and `transfer get` and
+  `transfer cancel` say `transfer of "x" not found` where they said `no
+  transfer found for "x"`. The exit code is still 4.
 - `email create` for a mailbox that already exists reported "Created … →
   <your --to>" and exited 0, though the API had changed nothing and the
   mailbox still forwarded to its old address (#283). It now fails (exit 1)
