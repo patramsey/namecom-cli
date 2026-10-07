@@ -48,7 +48,14 @@ func contractServer(t *testing.T, routes map[string]reply) *httptest.Server {
 // terminal, so confirmations cannot be answered.
 func runContract(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	t.Cleanup(output.StubInteractive(false))
+	return runContractTTY(t, false, args...)
+}
+
+// runContractTTY is runContract with output.IsInteractive answering
+// interactive.
+func runContractTTY(t *testing.T, interactive bool, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	t.Cleanup(output.StubInteractive(interactive))
 
 	dir := t.TempDir()
 	outF, err := os.Create(filepath.Join(dir, "stdout")) //nolint:gosec // a path under t.TempDir()
