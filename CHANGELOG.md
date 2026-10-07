@@ -36,6 +36,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   (#286). `email get` uses the same wording. The `email delete` prompt says
   where the mailbox forwards; it fetches the mailbox for that only when it
   will ask, so `--yes` sends one request as before.
+- A TXT value containing `"` is recognised as already in the zone (#284).
+  The API stores it with the quotes escaped (`v=spf1 \"quoted\" ~all`), so
+  `dns create --if-not-exists`, `dns sync` and `dns import --skip-existing`
+  never matched it, sent the create again, got a 500 and exited 6 on every
+  run — and `dns sync --prune` planned to delete the live record. Both
+  spellings now compare as one, whether the value comes from `--answer`, a
+  hand-written zone line (`"v=spf1 \"quoted\" ~all"`) or a `dns export`.
 
 ## [0.5.1] - 2026-10-05
 
