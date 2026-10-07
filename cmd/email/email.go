@@ -119,7 +119,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
@@ -131,7 +132,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var lastResult *coreapigo.ListEmailForwardingsResponse
 	for {
 		result, err := client.SDK().EmailForwardings.ListEmailForwardings(cmd.Context(),
-			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
+			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -142,8 +143,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		if !ok {
 			break
 		}
-		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
-		if !cmdutil.AutoPage(cmd, listAll) {
+		// cmdutil.ListPaging: --all, or --quiet without --page or --limit.
+		if !paging.All {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -179,7 +180,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
-			out.Empty("email forwarding", fmt.Sprintf("Run 'namecom email create %s <mailbox> --to dest@example.com' to add one", domain))
+			cmdutil.EmptyPage(out, listPage, "email forwarding", fmt.Sprintf("Run 'namecom email create %s <mailbox> --to dest@example.com' to add one", domain))
 			return nil
 		}
 		out.Table(

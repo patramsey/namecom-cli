@@ -151,7 +151,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
@@ -163,7 +164,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	var lastResult *coreapigo.ListTransfersResponse
 	for {
 		result, err := client.SDK().Transfers.ListTransfers(cmd.Context(),
-			&coreapigo.ListTransfersRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)})
+			&coreapigo.ListTransfersRequest{Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
 			return err
@@ -174,8 +175,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			break
 		}
-		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
-		if !cmdutil.AutoPage(cmd, listAll) {
+		// cmdutil.ListPaging: --all, or --quiet without --page or --limit.
+		if !paging.All {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -211,7 +212,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return out.YAMLList(transfers, np, 0)
 	default:
 		if len(transfers) == 0 {
-			out.Empty("transfer", "Run 'namecom transfer create <domain> --auth-code XXXXXX' to initiate a transfer")
+			cmdutil.EmptyPage(out, listPage, "transfer", "Run 'namecom transfer create <domain> --auth-code XXXXXX' to initiate a transfer")
 			return nil
 		}
 		out.Table(

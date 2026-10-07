@@ -136,10 +136,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	// A filter does not make the list page fully (#281): see cmdutil.AutoPage.
-	autoPage := cmdutil.AutoPage(cmd, listAll)
-
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	// A filter does not make the list page fully (#281): see cmdutil.ListPaging.
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
@@ -155,7 +154,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	// sat behind every other page.
 	dir := "desc"
 	for {
-		req := &coreapigo.ListOrdersRequest{Page: &page, Dir: &dir, PerPage: cmdutil.PerPage(listLimit)}
+		req := &coreapigo.ListOrdersRequest{Page: &page, Dir: &dir, PerPage: paging.PerPage}
 		if listDomain != "" {
 			req.DomainName = &listDomain
 		}
@@ -180,7 +179,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			break
 		}
-		if !autoPage {
+		if !paging.All {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -218,7 +217,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return out.YAMLList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		if len(orders) == 0 {
-			out.Empty("order", "")
+			cmdutil.EmptyPage(out, listPage, "order", "")
 			return nil
 		}
 		orderTable(out, orders)

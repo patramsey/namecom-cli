@@ -91,7 +91,12 @@ func runList(cmd *cobra.Command, _ []string) error {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	// Every page with --all, or --quiet without --page or --limit — see
+	// cmdutil.ListPaging. A filter does not change that (#281): it used to page
+	// fully on the theory that results are small, but --tld com or a date
+	// range can match thousands, and it ignored --page and --limit.
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 	if err := cmdutil.ValidSortDir(listSortDir); err != nil {
@@ -113,17 +118,11 @@ func runList(cmd *cobra.Command, _ []string) error {
 		expireEnd = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
-	// Every page with --all, or --quiet without --page or --limit — see
-	// cmdutil.AutoPage. A filter does not change that (#281): it used to page
-	// fully on the theory that results are small, but --tld com or a date
-	// range can match thousands, and it ignored --page and --limit.
-	autoPage := cmdutil.AutoPage(cmd, listAll)
-
 	spin := out.StartSpinner("Fetching domains…")
 
 	// Build query params from flags (shared across all page requests).
 	buildParams := func(page int) *coreapigo.ListDomainsRequest {
-		p := &coreapigo.ListDomainsRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)}
+		p := &coreapigo.ListDomainsRequest{Page: &page, PerPage: paging.PerPage}
 		if listSort != "" {
 			p.Sort = &listSort
 		}
@@ -152,7 +151,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	var hasMore bool
 
 	// Fetch page 1 first to discover LastPage.
-	lastResult, err := client.SDK().Domains.ListDomains(ctx, buildParams(listPage))
+	lastResult, err = client.SDK().Domains.ListDomains(ctx, buildParams(listPage))
 	if err != nil {
 		spin.Stop()
 		return api.FromSDKError(err)
@@ -160,7 +159,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	domains = append(domains, cmdutil.NonNil(lastResult.Domains)...)
 
 	if lastResult.NextPage != nil && *lastResult.NextPage != 0 {
-		if !autoPage {
+		if !paging.All {
 			hasMore = true
 		} else if lastResult.LastPage != nil && *lastResult.LastPage > listPage {
 			// Fetch the remaining pages in parallel, continuing from the page we
@@ -255,10 +254,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return out.YAMLList(domains, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		if len(domains) == 0 {
-			if isFiltered(cmd) {
+			if isFiltered(cmd) && listPage == 1 {
 				out.Warn("no domains matched — try a different filter")
 			} else {
-				out.Empty("domain", "Run 'namecom domain register <domain>' to register your first domain")
+				cmdutil.EmptyPage(out, listPage, "domain", "Run 'namecom domain register <domain>' to register your first domain")
 			}
 			return nil
 		}
@@ -283,8 +282,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 				nextPage = *lastResult.NextPage
 			}
 			out.Footer(
-				fmt.Sprintf("Showing %s–%s of %s", output.Thousands(lastResult.From),
-					output.Thousands(lastResult.To), output.Plural(lastResult.TotalCount, "domain")),
+				cmdutil.Showing(lastResult.From, lastResult.To, lastResult.TotalCount, "domain"),
 				cmdutil.MorePages(nextPage),
 			)
 		case hasMore:
