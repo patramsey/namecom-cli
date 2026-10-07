@@ -177,6 +177,10 @@ func markerTokenCmd(marker, tok string) string {
 // accepted connections but never answered froze the shell for 30s per TAB.
 func TestComplete_ShortDeadlineNoRetries(t *testing.T) {
 	withConfig(t, loneProfile)
+	// Shorten the deadline so the hung-API case doesn't wait out 2s.
+	prev := cmdutil.CompletionTimeout
+	cmdutil.CompletionTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { cmdutil.CompletionTimeout = prev })
 
 	t.Run("a hung API gives up quickly", func(t *testing.T) {
 		release := make(chan struct{})

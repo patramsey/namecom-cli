@@ -18,7 +18,7 @@ import (
 // until completion returns, so a slow or unreachable API should cost the user
 // a moment, not the full --timeout; root.go also disables retries for the
 // completion client.
-const CompletionTimeout = 2 * time.Second
+var CompletionTimeout = 2 * time.Second
 
 // ClientFactory builds the API client on demand. root.go stores one on the
 // context of cobra's __complete command instead of a client, for two reasons.
