@@ -51,7 +51,10 @@ func MorePages(next int) string {
 
 // AutoPage reports whether a paged list fetches every page rather than one:
 // with --all, or with --quiet when neither --page nor --limit was given.
-// A list may also page fully for its own reasons, such as a filter.
+// Nothing else does: a filter narrows the page, it does not fetch more of
+// them. domain, order and dns list used to page fully whenever one was set,
+// ignoring --page and --limit, so `order list --status failed --limit 2`
+// sent 52 requests (#281).
 //
 // --quiet pages fully by default because the table's "--page N for more"
 // footer is not printed under it, so one page would truncate silently (#99).

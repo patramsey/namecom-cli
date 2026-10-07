@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -237,5 +238,26 @@ func TestEnumValuesPassValidation(t *testing.T) {
 		if _, err := coreapigo.NewListOrdersRequestOrderStatusFromString(v); err != nil {
 			t.Errorf("OrderStatuses offers %q, which the SDK does not know: %v", v, err)
 		}
+	}
+	for _, v := range ClaimsPurchaseTypes {
+		if _, err := coreapigo.NewDomainClaimsCheckRequestPurchaseTypeFromString(v); err != nil {
+			t.Errorf("ClaimsPurchaseTypes offers %q, which the SDK does not know: %v", v, err)
+		}
+	}
+}
+
+// TestValidOneOf pins #281: an unknown enum filter is a usage error naming
+// the valid values, not a value the API ignores.
+func TestValidOneOf(t *testing.T) {
+	if err := ValidOneOf("status", "failed", OrderStatuses); err != nil {
+		t.Errorf("ValidOneOf(failed) = %v, want nil", err)
+	}
+	err := ValidOneOf("status", "bogus", OrderStatuses)
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("ValidOneOf(bogus) = %v, want a UsageError", err)
+	}
+	if !strings.Contains(err.Error(), "--status") || !strings.Contains(err.Error(), "success, failed") {
+		t.Errorf("error %q should name the flag and the valid values", err)
 	}
 }

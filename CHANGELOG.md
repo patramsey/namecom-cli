@@ -84,6 +84,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
   as received, so they were ignored: raw JSON, exit 0. `-q` is no longer
   listed on `namecom api --help`. **Scripts** that passed them get exit 2
   and no request is sent; `-o json` and `-o table` are unchanged.
+- A filter on `domain list`, `order list` or `dns list` no longer fetches
+  every page (#281). It ignored `--page` and `--limit` and walked the whole
+  account at `--limit` per request, so `order list --status failed --limit 2`
+  sent 52 requests and `domain list --expiring-after … --limit 1` one per
+  matching domain. A filtered list now fetches one page, like an unfiltered
+  one, and the footer (or `nextPage` in JSON) says when there are more;
+  `--all` fetches every match. `dns list --type` and `--host` filter the
+  records on the page fetched, since the API cannot filter them; a page with
+  no match says when there are more. `order list --status`, `dns list --type`
+  and `domain claims --purchase-type` reject an unknown value with exit 2
+  before any request; the API ignored it, so `--status bogus` listed every
+  order. **Scripts:** a filtered list without `--all` now prints one page.
 
 ## [0.5.1] - 2026-10-05
 

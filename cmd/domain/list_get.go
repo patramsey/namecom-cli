@@ -20,6 +20,9 @@ var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List domains in your account",
+	Long: `List domains in your account, one page at a time (250 unless --limit says
+otherwise). The filters narrow what the API returns; they do not fetch more
+pages. The footer says when there are more, and --all fetches every match.`,
 	Example: `  namecom domain list                             # first page (250)
   namecom domain list --page 2                    # second page
   namecom domain list --all                       # all domains (good for scripting)
@@ -110,10 +113,11 @@ func runList(cmd *cobra.Command, _ []string) error {
 		expireEnd = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
-	// When a filter is active, auto-paginate — results are small and the user
-	// expects to see everything matching, not just the first page.
-	// So does --quiet without --page or --limit — see cmdutil.AutoPage.
-	autoPage := cmdutil.AutoPage(cmd, listAll) || isFiltered(cmd)
+	// Every page with --all, or --quiet without --page or --limit — see
+	// cmdutil.AutoPage. A filter does not change that (#281): it used to page
+	// fully on the theory that results are small, but --tld com or a date
+	// range can match thousands, and it ignored --page and --limit.
+	autoPage := cmdutil.AutoPage(cmd, listAll)
 
 	spin := out.StartSpinner("Fetching domains…")
 

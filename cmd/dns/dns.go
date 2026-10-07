@@ -67,6 +67,12 @@ var listCmd = &cobra.Command{
 	Use:     "list <domain>",
 	Aliases: []string{"ls"},
 	Short:   "List DNS records for a domain",
+	Long: `List DNS records for a domain, one page at a time: the API's page holds 500
+records unless --limit says otherwise, so one page is usually the whole zone.
+
+--type and --host filter the records on the page fetched; the API cannot
+filter them. They do not change how many pages are fetched. If there are
+more, the footer says so; --all filters the whole zone.`,
 	Example: `  namecom dns list example.com
   namecom dns list example.com --type A
   namecom dns list example.com --type MX
@@ -167,8 +173,8 @@ partway can be run again.`,
 
 func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "records")
-	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
-	listCmd.Flags().StringVar(&listHost, "host", "", "filter by host (@ for the apex; www or www.example.com)")
+	listCmd.Flags().StringVar(&listType, "type", "", "show only records of this type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA) on the page fetched")
+	listCmd.Flags().StringVar(&listHost, "host", "", "show only records at this host (@ for the apex; www or www.example.com) on the page fetched")
 
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT; CAA is read-only through the API (required; prompted in a terminal)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "host: www or www.example.com (@ or the domain for the apex)")
@@ -210,6 +216,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if listType != "" {
+		if err := cmdutil.ValidDNSType(listType); err != nil {
+			return err
+		}
+	}
 	var wantHost string
 	if listHost != "" {
 		if wantHost, err = filterHost(listHost, domain); err != nil {
@@ -218,12 +229,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	filtered := listType != "" || listHost != ""
 
-	// --type and --host filter client-side, so they must see every page:
-	// filtering only page 1 silently reports "no records" for a zone that
-	// has them. Matches `domain list` and `order list`, which auto-page
-	// whenever a filter is set. So does --quiet without --page or --limit —
-	// see cmdutil.AutoPage.
-	autoPage := cmdutil.AutoPage(cmd, listAll) || filtered
+	// --type and --host filter client-side, the records on the pages
+	// fetched. They used to page fully, ignoring --page and --limit, so
+	// `--type A --limit 1` fetched the zone one record per request (#281).
+	// They now page as the unfiltered list does — see cmdutil.AutoPage — and
+	// a page with no match still says when there are more.
+	autoPage := cmdutil.AutoPage(cmd, listAll)
 	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
 		return err
 	}
@@ -283,6 +294,15 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAMLList(records, cmdutil.Int32Page(nextPage), 0)
 	default:
+		if len(records) == 0 && hasMore {
+			// The filter matched nothing on this page, not in the zone.
+			next := listPage + 1
+			if nextPage != nil {
+				next = *nextPage
+			}
+			out.Footer(fmt.Sprintf("No matching records on page %d", listPage), cmdutil.MorePages(next))
+			return nil
+		}
 		if len(records) == 0 {
 			// Distinguish "this zone is empty" from "nothing matched the filter".
 			// The generic message claimed the zone had no records at all and

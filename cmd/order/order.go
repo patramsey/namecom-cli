@@ -49,7 +49,11 @@ var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List orders",
-	Long:    "List orders, newest first.\n\n" + timestampNote,
+	Long: `List orders, newest first, one page at a time. The filters narrow what the
+API returns; they do not fetch more pages. The footer says when there are
+more, and --all fetches every match.
+
+` + timestampNote,
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
   namecom order list --since 2026-01-01                # orders from this year
@@ -124,10 +128,16 @@ func runList(cmd *cobra.Command, _ []string) error {
 		until = d.AddDate(0, 0, 1).Format("2006-01-02")
 	}
 
-	// Auto-paginate when any filter is active — results will be small.
-	filtered := cmd.Flags().Changed("domain") || cmd.Flags().Changed("since") ||
-		cmd.Flags().Changed("until") || cmd.Flags().Changed("status")
-	autoPage := cmdutil.AutoPage(cmd, listAll) || filtered
+	// --status bogus is not rejected by the API, only ignored, so it listed
+	// every order (#281).
+	if listStatus != "" {
+		listStatus = strings.ToLower(listStatus)
+		if err := cmdutil.ValidOneOf("status", listStatus, cmdutil.OrderStatuses); err != nil {
+			return err
+		}
+	}
+	// A filter does not make the list page fully (#281): see cmdutil.AutoPage.
+	autoPage := cmdutil.AutoPage(cmd, listAll)
 
 	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
 		return err

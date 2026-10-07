@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -425,6 +426,17 @@ func ValidEmail(addr, flagName string) error {
 		return usagef("--%s %q domain part has no dot — expected user@domain.tld", flagName, addr)
 	}
 	return nil
+}
+
+// ValidOneOf checks that a flag which takes one of a fixed set has one of
+// them. The API ignores a filter value it does not know, so `order list
+// --status bogus` listed every order rather than none (#281); it is a usage
+// error here, before any request.
+func ValidOneOf(flagName, v string, values []string) error {
+	if slices.Contains(values, v) {
+		return nil
+	}
+	return usagef("invalid --%s %q: valid values are %s", flagName, v, strings.Join(values, ", "))
 }
 
 // ValidURLForwardingType checks that t is a supported URL forwarding type.
