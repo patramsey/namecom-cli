@@ -391,6 +391,8 @@ func TestRootHelp_ExitCodesMatchREADME(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout has CRLF line endings; compare as LF.
+	readme = bytes.ReplaceAll(readme, []byte("\r\n"), []byte("\n"))
 	// Rows such as "  | `usage` | The command line is wrong… | 2 |".
 	row := regexp.MustCompile("(?m)^\\s*\\| `([a-z_]+)` \\|.*\\| ([0-9]) \\|$")
 	rows := row.FindAllStringSubmatch(string(readme), -1)
@@ -430,6 +432,8 @@ func TestDNSSECExamples_PassValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout has CRLF line endings; compare as LF.
+	readme = bytes.ReplaceAll(readme, []byte("\r\n"), []byte("\n"))
 	create := mustFind(t, []string{"dnssec", "create"})
 	// The flag help states the limits the check applies.
 	for flag, want := range map[string]string{"digest": "64 for 2", "key-tag": "0-65535"} {

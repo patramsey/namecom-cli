@@ -270,6 +270,8 @@ func TestREADME_ErrorExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout has CRLF line endings; compare as LF.
+	readme = bytes.ReplaceAll(readme, []byte("\r\n"), []byte("\n"))
 	_, after, ok := strings.Cut(string(readme), "- **Errors** are one document on stderr:")
 	if !ok {
 		t.Fatal("the README's Errors section moved")
