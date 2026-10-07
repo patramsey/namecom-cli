@@ -9,8 +9,27 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
-### Fixed
+## [0.5.3] - 2026-10-07
 
+Fixes from a second live sandbox sweep (#307–#314). Lists stop looping past
+the last page, a URL forwarding the API half-rejects is reported as it
+really is, and multi-target reads and `api --paginate` stop wasting
+requests.
+
+Output a script might notice:
+
+- A `--page` past the end of any list is `{"data":[]}` with exit 0. Domain
+  and order lists used to repeat page 1, or fail with exit 1.
+- `dns create` of an MX or SRV record without `--priority`, `--priority` on
+  a type that has none, a reversed date range, and an out-of-zone `--host`
+  ending in a dot are usage errors (exit 2) before any request.
+- `api --paginate` stops at 100 pages (`--max-pages`, exit 2 past it).
+- Missing-argument errors put the usage line in `error.hint`.
+- `-o tsv` for `url get`, `email get` and `order get` is `field<TAB>value`
+  rows; `status` JSON always has its two lists; YAML quotes `yes`/`no`.
+- The error envelope's top-level `hint` is deprecated and goes in 0.6.0.
+
+### Fixed
 - A `--page` past the end of any list is an empty page: `{"data":[]}` and
   exit 0, or "No domains on page N" with the past-the-last-page note in a
   table. `domain list` and `order list` printed page 1 again for every
@@ -21,6 +40,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   past the end while more pages existed, so a script paging one record at a
   time missed every record after the first. Scripts that relied on the exit
   1 past the end now see an empty page instead (#307).
+- An apex `url create` that the API answers with `400 … Duplicate Record`
+  is checked against the domain's forwardings before it is reported
+  (#308). The API can store the forwarding and still send that error,
+  when the A record it picks for the apex matches one left by a deleted
+  forwarding. If the forwarding is there, the create succeeds with a warning
+  naming the left-over apex A records as the likely cause (in JSON, the entry
+  with `"changed": true` and `{"warnings": […]}` on stderr). If not, it is a
+  `conflict` error (still exit 1; the JSON type was `api`) whose hint names
+  them. Only that error costs the extra request.
 - `domain get` with several domains stops reading once one fails. It
   printed only the error, as it still does, but went on to request every
   other domain first: `domain list -q | domain get -` with the first name
@@ -44,6 +72,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `www.`; write `www`. `--host .example.com` now says it has an empty label,
   not that `--host` is empty. `dns update --host` checks the host before
   fetching the record.
+- `url create --host` reads a host as `dns create` does (#309): `www`,
+  `www.example.com` and `www.example.com.` all forward www, and
+  `example.com` is the apex. A fully qualified host was sent as typed and
+  made a forwarding for `www.example.com.example.com`, and one with a
+  trailing dot was refused. A trailing-dot name outside the domain, such as
+  `www.other.org.`, is a usage error (exit 2) before any request.
 - DNS record values (#310). `dns create` of an MX or SRV record without
   `--priority` is a usage error (exit 2) before any request, `--dry-run`
   included. It used to warn that the priority was 0, send none, and fail at
@@ -61,15 +95,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `dns import --skip-existing`, the advice is to fix the record and re-run,
   not to add `--skip-existing`. **Scripts:** MX/SRV creates without
   `--priority`, and `--priority` on other types, now exit 2.
-- An apex `url create` that the API answers with `400 … Duplicate Record`
-  is checked against the domain's forwardings before it is reported
-  (#308). The API can store the forwarding and still send that error,
-  when the A record it picks for the apex matches one left by a deleted
-  forwarding. If the forwarding is there, the create succeeds with a warning
-  naming the left-over apex A records as the likely cause (in JSON, the entry
-  with `"changed": true` and `{"warnings": […]}` on stderr). If not, it is a
-  `conflict` error (still exit 1; the JSON type was `api`) whose hint names
-  them. Only that error costs the extra request.
 - `url update` whose flags ask for what the forwarding already is sends
   nothing, under `--dry-run` too, and says `already has these values:
   nothing to change` (#312). It sent the PATCH anyway and printed "no
@@ -80,13 +105,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   forwards elsewhere, each with one GET (#313). They previewed the
   request and exited 0 where the real command exits 4 (not found) or 1
   (conflict). The real commands send what they did before.
+- `url update` of a missing forwarding ID says `URL forwarding N not found
+  on <domain>` and how to list the IDs, as `url get` and `url delete` do,
+  rather than the API's own message (#313).
 - The notes about the DNS records forwarding adds or leaves — the apex A
   record a `url delete` leaves, the MX and SPF records of `email create` and
   `email delete` — printed only in a table. In JSON and YAML they are now
   warnings, in `{"warnings": […]}` on stderr (#313).
-- `url update` of a missing forwarding ID says `URL forwarding N not found
-  on <domain>` and how to list the IDs, as `url get` and `url delete` do,
-  rather than the API's own message (#313).
 - More argument mistakes are usage errors (exit 2) before any request
   (#313). `domain requirements` refuses an empty TLD, one with spaces, and
   `.`; it exited 1 or sent them to the API. A leading dot is dropped, so
@@ -102,25 +127,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   domain not in the account, with one GET. **Scripts:** a missing argument's
   JSON error is `"message": "domain is required"` with the usage line in
   `error.hint`; the usage line was appended to the message.
-- `url create --host` reads a host as `dns create` does (#309): `www`,
-  `www.example.com` and `www.example.com.` all forward www, and
-  `example.com` is the apex. A fully qualified host was sent as typed and
-  made a forwarding for `www.example.com.example.com`, and one with a
-  trailing dot was refused. A trailing-dot name outside the domain, such as
-  `www.other.org.`, is a usage error (exit 2) before any request.
-- `-o yaml` quotes every string a YAML 1.1 parser reads as a boolean or
-  null: `yes`, `no`, `on`, `off`, `y`, `n`, `true`, `false`, `null` and `~`,
-  in any case. `domain requirements fr -o yaml` printed Norway's country
-  code as a bare `NO`, which Ruby's `YAML.load` and PyYAML read back as
-  `false`. **Scripts**: those values are now `"NO"`, `"yes"` and so on; a
-  YAML 1.2 parser reads the same strings as before.
-- `status -o json` always has `expiringDomains` and
-  `pendingTransferDomains`, `[]` when there are none; they were left out, so
-  `status --jq '.pendingTransferDomains[]'` failed with "cannot iterate over:
-  null" on an account with no pending transfers. **Scripts**:
-  `pendingTransferDomains` is `null` when the transfers lookup failed (when
-  `pendingTransfers` is absent), and in `-o tsv` an empty list is `[]`
-  rather than an empty cell.
 - `-o tsv` prints one shape per command whether or not `--fields` is given.
   **Scripts**: `url get`, `email get` and `order get` print field<TAB>value
   rows with the `-o json` keys, as they did with `--fields`, rather than a
@@ -129,6 +135,19 @@ Releases before `0.2.0` predate this file. Their notes are on the
   dry run with `--fields` prints a header and a row, as it does without.
   `open --dry-run -o tsv` prints the `url`, `opened` and `dryRun` rows
   rather than the text line.
+- `status -o json` always has `expiringDomains` and
+  `pendingTransferDomains`, `[]` when there are none; they were left out, so
+  `status --jq '.pendingTransferDomains[]'` failed with "cannot iterate over:
+  null" on an account with no pending transfers. **Scripts**:
+  `pendingTransferDomains` is `null` when the transfers lookup failed (when
+  `pendingTransfers` is absent), and in `-o tsv` an empty list is `[]`
+  rather than an empty cell.
+- `-o yaml` quotes every string a YAML 1.1 parser reads as a boolean or
+  null: `yes`, `no`, `on`, `off`, `y`, `n`, `true`, `false`, `null` and `~`,
+  in any case. `domain requirements fr -o yaml` printed Norway's country
+  code as a bare `NO`, which Ruby's `YAML.load` and PyYAML read back as
+  `false`. **Scripts**: those values are now `"NO"`, `"yes"` and so on; a
+  YAML 1.2 parser reads the same strings as before.
 - Paged lists print one footer, worded the same everywhere: `Showing 1–2 of
   9,122 orders` on every page when the API gives a total, the last page
   included, where `order list`, `dns list` and `transfer list` said only "2
@@ -2395,7 +2414,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/patramsey/namecom-cli/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/patramsey/namecom-cli/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/patramsey/namecom-cli/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/patramsey/namecom-cli/compare/v0.4.9...v0.5.0
