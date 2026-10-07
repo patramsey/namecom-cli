@@ -93,6 +93,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   made a forwarding for `www.example.com.example.com`, and one with a
   trailing dot was refused. A trailing-dot name outside the domain, such as
   `www.other.org.`, is a usage error (exit 2) before any request.
+- `-o yaml` quotes every string a YAML 1.1 parser reads as a boolean or
+  null: `yes`, `no`, `on`, `off`, `y`, `n`, `true`, `false`, `null` and `~`,
+  in any case. `domain requirements fr -o yaml` printed Norway's country
+  code as a bare `NO`, which Ruby's `YAML.load` and PyYAML read back as
+  `false`. **Scripts**: those values are now `"NO"`, `"yes"` and so on; a
+  YAML 1.2 parser reads the same strings as before.
 
 ## [0.5.2] - 2026-10-07
 

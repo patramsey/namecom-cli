@@ -339,14 +339,29 @@ func yamlNode(v any) (*yaml.Node, error) {
 // than track each case, any string with a control character, a Unicode line
 // separator, a byte order mark or surrounding whitespace is double-quoted,
 // where everything is escaped and nothing is folded or trimmed.
+//
+// So is any spelling of a YAML 1.1 boolean or null. yaml.v3 quotes only what
+// YAML 1.2 would mistype, so a country code of NO, or a DNS answer of "on",
+// was written bare, and Ruby's YAML.load and PyYAML, which read YAML 1.1,
+// read it back as false or true.
 func yamlString(s string) *yaml.Node {
 	n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s}
-	if s == "<<" || strings.TrimSpace(s) != s || strings.ContainsFunc(s, func(r rune) bool {
+	if s == "<<" || yaml11Scalar(s) || strings.TrimSpace(s) != s || strings.ContainsFunc(s, func(r rune) bool {
 		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\ufeff'
 	}) {
 		n.Style = yaml.DoubleQuotedStyle
 	}
 	return n
+}
+
+// yaml11Scalar reports whether s, in any case, is a YAML 1.1 boolean
+// (y, n, yes, no, on, off, true, false) or null (null, ~).
+func yaml11Scalar(s string) bool {
+	switch strings.ToLower(s) {
+	case "y", "n", "yes", "no", "on", "off", "true", "false", "null", "~":
+		return true
+	}
+	return false
 }
 
 // jsonToNode consumes one JSON value from dec and returns it as a node.
