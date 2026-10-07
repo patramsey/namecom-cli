@@ -353,7 +353,15 @@ func renderStatus(out *output.Config, s statusSummary) {
 
 	// Footer hints.
 	fmt.Fprintln(out.Writer)
-	if s.Expired > 0 || s.ExpiringCritical > 0 || s.ExpiringSoon > 0 {
+	// The hint names what is listed: it said "expiring" under a list of
+	// domains that had already expired (#293).
+	expiringN := s.ExpiringCritical + s.ExpiringSoon
+	switch {
+	case s.Expired > 0 && expiringN > 0:
+		out.Hint("Run 'namecom domain renew <domain>' to renew expired and expiring domains")
+	case s.Expired > 0:
+		out.Hint("Run 'namecom domain renew <domain>' to renew expired domains")
+	case expiringN > 0:
 		out.Hint("Run 'namecom domain renew <domain>' to renew expiring domains")
 	}
 	out.Hint("Run 'namecom domain list' to see all domains")

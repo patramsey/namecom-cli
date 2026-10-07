@@ -249,6 +249,36 @@ func TestStatus_RendersExpiredAsExpired(t *testing.T) {
 	}
 }
 
+// TestStatus_RenewHintNamesWhatIsListed pins #293: the footer said "renew
+// expiring domains" under a list of domains that had already expired.
+func TestStatus_RenewHintNamesWhatIsListed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    statusSummary
+		want string
+	}{
+		{"expired only", statusSummary{DomainsTotal: 1, Expired: 1}, "to renew expired domains"},
+		{"expiring only", statusSummary{DomainsTotal: 1, ExpiringSoon: 1}, "to renew expiring domains"},
+		{"both", statusSummary{DomainsTotal: 2, Expired: 1, ExpiringCritical: 1}, "to renew expired and expiring domains"},
+		{"neither", statusSummary{DomainsTotal: 1}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &stderr}
+			renderStatus(out, tc.s)
+			got := ""
+			for _, l := range strings.Split(stderr.String(), "\n") {
+				if strings.Contains(l, "domain renew") {
+					got = l
+				}
+			}
+			if tc.want == "" && got != "" || tc.want != "" && !strings.HasSuffix(got, tc.want) {
+				t.Errorf("renew hint = %q, want one ending %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStatus_SummaryLine pins #211: a domain due within 7 days hid the count
 // due in 7–30 days from the summary, and counts other than 1 read as
 // "2 transfer pending".
