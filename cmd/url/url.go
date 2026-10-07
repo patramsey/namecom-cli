@@ -114,7 +114,7 @@ var deleteCmd = &cobra.Command{
 func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding entries")
 
-	createCmd.Flags().StringVar(&createHost, "host", "@", "host to forward (@ for apex); forwarding a subdomain replaces its A records")
+	createCmd.Flags().StringVar(&createHost, "host", "@", "host to forward: www, www.example.com, or @ for the apex; forwarding a subdomain replaces its A records")
 	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL "+cmdutil.PromptedRequired)
 	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: "+urlTypes)
 	createCmd.Flags().StringVar(&createTitle, "title", "", "page title (masked only)")
@@ -256,8 +256,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
-			fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
+		return forwardingNotFound(err, id, domain)
 	}
 	if err != nil {
 		return err
@@ -297,8 +296,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// The API treats host "" as distinct from "@": a forwarding on "" replaces
 	// every apex A record and adds a "*" wildcard, and deleting it removes
 	// every apex A record. Refuse it the way `dns create` does, before the
-	// form asks for anything else.
-	if err := cmdutil.ValidDNSHost(createHost); err != nil {
+	// form asks for anything else. A fully qualified host is made relative,
+	// as `dns create` makes it: sent as typed, www.example.com became a
+	// forwarding for www.example.com.example.com.
+	host, err := cmdutil.ZoneHost(createHost, domain)
+	if err != nil {
 		return err
 	}
 
@@ -315,7 +317,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			huh.NewGroup(
 				huh.NewInput().
 					Title("Destination URL").
-					Description(fmt.Sprintf("Where should %s forward to?", forwardingName(domain, createHost))).
+					Description(fmt.Sprintf("Where should %s forward to?", forwardingName(domain, host))).
 					Placeholder("https://example.com").
 					Value(&createForwardsTo).
 					Validate(validateDestination),
@@ -347,7 +349,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// /core/v1/domains//url/forwarding with an empty segment.
 	body := coreapigo.URLForwardingInput{
 		DomainName: domain,
-		Host:       createHost,
+		Host:       host,
 		ForwardsTo: createForwardsTo,
 		Type:       coreapigo.URLForwardingInputType(createType),
 	}
@@ -374,11 +376,21 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	})
+	recovered := false
+	if err != nil && host == "@" && isDuplicateRecord(err) {
+		entry, err = createdAnyway(cmd, body, err)
+		recovered = err == nil
+	}
 	if err != nil {
 		return err
 	}
 	if !sent {
 		return nil
+	}
+	if recovered {
+		out.Warn(fmt.Sprintf("the API answered 400 Duplicate Record, but the forwarding was created (id %d). "+
+			"The apex of %s likely has A records left by deleted forwardings: see 'namecom dns list %s --host @ --type A', "+
+			"and remove the ones you don't need with 'namecom dns delete %s <id>'", *entry.ID, domain, domain, domain))
 	}
 
 	if out.QuietMode {
@@ -390,13 +402,23 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// A recovered create says "changed": true, since the error it recovered
+	// from could read as nothing having been made.
+	var doc any = entry
+	if recovered && (out.Format == output.FormatJSON || out.Format == output.FormatYAML) {
+		withChanged, err := output.WithChanged(entry, true)
+		if err != nil {
+			return err
+		}
+		doc = withChanged
+	}
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(entry)
+		return out.JSON(doc)
 	case output.FormatYAML:
-		return out.YAML(entry)
+		return out.YAML(doc)
 	default:
-		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, createHost, createForwardsTo))
+		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, host, createForwardsTo))
 	}
 	return nil
 }
@@ -427,6 +449,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	current, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	getStop()
+	if cmdutil.IsNotFound(err) {
+		return forwardingNotFound(err, id, domain)
+	}
 	if err != nil {
 		return err
 	}
@@ -538,6 +563,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		out.Warn(fmt.Sprintf(`the forwarding keeps its title and meta, which %s does not use — pass --title "" --meta "" to clear them`, fwdTypeStr))
 	}
 
+	// The flags ask for what the forwarding already is: nothing is sent,
+	// under --dry-run too, as `dns update` does. The PATCH used to be sent
+	// anyway and reported as "no values changed", with nothing in JSON to
+	// tell it from a change. The GET above is all it takes.
+	changes := urlChanges(current, body)
+	if len(changes) == 0 {
+		return printUpdated(out, current, false,
+			fmt.Sprintf("URL forwarding %d (%s) already has these values: nothing to change", id, displayHost(current.Host)))
+	}
+
 	var entry *coreapigo.URLForwardingResponse
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.URLForwardingUpdate]{
 		Method: "PATCH",
@@ -550,21 +585,32 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			&coreapigo.UpdateURLForwardingByIDRequest{DomainName: domain, ID: id, Body: &body})
 		return err
 	})
-	if err != nil {
+	if err != nil || !sent {
 		return err
 	}
-	if !sent || out.Quiet() {
+	return printUpdated(out, entry, true,
+		fmt.Sprintf("Updated URL forwarding %d (%s): %s", id, displayHost(current.Host), strings.Join(changes, ", ")))
+}
+
+// printUpdated prints the forwarding `url update` changed, or found already
+// as asked: in JSON and YAML the entry with "changed", so a script can tell
+// a no-op from a change, and otherwise msg. --quiet prints nothing.
+func printUpdated(out *output.Config, entry *coreapigo.URLForwardingResponse, changed bool, msg string) error {
+	if out.Quiet() {
 		return nil
 	}
-
 	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(entry)
-	case output.FormatYAML:
-		return out.YAML(entry)
-	default:
-		out.Success(urlUpdateLine(id, current, body))
+	case output.FormatJSON, output.FormatYAML:
+		doc, err := output.WithChanged(entry, changed)
+		if err != nil {
+			return err
+		}
+		if out.Format == output.FormatYAML {
+			return out.YAML(doc)
+		}
+		return out.JSON(doc)
 	}
+	out.Success(msg)
 	return nil
 }
 
@@ -589,8 +635,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
-			fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
+		return forwardingNotFound(err, id, domain)
 	}
 	if err != nil {
 		return err
@@ -615,12 +660,70 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
 	// The API removes a subdomain forwarding's A records with it, but not the
-	// one it added at the apex (#286).
+	// one it added at the apex (#286). Left behind, such records are what makes
+	// a later apex create answer 400 Duplicate Record, so JSON says so too.
 	if current != nil && displayHost(current.Host) == "@" {
-		out.Note(fmt.Sprintf("the A record name.com added at the apex of %s for this forwarding stays — remove it with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
+		cmdutil.SideEffectNote(out, fmt.Sprintf("the A record name.com added at the apex of %s for this forwarding stays — remove it with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
 			domain, domain, domain))
 	}
 	return nil
+}
+
+// forwardingNotFound is the not-found error for a forwarding ID, the same
+// for get, update and delete. update showed the API's own "URL forwarding
+// entry not found.", which names neither the ID nor the domain.
+func forwardingNotFound(err error, id int, domain string) error {
+	return cmdutil.NotFound(err, fmt.Sprintf("URL forwarding %d not found on %s", id, domain),
+		fmt.Sprintf("run 'namecom url list %s' to see its forwarding IDs", domain))
+}
+
+// isDuplicateRecord reports whether err is the API's 400 "Parameter Value
+// Error - Duplicate Record".
+func isDuplicateRecord(err error) bool {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	return ok && apiErr.StatusCode == 400 &&
+		strings.Contains(apiErr.Details+" "+apiErr.Message, "Duplicate Record")
+}
+
+// createdAnyway is an apex create that the API answered with 400 Duplicate
+// Record. It can store the forwarding and still answer that: name.com picks
+// an A record for the apex, and when its pick matches an A record left by an
+// earlier, deleted forwarding, the forwarding is created and the 400 sent
+// anyway. Reported as a failure, a script retried a write that had landed,
+// or cleaned up one it believed it never made.
+//
+// One list of the domain's forwardings decides it, and only on this error,
+// so a create that succeeds still costs one request. A forwarding on the
+// apex with the destination and type sent is returned as the result. When
+// there is none, cause is returned as a conflict naming the likely culprit;
+// when the list fails, as one saying the outcome is unknown.
+func createdAnyway(cmd *cobra.Command, body coreapigo.URLForwardingInput, cause error) (*coreapigo.URLForwardingResponse, error) {
+	out := cmdutil.Out(cmd)
+	client := cmdutil.APIClient(cmd)
+	domain := body.DomainName
+
+	stop := out.Spin("Checking whether the forwarding was created…")
+	page, perPage := 1, cmdutil.MaxPerPage
+	list, err := client.SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
+		&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: &perPage})
+	stop()
+	if err != nil {
+		return nil, &cmdutil.ConflictError{Err: cause,
+			Hint: fmt.Sprintf("the forwarding may have been created anyway: run 'namecom url list %s' to check", domain)}
+	}
+	var found *coreapigo.URLForwardingResponse
+	for _, f := range cmdutil.NonNil(list.URLForwarding) {
+		if f.ID != nil && displayHost(f.Host) == "@" && f.ForwardsTo == body.ForwardsTo &&
+			string(f.Type) == string(body.Type) && (found == nil || *f.ID > *found.ID) {
+			found = f
+		}
+	}
+	if found == nil {
+		return nil, &cmdutil.ConflictError{Err: cause,
+			Hint: fmt.Sprintf("the apex of %s likely has A records left by deleted forwardings: see 'namecom dns list %s --host @ --type A', and remove the ones you don't need with 'namecom dns delete %s <id>'",
+				domain, domain, domain)}
+	}
+	return found, nil
 }
 
 // maskedOnly is the usage error for a non-empty --title or --meta on a
@@ -642,10 +745,10 @@ func derefStr(p *string) string {
 	return *p
 }
 
-// urlUpdateLine names the forwarding an update changed and what changed:
-// "Updated URL forwarding 7 (go.example.com): forwards to https://a → https://b".
-// It said only "Updated URL forwarding 7" (#238).
-func urlUpdateLine(id int, current *coreapigo.URLForwardingResponse, body coreapigo.URLForwardingUpdate) string {
+// urlChanges lists what an update changes on the forwarding, as "forwards
+// to https://a → https://b", for the line that names it (#238). An empty
+// list means the update would change nothing.
+func urlChanges(current *coreapigo.URLForwardingResponse, body coreapigo.URLForwardingUpdate) []string {
 	var changes []string
 	add := func(field, was, now string) {
 		if was != now {
@@ -658,23 +761,13 @@ func urlUpdateLine(id int, current *coreapigo.URLForwardingResponse, body coreap
 			changes = append(changes, fmt.Sprintf("%s %s → %s", field, was, now))
 		}
 	}
-	str := func(p *string) string {
-		if p == nil {
-			return ""
-		}
-		return *p
-	}
-	add("forwards to", current.ForwardsTo, str(body.ForwardsTo))
+	add("forwards to", current.ForwardsTo, derefStr(body.ForwardsTo))
 	if body.Type != nil {
 		add("type", string(current.Type), string(*body.Type))
 	}
-	add("title", str(current.Title), str(body.Title))
-	add("meta", str(current.Meta), str(body.Meta))
-	line := fmt.Sprintf("Updated URL forwarding %d (%s)", id, displayHost(current.Host))
-	if len(changes) == 0 {
-		return line + ": no values changed"
-	}
-	return line + ": " + strings.Join(changes, ", ")
+	add("title", derefStr(current.Title), derefStr(body.Title))
+	add("meta", derefStr(current.Meta), derefStr(body.Meta))
+	return changes
 }
 
 func urlRows(entries []*coreapigo.URLForwardingResponse) [][]string {

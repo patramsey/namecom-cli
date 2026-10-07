@@ -720,10 +720,31 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/email/forwarding",
 			},
 		},
+		"email create --dry-run": {
+			args: []string{"email", "create", "example.com", "info", "--to", "you@example.org", "--dry-run"},
+			why:  "a dry run checks for a mailbox that already forwards elsewhere, which the real create reports as a conflict from its own response (#313)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
 		"email update": {
 			args: []string{"email", "update", "example.com", "info", "--to", "new@example.org", "--yes"},
 			want: []string{
 				"PUT /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email update --dry-run": {
+			args: []string{"email", "update", "example.com", "info", "--to", "new@example.org", "--dry-run"},
+			why:  "a dry run checks the mailbox exists, as the real PUT's 404 would (#313)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email delete --dry-run": {
+			args: []string{"email", "delete", "example.com", "info", "--dry-run"},
+			why:  "a dry run checks the mailbox exists, as the real DELETE's 404 would (#313)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
 			},
 		},
 		"email delete": {
@@ -761,12 +782,47 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/url/forwarding",
 			},
 		},
+		"url create --dry-run": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--dry-run"},
+			want: nil,
+		},
+		"url create, apex 400 Duplicate Record that landed": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--yes"},
+			routes: map[string]reply{
+				"POST /core/v1/domains/example.com/url/forwarding": {400, `{"message":"Invalid Argument","details":"Parameter Value Error - Duplicate Record"}`},
+				"GET /core/v1/urlforwarding/example.com":           {200, `{"urlForwarding":[{"id":9,"host":"","forwardsTo":"https://example.org","type":"redirect"}],"lastPage":1}`},
+			},
+			why: "the API can store an apex forwarding and still answer 400 Duplicate Record; one list, only on that error, tells which (#308)",
+			want: []string{
+				"POST /core/v1/domains/example.com/url/forwarding",
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
+		},
+		"url create, apex 400 Duplicate Record that did not land": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--yes"},
+			routes: map[string]reply{
+				"POST /core/v1/domains/example.com/url/forwarding": {400, `{"message":"Invalid Argument","details":"Parameter Value Error - Duplicate Record"}`},
+				"GET /core/v1/urlforwarding/example.com":           {200, `{"urlForwarding":[],"lastPage":1}`},
+			},
+			code: 1,
+			want: []string{
+				"POST /core/v1/domains/example.com/url/forwarding",
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
+		},
 		"url update": {
 			args: []string{"url", "update", "example.com", "7", "--to", "https://example.net", "--yes"},
 			why:  "read-modify-write: unset flags keep the current values",
 			want: []string{
 				"GET /core/v1/urlforwarding/example.com/7",
 				"PATCH /core/v1/urlforwarding/example.com/7",
+			},
+		},
+		"url update, nothing to change": {
+			args: []string{"url", "update", "example.com", "7", "--to", "https://example.org", "--yes"},
+			why:  "the read-modify-write's GET shows the forwarding already has these values, so no PATCH is sent (#312)",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com/7",
 			},
 		},
 		"url delete": {
