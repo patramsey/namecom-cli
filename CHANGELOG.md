@@ -120,6 +120,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   --lock=false` and `domain lock off` warn, before the prompt or dry-run
   preview, when the domain is inside its transfer lock and the unlock will be
   refused.
+- `domain check` handles repeated and unanswered names (#288). A name given
+  twice, in any case (`example.com EXAMPLE.com`), is checked and shown once,
+  as `domain get` does; the second copy was reported "availability unknown"
+  and the command exited 1. A name the registry did not answer reads
+  `unknown` in the AVAILABILITY column, not `taken`. **Scripts:** in JSON and
+  YAML its row has `"purchasable": null` rather than `false`, so it can be
+  told apart from a taken name, and `--exit-status` finding a name
+  unavailable reports error type `unavailable` instead of `api` (still exit
+  1).
 
 ## [0.5.1] - 2026-10-05
 

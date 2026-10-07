@@ -577,6 +577,25 @@ func TestJSONContract_Errors(t *testing.T) {
 	}
 }
 
+// TestJSONContract_CheckExitStatusType pins #288: `domain check
+// --exit-status` finding a name taken exits 1 with an error typed
+// "unavailable". It was "api", though nothing failed at the API.
+func TestJSONContract_CheckExitStatusType(t *testing.T) {
+	withConfig(t, loneProfile)
+	args := []string{"domain", "check", "--exit-status", "--authoritative", "example.com"}
+	resetFlags(t, args)
+	srv := contractServer(t, map[string]reply{"POST /core/v1/domains:checkAvailability": {200,
+		`{"results":[{"domainName":"example.com","purchasable":false}]}`}})
+	_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "-o", "json"}, args...)...)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+	if e["type"] != output.ErrorTypeUnavailable {
+		t.Errorf("error.type = %v, want %q\n%s", e["type"], output.ErrorTypeUnavailable, stderr)
+	}
+}
+
 // TestJSONContract_AuthStatusDetails pins #240's last finding: a rejected
 // `auth status` packed the profile, username, endpoint and config path into
 // the message only. They are fields of error.details now.

@@ -284,6 +284,14 @@ func UnknownCommand(word, path string, suggestions []string) error {
 	return NewUsageErrorHint(e, hint)
 }
 
+// UnavailableError is `domain check --exit-status`'s failure: names that are
+// not available. Nothing went wrong, so it exits 1 as the docs say but is not
+// typed "api" in the error envelope, where a script branching on error.type
+// read it as an API failure (#288).
+type UnavailableError struct{ Msg string }
+
+func (e *UnavailableError) Error() string { return e.Msg }
+
 // RequireField returns an *api.UnexpectedResponseError when value, the field
 // that identifies the resource a get command fetched, is its zero value — an
 // empty string or a nil pointer. what names it for the message: "the domain
