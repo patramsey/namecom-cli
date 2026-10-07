@@ -659,10 +659,14 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	var writes []cmdutil.Write[cmdutil.NoBody]
 	var summaries []string
 	var present, absent []int
-	for _, id := range ids {
-		stop := out.Spin("Fetching record…")
-		current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
-		stop()
+	// Read together; the first failure, in the order given, is reported.
+	stop := out.Spin("Fetching record…")
+	currents, errs := cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
+		return client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+	})
+	stop()
+	for i, id := range ids {
+		current, err := currents[i], errs[i]
 		if err != nil {
 			err = api.FromSDKError(err)
 			if cmdutil.IsNotFound(err) {

@@ -24,6 +24,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   **Scripts**: in JSON, a free name's result now carries the registry's
   fields (`purchaseType`, `premium`, `renewalPrice` as the registry gives
   them) rather than the pricing endpoint's.
+- Commands given several targets read them at the same time rather than one
+  after another, up to five at once (#294): `domain get`, `domain lock`,
+  `autorenew` and `privacy` with several domains, and `dns delete` with
+  several IDs. The writes that follow are still sent one at a time, in
+  order. Independent lookups within one command are sent together too:
+  `domain pricing`'s price and availability, and `domain register`'s price
+  and trademark-claims check.
 
 ### Fixed
 - Mistakes caught before any request is sent are usage errors (exit 2), not

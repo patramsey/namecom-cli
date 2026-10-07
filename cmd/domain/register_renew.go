@@ -199,13 +199,23 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// 1-year price and then sends it alongside years:N, which CreateDomainRequest
 	// explicitly warns against ("If passing purchasePrice make sure to adjust it
 	// accordingly").
-	// The account balance is fetched alongside, for the confirmation (#271).
+	// The account balance is fetched alongside, for the confirmation (#271),
+	// and so is the trademark claim (below), which needs only the purchase
+	// type the availability check gave.
 	balance := cmdutil.StartBalance(cmd)
+	var claim *coreapigo.DomainClaimsCheckResponse
+	var claimErr error
+	claimDone := make(chan struct{})
+	go func() {
+		defer close(claimDone)
+		claim, claimErr = lookupClaims(cmd, domainName, checkPurchaseType)
+	}()
 	stop := out.Spin("Checking pricing for " + domainName + "…")
 	pricingYears := registerYears
 	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domainName, Years: &pricingYears})
 	stop()
+	<-claimDone
 	if err != nil {
 		return fmt.Errorf("fetching pricing: %w", err)
 	}
@@ -251,13 +261,13 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	// include the claims acknowledgment data in the domain creation request."
 	// Without this the CLI simply could not register a TMCH-matched name.
 	//
-	// The claim is looked up here so the body is complete before it is
-	// previewed or confirmed. Showing the notice and collecting the
-	// acknowledgement stay after the price confirmation, in the send callback
-	// below — they add nothing to the body, which already carries the claim.
-	claim, err := lookupClaims(cmd, domainName, checkPurchaseType)
-	if err != nil {
-		return err
+	// The claim is looked up before this, alongside the pricing, so the body
+	// is complete before it is previewed or confirmed. Showing the notice and
+	// collecting the acknowledgement stay after the price confirmation, in
+	// the send callback below — they add nothing to the body, which already
+	// carries the claim.
+	if claimErr != nil {
+		return claimErr
 	}
 	body.Claims = claimsInfo(claim)
 	if dryRun && claim != nil {

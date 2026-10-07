@@ -78,8 +78,13 @@ func runToggle(cmd *cobra.Command, args []string, tg toggle) error {
 
 	res := out.Results()
 	var pending []string
-	for _, d := range domains {
-		current, err := toggleCurrent(cmd, d)
+	// Read together; the first failure, in the order given, is reported.
+	currents, errs := cmdutil.FetchEach(cmd.Context(), domains,
+		func(_ context.Context, d string) (*coreapigo.DomainResponsePayload, error) {
+			return toggleCurrent(cmd, d)
+		})
+	for i, d := range domains {
+		current, err := currents[i], errs[i]
 		if err != nil {
 			return err
 		}
@@ -827,14 +832,22 @@ func runPricing(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The two lookups are independent, so they are sent together.
+	var acq *coreapigo.SearchResult
+	var acqErr error
+	acqDone := make(chan struct{})
+	go func() {
+		defer close(acqDone)
+		acq, acqErr = acquisition(cmd, domain)
+	}()
 	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
 		&coreapigo.GetPricingForDomainRequest{DomainName: domain})
+	<-acqDone
 	if err != nil {
 		return api.FromSDKError(err)
 	}
-	acq, err := acquisition(cmd, domain)
-	if err != nil {
-		return err
+	if acqErr != nil {
+		return acqErr
 	}
 
 	// Quiet prints the registration price as a bare number ("12.99"), the one

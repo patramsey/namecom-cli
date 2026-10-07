@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -309,12 +310,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Read together; the first failure, in the order given, is reported.
+	stop := out.Spin("Fetching domain…")
+	results, errs := cmdutil.FetchEach(cmd.Context(), domains,
+		func(ctx context.Context, domain string) (*coreapigo.DomainResponsePayload, error) {
+			return client.SDK().Domains.GetDomain(ctx, &coreapigo.GetDomainRequest{DomainName: domain})
+		})
+	stop()
 	fetched := make([]*coreapigo.DomainResponsePayload, 0, len(domains))
-	for _, domain := range domains {
-		stop := out.Spin("Fetching domain…")
-		d, err := client.SDK().Domains.GetDomain(cmd.Context(),
-			&coreapigo.GetDomainRequest{DomainName: domain})
-		stop()
+	for i, domain := range domains {
+		d, err := results[i], errs[i]
 		if err != nil {
 			if cmdutil.IsNotFound(err) {
 				return cmdutil.DomainNotFound(err, domain)

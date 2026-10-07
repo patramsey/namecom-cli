@@ -325,8 +325,7 @@ func TestRequestCounts(t *testing.T) {
 		"domain get, two": {
 			args: []string{"domain", "get", "example.com", "example.net"},
 			want: []string{
-				"GET /core/v1/domains/example.com",
-				"GET /core/v1/domains/example.net",
+				together("GET /core/v1/domains/example.com", "GET /core/v1/domains/example.net"),
 			},
 		},
 		"domain search": {
@@ -358,11 +357,10 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"domain register --yes": {
 			args: []string{"domain", "register", "new.com", "--years", "1", "--yes"},
-			why:  "availability first (a taken name costs nothing more); pricing for the premium and --max-price gates; the claims check TMCH requires",
+			why:  "availability first, so a taken name costs nothing more; then, together, pricing for the premium and --max-price gates and the claims check TMCH requires",
 			want: []string{
 				"POST /core/v1/domains:checkAvailability",
-				"GET /core/v1/domains/new.com:getPricing?years=1",
-				"POST /core/v1/domaininfo/claims/new.com",
+				together("GET /core/v1/domains/new.com:getPricing?years=1", "POST /core/v1/domaininfo/claims/new.com"),
 				"POST /core/v1/domains",
 			},
 		},
@@ -418,8 +416,7 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"domain", "pricing", "example.com"},
 			why:  "availability gives the aftermarket price pricing leaves out (#187)",
 			want: []string{
-				"GET /core/v1/domains/example.com:getPricing",
-				"POST /core/v1/domains:checkAvailability",
+				together("GET /core/v1/domains/example.com:getPricing", "POST /core/v1/domains:checkAvailability"),
 			},
 		},
 		"domain auth-code": {
@@ -458,8 +455,7 @@ func TestRequestCounts(t *testing.T) {
 		"domain lock off, two": {
 			args: []string{"domain", "lock", "off", "example.com", "example.net", "--yes"},
 			want: []string{
-				"GET /core/v1/domains/example.com",
-				"GET /core/v1/domains/example.net",
+				together("GET /core/v1/domains/example.com", "GET /core/v1/domains/example.net"),
 				"PATCH /core/v1/domains/example.com",
 				"PATCH /core/v1/domains/example.net",
 			},
@@ -569,8 +565,7 @@ func TestRequestCounts(t *testing.T) {
 		"dns delete, two": {
 			args: []string{"dns", "delete", "example.com", "42", "43", "--yes"},
 			want: []string{
-				"GET /core/v1/domains/example.com/records/42",
-				"GET /core/v1/domains/example.com/records/43",
+				together("GET /core/v1/domains/example.com/records/42", "GET /core/v1/domains/example.com/records/43"),
 				"DELETE /core/v1/domains/example.com/records/42",
 				"DELETE /core/v1/domains/example.com/records/43",
 			},

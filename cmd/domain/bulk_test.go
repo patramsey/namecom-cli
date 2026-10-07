@@ -44,8 +44,8 @@ func (s *chunkServer) handler(t *testing.T) http.HandlerFunc {
 			_, _ = fmt.Sscanf(name, "name%03d.com", &n)
 			return n%40 == 0
 		}
-		switch {
-		case r.URL.Path == "/core/v1/zonecheck" || r.URL.Path == "/core/v1/domains:checkAvailability":
+		switch r.URL.Path {
+		case "/core/v1/zonecheck", "/core/v1/domains:checkAvailability":
 			var body struct {
 				DomainNames []string `json:"domainNames"`
 			}
