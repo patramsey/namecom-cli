@@ -9,7 +9,11 @@ import (
 )
 
 // AllUsage is the help for every list's --all.
-const AllUsage = "fetch every page, starting at --page"
+const AllUsage = "fetch every page, starting at --page, 1000 per request"
+
+// MaxPerPage is the largest page the API serves: a larger perPage is
+// rejected with "perPage exceeds maximum of 1000".
+const MaxPerPage = 1000
 
 // AddPageFlags gives a list command --all, --page and --limit, the same on
 // every paged list (#236). --page existed only on `domain list`, so
@@ -18,29 +22,50 @@ const AllUsage = "fetch every page, starting at --page"
 func AddPageFlags(cmd *cobra.Command, all *bool, page, limit *int, plural string) {
 	cmd.Flags().BoolVar(all, "all", false, AllUsage)
 	cmd.Flags().IntVar(page, "page", 1, "page to fetch, from 1")
-	cmd.Flags().IntVar(limit, "limit", 0, plural+" per page (default: the API's page size)")
+	cmd.Flags().IntVar(limit, "limit", 0, plural+" per page, 1 to 1000 (default: the API's page size)")
 	MarkList(cmd)
 }
 
-// ValidPage checks --page and --limit before any request. --page 0 used to
-// exit 1, like an API failure, instead of 2.
-func ValidPage(page, limit int) error {
-	if page < 1 {
-		return usagef("--page must be 1 or greater (got %d)", page)
-	}
-	if limit < 0 {
-		return usagef("--limit must be 1 or greater (got %d)", limit)
-	}
-	return nil
+// Paging is how a paged list fetches, decided by ListPaging.
+type Paging struct {
+	// All is whether to fetch every page from --page on, rather than one.
+	All bool
+	// PerPage is the perPage each request sends: nil for the API's default.
+	PerPage *int
 }
 
-// PerPage is --limit as the perPage a list request sends: nil, the API's
-// default, when it was not set.
-func PerPage(limit int) *int {
-	if limit <= 0 {
-		return nil
+// ListPaging checks a list's --page and --limit before any request and
+// decides how it fetches: every page when AutoPage says so, else the one
+// page --page names, of --limit items.
+//
+// --page 0 used to exit 1, like an API failure, instead of 2 (#236), and
+// --limit 0 silently meant the default page while --limit 1001 was a 400 from
+// the API (#290). Both are usage errors now.
+//
+// A list that fetches every page requests MaxPerPage whatever --limit says:
+// --limit is how many items a page shows, and when every page is fetched
+// it only sets how many requests that takes. `domain list --limit 2 --all`
+// sent one request per two domains (#290); it now sends one per thousand,
+// and says that --limit did not apply.
+func ListPaging(cmd *cobra.Command, all bool, page, limit int) (Paging, error) {
+	if page < 1 {
+		return Paging{}, usagef("--page must be 1 or greater (got %d)", page)
 	}
-	return &limit
+	limitSet := cmd.Flags().Changed("limit")
+	if (limitSet || limit != 0) && (limit < 1 || limit > MaxPerPage) {
+		return Paging{}, usagef("--limit must be between 1 and %d (got %d)", MaxPerPage, limit)
+	}
+	if !AutoPage(cmd, all) {
+		if limit == 0 {
+			return Paging{}, nil
+		}
+		return Paging{PerPage: &limit}, nil
+	}
+	if limitSet {
+		Out(cmd).Warn(fmt.Sprintf("--limit does not apply with --all: every page is fetched, %d per request", MaxPerPage))
+	}
+	n := MaxPerPage
+	return Paging{All: true, PerPage: &n}, nil
 }
 
 // MorePages is the note under a list that stopped before its last page,
@@ -51,7 +76,10 @@ func MorePages(next int) string {
 
 // AutoPage reports whether a paged list fetches every page rather than one:
 // with --all, or with --quiet when neither --page nor --limit was given.
-// A list may also page fully for its own reasons, such as a filter.
+// Nothing else does: a filter narrows the page, it does not fetch more of
+// them. domain, order and dns list used to page fully whenever one was set,
+// ignoring --page and --limit, so `order list --status failed --limit 2`
+// sent 52 requests (#281).
 //
 // --quiet pages fully by default because the table's "--page N for more"
 // footer is not printed under it, so one page would truncate silently (#99).
@@ -70,6 +98,29 @@ func AutoPage(cmd *cobra.Command, all bool) bool {
 // line, as Footer would print it if quiet mode printed footers.
 func QuietMorePages(out *output.Config, next int) {
 	fmt.Fprintln(out.EWriter, out.Dim(MorePages(next)))
+}
+
+// Showing is the count under a list that stopped before its last page, when
+// the API reported where the page sits: "Showing 1–250 of 6,522 domains".
+// "1 unverified contact · --page 2 for more" read as the total (#290).
+func Showing(from, to, total int, noun string) string {
+	return fmt.Sprintf("Showing %s–%s of %s", output.Thousands(from), output.Thousands(to), output.Plural(total, noun))
+}
+
+// EmptyPage is out.Empty for a list that came back empty. Past page 1 that
+// says nothing about the list, only that --page ran past its end, so the
+// usual hint — "add the first one", or for unverified contacts "new ones
+// take ~10 minutes to appear" — would be wrong (#290).
+func EmptyPage(out *output.Config, page int, noun, hint string) {
+	if page <= 1 {
+		out.Empty(noun, hint)
+		return
+	}
+	if out.Format != output.FormatTable || out.QuietMode {
+		return
+	}
+	fmt.Fprintln(out.EWriter, out.Dim(fmt.Sprintf("No %s on page %d.", output.PluralNoun(2, noun), page)))
+	out.Hint("That is past the last page; leave out --page to start at the first")
 }
 
 // Int32Page narrows the SDK's *int page number to the *int32 the output

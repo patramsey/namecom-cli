@@ -99,7 +99,8 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
@@ -111,7 +112,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 	var lastResult *coreapigo.UnverifiedContactsResponse
 	for {
 		result, err := client.SDK().ContactVerification.UnverifiedContactsList(cmd.Context(),
-			&coreapigo.UnverifiedContactsListRequest{Page: &page, PerPage: cmdutil.PerPage(listLimit)})
+			&coreapigo.UnverifiedContactsListRequest{Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
 			return err
@@ -124,8 +125,8 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			break
 		}
-		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
-		if !cmdutil.AutoPage(cmd, listAll) {
+		// cmdutil.ListPaging: --all, or --quiet without --page or --limit.
+		if !paging.All {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -160,7 +161,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		return out.YAMLList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		if len(contacts) == 0 {
-			out.Empty("unverified contact", "Newly triggered verifications can take ~10 minutes to appear")
+			cmdutil.EmptyPage(out, listPage, "unverified contact", "Newly triggered verifications can take ~10 minutes to appear")
 			return nil
 		}
 		out.Table(
@@ -168,9 +169,13 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			unverifiedRows(out, contacts),
 			output.Essential("DOMAINS"),
 		)
-		if hasMore {
+		switch {
+		case hasMore && lastResult.TotalCount > 0 && lastResult.From > 0:
+			out.Footer(cmdutil.Showing(lastResult.From, lastResult.To, lastResult.TotalCount, "unverified contact"),
+				cmdutil.MorePages(nextPage))
+		case hasMore:
 			out.Count(len(contacts), "unverified contact", cmdutil.MorePages(nextPage))
-		} else {
+		default:
 			out.Count(len(contacts), "unverified contact")
 		}
 		out.WarnBox(

@@ -202,7 +202,10 @@ func TestOrderList_StatusFilterPassedToAPI(t *testing.T) {
 	}
 }
 
-func TestOrderList_FilterAutoPages(t *testing.T) {
+// TestOrderList_FilterFetchesOnePage pins #281: a filter made order list
+// fetch every page, so `--status failed --limit 2` sent 52 requests. A filter
+// narrows the page; it does not fetch more of them.
+func TestOrderList_FilterFetchesOnePage(t *testing.T) {
 	srv, requests := orderServer(t, [][]int{
 		{101}, // page 1 — NextPage=2
 		{102}, // page 2 — no NextPage
@@ -217,8 +220,8 @@ func TestOrderList_FilterAutoPages(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if len(*requests) != 2 {
-		t.Errorf("expected 2 requests (filter auto-paginates), got %d: %v", len(*requests), *requests)
+	if len(*requests) != 1 {
+		t.Errorf("expected 1 request (a filter does not page fully), got %d: %v", len(*requests), *requests)
 	}
 }
 

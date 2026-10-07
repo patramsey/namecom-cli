@@ -111,7 +111,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
@@ -123,7 +124,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var lastResult *coreapigo.ListVanityNameserversResponse
 	for {
 		result, err := client.SDK().VanityNameservers.ListVanityNameservers(cmd.Context(),
-			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
+			&coreapigo.ListVanityNameserversRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -134,8 +135,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		if !ok {
 			break
 		}
-		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
-		if !cmdutil.AutoPage(cmd, listAll) {
+		// cmdutil.ListPaging: --all, or --quiet without --page or --limit.
+		if !paging.All {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -171,7 +172,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
-			out.Empty("vanity nameserver", fmt.Sprintf("Run 'namecom vanity-ns create %s --hostname ns1.%s --ips 1.2.3.4' to add one", domain, domain))
+			cmdutil.EmptyPage(out, listPage, "vanity nameserver", fmt.Sprintf("Run 'namecom vanity-ns create %s --hostname ns1.%s --ips 1.2.3.4' to add one", domain, domain))
 			return nil
 		}
 		out.Table(

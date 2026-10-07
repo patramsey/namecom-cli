@@ -84,6 +84,33 @@ Releases before `0.2.0` predate this file. Their notes are on the
   as received, so they were ignored: raw JSON, exit 0. `-q` is no longer
   listed on `namecom api --help`. **Scripts** that passed them get exit 2
   and no request is sent; `-o json` and `-o table` are unchanged.
+- A filter on `domain list`, `order list` or `dns list` no longer fetches
+  every page (#281). It ignored `--page` and `--limit` and walked the whole
+  account at `--limit` per request, so `order list --status failed --limit 2`
+  sent 52 requests and `domain list --expiring-after … --limit 1` one per
+  matching domain. A filtered list now fetches one page, like an unfiltered
+  one, and the footer (or `nextPage` in JSON) says when there are more;
+  `--all` fetches every match. `dns list --type` and `--host` filter the
+  records on the page fetched, since the API cannot filter them; a page with
+  no match says when there are more. `order list --status`, `dns list --type`
+  and `domain claims --purchase-type` reject an unknown value with exit 2
+  before any request; the API ignored it, so `--status bogus` listed every
+  order. **Scripts:** a filtered list without `--all` now prints one page.
+- Paging edges on every list (#290). `--limit` must be between 1 and 1000,
+  the API's maximum: `--limit 0` silently meant the default page, and
+  `--limit 1001` failed at the API with exit 1; both are now usage errors
+  (exit 2) before any request. `--all`, and `-q` without `--page` or
+  `--limit`, request 1000 items a page whatever `--limit` says, so
+  `domain list --limit 2 --all` sends one request per thousand domains, not
+  per two; `--limit` with `--all` prints a warning that it does not apply,
+  and `--all --page N` starts at page N of 1000. The whole-zone reads of
+  `dns export`, `dns sync`, `dns import --skip-existing` and
+  `dns create --if-not-exists` also page at 1000. `dns list --page N` past
+  the last page is an empty page (`{"data":[]}`, exit 0); the API answers
+  it with page 1, so a script paging until empty never stopped. A page past
+  the end of any list says so, rather than suggesting you create the first
+  item. `contact unverified` under `--limit` shows
+  `Showing 1–1 of 2 unverified contacts`, as `domain list` does.
 
 ## [0.5.1] - 2026-10-05
 

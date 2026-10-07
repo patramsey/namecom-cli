@@ -191,6 +191,9 @@ func runClaims(cmd *cobra.Command, args []string) error {
 
 	body := coreapigo.DomainClaimsCheckRequest{Domain: domainName}
 	if claimsPurchaseType != "" {
+		if err := cmdutil.ValidOneOf("purchase-type", claimsPurchaseType, cmdutil.ClaimsPurchaseTypes); err != nil {
+			return err
+		}
 		pt := coreapigo.DomainClaimsCheckRequestPurchaseType(claimsPurchaseType)
 		body.PurchaseType = &pt
 	}

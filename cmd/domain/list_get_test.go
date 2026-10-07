@@ -212,7 +212,9 @@ func TestDomainList_AllFetchesAllPages(t *testing.T) {
 	}
 }
 
-func TestDomainList_FilterWrapsWildcardAndAutoPages(t *testing.T) {
+// TestDomainList_FilterWrapsWildcardOnOnePage: --filter is sent as a
+// wildcard, and fetches one page, not every page (#281).
+func TestDomainList_FilterWrapsWildcardOnOnePage(t *testing.T) {
 	srv, requests := domainServer(t, [][]string{
 		{"acme.io"},  // page 1 — NextPage=2
 		{"acme.com"}, // page 2 — no NextPage
@@ -227,8 +229,8 @@ func TestDomainList_FilterWrapsWildcardAndAutoPages(t *testing.T) {
 	if err := runList(cmd, nil); err != nil {
 		t.Fatalf("runList: %v", err)
 	}
-	if len(requests()) != 2 {
-		t.Errorf("expected 2 requests (filter auto-paginates), got %d: %v", len(requests()), requests())
+	if len(requests()) != 1 {
+		t.Errorf("expected 1 request (a filter does not page fully), got %d: %v", len(requests()), requests())
 	}
 	for _, u := range requests() {
 		if !contains(u, "domainName=%2Aacme%2A") && !contains(u, "domainName=*acme*") {

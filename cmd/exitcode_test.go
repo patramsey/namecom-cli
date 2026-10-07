@@ -515,7 +515,9 @@ func TestPagedLists_BadPageIsUsage(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	for _, args := range pagedLists {
-		for _, bad := range [][]string{{"--page", "0"}, {"--limit", "-1"}} {
+		// #290: --limit 0 silently meant the API's default page, and --limit
+		// 1001 was a 400 from the API, exit 1.
+		for _, bad := range [][]string{{"--page", "0"}, {"--limit", "-1"}, {"--limit", "0"}, {"--limit", "1001"}, {"--all", "--limit", "0"}} {
 			t.Run(strings.Join(append(args[:2:2], bad...), " "), func(t *testing.T) {
 				resetFlags(t, args)
 				full := append(append([]string{"--base-url", srv.URL, "-o", "json"}, args...), bad...)

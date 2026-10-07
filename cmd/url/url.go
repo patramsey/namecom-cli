@@ -145,7 +145,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
@@ -157,7 +158,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	var lastResult *coreapigo.ListURLForwardingsResponse
 	for {
 		result, err := client.SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
-			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: cmdutil.PerPage(listLimit)})
+			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: paging.PerPage})
 		if err != nil {
 			spin.Stop()
 			return api.FromSDKError(err)
@@ -168,8 +169,8 @@ func runList(cmd *cobra.Command, args []string) error {
 		if !ok {
 			break
 		}
-		// cmdutil.AutoPage: --all, or --quiet without --page or --limit.
-		if !cmdutil.AutoPage(cmd, listAll) {
+		// cmdutil.ListPaging: --all, or --quiet without --page or --limit.
+		if !paging.All {
 			hasMore, nextPage = true, next
 			break
 		}
@@ -207,7 +208,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return out.YAMLList(all, np, 0)
 	default:
 		if len(all) == 0 {
-			out.Empty("URL forwarding", fmt.Sprintf("Run 'namecom url create %s --to https://example.com' to add one", domain))
+			cmdutil.EmptyPage(out, listPage, "URL forwarding", fmt.Sprintf("Run 'namecom url create %s --to https://example.com' to add one", domain))
 			return nil
 		}
 		out.Table(

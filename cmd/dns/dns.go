@@ -67,6 +67,12 @@ var listCmd = &cobra.Command{
 	Use:     "list <domain>",
 	Aliases: []string{"ls"},
 	Short:   "List DNS records for a domain",
+	Long: `List DNS records for a domain, one page at a time: the API's page holds 500
+records unless --limit says otherwise, so one page is usually the whole zone.
+
+--type and --host filter the records on the page fetched; the API cannot
+filter them. They do not change how many pages are fetched. If there are
+more, the footer says so; --all filters the whole zone.`,
 	Example: `  namecom dns list example.com
   namecom dns list example.com --type A
   namecom dns list example.com --type MX
@@ -167,8 +173,8 @@ partway can be run again.`,
 
 func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "records")
-	listCmd.Flags().StringVar(&listType, "type", "", "filter by record type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA)")
-	listCmd.Flags().StringVar(&listHost, "host", "", "filter by host (@ for the apex; www or www.example.com)")
+	listCmd.Flags().StringVar(&listType, "type", "", "show only records of this type (A, AAAA, CNAME, MX, TXT, NS, SRV, ANAME, CAA) on the page fetched")
+	listCmd.Flags().StringVar(&listHost, "host", "", "show only records at this host (@ for the apex; www or www.example.com) on the page fetched")
 
 	createCmd.Flags().StringVar(&createType, "type", "", "record type: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT; CAA is read-only through the API (required; prompted in a terminal)")
 	createCmd.Flags().StringVar(&createHost, "host", "@", "host: www or www.example.com (@ or the domain for the apex)")
@@ -210,6 +216,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if listType != "" {
+		if err := cmdutil.ValidDNSType(listType); err != nil {
+			return err
+		}
+	}
 	var wantHost string
 	if listHost != "" {
 		if wantHost, err = filterHost(listHost, domain); err != nil {
@@ -218,18 +229,18 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	filtered := listType != "" || listHost != ""
 
-	// --type and --host filter client-side, so they must see every page:
-	// filtering only page 1 silently reports "no records" for a zone that
-	// has them. Matches `domain list` and `order list`, which auto-page
-	// whenever a filter is set. So does --quiet without --page or --limit —
-	// see cmdutil.AutoPage.
-	autoPage := cmdutil.AutoPage(cmd, listAll) || filtered
-	if err := cmdutil.ValidPage(listPage, listLimit); err != nil {
+	// --type and --host filter client-side, the records on the pages
+	// fetched. They used to page fully, ignoring --page and --limit, so
+	// `--type A --limit 1` fetched the zone one record per request (#281).
+	// They now page as the unfiltered list does — see cmdutil.AutoPage — and
+	// a page with no match still says when there are more.
+	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
+	if err != nil {
 		return err
 	}
 
 	stop := out.Spin("Fetching DNS records…")
-	records, hasMore, nextPage, err := fetchRecords(cmd, domain, listPage, cmdutil.PerPage(listLimit), autoPage)
+	records, hasMore, nextPage, err := fetchRecords(cmd, domain, listPage, paging.PerPage, paging.All)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
@@ -283,6 +294,15 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAMLList(records, cmdutil.Int32Page(nextPage), 0)
 	default:
+		if len(records) == 0 && hasMore {
+			// The filter matched nothing on this page, not in the zone.
+			next := listPage + 1
+			if nextPage != nil {
+				next = *nextPage
+			}
+			out.Footer(fmt.Sprintf("No matching records on page %d", listPage), cmdutil.MorePages(next))
+			return nil
+		}
 		if len(records) == 0 {
 			// Distinguish "this zone is empty" from "nothing matched the filter".
 			// The generic message claimed the zone had no records at all and
@@ -295,7 +315,7 @@ func runList(cmd *cobra.Command, args []string) error {
 				}
 				hint := fmt.Sprintf("Run 'namecom dns list %s' to see every record", domain)
 				if listHost == "" {
-					out.Empty(noun, hint)
+					cmdutil.EmptyPage(out, listPage, noun, hint)
 					return nil
 				}
 				// Not out.Empty, which pluralises the last word: "No DNS
@@ -306,7 +326,7 @@ func runList(cmd *cobra.Command, args []string) error {
 				}
 				return nil
 			}
-			out.Empty("DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
+			cmdutil.EmptyPage(out, listPage, "DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
 			return nil
 		}
 		// Filtered, or TSV, where a section heading would be read as a row:
@@ -880,9 +900,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 // fetchRecords fetches a domain's DNS records from page start, perPage at a
 // time (nil for the API's default), and every later page when all is set.
+// Fetching every page with no perPage asks for cmdutil.MaxPerPage, the
+// fewest requests: the whole-zone reads of export, sync, import and
+// --if-not-exists paged at the API's default of 500 (#294).
+//
+// A start past the last page yields no records. The API answers it with page
+// 1 instead (#290), so a script paging `dns list --page N` until a page came
+// back empty never stopped.
 func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, err error) {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
+	if all && perPage == nil {
+		n := cmdutil.MaxPerPage
+		perPage = &n
+	}
 
 	page := start
 	var lastNextPage *int
@@ -895,6 +926,9 @@ func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, al
 		})
 		if err2 != nil {
 			return nil, false, nil, api.FromSDKError(err2)
+		}
+		if page == start && pastLastPage(start, perPage, result.From) {
+			return nil, false, nil, nil
 		}
 		records = append(records, cmdutil.NonNil(result.Records)...)
 		lastNextPage = result.NextPage
@@ -913,6 +947,23 @@ func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, al
 		nextPage = lastNextPage
 	}
 	return records, hasMore, nextPage, nil
+}
+
+// pastLastPage reports whether a records page asked for as page, perPage
+// at a time (nil for the API's default), came back as an earlier page, which
+// is how the API answers a page past the last. Page p starts at record
+// (p-1)*perPage+1, and at least at record p whatever the page size, so a
+// page that starts before that is not the one asked for. from is 0 when the
+// response did not say, and is then taken at its word.
+func pastLastPage(page int, perPage *int, from int) bool {
+	if page <= 1 || from <= 0 {
+		return false
+	}
+	first := page
+	if perPage != nil {
+		first = (page-1)*(*perPage) + 1
+	}
+	return from < first
 }
 
 // recordName is the name a record answers to: host joined to the domain, or
