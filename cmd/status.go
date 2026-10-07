@@ -120,14 +120,52 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	now := time.Now()
 	expireEnd := now.AddDate(0, 0, 30).Format("2006-01-02")
 	falseVal := false
+	// The counts need only totalCount, so they ask for one domain rather
+	// than the API's default page of them; the lists walk every page at
+	// the largest size (#294).
+	one, maxPage := 1, cmdutil.MaxPerPage
 
 	g, gctx := errgroup.WithContext(ctx)
 
-	// Single page-1 request to get TotalCount — no need to page everything.
+	// Fetch only domains expiring in the next 30 days. --quiet prints these
+	// alone, so it sends this request and none of the others.
+	g.Go(func() error {
+		p := 1
+		for {
+			result, err := client.SDK().Domains.ListDomains(gctx,
+				&coreapigo.ListDomainsRequest{Page: &p, PerPage: &maxPage, ExpireDateEnd: &expireEnd})
+			if err != nil {
+				return api.FromSDKError(err)
+			}
+			expiringDomains = append(expiringDomains, cmdutil.NonNil(result.Domains)...)
+			next, ok := cmdutil.NextPage(p, result.NextPage, result.LastPage)
+			if !ok {
+				return nil
+			}
+			p = next
+		}
+	})
+	if out.QuietMode {
+		if err := g.Wait(); err != nil {
+			stop()
+			return err
+		}
+		stop()
+		// Quiet prints the domains that need attention — expired or
+		// expiring within 30 days — one per line, ready for `xargs namecom
+		// domain renew`. Nothing means nothing is due. The totals have no
+		// single identifying value, and -o json carries them.
+		for _, e := range classifyExpiry(expiringDomains, now).items {
+			out.Quiet(e.Domain)
+		}
+		return nil
+	}
+
+	// One request for TotalCount — no need to page everything.
 	g.Go(func() error {
 		p := 1
 		result, err := client.SDK().Domains.ListDomains(gctx,
-			&coreapigo.ListDomainsRequest{Page: &p})
+			&coreapigo.ListDomainsRequest{Page: &p, PerPage: &one})
 		if err != nil {
 			return api.FromSDKError(err)
 		}
@@ -139,30 +177,12 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	g.Go(func() error {
 		p := 1
 		result, err := client.SDK().Domains.ListDomains(gctx,
-			&coreapigo.ListDomainsRequest{Page: &p, Locked: &falseVal})
+			&coreapigo.ListDomainsRequest{Page: &p, PerPage: &one, Locked: &falseVal})
 		if err != nil {
 			return api.FromSDKError(err)
 		}
 		unlockedCount = result.TotalCount
 		return nil
-	})
-
-	// Fetch only domains expiring in the next 30 days.
-	g.Go(func() error {
-		p := 1
-		for {
-			result, err := client.SDK().Domains.ListDomains(gctx,
-				&coreapigo.ListDomainsRequest{Page: &p, ExpireDateEnd: &expireEnd})
-			if err != nil {
-				return api.FromSDKError(err)
-			}
-			expiringDomains = append(expiringDomains, cmdutil.NonNil(result.Domains)...)
-			next, ok := cmdutil.NextPage(p, result.NextPage, result.LastPage)
-			if !ok {
-				return nil
-			}
-			p = next
-		}
 	})
 
 	// Account balance. Non-fatal: a status view is still useful without it,
@@ -181,7 +201,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	g.Go(func() error {
 		for tPage := ptrInt(1); ; {
 			tResult, err := client.SDK().Transfers.ListTransfers(gctx,
-				&coreapigo.ListTransfersRequest{Page: tPage})
+				&coreapigo.ListTransfersRequest{Page: tPage, PerPage: &maxPage})
 			if err != nil {
 				// Non-fatal: a status view is still useful without it. But leave
 				// transfersOK false so the count is reported as unknown rather
@@ -242,17 +262,6 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		ExpiringDomains:  expiringItems,
 		PendingDomains:   pendingDomains,
 		Balance:          balance,
-	}
-
-	// Quiet prints the domains that need attention — expired or expiring
-	// within 30 days — one per line, ready for `xargs namecom domain renew`.
-	// Nothing means nothing is due. The totals have no single identifying
-	// value, and -o json carries them.
-	if out.QuietMode {
-		for _, e := range summary.ExpiringDomains {
-			out.Quiet(e.Domain)
-		}
-		return nil
 	}
 
 	switch out.Format {

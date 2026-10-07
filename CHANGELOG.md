@@ -9,6 +9,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Changed
+- `status` asks for less (#294). The domain and unlocked counts request one
+  domain each and read the total, where each fetched the API's default page
+  of domains to count them; the expiring domains and the transfers are
+  fetched 1,000 a page. `status -q`, which prints only the domains expired
+  or expiring, sends that one request instead of five.
+
 ### Fixed
 - Mistakes caught before any request is sent are usage errors (exit 2), not
   API failures (exit 1) (#291): a vanity nameserver hostname outside its

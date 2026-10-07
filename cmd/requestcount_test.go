@@ -256,24 +256,20 @@ func TestRequestCounts(t *testing.T) {
 		// Account
 		"status": {
 			args: []string{"status"},
-			why:  "five independent reads, sent together; the counts ask for one item each and read totalCount",
+			why:  "five independent reads, sent together; the two counts ask for one domain and read totalCount",
 			want: []string{together(
 				"GET /core/v1/accountinfo/balance",
-				"GET /core/v1/domains?expireDateEnd="+soon+"&page=1",
-				"GET /core/v1/domains?page=1",
-				"GET /core/v1/domains?locked=false&page=1",
-				"GET /core/v1/transfers?page=1",
+				"GET /core/v1/domains?expireDateEnd="+soon+"&page=1&perPage=1000",
+				"GET /core/v1/domains?page=1&perPage=1",
+				"GET /core/v1/domains?locked=false&page=1&perPage=1",
+				"GET /core/v1/transfers?page=1&perPage=1000",
 			)},
 		},
 		"status -q": {
 			args: []string{"status", "-q"},
-			want: []string{together(
-				"GET /core/v1/accountinfo/balance",
-				"GET /core/v1/domains?expireDateEnd="+soon+"&page=1",
-				"GET /core/v1/domains?page=1",
-				"GET /core/v1/domains?locked=false&page=1",
-				"GET /core/v1/transfers?page=1",
-			)},
+			want: []string{
+				"GET /core/v1/domains?expireDateEnd=" + soon + "&page=1&perPage=1000",
+			},
 		},
 		"auth status": {
 			args: []string{"auth", "status"},
