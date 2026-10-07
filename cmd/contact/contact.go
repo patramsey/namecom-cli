@@ -165,8 +165,10 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			)
 		}
 	}
+	foot := cmdutil.Page("unverified contact", listPage, len(contacts), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	switch out.Format {
 	case output.FormatJSON:
+		out.ListFooter(foot) // for a table --fields prints
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
@@ -191,15 +193,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			unverifiedRows(out, contacts),
 			output.Essential("DOMAINS"),
 		)
-		switch {
-		case hasMore && lastResult.TotalCount > 0 && lastResult.From > 0:
-			out.Footer(cmdutil.Showing(lastResult.From, lastResult.To, lastResult.TotalCount, "unverified contact"),
-				cmdutil.MorePages(nextPage))
-		case hasMore:
-			out.Count(len(contacts), "unverified contact", cmdutil.MorePages(nextPage))
-		default:
-			out.Count(len(contacts), "unverified contact")
-		}
+		out.ListFooter(foot)
 		warn()
 	}
 	return nil

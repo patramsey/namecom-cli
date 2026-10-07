@@ -73,9 +73,9 @@ func ListPaging(cmd *cobra.Command, all bool, page, limit int) (Paging, error) {
 }
 
 // MorePages is the note under a list that stopped before its last page,
-// matching the footer `domain list` already printed.
+// as output.ListFooter words it.
 func MorePages(next int) string {
-	return fmt.Sprintf("--page %d for more, --all for everything", next)
+	return output.MorePages(next)
 }
 
 // AutoPage reports whether a paged list fetches every page rather than one:
@@ -104,11 +104,21 @@ func QuietMorePages(out *output.Config, next int) {
 	fmt.Fprintln(out.EWriter, out.Dim(MorePages(next)))
 }
 
-// Showing is the count under a list that stopped before its last page, when
-// the API reported where the page sits: "Showing 1–250 of 6,522 domains".
-// "1 unverified contact · --page 2 for more" read as the total (#290).
-func Showing(from, to, total int, noun string) string {
-	return fmt.Sprintf("Showing %s–%s of %s", output.Thousands(from), output.Thousands(to), output.Plural(total, noun))
+// Page is the footer of one page of a list: noun names an item, page is the
+// --page asked for, shown is how many items were printed, and from, to and total are where the page sits, as
+// the response reports them. all says every page from --page on was
+// fetched, when the last response's from and to describe only the last
+// page, and so are left out. next is the page after, 0 for none.
+//
+// "1 unverified contact · --page 2 for more" read as the total (#290), and
+// the last page of a paged list said "1 domain" where page 1 said "Showing
+// 1–2 of 5 domains": with a total, every page says where it sits.
+func Page(noun string, page, shown int, all bool, from, to, total, next int) output.ListPage {
+	p := output.ListPage{Noun: noun, Page: page, Count: shown, Total: total, Next: next}
+	if !all {
+		p.From, p.To = from, to
+	}
+	return p
 }
 
 // EmptyPage is out.Empty for a list that came back empty. Past page 1 that

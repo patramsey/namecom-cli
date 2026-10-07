@@ -178,8 +178,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	foot := cmdutil.Page("forwarding", listPage, len(all), true, 0, 0, 0, nextPage) // the API gives this list no total
 	switch out.Format {
 	case output.FormatJSON:
+		out.ListFooter(foot) // for a table --fields prints
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
@@ -201,11 +203,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			headers,
 			emailRows(all),
 		)
-		if hasMore {
-			out.Count(len(all), "forwarding", cmdutil.MorePages(nextPage))
-		} else {
-			out.Count(len(all), "forwarding")
-		}
+		out.ListFooter(foot)
 	}
 	return nil
 }
@@ -243,6 +241,10 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return out.JSON(entry)
 	case output.FormatYAML:
 		return out.YAML(entry)
+	case output.FormatTSV:
+		// One object is field<TAB>value rows, the -o json keys, as it is
+		// with --fields: it was the list's header and one row.
+		return out.TSVObject(entry)
 	default:
 		out.Table(
 			[]string{"MAILBOX", "FORWARDS TO"},

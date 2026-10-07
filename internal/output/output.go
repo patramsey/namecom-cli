@@ -339,14 +339,29 @@ func yamlNode(v any) (*yaml.Node, error) {
 // than track each case, any string with a control character, a Unicode line
 // separator, a byte order mark or surrounding whitespace is double-quoted,
 // where everything is escaped and nothing is folded or trimmed.
+//
+// So is any spelling of a YAML 1.1 boolean or null. yaml.v3 quotes only what
+// YAML 1.2 would mistype, so a country code of NO, or a DNS answer of "on",
+// was written bare, and Ruby's YAML.load and PyYAML, which read YAML 1.1,
+// read it back as false or true.
 func yamlString(s string) *yaml.Node {
 	n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s}
-	if s == "<<" || strings.TrimSpace(s) != s || strings.ContainsFunc(s, func(r rune) bool {
+	if s == "<<" || yaml11Scalar(s) || strings.TrimSpace(s) != s || strings.ContainsFunc(s, func(r rune) bool {
 		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\ufeff'
 	}) {
 		n.Style = yaml.DoubleQuotedStyle
 	}
 	return n
+}
+
+// yaml11Scalar reports whether s, in any case, is a YAML 1.1 boolean
+// (y, n, yes, no, on, off, true, false) or null (null, ~).
+func yaml11Scalar(s string) bool {
+	switch strings.ToLower(s) {
+	case "y", "n", "yes", "no", "on", "off", "true", "false", "null", "~":
+		return true
+	}
+	return false
 }
 
 // jsonToNode consumes one JSON value from dec and returns it as a node.
@@ -632,12 +647,20 @@ func (c *Config) fitColumns(headers []string, rows [][]string, essential map[str
 	for i := range keep {
 		keep[i] = i
 	}
+	// A header that is not printed takes no width: under --no-header, a
+	// domain was cut to make room for "AUTO-RENEW" above "yes".
+	measured := headers
+	if c.NoHeader {
+		measured = nil
+	}
 	var natural, widths []int
 	for {
-		natural = colWidths(headers, rows, keep)
+		natural = colWidths(measured, rows, keep)
+		dated := datedWidths(measured, rows, keep)
 		var fits bool
-		widths, fits = shrinkToFit(headers, keep, natural, c.MaxWidth)
+		widths, fits = shrinkToFit(measured, keep, natural, dated, c.MaxWidth)
 		if fits {
+			widths = giveBack(widths, natural, dated, c.MaxWidth)
 			break
 		}
 		drop := -1
@@ -708,12 +731,31 @@ func shortenCell(v string, width int) string {
 
 // shrinkToFit narrows the widest column a character at a time until the table
 // fits maxWidth, taking no column below minColWidth or its header's width. It
-// returns the widths and whether they fit.
-func shrinkToFit(headers []string, keep, natural []int, maxWidth int) ([]int, bool) {
+// returns the widths and whether they fit. headers is nil when none is
+// printed.
+//
+// A column of dates (dated, see datedWidths) first loses the relative
+// phrases, all at once, since shortenCell cuts a date to the date alone
+// whatever width it is given: narrowed a character at a time, it was given
+// 20 columns and drew 10, and the spare 10 went unused while a domain or an
+// email address beside it was cut. giveBack returns them, if they are not
+// needed after all.
+func shrinkToFit(headers []string, keep, natural, dated []int, maxWidth int) ([]int, bool) {
 	widths := append([]int(nil), natural...)
+	if tableWidth(widths) > maxWidth {
+		for k, d := range dated {
+			if d > 0 {
+				widths[k] = min(widths[k], d)
+			}
+		}
+	}
 	floor := make([]int, len(widths))
 	for k, i := range keep {
-		floor[k] = min(natural[k], max(minColWidth, lipgloss.Width(headers[i])))
+		h := 0
+		if i < len(headers) {
+			h = lipgloss.Width(headers[i])
+		}
+		floor[k] = min(widths[k], max(minColWidth, h))
 	}
 	for tableWidth(widths) > maxWidth {
 		widest := -1
@@ -728,6 +770,59 @@ func shrinkToFit(headers []string, keep, natural []int, maxWidth int) ([]int, bo
 		widths[widest]--
 	}
 	return widths, true
+}
+
+// giveBack hands the width a fitted table leaves unused to the columns that
+// were narrowed, from the first, up to each one's natural width. A column of
+// dates gets its phrases back only if all of them fit: a width between the
+// date and the whole would still draw the date alone.
+func giveBack(widths, natural, dated []int, maxWidth int) []int {
+	spare := maxWidth - tableWidth(widths)
+	for k := range widths {
+		need := natural[k] - widths[k]
+		if spare <= 0 {
+			break
+		}
+		if need <= 0 || (dated[k] > 0 && widths[k] <= dated[k] && need > spare) {
+			continue
+		}
+		add := min(need, spare)
+		widths[k] += add
+		spare -= add
+	}
+	return widths
+}
+
+// datedWidths returns, for each column at the given indexes, the width it
+// takes with every date cut to the date alone (see shortenCell), or 0 for a
+// column with no such date.
+func datedWidths(headers []string, rows [][]string, cols []int) []int {
+	const date = len("2006-01-02")
+	w := make([]int, len(cols))
+	has := make([]bool, len(cols))
+	for k, i := range cols {
+		if i < len(headers) {
+			w[k] = lipgloss.Width(headers[i])
+		}
+	}
+	for _, r := range rows {
+		for k, i := range cols {
+			if i >= len(r) {
+				continue
+			}
+			cw := lipgloss.Width(r[i])
+			if datedCell.MatchString(ansi.Strip(r[i])) {
+				has[k], cw = true, date
+			}
+			w[k] = max(w[k], cw)
+		}
+	}
+	for k := range w {
+		if !has[k] {
+			w[k] = 0
+		}
+	}
+	return w
 }
 
 // colWidths measures the columns at the given indexes at their natural
@@ -1097,6 +1192,11 @@ func (c *Config) Note(msg string) {
 func (c *Config) Hint(msg string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
+	}
+	// Wrapped to the terminal, continuation lines under the text rather than
+	// the arrow.
+	if c.MaxWidth > 2 && ansi.StringWidth(msg)+2 > c.MaxWidth {
+		msg = strings.Join(wrapWords(msg, c.MaxWidth-2), "\n  ")
 	}
 	if c.ColorEnabled() {
 		arrow := styleDim.Render("→")
@@ -1898,6 +1998,9 @@ func (c *Config) DryRun(method, path string, body any) error {
 // q is DryRun exactly.
 func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context string) error {
 	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body, Quote: q}
+	if c.filter != nil {
+		c.filter.dryRun = true
+	}
 	switch c.Format {
 	case FormatJSON:
 		return dryRunErr(c.JSON(req))
@@ -2022,9 +2125,12 @@ func (c *Config) Count(n int, noun string, notes ...string) {
 }
 
 // Footer prints parts as one dim line on stderr, joined with " · ". Only in
-// table mode, and not in quiet mode. Count is the usual caller; a list whose
-// count reads differently ("Showing 1–250 of 6,522 domains") calls it
-// directly. It goes to stderr for the reason Hint does.
+// table mode, and not in quiet mode. Count is the usual caller; a paged list
+// calls ListFooter. It goes to stderr for the reason Hint does.
+//
+// A line wider than the terminal breaks between parts, and a part wider
+// than the terminal between words: `order list`'s footer was 111 columns,
+// and wrapped mid-word at 80.
 func (c *Config) Footer(parts ...string) {
 	if c.Format != FormatTable || c.QuietMode {
 		return
@@ -2035,9 +2141,135 @@ func (c *Config) Footer(parts ...string) {
 			kept = append(kept, p)
 		}
 	}
-	if len(kept) > 0 {
-		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(kept, " · ")))
+	if len(kept) == 0 {
+		return
 	}
+	for _, line := range c.packParts(kept, " · ") {
+		fmt.Fprintln(c.EWriter, c.Dim(line))
+	}
+}
+
+// packParts joins parts with sep into lines no wider than MaxWidth, breaking
+// only between parts, and between words within a part too wide for a line
+// of its own. With no MaxWidth it is one line.
+func (c *Config) packParts(parts []string, sep string) []string {
+	if c.MaxWidth <= 0 {
+		return []string{strings.Join(parts, sep)}
+	}
+	var lines []string
+	cur := ""
+	for _, p := range parts {
+		switch {
+		case cur == "":
+			cur = p
+		case ansi.StringWidth(cur+sep+p) <= c.MaxWidth:
+			cur += sep + p
+		default:
+			lines = append(lines, cur)
+			cur = p
+		}
+		if ansi.StringWidth(cur) > c.MaxWidth {
+			wrapped := wrapWords(cur, c.MaxWidth)
+			lines = append(lines, wrapped[:len(wrapped)-1]...)
+			cur = wrapped[len(wrapped)-1]
+		}
+	}
+	return append(lines, cur)
+}
+
+// wrapWords breaks s into lines no wider than width, between words only: a
+// word wider than width has a line of its own. Not ansi.Wordwrap, which
+// also breaks after a hyphen, and so split a flag from its "--".
+func wrapWords(s string, width int) []string {
+	var lines []string
+	cur := ""
+	for _, w := range strings.Fields(s) {
+		switch {
+		case cur == "":
+			cur = w
+		case ansi.StringWidth(cur)+1+ansi.StringWidth(w) <= width:
+			cur += " " + w
+		default:
+			lines = append(lines, cur)
+			cur = w
+		}
+	}
+	return append(lines, cur)
+}
+
+// MorePages is the note under a list that stopped before its last page.
+func MorePages(next int) string {
+	return fmt.Sprintf("--page %d for more, --all for everything", next)
+}
+
+// ListPage is the page of a list a command printed, as its footer
+// describes it. ListFooter prints it.
+type ListPage struct {
+	// Noun names one item, as Plural takes it: "domain", "record".
+	Noun string
+	// Page is the page asked for, from 1. An empty page past the first is
+	// past the end of the list, and its footer says so, as
+	// cmdutil.EmptyPage does.
+	Page int
+	// Count is how many items were printed.
+	Count int
+	// From and To are the positions of the first and last item in the whole
+	// list, and Total its length, as the API reports them. Zero when it does
+	// not, or when they would mislead: a list filtered after it was fetched,
+	// or every page fetched from one past the first.
+	From, To, Total int
+	// Notes go after the count: "newest first".
+	Notes []string
+	// Next is the page after this one, or 0 when this is the last.
+	Next int
+	// Narrow names the flags that would narrow the list, offered after Next
+	// ("--since or --domain"). Only flags not already given belong here.
+	Narrow string
+}
+
+// parts is the footer's parts: "Showing 1–2 of 6,522 domains" when the page
+// is part of a longer list whose length is known, else "2 domains"; then
+// the notes and the page to ask for next.
+func (p ListPage) parts() []string {
+	if p.Count == 0 && p.Page > 1 && p.Next == 0 {
+		return []string{fmt.Sprintf("No %s on page %d", PluralNoun(2, p.Noun), p.Page),
+			"that is past the last page; leave out --page to start at the first"}
+	}
+	count := Plural(p.Count, p.Noun)
+	switch {
+	case p.Total > p.Count && p.From > 0 && p.To >= p.From:
+		count = fmt.Sprintf("Showing %s–%s of %s", Thousands(p.From), Thousands(p.To), Plural(p.Total, p.Noun))
+	case p.Total > p.Count:
+		count = Thousands(p.Count) + " of " + Plural(p.Total, p.Noun)
+	}
+	parts := append([]string{count}, p.Notes...)
+	if p.Next > 0 {
+		more := MorePages(p.Next)
+		if p.Narrow != "" {
+			more += ", or narrow with " + p.Narrow
+		}
+		parts = append(parts, more)
+	}
+	return parts
+}
+
+// ListFooter prints the footer under a page of a list, the one footer every
+// paged list uses. Lists said the same thing four ways — "2 orders",
+// "Showing 1–2 of 6,522 domains", "2 of 9,122 results" with --fields — and
+// dropped the "of N" on the last page, which read as the total.
+//
+// A command calls it after its table, and also in its JSON branch: when
+// --fields is printing a table, the command runs in JSON mode, and the
+// footer is kept for EndFilter to print under the filtered table. It prints
+// nothing in any other format.
+func (c *Config) ListFooter(p ListPage) {
+	if f := c.filter; f != nil {
+		if f.format == FormatTable {
+			f.page = &p
+		}
+		return
+	}
+	c.Footer(p.parts()...)
 }
 
 // Dim returns text rendered in a muted/gray style.

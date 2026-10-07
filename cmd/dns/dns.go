@@ -246,7 +246,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	stop := out.Spin("Fetching DNS records…")
-	records, hasMore, nextPage, err := fetchRecords(cmd, domain, listPage, paging.PerPage, paging.All)
+	records, hasMore, nextPage, pos, err := fetchRecordsAt(cmd, domain, listPage, paging.PerPage, paging.All)
 	stop()
 	if err != nil {
 		if cmdutil.IsNotFound(err) {
@@ -294,11 +294,27 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// The zone's size, from the response: the JSON had nextPage but no
+	// total, which the other lists the API counts have. --type and --host
+	// filter the fetched records, so the zone's size is not the list's, and
+	// is left out then.
+	next := 0
+	if hasMore {
+		next = listPage + 1
+		if nextPage != nil {
+			next = *nextPage
+		}
+	}
+	foot := cmdutil.Page("record", listPage, len(records), paging.All, pos.from, pos.to, pos.total, next)
+	if filtered {
+		foot = cmdutil.Page("record", listPage, len(records), true, 0, 0, 0, next)
+	}
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSONList(records, cmdutil.Int32Page(nextPage), 0)
+		out.ListFooter(foot) // for a table --fields prints
+		return out.JSONList(records, cmdutil.Int32Page(nextPage), cmdutil.Int32Count(foot.Total))
 	case output.FormatYAML:
-		return out.YAMLList(records, cmdutil.Int32Page(nextPage), 0)
+		return out.YAMLList(records, cmdutil.Int32Page(nextPage), cmdutil.Int32Count(foot.Total))
 	default:
 		headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
 		if priorityColumn(out, records) {
@@ -350,15 +366,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			// Unfiltered: group by type with section headers.
 			renderGroupedRecords(out, records)
 		}
-		if hasMore {
-			next := listPage + 1
-			if nextPage != nil {
-				next = *nextPage
-			}
-			out.Count(len(records), "record", cmdutil.MorePages(next))
-		} else {
-			out.Count(len(records), "record")
-		}
+		out.ListFooter(foot)
 	}
 	return nil
 }
@@ -987,6 +995,18 @@ func runImport(cmd *cobra.Command, args []string) error {
 // back empty never stopped; further past, with a 400. cmdutil.PastLastPage
 // and PageOutOfRange say when.
 func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, err error) {
+	records, hasMore, nextPage, _, err = fetchRecordsAt(cmd, domain, start, perPage, all)
+	return records, hasMore, nextPage, err
+}
+
+// recordsPos is where the records fetchRecordsAt returned sit in the zone,
+// as the responses put it: the first and last record's positions and the
+// zone's size. Zero when a response did not say.
+type recordsPos struct{ from, to, total int }
+
+// fetchRecordsAt is fetchRecords that also returns the position, for the
+// list's footer and its JSON total.
+func fetchRecordsAt(cmd *cobra.Command, domain string, start int, perPage *int, all bool) (records []*coreapigo.Record, hasMore bool, nextPage *int, pos recordsPos, err error) {
 	client := cmdutil.APIClient(cmd)
 	ctx := cmd.Context()
 	if all && perPage == nil {
@@ -1004,16 +1024,20 @@ func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, al
 			PerPage:    perPage,
 		})
 		if page == start && cmdutil.PageOutOfRange(page, err2) {
-			return nil, false, nil, nil
+			return nil, false, nil, pos, nil
 		}
 		if err2 != nil {
-			return nil, false, nil, api.FromSDKError(err2)
+			return nil, false, nil, pos, api.FromSDKError(err2)
 		}
 		if page == start && cmdutil.PastLastPage(start, perPage, len(result.Records), result.TotalCount, result.LastPage) {
-			return nil, false, nil, nil
+			return nil, false, nil, pos, nil
 		}
 		records = append(records, cmdutil.NonNil(result.Records)...)
 		lastNextPage = result.NextPage
+		pos.to, pos.total = result.To, result.TotalCount
+		if page == start {
+			pos.from = result.From
+		}
 
 		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
 		if !ok {
@@ -1028,7 +1052,7 @@ func fetchRecords(cmd *cobra.Command, domain string, start int, perPage *int, al
 	if hasMore {
 		nextPage = lastNextPage
 	}
-	return records, hasMore, nextPage, nil
+	return records, hasMore, nextPage, pos, nil
 }
 
 // recordName is the name a record answers to: host joined to the domain, or

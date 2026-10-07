@@ -205,19 +205,21 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	foot := cmdutil.Page("transfer", listPage, len(transfers), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	switch out.Format {
 	case output.FormatJSON:
+		out.ListFooter(foot) // for a table --fields prints
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(transfers, np, 0)
+		return out.JSONList(transfers, np, cmdutil.Int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(transfers, np, 0)
+		return out.YAMLList(transfers, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		headers := []string{"DOMAIN", "STATUS"}
 		if len(transfers) == 0 {
@@ -228,11 +230,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			headers,
 			transferRows(out, transfers),
 		)
-		if hasMore {
-			out.Count(len(transfers), "transfer", cmdutil.MorePages(nextPage))
-		} else {
-			out.Count(len(transfers), "transfer")
-		}
+		out.ListFooter(foot)
 	}
 	return nil
 }

@@ -33,15 +33,17 @@ Formats (-o, --output):
                 value it lacks is an empty cell, not a missing row. A
                 command with a detail table (domain get) uses the table's
                 field names; one without (status, version, auth status,
-                config show, domain claims, open) uses the -o json keys,
-                with bare values — where a value came from is a key of its
-                own, such as profileSource — and a list in a value is a
-                JSON array.
+                config show, domain claims, url get, email get, order get,
+                open) uses the -o json keys, with bare values — where a
+                value came from is a key of its own, such as profileSource
+                — and a list in a value is a JSON array: order get's items
+                are one orderItems cell.
 
   A write prints its result's keys (success, changed, message) as one
   object, and a write to several targets a row each; a read never prints
-  them. A dry run prints method, path and body as a list, and dns sync's
-  plan a row per change: action, type, host, answer, TTL, priority.
+  them. A dry run prints method, path and body as a list, with or without
+  --fields, and dns sync's plan a row per change: action, type, host,
+  answer, TTL, priority.
   dns export writes a file, JSON or a zone file, so -o table, -o tsv and
   -q are usage errors there.
 

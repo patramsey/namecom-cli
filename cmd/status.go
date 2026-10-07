@@ -44,9 +44,13 @@ type statusSummary struct {
 	// Balance is nil when the lookup failed. It must not default to 0:
 	// rendering a failed balance as $0.00 tells the user their account is
 	// empty, which is worse than telling them nothing.
-	Balance         *float64     `json:"balance,omitempty"`
-	ExpiringDomains []expiryItem `json:"expiringDomains,omitempty"`
-	PendingDomains  []string     `json:"pendingTransferDomains,omitempty"`
+	Balance *float64 `json:"balance,omitempty"`
+	// The lists are always present, [] when empty: omitempty left them out,
+	// so `--jq '.pendingTransferDomains[]'` failed on an account with none.
+	// PendingDomains is null when the transfers lookup failed, as
+	// PendingTransfers is absent: the domains are unknown, not none.
+	ExpiringDomains []expiryItem `json:"expiringDomains"`
+	PendingDomains  []string     `json:"pendingTransferDomains"`
 }
 
 type expiryItem struct {
@@ -232,8 +236,14 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	// Compute stats from the targeted results.
 	exp := classifyExpiry(expiringDomains, now)
 	expExpired, expCritical, expSoon, expiringItems := exp.expired, exp.critical, exp.soon, exp.items
+	if expiringItems == nil {
+		expiringItems = []expiryItem{}
+	}
 
 	var pendingDomains []string
+	if transfersOK {
+		pendingDomains = []string{}
+	}
 	for _, t := range transfers {
 		s := string(t.Status)
 		if s != "completed" && s != "canceled" && s != "failed" && s != "rejected" {

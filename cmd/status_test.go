@@ -165,6 +165,13 @@ func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
 		if v != float64(0) {
 			t.Errorf("expected 0 pending transfers, got %#v", v)
 		}
+		// Empty lists are [], not left out: `--jq '.pendingTransferDomains[]'`
+		// failed with "cannot iterate over: null" on an account with none.
+		for _, k := range []string{"expiringDomains", "pendingTransferDomains"} {
+			if l, ok := got[k].([]any); !ok || len(l) != 0 {
+				t.Errorf("%s = %#v, want []", k, got[k])
+			}
+		}
 	})
 
 	t.Run("unavailable is not reported as zero", func(t *testing.T) {
@@ -181,6 +188,10 @@ func TestStatus_DistinguishesZeroTransfersFromUnavailable(t *testing.T) {
 		}
 		if v, present := got["pendingTransfers"]; present {
 			t.Errorf("a failed transfers lookup must not claim a count, got %#v", v)
+		}
+		// Nor an empty list: null says the domains are unknown.
+		if v, present := got["pendingTransferDomains"]; !present || v != nil {
+			t.Errorf("pendingTransferDomains = %#v (present %v), want null", v, present)
 		}
 	})
 }

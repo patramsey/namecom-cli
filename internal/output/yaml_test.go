@@ -61,6 +61,37 @@ func TestWriteYAML_RoundTripsLikeJSON(t *testing.T) {
 	}
 }
 
+// TestWriteYAML_QuotesYAML11Scalars pins that a string a YAML 1.1 parser —
+// Ruby's YAML.load, PyYAML — reads as a boolean or null is quoted. yaml.v3
+// quotes what YAML 1.2 would mistype, but wrote `value: NO` for Norway's
+// country code and `value: yes` for a requirements option, which those
+// parsers read back as false and true.
+func TestWriteYAML_QuotesYAML11Scalars(t *testing.T) {
+	for _, s := range []string{
+		"y", "Y", "yes", "Yes", "YES", "yEs", "n", "N", "no", "No", "NO",
+		"on", "On", "ON", "off", "Off", "OFF", "true", "True", "TRUE", "false", "FALSE",
+		"null", "Null", "NULL", "~",
+	} {
+		var buf bytes.Buffer
+		if err := writeYAML(&buf, map[string]any{s: s}); err != nil {
+			t.Fatal(err)
+		}
+		if want := `"` + s + `": "` + s + `"` + "\n"; buf.String() != want {
+			t.Errorf("%q: got %q, want %q", s, buf.String(), want)
+		}
+	}
+	// Strings that only look like one stay plain.
+	for _, s := range []string{"yess", "nope", "onto", "Norway", "nul"} {
+		var buf bytes.Buffer
+		if err := writeYAML(&buf, map[string]any{"a": s}); err != nil {
+			t.Fatal(err)
+		}
+		if want := "a: " + s + "\n"; buf.String() != want {
+			t.Errorf("%q: got %q, want %q", s, buf.String(), want)
+		}
+	}
+}
+
 // yamlAsJSON turns what yaml.Unmarshal decodes into what json.Unmarshal
 // would: map[string]any and float64 numbers.
 func yamlAsJSON(v any) any {

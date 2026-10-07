@@ -93,6 +93,43 @@ Releases before `0.2.0` predate this file. Their notes are on the
   made a forwarding for `www.example.com.example.com`, and one with a
   trailing dot was refused. A trailing-dot name outside the domain, such as
   `www.other.org.`, is a usage error (exit 2) before any request.
+- `-o yaml` quotes every string a YAML 1.1 parser reads as a boolean or
+  null: `yes`, `no`, `on`, `off`, `y`, `n`, `true`, `false`, `null` and `~`,
+  in any case. `domain requirements fr -o yaml` printed Norway's country
+  code as a bare `NO`, which Ruby's `YAML.load` and PyYAML read back as
+  `false`. **Scripts**: those values are now `"NO"`, `"yes"` and so on; a
+  YAML 1.2 parser reads the same strings as before.
+- `status -o json` always has `expiringDomains` and
+  `pendingTransferDomains`, `[]` when there are none; they were left out, so
+  `status --jq '.pendingTransferDomains[]'` failed with "cannot iterate over:
+  null" on an account with no pending transfers. **Scripts**:
+  `pendingTransferDomains` is `null` when the transfers lookup failed (when
+  `pendingTransfers` is absent), and in `-o tsv` an empty list is `[]`
+  rather than an empty cell.
+- `-o tsv` prints one shape per command whether or not `--fields` is given.
+  **Scripts**: `url get`, `email get` and `order get` print field<TAB>value
+  rows with the `-o json` keys, as they did with `--fields`, rather than a
+  header and a row; `order get`'s items are a JSON array in the
+  `orderItems` row, where they were a second table in the same stream. A
+  dry run with `--fields` prints a header and a row, as it does without.
+  `open --dry-run -o tsv` prints the `url`, `opened` and `dryRun` rows
+  rather than the text line.
+- Paged lists print one footer, worded the same everywhere: `Showing 1–2 of
+  9,122 orders` on every page when the API gives a total, the last page
+  included, where `order list`, `dns list` and `transfer list` said only "2
+  orders" and the last page of `domain list` "1 domain". With `--fields` in
+  a table, the footer comes after the table, not before it, and names the
+  items rather than "results". `order list` no longer suggests narrowing
+  with `--status` or `--domain` when they are given, and footers and hints
+  wrap to the terminal. **Scripts**: `dns list` and `transfer list` JSON
+  and YAML now carry `total`, as the other counted lists do (`dns list`
+  leaves it out under `--type` or `--host`, which filter after fetching).
+- A table cut to fit the terminal uses the width it has before cutting a
+  value. At 80 columns `contact unverified` drew a 70-wide table and cut an
+  email address one character too long, and `domain list --no-header` cut a
+  domain to make room for headers it did not print. A date's "(in 3
+  months)" now goes first, and any width left over goes back to the values
+  that were cut.
 
 ## [0.5.2] - 2026-10-07
 

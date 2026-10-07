@@ -1050,13 +1050,72 @@ func TestTableShortensDateWithoutLosingDirection(t *testing.T) {
 		if !strings.Contains(got, "2026-07-19 ") || strings.Contains(got, "(3 month") || strings.Contains(got, "2026-07-19 (") {
 			t.Errorf("color %v: want the date alone, without a cut relative phrase:\n%s", color, got)
 		}
-		if !strings.Contains(got, "a-rather-long-domain…") {
+		if !strings.Contains(got, "a-rather-long-domain") || !strings.Contains(got, "…") {
 			t.Errorf("color %v: want the domain cut with …:\n%s", color, got)
 		}
 	}
 	if got := shortenCell("2026-07-19 (3 months ago)", 8); got != "2026-07…" {
 		t.Errorf("narrower than the date: %q, want it cut with …", got)
 	}
+}
+
+// TestTableGivesBackSpareWidth: a table cut to fit the terminal uses the
+// width it has before cutting a value. At 80 columns `contact unverified`
+// drew a 70-wide table with the email cut, though it was one character too
+// long: the deadline column was narrowed to 20, drew the date alone in 10,
+// and the other 10 went unused. Under --no-header a domain was cut to make
+// room for headers that were not printed.
+func TestTableGivesBackSpareWidth(t *testing.T) {
+	lines := func(s string) []string { return strings.Split(strings.TrimRight(s, "\n"), "\n") }
+
+	t.Run("a cut date's phrase goes to the cut email", func(t *testing.T) {
+		var buf, errw bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &errw, MaxWidth: 80}
+		email := "someone.with.a.long.name@ex.com" // 31
+		c.Table([]string{"ID", "EMAIL", "DEADLINE", "DOMAINS"}, [][]string{
+			{"12345", email, "2026-07-19 (3 months ago)", "a-domain.com, b.org"},
+		}, Essential("DOMAINS"))
+		got := buf.String()
+		if !strings.Contains(got, email) || !strings.Contains(got, "a-domain.com, b.org") {
+			t.Errorf("email or domains cut although the table had room for them:\n%s", got)
+		}
+		for _, l := range lines(got) {
+			if w := lipgloss.Width(l); w > 80 {
+				t.Errorf("line %d wide, want <= 80: %q", w, l)
+			}
+		}
+	})
+
+	t.Run("a cut table is as wide as the terminal", func(t *testing.T) {
+		var buf, errw bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &errw, MaxWidth: 80}
+		c.Table([]string{"ID", "EMAIL", "DEADLINE", "DOMAINS"}, [][]string{
+			{"12345", "someone.with.a.long.name@ex.com", "2026-07-19 (3 months ago)", "a-domain.com, another-domain.org, third.net"},
+		}, Essential("DOMAINS"))
+		for _, l := range lines(buf.String()) {
+			if w := lipgloss.Width(l); w != 80 {
+				t.Errorf("a table that cut values is %d wide, want 80: %q", w, l)
+			}
+		}
+	})
+
+	t.Run("an unprinted header takes no width", func(t *testing.T) {
+		var buf, errw bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &errw, MaxWidth: 80, NoHeader: true}
+		domain := "loadtest-ff7fb52b-b51b-46c8-b254-6a557f05.com" // 45
+		c.Table([]string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}, [][]string{
+			{domain, "2027-03-01 (in 6 months)", "yes", "yes", "no"},
+		})
+		got := buf.String()
+		if !strings.Contains(got, domain) || !strings.Contains(got, "2027-03-01") {
+			t.Errorf("want the whole domain, and the date without its phrase, in 80 columns:\n%s", got)
+		}
+		for _, l := range lines(got) {
+			if w := lipgloss.Width(l); w > 80 {
+				t.Errorf("line %d wide, want <= 80: %q", w, l)
+			}
+		}
+	})
 }
 
 // TestTableEssentialColumns: a DNS answer, the widest column, was the first

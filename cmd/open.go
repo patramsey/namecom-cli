@@ -71,6 +71,10 @@ func renderOpenDryRun(out *output.Config, target string) error {
 		return out.JSON(res)
 	case output.FormatYAML:
 		return out.YAML(res)
+	case output.FormatTSV:
+		// The url, opened and dryRun rows renderOpen prints; this printed
+		// the text line.
+		return out.TSVObject(res)
 	}
 	fmt.Fprintf(out.Writer, "%s would open %s\n", out.Amber("dry-run:"), target)
 	return nil
