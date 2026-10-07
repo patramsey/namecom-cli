@@ -43,7 +43,11 @@ var getCmd = &cobra.Command{
 	Short: "Get details for one or more domains",
 	Long: `Get details for one or more domains. With more than one, or with '-'
 (read domains from stdin, one per line), JSON and YAML output is a list,
-{"data": [...]}, with one object per domain.`,
+{"data": [...]}, with one object per domain.
+
+It is all or nothing: if any domain cannot be read, nothing is printed but
+the error, the exit code is non-zero (4 for a domain not in the account),
+and the domains not yet read are not requested.`,
 	Example: `  namecom domain get example.com
   namecom domain get example.com example.net
   namecom domain list -q | namecom domain get - -o json`,
@@ -316,26 +320,26 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Read together; the first failure, in the order given, is reported.
+	// Read together. All or nothing: the first failure is the only output
+	// and stops the reads still to come, so a missing name early in a long
+	// list costs a handful of requests, not the whole list.
 	stop := out.Spin("Fetching domain…")
-	results, errs := cmdutil.FetchEach(cmd.Context(), domains,
+	fetched, err := cmdutil.FetchEach(cmd.Context(), domains,
 		func(ctx context.Context, domain string) (*coreapigo.DomainResponsePayload, error) {
-			return client.SDK().Domains.GetDomain(ctx, &coreapigo.GetDomainRequest{DomainName: domain})
+			d, err := client.SDK().Domains.GetDomain(ctx, &coreapigo.GetDomainRequest{DomainName: domain})
+			if cmdutil.IsNotFound(err) {
+				return nil, cmdutil.DomainNotFound(err, domain)
+			}
+			return d, err
 		})
 	stop()
-	fetched := make([]*coreapigo.DomainResponsePayload, 0, len(domains))
-	for i, domain := range domains {
-		d, err := results[i], errs[i]
-		if err != nil {
-			if cmdutil.IsNotFound(err) {
-				return cmdutil.DomainNotFound(err, domain)
-			}
-			return err
-		}
+	if err != nil {
+		return err
+	}
+	for _, d := range fetched {
 		if err := cmdutil.RequireField("the domain name", d.DomainName); err != nil {
 			return err
 		}
-		fetched = append(fetched, d)
 	}
 
 	// --quiet prints the identifying value only, matching list commands.

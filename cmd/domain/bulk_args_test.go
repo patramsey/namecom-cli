@@ -10,7 +10,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -187,6 +189,85 @@ func TestGet_SeveralDomains(t *testing.T) {
 func TestGet_HelpNamesTheListShape(t *testing.T) {
 	if !strings.Contains(getCmd.Long, `{"data": [...]}`) || strings.Contains(getCmd.Long, "an array") {
 		t.Errorf("domain get --help should give the {\"data\": [...]} shape:\n%s", getCmd.Long)
+	}
+}
+
+// heldNotFound answers GET /core/v1/domains/missing.com with a 404, held
+// until four other reads have arrived, and every other domain with its
+// object once that 404 is sent; it counts every request. So a command given
+// missing.com first and then several more sends exactly five requests if a
+// failure stops the reads still to come, and all of them if not.
+func heldNotFound(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var requests atomic.Int32
+	arrived := make(chan struct{}, 16)
+	released := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		d := strings.TrimPrefix(r.URL.Path, "/core/v1/domains/")
+		if d != "missing.com" {
+			arrived <- struct{}{}
+			<-released
+			_, _ = fmt.Fprintf(w, `{"domainName":%q}`, d) //nolint:gosec // test stub
+			return
+		}
+		defer close(released)
+		for range 4 {
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				t.Error("the reads after the first were not sent together")
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &requests
+}
+
+// missingFirst is missing.com and eleven domains after it.
+func missingFirst() []string {
+	args := []string{"missing.com"}
+	for i := 1; i < 12; i++ {
+		args = append(args, fmt.Sprintf("d%d.com", i))
+	}
+	return args
+}
+
+// TestGet_MissingDomainStopsTheRest: `domain get` with one missing domain
+// prints only the error, yet went on to read every other domain it was
+// given (ISSUE-06) — for `domain list -q | domain get -`, thousands of
+// requests whose results were thrown away. With the first of twelve missing,
+// the five reads in flight when its 404 comes back are the only requests,
+// and nothing reaches stdout.
+func TestGet_MissingDomainStopsTheRest(t *testing.T) {
+	srv, requests := heldNotFound(t)
+	cmd, buf := cmdForCheckJSON(t, srv)
+	err := runGet(cmd, missingFirst())
+	if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `"missing.com"`) {
+		t.Errorf("runGet = %v, want missing.com's not-found error", err)
+	}
+	if got := requests.Load(); got != 5 {
+		t.Errorf("sent %d requests, want 5: the five in flight when the 404 came back", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("printed %s, want nothing: a failed get is all or nothing", buf.String())
+	}
+}
+
+// TestToggle_MissingDomainStopsTheRest: a toggle reads every domain before
+// changing any, and stops at a missing one; the reads after it are spared
+// too (ISSUE-06).
+func TestToggle_MissingDomainStopsTheRest(t *testing.T) {
+	srv, requests := heldNotFound(t)
+	err := runAutorenew(withRootFlags(t, baseCmd(t, srv)), append([]string{"on"}, missingFirst()...))
+	if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), `"missing.com"`) {
+		t.Errorf("runAutorenew = %v, want missing.com's not-found error", err)
+	}
+	if got := requests.Load(); got != 5 {
+		t.Errorf("sent %d requests, want 5: the five in flight when the 404 came back", got)
 	}
 }
 

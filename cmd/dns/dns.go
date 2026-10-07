@@ -659,25 +659,29 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	var writes []cmdutil.Write[cmdutil.NoBody]
 	var summaries []string
 	var present, absent []int
-	// Read together; the first failure, in the order given, is reported.
+	// Read together; the first failure stops the rest and is reported. A
+	// missing record under --if-exists is not a failure: it comes back nil.
 	stop := out.Spin("Fetching record…")
-	currents, errs := cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
-		return client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+	currents, err := cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
+		r, err := client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+		if err = api.FromSDKError(err); cmdutil.IsNotFound(err) {
+			if deleteIfExists {
+				return nil, nil
+			}
+			return nil, cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
+				fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
+		}
+		return r, err
 	})
 	stop()
+	if err != nil {
+		return err
+	}
 	for i, id := range ids {
-		current, err := currents[i], errs[i]
-		if err != nil {
-			err = api.FromSDKError(err)
-			if cmdutil.IsNotFound(err) {
-				if deleteIfExists {
-					absent = append(absent, id)
-					continue
-				}
-				return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
-					fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
-			}
-			return err
+		current := currents[i]
+		if current == nil {
+			absent = append(absent, id)
+			continue
 		}
 		present = append(present, id)
 		summaries = append(summaries, recordSummary(current))

@@ -21,6 +21,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   past the end while more pages existed, so a script paging one record at a
   time missed every record after the first. Scripts that relied on the exit
   1 past the end now see an empty page instead (#307).
+- `domain get` with several domains stops reading once one fails. It
+  printed only the error, as it still does, but went on to request every
+  other domain first: `domain list -q | domain get -` with the first name
+  missing read the whole account to say so. Toggles (`domain lock`,
+  `autorenew`, `privacy`) and `dns delete` given several targets stop the
+  same way. When two fail at once, the error reported is the first to come
+  back, which may not be the first in the order given.
 
 ## [0.5.2] - 2026-10-07
 
