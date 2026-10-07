@@ -371,7 +371,9 @@ func usageLine(cmd *cobra.Command) string {
 func globalFlagNames(cmd *cobra.Command) map[string]bool {
 	switch cmdutil.Kind(cmd) {
 	case cmdutil.KindWrite:
-		return map[string]bool{"output": true, "quiet": true, "yes": true, "dry-run": true}
+		// api prints the body as received, which -q cannot shorten (#293).
+		quiet := cmd.Annotations[cmdutil.RawOutputAnnotation] == ""
+		return map[string]bool{"output": true, "quiet": quiet, "yes": true, "dry-run": true}
 	case cmdutil.KindList:
 		return map[string]bool{"output": true, "quiet": true, "wide": true, "no-header": true}
 	}

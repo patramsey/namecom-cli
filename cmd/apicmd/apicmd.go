@@ -52,6 +52,10 @@ gone. The global --jq filters that merged document. It asks for 1000 items
 a page, the most the API serves, unless the path or -f sets perPage, and in
 a terminal it shows on stderr which page it is fetching.
 
+The response body is printed as received. -o json or table only chooses how
+an error is printed; -o yaml, -o tsv and -q do not apply, and are usage
+errors.
+
 --include prints the response status line and headers before the body; with
 --paginate, those of each page, then the merged body. --jq and --fields
 filter the body alone.
@@ -68,11 +72,11 @@ method, path, and body — instead of sent. GET and HEAD still run.`,
   namecom api /core/v1/domains --include --jq '.totalCount'
   namecom api POST /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
   namecom api PUT /core/v1/domains/example.com/records/123 --input record.json
+  namecom api -X PATCH /core/v1/domains/example.com -F autorenewEnabled=true --dry-run
+  namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run
 
   # In a script, skip the confirmation:
-  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records --yes
-  namecom api -X PATCH /core/v1/domains/example.com -F autorenewEnabled=true --dry-run
-  namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run`,
+  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records --yes`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 2 {
 			return cmdutil.ExactArgs(2)(cmd, args)
@@ -118,6 +122,7 @@ func init() {
 	f.BoolVar(&apiPaginate, "paginate", false, "follow nextPage and print every page as one document (GET only)")
 	// Any method but GET or HEAD goes through RunWrite.
 	cmdutil.MarkWrite(Cmd)
+	cmdutil.MarkRawOutput(Cmd)
 	cmdutil.CompleteFlagValues(Cmd, "method", allowedMethods)
 }
 
@@ -183,6 +188,20 @@ func checkMethod(m, how string) (string, error) {
 		how, m, strings.Join(allowedMethods, ", ")))
 }
 
+// checkOutput rejects the output flags api cannot honour. It prints the
+// body as received, so -o yaml, -o tsv and -q were ignored without a word
+// (#293). JSON and table mode stay: they choose how an error is printed.
+func checkOutput(out *output.Config) error {
+	const why = "api prints the response body as received; use --jq or --fields to pick from it"
+	switch {
+	case out.QuietMode:
+		return cmdutil.NewUsageError(errors.New("--quiet does not apply to api: " + why))
+	case out.Format == output.FormatYAML, out.Format == output.FormatTSV:
+		return cmdutil.NewUsageError(fmt.Errorf("-o %s does not apply to api: %s", out.Format, why))
+	}
+	return nil
+}
+
 // checkFlags rejects flags that contradict each other or the method, before
 // anything is read or sent.
 func checkFlags(method string, dataSet bool) error {
@@ -201,6 +220,9 @@ func checkFlags(method string, dataSet bool) error {
 }
 
 func runAPI(cmd *cobra.Command, args []string) error {
+	if err := checkOutput(cmdutil.Out(cmd)); err != nil {
+		return err
+	}
 	dataSet := apiBody != "" || cmd.Flags().Changed("data")
 	hasBody := dataSet || apiInput != "" || len(apiFields)+len(apiTyped) > 0
 	method, rawPath, err := methodAndPath(cmd, args, hasBody)

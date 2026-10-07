@@ -506,7 +506,9 @@ of them is a breaking change and is called out in the
 as received (`{"domains": [...]}`, not `{"data": [...]}`). It exists to reach
 endpoints namecom does not wrap and to show what the API itself says, and
 reshaping the body would hide the very thing it was asked for. Its errors use
-the envelope above, with the response body as `details`.
+the envelope above, with the response body as `details`. `-o yaml`, `-o tsv`
+and `-q` do not apply to it and are usage errors (exit 2); use `--jq` or
+`--fields` to pick from the body.
 
 ## Configuration
 

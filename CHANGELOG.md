@@ -79,6 +79,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   requests. In a terminal it now shows the page it is fetching on stderr
   (`Fetching page 3 of 7…`), where a long walk printed nothing until it
   ended. The merged document is unchanged.
+- `namecom api -o yaml`, `-o tsv` and `-q` are usage errors (exit 2) that
+  name `--jq` and `--fields` instead (#293). `api` prints the response body
+  as received, so they were ignored: raw JSON, exit 0. `-q` is no longer
+  listed on `namecom api --help`. **Scripts** that passed them get exit 2
+  and no request is sent; `-o json` and `-o table` are unchanged.
 
 ## [0.5.1] - 2026-10-05
 

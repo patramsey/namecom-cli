@@ -196,7 +196,7 @@ func TestHelp_GlobalFlagsByKind(t *testing.T) {
 	}{
 		{"dns create", []string{"--dry-run", "--yes", "--output", "--quiet"}, []string{"--wide", "--token"}},
 		{"domain register", []string{"--dry-run", "--yes"}, []string{"--wide"}},
-		{"api", []string{"--dry-run", "--yes"}, nil},
+		{"api", []string{"--dry-run", "--yes", "--output"}, []string{"--quiet"}},
 		{"dns list", []string{"--wide", "--no-header", "--quiet", "--output"}, []string{"--dry-run", "--yes"}},
 		{"domain get", []string{"--output"}, []string{"--dry-run", "--yes", "--quiet", "--wide"}},
 	} {
