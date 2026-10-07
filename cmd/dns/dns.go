@@ -500,6 +500,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	// The new host is checked before the record is fetched: a bad one needs
+	// no request to refuse.
+	var newHost string
+	if cmd.Flags().Changed("host") {
+		if newHost, err = zoneHost(updateHost, domain); err != nil {
+			return err
+		}
+	}
 
 	// Read-modify-write: fetch existing record so unset flags don't blank fields.
 	current, err := client.SDK().DNS.GetRecord(cmd.Context(), &coreapigo.GetRecordRequest{
@@ -544,11 +552,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
 	}
 	if cmd.Flags().Changed("host") {
-		host, err := zoneHost(updateHost, domain)
-		if err != nil {
-			return err
-		}
-		body.Host = &host
+		body.Host = &newHost
 	}
 	if cmd.Flags().Changed("answer") {
 		rtype := string(body.Type)

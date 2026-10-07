@@ -36,6 +36,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   and the exit code is 2, with an error naming the page count and suggesting
   a larger `perPage`. A script that walks more than 100 pages needs
   `--max-pages`.
+- `dns create`, `dns update`, `dns list` and a `dns import`/`dns sync` JSON
+  file refuse a `--host` (or host) ending in a dot that is not in the zone,
+  with exit 2 before any request (ISSUE-03). The trailing dot makes the name
+  absolute, but 0.5.2 dropped it, so `--host sweep.example.org.` on
+  example.com created `sweep.example.org.example.com`. That includes a bare
+  `www.`; write `www`. `--host .example.com` now says it has an empty label,
+  not that `--host` is empty. `dns update --host` checks the host before
+  fetching the record.
 
 ## [0.5.2] - 2026-10-07
 

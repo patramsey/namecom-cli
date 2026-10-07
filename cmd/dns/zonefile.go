@@ -62,6 +62,9 @@ func readRecordsFile(path, domain string) ([]inputRecord, string, error) {
 		// `dns create --host` reads it (#285). A zone file needs no such
 		// step: its owner names are resolved against $ORIGIN.
 		for i := range recs {
+			if err := inZone(recs[i].Host, domain); err != nil {
+				return nil, "", fmt.Errorf("%s: %w", recs[i].Source, err)
+			}
 			recs[i].Host = relHost(recs[i].Host, domain)
 		}
 		return recs, formatJSON, nil
