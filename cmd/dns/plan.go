@@ -65,13 +65,16 @@ func normAnswer(rtype, a string) string {
 			return f[0] + " " + f[1] + " " + normName(f[2])
 		}
 	case "TXT":
-		if parts, ok := parseQuotedTXT(a); ok {
+		// The strings may be run together: the API stores `"a" "b"` (a
+		// DKIM key split in two, say) as `"a""b"`, and the two never
+		// matched.
+		if parts, ok := parseQuotedStrings(a, true); ok {
 			return strings.Join(parts, "")
 		}
 		// The API stores a `"` as `\"` (#284), so the stored form of a
 		// value with quotes never matched the value as sent.
 		a = unescapeStoredTXT(a)
-		if parts, ok := parseQuotedTXT(a); ok {
+		if parts, ok := parseQuotedStrings(a, true); ok {
 			return strings.Join(parts, "")
 		}
 	case "CAA":
@@ -110,6 +113,23 @@ func unescapeStoredTXT(s string) string {
 // keeps. For every other type it is ignored, and so is not compared.
 func typeHasPriority(rtype string) bool {
 	return rtype == "MX" || rtype == "SRV"
+}
+
+// checkPriority refuses a priority the record's type cannot have, and a
+// missing one on MX or SRV, before anything is sent. The API rejects an MX
+// or SRV record without a priority ("Priority is required"), where a warning
+// claimed the CLI would use 0; and it took a priority on any other type and
+// dropped it. set is whether a priority was given; what names where it comes
+// from: "--priority", or the file.
+func checkPriority(rtype string, set bool, what string) error {
+	rtype = strings.ToUpper(rtype)
+	switch {
+	case typeHasPriority(rtype) && !set:
+		return cmdutil.NewUsageError(fmt.Errorf("%s records need a priority: pass %s (lower is preferred; 10 is usual)", rtype, what))
+	case !typeHasPriority(rtype) && set:
+		return cmdutil.NewUsageError(fmt.Errorf("%s applies only to MX and SRV records, not %s", what, rtype))
+	}
+	return nil
 }
 
 // protectedReason says why sync leaves a live record alone unless
@@ -345,6 +365,9 @@ func computePlan(domain string, desired []inputRecord, live []*coreapigo.Record,
 		if d.Type == "CAA" {
 			return nil, cmdutil.NewUsageError(fmt.Errorf("%s: CAA %s → %s is not in the zone, and name.com's API cannot create CAA records — remove it from the file",
 				d.Source, d.Host, d.Answer))
+		}
+		if err := checkPriority(d.Type, d.Priority != nil, "a priority in the file"); err != nil {
+			return nil, fmt.Errorf("%s (%s %s): %w", d.Source, d.Type, d.Host, err)
 		}
 		body := &coreapigo.DNSCreateRecordBody{
 			DomainName: domain,

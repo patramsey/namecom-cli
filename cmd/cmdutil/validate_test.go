@@ -219,24 +219,20 @@ func TestValidDNSAnswer(t *testing.T) {
 func TestDNSAnswerWarnings(t *testing.T) {
 	tests := []struct {
 		rtype, answer   string
-		priority        int64
-		priChanged      bool
 		wantWarnContain string
 	}{
-		{"A", "10.0.0.1", 0, false, "private"},
-		{"A", "172.16.0.1", 0, false, "private"},
-		{"A", "192.168.1.1", 0, false, "private"},
-		{"A", "8.8.8.8", 0, false, ""},
-		{"A", "::1", 0, false, ""},                    // IPv6 addr: isPrivateIP returns false for non-IPv4
-		{"CNAME", "target.example.com", 0, false, ""}, // name.com reads it as absolute (#285)
-		{"CNAME", "target.example.com.", 0, false, ""},
-		{"MX", "mail.example.com", 0, false, "priority"},
-		{"MX", "mail.example.com", 0, true, ""},   // priority explicitly set
-		{"MX", "mail.example.com", 10, false, ""}, // non-zero priority
-		{"TXT", "v=spf1 ~all", 0, false, ""},
+		{"A", "10.0.0.1", "private"},
+		{"A", "172.16.0.1", "private"},
+		{"A", "192.168.1.1", "private"},
+		{"A", "8.8.8.8", ""},
+		{"A", "::1", ""},                    // IPv6 addr: isPrivateIP returns false for non-IPv4
+		{"CNAME", "target.example.com", ""}, // name.com reads it as absolute (#285)
+		{"CNAME", "target.example.com.", ""},
+		{"MX", "mail.example.com", ""}, // a missing priority is an error now, not a warning
+		{"TXT", "v=spf1 ~all", ""},
 	}
 	for _, tt := range tests {
-		warns := DNSAnswerWarnings(tt.rtype, tt.answer, tt.priority, tt.priChanged)
+		warns := DNSAnswerWarnings(tt.rtype, tt.answer)
 		if tt.wantWarnContain == "" {
 			if len(warns) != 0 {
 				t.Errorf("DNSAnswerWarnings(%q, %q) expected no warnings, got %v", tt.rtype, tt.answer, warns)

@@ -1190,31 +1190,6 @@ func TestDNSUpdate_NoFalsePriorityWarning(t *testing.T) {
 	}
 }
 
-// TestDNSUpdate_WarnsWhenPriorityGenuinelyZero pins the warning still firing
-// when it should — an MX record that really does have priority 0.
-func TestDNSUpdate_WarnsWhenPriorityGenuinelyZero(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"id":1,"type":"MX","host":"@","answer":"mail.example.com.","ttl":3600}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"id":1}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	cmd, ew := cmdForUpdateCapturing(t, srv)
-	if err := cmd.ParseFlags([]string{"--answer", "mail2.example.com."}); err != nil {
-		t.Fatalf("ParseFlags: %v", err)
-	}
-	if err := runUpdate(cmd, []string{"example.com", "1"}); err != nil {
-		t.Fatalf("runUpdate: %v", err)
-	}
-	if !strings.Contains(ew.String(), "priority is 0") {
-		t.Errorf("expected the priority-0 warning for a record with no priority; stderr: %q", ew.String())
-	}
-}
-
 // TestDNSImport_ReadsStdin covers `--file -`, which both help examples advertise
 // (`namecom dns export old.com | namecom dns import new.com --file -`) but which
 // os.ReadFile never handled — it failed with "open -: no such file or directory".

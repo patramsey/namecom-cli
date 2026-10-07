@@ -91,6 +91,18 @@ func TestDNSImport_PartialFailureSuggestsSkipExisting(t *testing.T) {
 	if err == nil || !strings.Contains(stderr, "re-run with --skip-existing") {
 		t.Errorf("err %v, stderr %q", err, stderr)
 	}
+
+	// With --skip-existing already given, "re-run with --skip-existing" told
+	// the user to do what they had just done.
+	t.Run("already --skip-existing", func(t *testing.T) {
+		z, srv := newFakeZone(t)
+		z.fail = func(_ string, r fakeRecord) bool { return r.Host == "boom" }
+		_, stderr, err := runImportFile(t, srv, runOpts{}, file, true)
+		if err == nil || strings.Contains(stderr, "re-run with --skip-existing") ||
+			!strings.Contains(stderr, "fix the failing record and re-run the same command") {
+			t.Errorf("err %v, stderr %q", err, stderr)
+		}
+	})
 }
 
 // TestDNSImport_ZoneFile pins zone-file input: what `dns export --zone`

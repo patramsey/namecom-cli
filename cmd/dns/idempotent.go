@@ -32,7 +32,31 @@ func filterHost(h, domain string) (string, error) {
 // send a fully qualified host as typed, and the API made
 // www.example.com.example.com.
 func zoneHost(h, domain string) (string, error) {
+	if err := inZone(h, domain); err != nil {
+		return "", err
+	}
 	return asciiHost(relHost(h, domain))
+}
+
+// inZone refuses an absolute host — one ending in "." — that is not domain
+// or a name under it. The trailing dot says the name is complete, so
+// "sweep.example.org." on example.com names a host outside the zone; relHost
+// dropped the dot and created sweep.example.org.example.com instead. A
+// dotless name is relative, as in a zone file, and is not checked.
+func inZone(h, domain string) error {
+	t, abs := strings.CutSuffix(h, ".")
+	if !abs || t == "" {
+		return nil
+	}
+	a, err := cmdutil.ASCIIHostname(t, "--host")
+	if err != nil || cmdutil.ValidDNSHost(t) != nil {
+		return nil // left to asciiHost, which names the problem
+	}
+	if la := strings.ToLower(a); la == domain || strings.HasSuffix(la, "."+domain) {
+		return nil
+	}
+	return cmdutil.NewUsageError(fmt.Errorf("--host %q is not in %s: a trailing dot makes a name absolute — use %q for the host %s.%s",
+		h, domain, t, t, domain))
 }
 
 // relHost strips the zone from a fully qualified host, with or without its
@@ -50,9 +74,11 @@ func relHost(h, domain string) string {
 	switch la := strings.ToLower(a); {
 	case la == domain:
 		return "@"
-	case strings.HasSuffix(la, "."+domain):
+	case strings.HasSuffix(la, "."+domain) && len(la) > len(domain)+1:
 		return a[:len(a)-len(domain)-1]
 	}
+	// ".example.com" is left whole, so asciiHost reports its empty label
+	// rather than an empty --host.
 	return t
 }
 
