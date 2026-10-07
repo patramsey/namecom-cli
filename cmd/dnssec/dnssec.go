@@ -59,7 +59,7 @@ var createCmd = &cobra.Command{
 	Long: `Add a DS record at the registry. Take its values from the DNS host, which
 publishes the matching DNSKEY: a DS record that matches none of the keys the
 zone is signed with makes validating resolvers fail to resolve the domain.`,
-	Example:           `  namecom dnssec create example.com --algorithm 8 --digest-type 2 --key-tag 12345 --digest abc123`,
+	Example:           `  namecom dnssec create example.com --algorithm 8 --digest-type 2 --key-tag 12345 --digest A379A6F6EEAFB9A55E378C118034E2751E682FAB9F2D30AB13D2125586CE1947`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCreate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -80,9 +80,9 @@ least one must match a key the zone is signed with.`,
 
 func init() {
 	createCmd.Flags().Int32Var(&createAlgorithm, "algorithm", 0, "DNSSEC algorithm number (required)")
-	createCmd.Flags().StringVar(&createDigest, "digest", "", "digest of the DNSKEY RR (required)")
-	createCmd.Flags().Int32Var(&createDigestType, "digest-type", 0, "digest type number (required)")
-	createCmd.Flags().Int32Var(&createKeyTag, "key-tag", 0, "key tag (required)")
+	createCmd.Flags().StringVar(&createDigest, "digest", "", "hex digest of the DNSKEY RR: 40 characters for digest type 1, 64 for 2 and 3, 96 for 4 (required)")
+	createCmd.Flags().Int32Var(&createDigestType, "digest-type", 0, "digest type number: 1 SHA-1, 2 SHA-256, 3 GOST, 4 SHA-384 (required)")
+	createCmd.Flags().Int32Var(&createKeyTag, "key-tag", 0, "key tag, 0-65535 (required)")
 	_ = createCmd.MarkFlagRequired("algorithm")
 	_ = createCmd.MarkFlagRequired("digest")
 	_ = createCmd.MarkFlagRequired("digest-type")

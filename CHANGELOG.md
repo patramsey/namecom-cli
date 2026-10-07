@@ -145,6 +145,21 @@ Releases before `0.2.0` predate this file. Their notes are on the
   domain to make room for headers it did not print. A date's "(in 3
   months)" now goes first, and any width left over goes back to the values
   that were cut.
+- Help and README fixes (#314). `namecom --help` lists a write with no
+  terminal to confirm it and no `--yes` (`confirmation_required`) under
+  exit 2, as the README's table does; it said only "usage error". The
+  `dnssec create` example in its help and in the README used a digest that
+  0.5.2's check refuses; both now pass it, and `--digest`, `--digest-type`
+  and `--key-tag` say what they accept. The README's error example shows
+  the not-found wording 0.5.2 introduced, and its JSON contract notes that
+  `domain claims` names the domain `domain` (the API's key) and
+  `domain pricing` does not name it.
+
+### Deprecated
+
+- The error envelope's top-level `hint`, a copy of `error.hint`, will be
+  removed in 0.6.0 (#314). It was announced in 0.5.0 as kept "for this
+  release only" and is still printed; read `error.hint`.
 
 ## [0.5.2] - 2026-10-07
 

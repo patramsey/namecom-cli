@@ -260,6 +260,43 @@ func TestErrorOutput_ArgCountHonoursOutputFlag(t *testing.T) {
 	}
 }
 
+// TestREADME_ErrorExample pins #314: the README's error envelope showed
+// "Not Found" and "check the name or ID for typos", the wording 0.5.2 (#291)
+// replaced. The example is what `domain get example.com -o json` prints for
+// a domain not in the account.
+func TestREADME_ErrorExample(t *testing.T) {
+	withConfig(t, loneProfile)
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, ok := strings.Cut(string(readme), "- **Errors** are one document on stderr:")
+	if !ok {
+		t.Fatal("the README's Errors section moved")
+	}
+	_, after, _ = strings.Cut(after, "```json\n")
+	block, _, _ := strings.Cut(after, "```")
+	var want map[string]any
+	if err := json.Unmarshal([]byte(block), &want); err != nil {
+		t.Fatalf("README example is not JSON: %v\n%s", err, block)
+	}
+
+	resetFlags(t, []string{"domain", "get"})
+	srv, _ := apiStub(t, map[string]reply{"GET /core/v1/domains/example.com": {404, `{"message":"Not Found"}`}})
+	_, stderr, code := runContract(t, "--base-url", srv.URL, "domain", "get", "example.com", "-o", "json")
+	if code != 4 {
+		t.Errorf("exit %d, want 4", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stderr), &got); err != nil {
+		t.Fatalf("stderr is not one document: %v\n%s", err, stderr)
+	}
+	// Only the error object: the stub's --base-url adds a warning.
+	if g, w := fmt.Sprint(got["error"]), fmt.Sprint(want["error"]); g != w {
+		t.Errorf("README example is not what the CLI prints:\n got: %s\nwant: %s", g, w)
+	}
+}
+
 // TestMissingArgument_UsageInHint pins #313: a missing argument put the
 // usage line in error.message ("domain is required — try: …") and left
 // error.hint empty, where an extra argument or an unknown flag puts its.
