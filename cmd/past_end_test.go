@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestPagedLists_PastTheEnd pins ISSUE-01: every paged list answers a --page
+// TestPagedLists_PastTheEnd pins #307: every paged list answers a --page
 // past its end the same way, an empty page in one request, however the API
 // answers it. It answers with page 1 again when the list fits on one page
 // (domain list, order list), and with a 400, "Page exceeds available pages",
@@ -87,7 +87,7 @@ func TestPagedLists_PastTheEnd(t *testing.T) {
 	}
 }
 
-// TestDNSList_PageTwoAtPerPageOne pins ISSUE-01: the records API reports
+// TestDNSList_PageTwoAtPerPageOne pins #307: the records API reports
 // from:1 for page 2 at perPage 1, and dns list took that to mean page 2 was
 // past the end. It threw the record away and said "No DNS records on page 2"
 // with four more pages to go, so a script paging with --limit 1 stopped

@@ -20,7 +20,7 @@ Releases before `0.2.0` predate this file. Their notes are on the
   that as the empty page too. `dns list --limit 1 --page 2` said page 2 was
   past the end while more pages existed, so a script paging one record at a
   time missed every record after the first. Scripts that relied on the exit
-  1 past the end now see an empty page instead (ISSUE-01).
+  1 past the end now see an empty page instead (#307).
 
 ## [0.5.2] - 2026-10-07
 
