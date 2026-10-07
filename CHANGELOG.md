@@ -124,6 +124,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   wrap to the terminal. **Scripts**: `dns list` and `transfer list` JSON
   and YAML now carry `total`, as the other counted lists do (`dns list`
   leaves it out under `--type` or `--host`, which filter after fetching).
+- A table cut to fit the terminal uses the width it has before cutting a
+  value. At 80 columns `contact unverified` drew a 70-wide table and cut an
+  email address one character too long, and `domain list --no-header` cut a
+  domain to make room for headers it did not print. A date's "(in 3
+  months)" now goes first, and any width left over goes back to the values
+  that were cut.
 
 ## [0.5.2] - 2026-10-07
 

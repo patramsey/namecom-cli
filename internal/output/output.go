@@ -647,12 +647,20 @@ func (c *Config) fitColumns(headers []string, rows [][]string, essential map[str
 	for i := range keep {
 		keep[i] = i
 	}
+	// A header that is not printed takes no width: under --no-header, a
+	// domain was cut to make room for "AUTO-RENEW" above "yes".
+	measured := headers
+	if c.NoHeader {
+		measured = nil
+	}
 	var natural, widths []int
 	for {
-		natural = colWidths(headers, rows, keep)
+		natural = colWidths(measured, rows, keep)
+		dated := datedWidths(measured, rows, keep)
 		var fits bool
-		widths, fits = shrinkToFit(headers, keep, natural, c.MaxWidth)
+		widths, fits = shrinkToFit(measured, keep, natural, dated, c.MaxWidth)
 		if fits {
+			widths = giveBack(widths, natural, dated, c.MaxWidth)
 			break
 		}
 		drop := -1
@@ -723,12 +731,31 @@ func shortenCell(v string, width int) string {
 
 // shrinkToFit narrows the widest column a character at a time until the table
 // fits maxWidth, taking no column below minColWidth or its header's width. It
-// returns the widths and whether they fit.
-func shrinkToFit(headers []string, keep, natural []int, maxWidth int) ([]int, bool) {
+// returns the widths and whether they fit. headers is nil when none is
+// printed.
+//
+// A column of dates (dated, see datedWidths) first loses the relative
+// phrases, all at once, since shortenCell cuts a date to the date alone
+// whatever width it is given: narrowed a character at a time, it was given
+// 20 columns and drew 10, and the spare 10 went unused while a domain or an
+// email address beside it was cut. giveBack returns them, if they are not
+// needed after all.
+func shrinkToFit(headers []string, keep, natural, dated []int, maxWidth int) ([]int, bool) {
 	widths := append([]int(nil), natural...)
+	if tableWidth(widths) > maxWidth {
+		for k, d := range dated {
+			if d > 0 {
+				widths[k] = min(widths[k], d)
+			}
+		}
+	}
 	floor := make([]int, len(widths))
 	for k, i := range keep {
-		floor[k] = min(natural[k], max(minColWidth, lipgloss.Width(headers[i])))
+		h := 0
+		if i < len(headers) {
+			h = lipgloss.Width(headers[i])
+		}
+		floor[k] = min(widths[k], max(minColWidth, h))
 	}
 	for tableWidth(widths) > maxWidth {
 		widest := -1
@@ -743,6 +770,59 @@ func shrinkToFit(headers []string, keep, natural []int, maxWidth int) ([]int, bo
 		widths[widest]--
 	}
 	return widths, true
+}
+
+// giveBack hands the width a fitted table leaves unused to the columns that
+// were narrowed, from the first, up to each one's natural width. A column of
+// dates gets its phrases back only if all of them fit: a width between the
+// date and the whole would still draw the date alone.
+func giveBack(widths, natural, dated []int, maxWidth int) []int {
+	spare := maxWidth - tableWidth(widths)
+	for k := range widths {
+		need := natural[k] - widths[k]
+		if spare <= 0 {
+			break
+		}
+		if need <= 0 || (dated[k] > 0 && widths[k] <= dated[k] && need > spare) {
+			continue
+		}
+		add := min(need, spare)
+		widths[k] += add
+		spare -= add
+	}
+	return widths
+}
+
+// datedWidths returns, for each column at the given indexes, the width it
+// takes with every date cut to the date alone (see shortenCell), or 0 for a
+// column with no such date.
+func datedWidths(headers []string, rows [][]string, cols []int) []int {
+	const date = len("2006-01-02")
+	w := make([]int, len(cols))
+	has := make([]bool, len(cols))
+	for k, i := range cols {
+		if i < len(headers) {
+			w[k] = lipgloss.Width(headers[i])
+		}
+	}
+	for _, r := range rows {
+		for k, i := range cols {
+			if i >= len(r) {
+				continue
+			}
+			cw := lipgloss.Width(r[i])
+			if datedCell.MatchString(ansi.Strip(r[i])) {
+				has[k], cw = true, date
+			}
+			w[k] = max(w[k], cw)
+		}
+	}
+	for k := range w {
+		if !has[k] {
+			w[k] = 0
+		}
+	}
+	return w
 }
 
 // colWidths measures the columns at the given indexes at their natural
