@@ -68,6 +68,10 @@ func TestCompleteRecordIDs(t *testing.T) {
 		var requests int
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requests++
+			// The largest page, so most zones are one request (#294).
+			if pp := r.URL.Query().Get("perPage"); pp != "1000" {
+				t.Errorf("perPage = %q, want 1000", pp)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			if r.URL.Query().Get("page") == "2" {
 				_, _ = w.Write([]byte(`{"records":[{"id":2,"host":"b","type":"A","answer":"2.2.2.2","ttl":300}],"lastPage":2}`))

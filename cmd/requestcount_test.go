@@ -304,6 +304,15 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/domains?page=1&perPage=1000",
 			},
 		},
+		"domain list --all, three pages": {
+			args:   []string{"domain", "list", "--all", "--limit", "2"},
+			routes: map[string]reply{"GET /core/v1/domains": {200, `{"domains":[` + stubDomain("example.com") + `],"totalCount":3,"nextPage":2,"lastPage":3}`}},
+			why:    "page 1 says how many there are; the rest are fetched together, 1000 a page whatever --limit says",
+			want: []string{
+				"GET /core/v1/domains?page=1&perPage=1000",
+				together("GET /core/v1/domains?page=2&perPage=1000", "GET /core/v1/domains?page=3&perPage=1000"),
+			},
+		},
 		"domain list -q": {
 			args: []string{"domain", "list", "-q"},
 			want: []string{
@@ -903,11 +912,28 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/contacts/verify/9911",
 			},
 		},
+
+		// Shell completion: one request per TAB.
+		"complete a domain": {
+			args: []string{"__complete", "domain", "get", "exa"},
+			why:  "one filtered page while the shell waits; 250 rather than 1000 keeps it small",
+			want: []string{
+				"GET /core/v1/domains?domainName=%2Aexa%2A&page=1&perPage=250",
+			},
+		},
+		"complete a record ID": {
+			args: []string{"__complete", "dns", "delete", "example.com", ""},
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
+			},
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			resetFlags(t, tc.args)
+			// cobra adds __complete only once it runs; the command it
+			// completes for is the one with flags to reset.
+			resetFlags(t, slices.DeleteFunc(slices.Clone(tc.args), func(a string) bool { return a == "__complete" }))
 			srv, requests := apiStub(t, tc.routes)
 			_, stderr, code := runWithTerminal(t, tc.terminal, append([]string{"--base-url", srv.URL}, tc.args...)...)
 			if code != tc.code {

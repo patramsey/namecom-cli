@@ -38,6 +38,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   found` (exit 4), from the cancel's own reply. Without a terminal and
   without `--yes`, both now stop at needing `--yes` before any request.
   `transfer cancel --dry-run` still checks that the transfer exists.
+- Tab-completing a DNS record ID reads the zone 1,000 records a request,
+  so a zone of up to 1,000 records is one request while the shell waits;
+  it read 500 at a time (#294).
 
 ### Fixed
 - Mistakes caught before any request is sent are usage errors (exit 2), not

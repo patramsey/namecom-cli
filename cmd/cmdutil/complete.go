@@ -46,11 +46,17 @@ func completionClient(cmd *cobra.Command) *api.Client {
 	return nil
 }
 
+// completeDomainsPage is how many domains one TAB asks for. One request, not a
+// walk: the shell is frozen until it answers. The API serves up to 1000, but
+// a page that size is several hundred kilobytes, and more candidates than a
+// shell can usefully list; the filter below does the narrowing.
+const completeDomainsPage = 250
+
 // CompleteDomains is a cobra ValidArgsFunction that returns domain names for
-// shell tab completion. It fetches one maximally-sized page (250), filtered
-// server-side by what has been typed so far — without the filter, a domain
-// past the first page of a large account could never be completed. The shell
-// narrows the matches to the prefix from there.
+// shell tab completion. It fetches one page, filtered server-side by what has
+// been typed so far — without the filter, a domain past the first page of a
+// large account could never be completed. The shell narrows the matches to
+// the prefix from there.
 func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -62,7 +68,7 @@ func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]st
 	ctx, cancel := context.WithTimeout(cmd.Context(), CompletionTimeout)
 	defer cancel()
 	p := 1
-	perPage := 250
+	perPage := completeDomainsPage
 	req := &coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage}
 	if toComplete != "" {
 		// The same wrapping as `domain list --filter`: the API takes a
@@ -88,6 +94,11 @@ func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]st
 // CompleteRecordIDs returns DNS record IDs for the given domain, with a
 // type+host description so zsh/fish can display context alongside the ID.
 // Used as the second-arg completion for dns update and dns delete.
+//
+// It walks the zone MaxPerPage records at a time, so a zone of up to 1000
+// records — nearly every zone — is one request. It asked for the API's
+// default of 500, so a larger zone cost a request more while the shell
+// waited (#294).
 func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.ShellCompDirective) {
 	client := completionClient(cmd)
 	if client == nil {
@@ -97,10 +108,10 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 	ctx, cancel := context.WithTimeout(cmd.Context(), CompletionTimeout)
 	defer cancel()
 	var completions []string
-	page := 1
+	page, perPage := 1, MaxPerPage
 	for {
 		result, err := client.SDK().DNS.ListRecords(ctx,
-			&coreapigo.ListRecordsRequest{DomainName: domain, Page: &page})
+			&coreapigo.ListRecordsRequest{DomainName: domain, Page: &page, PerPage: &perPage})
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveError
 		}
