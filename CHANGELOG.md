@@ -42,6 +42,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   login`/`status`/`logout`, `config list-profiles` or `config show` says
   `namecom status takes no arguments, got "extra"`, as other commands do,
   rather than `unknown command "extra"`. Both still exit 2.
+- The API's "Method Not Allowed", as a 405 or as the 404 it gives `POST
+  /core/v1/orders`, no longer gets the hint "check the name or ID for
+  typos" (#291). It says the path does not accept that method, and for a
+  `namecom api` call that `-f` or `-F` made a POST, to pass `-X GET`. The
+  exit code and `error.type` still follow the status.
 - `email create` for a mailbox that already exists reported "Created … →
   <your --to>" and exited 0, though the API had changed nothing and the
   mailbox still forwarded to its old address (#283). It now fails (exit 1)

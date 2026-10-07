@@ -120,6 +120,24 @@ func TestAPIError_UserHint(t *testing.T) {
 	}
 }
 
+// TestAPIError_MethodNotAllowedHint pins #291: the API's "Method Not Allowed",
+// as a 405 or as the 404 it gives POST /core/v1/orders, was told to check the
+// name or ID for typos.
+func TestAPIError_MethodNotAllowedHint(t *testing.T) {
+	for _, e := range []*APIError{
+		ErrorFromResponse(405, []byte(`{"message":"Method Not Allowed"}`)),
+		ErrorFromResponse(405, nil),
+		ErrorFromResponse(404, []byte(`{"message":"Method Not Allowed"}`)),
+	} {
+		if hint := e.UserHint(); !strings.Contains(hint, "does not accept this method") {
+			t.Errorf("%d %q: hint = %q, want one about the method", e.StatusCode, e.Message, hint)
+		}
+	}
+	if hint := ErrorFromResponse(404, []byte(`{"message":"Not Found"}`)).UserHint(); !strings.Contains(hint, "typos") {
+		t.Errorf("a plain 404 should keep its hint, got %q", hint)
+	}
+}
+
 // TestAPIError_UnauthorizedNoteFormatting guards doubled parentheses. Error()
 // renders details as "message (details)", and the 401 note was itself wrapped
 // in parens, producing:

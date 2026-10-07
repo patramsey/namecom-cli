@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -757,6 +758,50 @@ func TestJSONContract_UnknownCommandSuggestions(t *testing.T) {
 	list, _ := e["suggestions"].([]any)
 	if e["type"] != output.ErrorTypeUsage || len(list) == 0 || list[0] != "namecom dns" {
 		t.Errorf(`want type usage and suggestions ["namecom dns", …], got:\n%s`, stderr)
+	}
+}
+
+// TestJSONContract_APIMethodNotAllowed pins #291's 405 item, from #282:
+// `namecom api /core/v1/orders -f …` sends a POST, which the API answers
+// with 404 "Method Not Allowed", and the hint said to check the name or ID
+// for typos. It now says -f made the POST and to pass -X GET; with the
+// method given, the hint is about the method. One request either way.
+func TestJSONContract_APIMethodNotAllowed(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args       []string
+		status     int
+		wantHint   string
+		wantCode   int
+		wantStatus float64
+	}{
+		{[]string{"api", "/core/v1/orders", "-f", "perPage=1", "--yes"}, 404, "pass -X GET", 4, 404},
+		{[]string{"api", "/core/v1/orders", "-f", "perPage=1", "--yes"}, 405, "pass -X GET", 1, 405},
+		{[]string{"api", "-X", "DELETE", "/core/v1/orders", "--yes"}, 405, "does not accept this method", 1, 405},
+	} {
+		t.Run(fmt.Sprint(tc.args[2], " ", tc.status), func(t *testing.T) {
+			resetFlags(t, tc.args)
+			var n atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				n.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"message":"Method Not Allowed"}`))
+			}))
+			t.Cleanup(srv.Close)
+			_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "-o", "json"}, tc.args...)...)
+			if code != tc.wantCode {
+				t.Errorf("exit %d, want %d", code, tc.wantCode)
+			}
+			if got := n.Load(); got != 1 {
+				t.Errorf("sent %d requests, want 1", got)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			hint, _ := e["hint"].(string)
+			if !strings.Contains(hint, tc.wantHint) || strings.Contains(hint, "typos") || e["status"] != tc.wantStatus {
+				t.Errorf("want status %v and a hint containing %q, got:\n%s", tc.wantStatus, tc.wantHint, stderr)
+			}
+		})
 	}
 }
 
