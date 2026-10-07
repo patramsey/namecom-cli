@@ -280,6 +280,10 @@ func (t *retryTransport) roundTrip(req *http.Request, sent *bool) (*http.Respons
 	return lastResp, lastErr
 }
 
+// defaultBaseDelay is the first-retry backoff when a transport sets none. A
+// variable so the package's tests can shorten it (see main_test.go).
+var defaultBaseDelay = time.Second
+
 // backoffDelay computes the wait duration for the next attempt. If retryAfter
 // is non-nil it is honored; otherwise exponential backoff with jitter is used.
 func (t *retryTransport) backoffDelay(attempt int, retryAfter *time.Duration) time.Duration {
@@ -293,7 +297,7 @@ func (t *retryTransport) backoffDelay(attempt int, retryAfter *time.Duration) ti
 	}
 	unit := t.baseDelay
 	if unit == 0 {
-		unit = time.Second
+		unit = defaultBaseDelay
 	}
 	base := min(unit<<attempt, maxBackoff)
 	// G404: jitter exists to desynchronize retries across concurrent requests,

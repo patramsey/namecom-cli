@@ -330,8 +330,10 @@ func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
 			return
 		}
-		// Stop at pricing — we don't need to simulate the full flow.
-		http.Error(w, `{"message":"stop"}`, http.StatusInternalServerError)
+		// Stop at pricing — we don't need to simulate the full flow. A 400,
+		// not a 500: a 500 on a read is retried with backoff, which made
+		// this test take about 7s.
+		http.Error(w, `{"message":"stop"}`, http.StatusBadRequest)
 	}))
 	t.Cleanup(srv.Close)
 
