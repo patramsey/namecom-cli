@@ -9,6 +9,32 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-07
+
+Fixes from a live sweep of every command against the sandbox (#281–#294),
+and a pass over the API requests each command sends. Filtered lists no
+longer walk every page, `namecom api` writes now ask first, and a new test
+pins the exact requests of 97 command variants, so a change that adds one
+shows up in review.
+
+Output a script might notice:
+
+- `namecom api` writes (anything but GET and HEAD) need `--yes` off a
+  terminal, as other writes do; they used to be sent at once.
+- A filter on `domain list`, `order list` or `dns list` returns one page, as
+  an unfiltered list does; pass `--all` for everything. `--limit` must be
+  1–1000, and filter values (`--status`, `--type`, `--purchase-type`) are
+  checked, exiting 2 before any request.
+- `email create` for a mailbox that already forwards elsewhere exits 1 with
+  a `conflict` error; `domain check --exit-status` reports type
+  `unavailable`; client-side mistakes that exited 1 as `api` errors exit 2.
+- Not-found errors carry the hint in `error.hint`, not in `message`.
+- `-o tsv` has one fixed shape per command; `dns export` refuses `-o tsv`,
+  `-o table` and `-q`. `domain check` shows names the registry didn't answer
+  as `unknown` (`"purchasable": null`).
+- `dns update` and `domain update` that change nothing send nothing and
+  report `"changed": false`.
+
 ### Changed
 - `status` asks for less (#294). The domain and unlocked counts request one
   domain each and read the total, where each fetched the API's default page
@@ -43,6 +69,133 @@ Releases before `0.2.0` predate this file. Their notes are on the
   it read 500 at a time (#294).
 
 ### Fixed
+- A filter on `domain list`, `order list` or `dns list` no longer fetches
+  every page (#281). It ignored `--page` and `--limit` and walked the whole
+  account at `--limit` per request, so `order list --status failed --limit 2`
+  sent 52 requests and `domain list --expiring-after … --limit 1` one per
+  matching domain. A filtered list now fetches one page, like an unfiltered
+  one, and the footer (or `nextPage` in JSON) says when there are more;
+  `--all` fetches every match. `dns list --type` and `--host` filter the
+  records on the page fetched, since the API cannot filter them; a page with
+  no match says when there are more. `order list --status`, `dns list --type`
+  and `domain claims --purchase-type` reject an unknown value with exit 2
+  before any request; the API ignored it, so `--status bogus` listed every
+  order. **Scripts:** a filtered list without `--all` now prints one page.
+- Paging edges on every list (#290). `--limit` must be between 1 and 1000,
+  the API's maximum: `--limit 0` silently meant the default page, and
+  `--limit 1001` failed at the API with exit 1; both are now usage errors
+  (exit 2) before any request. `--all`, and `-q` without `--page` or
+  `--limit`, request 1000 items a page whatever `--limit` says, so
+  `domain list --limit 2 --all` sends one request per thousand domains, not
+  per two; `--limit` with `--all` prints a warning that it does not apply,
+  and `--all --page N` starts at page N of 1000. The whole-zone reads of
+  `dns export`, `dns sync`, `dns import --skip-existing` and
+  `dns create --if-not-exists` also page at 1000. `dns list --page N` past
+  the last page is an empty page (`{"data":[]}`, exit 0); the API answers
+  it with page 1, so a script paging until empty never stopped. A page past
+  the end of any list says so, rather than suggesting you create the first
+  item. `contact unverified` under `--limit` shows
+  `Showing 1–1 of 2 unverified contacts`, as `domain list` does.
+- `namecom api` writes are confirmed like every other write (#282). Any
+  method but GET and HEAD asks first in a terminal, naming the method and
+  path, and the account under it. `namecom api /core/v1/domains -f
+  perPage=2` was an unconfirmed POST to the registration endpoint: `-f`
+  gives the request a body, which makes it a POST. That inference stays,
+  as in `gh api`, but the question and a `!` warning now say
+  `POST (inferred from -f)` and that `-X GET` sends the fields as a query.
+  **Scripts** (breaking): an `api` write run off a terminal now needs
+  `--yes`; without it, it exits 2 with `confirmation_required` and sends
+  nothing. GET, HEAD and `--dry-run` are unchanged.
+- `namecom api --paginate` asks for 1000 items a page, the API's maximum,
+  unless the path or `-f` sets `perPage` (#290). It used the API's default
+  page size, and a `-f perPage=5` walk of an order history made 900
+  requests. In a terminal it now shows the page it is fetching on stderr
+  (`Fetching page 3 of 7…`), where a long walk printed nothing until it
+  ended. The merged document is unchanged.
+- `email create` for a mailbox that already exists reported "Created … →
+  <your --to>" and exited 0, though the API had changed nothing and the
+  mailbox still forwarded to its old address (#283). It now fails (exit 1)
+  with `mailbox info@example.com already forwards to old@example.org`, and
+  suggests the `email update` command. **Scripts**: that case now exits 1
+  with a JSON error envelope of type `conflict`, whose `details` is the
+  existing entry, where it printed the entry and exited 0. The success line
+  shows the address the API stored rather than the `--to` value.
+- `domain update` leaves out a flag that restates the domain's current
+  setting (#287). `--lock=true` on a domain already locked was sent, and
+  during the 60-day transfer lock the API refuses any body carrying `locked`,
+  so the other changes in the same command failed with it. `--lock` now
+  reads the domain first, as `domain lock` does; when every flag is unchanged
+  nothing is sent and the result reports `"changed": false`. `domain update
+  --lock=false` and `domain lock off` warn, before the prompt or dry-run
+  preview, when the domain is inside its transfer lock and the unlock will be
+  refused.
+- `domain check` handles repeated and unanswered names (#288). A name given
+  twice, in any case (`example.com EXAMPLE.com`), is checked and shown once,
+  as `domain get` does; the second copy was reported "availability unknown"
+  and the command exited 1. A name the registry did not answer reads
+  `unknown` in the AVAILABILITY column, not `taken`. **Scripts:** in JSON and
+  YAML its row has `"purchasable": null` rather than `false`, so it can be
+  told apart from a taken name, and `--exit-status` finding a name
+  unavailable reports error type `unavailable` instead of `api` (still exit
+  1).
+- A TXT value containing `"` is recognised as already in the zone (#284).
+  The API stores it with the quotes escaped (`v=spf1 \"quoted\" ~all`), so
+  `dns create --if-not-exists`, `dns sync` and `dns import --skip-existing`
+  never matched it, sent the create again, got a 500 and exited 6 on every
+  run — and `dns sync --prune` planned to delete the live record. Both
+  spellings now compare as one, whether the value comes from `--answer`, a
+  hand-written zone line (`"v=spf1 \"quoted\" ~all"`) or a `dns export`.
+- DNS hosts are read the same way everywhere (#285). `dns create --host
+  sweep.example.com` created `sweep.example.com.example.com`, and the same
+  value in `dns list --host` found the `sweep` record, so `--if-not-exists`
+  never matched. `dns create`, `dns update`, `dns list` and a host in a JSON
+  file for `dns import` or `dns sync` now all take `sweep`,
+  `sweep.example.com` or `sweep.example.com.` as the same record, and the
+  domain itself as the apex; a trailing-dot FQDN is no longer refused as
+  "an empty label". Zone files keep BIND's reading, relative to `$ORIGIN`.
+- `dns update` with nothing to change sends nothing (#285). It sent the PUT
+  anyway and reported "no values changed". Now, when the flags ask for what
+  the record already is, it reads the record, sends no PUT, and says
+  `nothing to change`; with no value flags at all it is a usage error
+  (exit 2), as `domain update` is. **Scripts:** `dns update` JSON and YAML
+  now carry `"changed"` — `false` for a no-op, `true` for a real update — on
+  the record they print.
+- Dry runs check their target where the real command would fail, and some
+  write commands check their input more strictly (#292). Under `--dry-run`,
+  `vanity-ns update` and `vanity-ns delete` of a nameserver that does not
+  exist, and `dnssec delete` of a digest the domain does not have, fail
+  `not_found` (exit 4); `domain renew` of a domain not in the account fails
+  `not_found` instead of quoting a charge; and `transfer create` of a domain
+  already in the account is a usage error (exit 2). Each makes one read, and
+  only under `--dry-run`; a real run still sends the write alone.
+  `vanity-ns create`/`update --ips` takes only IPv4 and IPv6 addresses.
+  `dnssec create` takes a `--key-tag` of 0–65535 and a hexadecimal
+  `--digest` of the length its `--digest-type` produces (40, 64, 64 or 96
+  characters for types 1–4). `domain set-ns` accepts a trailing dot and any
+  case, as `vanity-ns` does, and refuses a nameserver listed twice.
+  `order refund 12345` is a usage error whose hint is the command with
+  `--order-id`; it was reported as an unknown command.
+- `open --dry-run` prints the URL and opens nothing (#292). It launched the
+  browser and reported `"opened": true`. **Scripts:** its JSON is now
+  `{"url": …, "opened": false, "dryRun": true}`; a real `open` reports `"dryRun": false`, so the key is always there.
+- Email and URL forwarding say what they do to DNS (#286). name.com adds MX
+  records (`mx3`–`mx8.name.com`) and an SPF record when the first mailbox is
+  created, and an A record for an apex URL forwarding; deleting the
+  forwarding leaves them. `email create`'s and `url create`'s help say so,
+  and `email create`, `email delete` and apex `url delete` print a note on
+  stderr naming the records and the `dns delete` command that removes them.
+  No request is added to find out.
+- `url create` and `url update` accepted `--title` and `--meta` on a
+  redirect or 302 forwarding and stored them, where they do nothing (#286).
+  They are now a usage error (exit 2) unless the forwarding is masked; an
+  empty value is still allowed, to clear one left on a redirect. Switching a
+  masked forwarding to another type warns that its title and meta are kept.
+- `email update` and `email delete` on a missing mailbox said only "Not
+  Found"; they now say `mailbox info@example.com not found — run 'namecom
+  email list example.com' …`, as `dns` and `url` do, and still exit 4
+  (#286). `email get` uses the same wording. The `email delete` prompt says
+  where the mailbox forwards; it fetches the mailbox for that only when it
+  will ask, so `--yes` sends one request as before.
 - Mistakes caught before any request is sent are usage errors (exit 2), not
   API failures (exit 1) (#291): a vanity nameserver hostname outside its
   domain (`vanity-ns get example.com ns1.other.com`, and the same in
@@ -80,181 +233,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   typos" (#291). It says the path does not accept that method, and for a
   `namecom api` call that `-f` or `-F` made a POST, to pass `-X GET`. The
   exit code and `error.type` still follow the status.
-- `email create` for a mailbox that already exists reported "Created … →
-  <your --to>" and exited 0, though the API had changed nothing and the
-  mailbox still forwarded to its old address (#283). It now fails (exit 1)
-  with `mailbox info@example.com already forwards to old@example.org`, and
-  suggests the `email update` command. **Scripts**: that case now exits 1
-  with a JSON error envelope of type `conflict`, whose `details` is the
-  existing entry, where it printed the entry and exited 0. The success line
-  shows the address the API stored rather than the `--to` value.
-- Email and URL forwarding say what they do to DNS (#286). name.com adds MX
-  records (`mx3`–`mx8.name.com`) and an SPF record when the first mailbox is
-  created, and an A record for an apex URL forwarding; deleting the
-  forwarding leaves them. `email create`'s and `url create`'s help say so,
-  and `email create`, `email delete` and apex `url delete` print a note on
-  stderr naming the records and the `dns delete` command that removes them.
-  No request is added to find out.
-- `url create` and `url update` accepted `--title` and `--meta` on a
-  redirect or 302 forwarding and stored them, where they do nothing (#286).
-  They are now a usage error (exit 2) unless the forwarding is masked; an
-  empty value is still allowed, to clear one left on a redirect. Switching a
-  masked forwarding to another type warns that its title and meta are kept.
-- `email update` and `email delete` on a missing mailbox said only "Not
-  Found"; they now say `mailbox info@example.com not found — run 'namecom
-  email list example.com' …`, as `dns` and `url` do, and still exit 4
-  (#286). `email get` uses the same wording. The `email delete` prompt says
-  where the mailbox forwards; it fetches the mailbox for that only when it
-  will ask, so `--yes` sends one request as before.
-- A TXT value containing `"` is recognised as already in the zone (#284).
-  The API stores it with the quotes escaped (`v=spf1 \"quoted\" ~all`), so
-  `dns create --if-not-exists`, `dns sync` and `dns import --skip-existing`
-  never matched it, sent the create again, got a 500 and exited 6 on every
-  run — and `dns sync --prune` planned to delete the live record. Both
-  spellings now compare as one, whether the value comes from `--answer`, a
-  hand-written zone line (`"v=spf1 \"quoted\" ~all"`) or a `dns export`.
-- DNS hosts are read the same way everywhere (#285). `dns create --host
-  sweep.example.com` created `sweep.example.com.example.com`, and the same
-  value in `dns list --host` found the `sweep` record, so `--if-not-exists`
-  never matched. `dns create`, `dns update`, `dns list` and a host in a JSON
-  file for `dns import` or `dns sync` now all take `sweep`,
-  `sweep.example.com` or `sweep.example.com.` as the same record, and the
-  domain itself as the apex; a trailing-dot FQDN is no longer refused as
-  "an empty label". Zone files keep BIND's reading, relative to `$ORIGIN`.
-- `dns create` and `dns update` no longer warn that a CNAME target without a
-  trailing dot "resolves relative to the zone". On name.com it never does:
-  the API reads every target as absolute.
-- `dns list --host www` with no match says `No DNS records at www found.`
-  instead of `No DNS record at wwws found.`
-- `dns update` with nothing to change sends nothing (#285). It sent the PUT
-  anyway and reported "no values changed". Now, when the flags ask for what
-  the record already is, it reads the record, sends no PUT, and says
-  `nothing to change`; with no value flags at all it is a usage error
-  (exit 2), as `domain update` is. **Scripts:** `dns update` JSON and YAML
-  now carry `"changed"` — `false` for a no-op, `true` for a real update — on
-  the record they print.
-- `namecom api` writes are confirmed like every other write (#282). Any
-  method but GET and HEAD asks first in a terminal, naming the method and
-  path, and the account under it. `namecom api /core/v1/domains -f
-  perPage=2` was an unconfirmed POST to the registration endpoint: `-f`
-  gives the request a body, which makes it a POST. That inference stays,
-  as in `gh api`, but the question and a `!` warning now say
-  `POST (inferred from -f)` and that `-X GET` sends the fields as a query.
-  **Scripts** (breaking): an `api` write run off a terminal now needs
-  `--yes`; without it, it exits 2 with `confirmation_required` and sends
-  nothing. GET, HEAD and `--dry-run` are unchanged.
-- `namecom api --paginate` asks for 1000 items a page, the API's maximum,
-  unless the path or `-f` sets `perPage` (#290). It used the API's default
-  page size, and a `-f perPage=5` walk of an order history made 900
-  requests. In a terminal it now shows the page it is fetching on stderr
-  (`Fetching page 3 of 7…`), where a long walk printed nothing until it
-  ended. The merged document is unchanged.
 - `namecom api -o yaml`, `-o tsv` and `-q` are usage errors (exit 2) that
   name `--jq` and `--fields` instead (#293). `api` prints the response body
   as received, so they were ignored: raw JSON, exit 0. `-q` is no longer
   listed on `namecom api --help`. **Scripts** that passed them get exit 2
   and no request is sent; `-o json` and `-o table` are unchanged.
-- The README said every write needs `--yes` off a terminal (#293). Only the
-  writes that confirm do: deletes; register, renew, transfers, transfer
-  cancels and refunds; `domain set-ns`, `domain contacts set`, unlocking,
-  turning privacy off and auto-renew on or off; `dns sync`; `auth login`
-  replacing a profile; and `namecom api` writes. `dns create`, `update` and
-  `import`, `email` and `url` `create` and `update`, `vanity-ns create` and
-  `update`, `dnssec create`, `domain lock on`, `domain privacy on`,
-  `contact resend` and `verify`, `auth logout` and `config use` run without
-  asking. The README now lists both, and how lists page; no command changed.
-- `domain get --help` said several domains print a JSON array; they print
-  `{"data": [...]}` (#293). `domain check --help` says an unanswered name's
-  `purchasable` is `null` and `--exit-status` reports `unavailable`, and
-  `auth logout --help` describes its dry run's `defaultSource`, as the
-  README's JSON contract now does too.
-- Help indented under a heading, such as `namecom help formatting`, reflows
-  in a narrow terminal (#293). Each line was wrapped on its own, leaving a
-  word or two ("the", "data:") on every other line at 70 columns. Command
-  lines in help are still never wrapped.
-- `transfer eligibility` for a domain already in your account says so
-  (`name.com (this account)`) instead of suggesting `transfer internal-in`
-  (#293). It reads the domain to find out, in a table only; JSON, YAML, TSV
-  and `-q` still send one request.
-- `status` suggests `domain renew` "to renew expired domains" when the
-  domains it lists have expired, rather than "expiring" (#293).
-- A date shortened to fit the terminal keeps the date and drops its whole
-  relative phrase (#293). It was cut mid-phrase, so `contact unverified`
-  showed a missed deadline as `2026-07-19 (3 month…`, without "ago".
-- `dnssec` messages say "DS record", as its help does, rather than
-  "DNSSEC key": `No DS records found`, `DS record <digest> not found on …`
-  (#293).
-- The README's "expiring within 60 days" example works with macOS's `date`
-  as well as GNU's (#293).
-- A filter on `domain list`, `order list` or `dns list` no longer fetches
-  every page (#281). It ignored `--page` and `--limit` and walked the whole
-  account at `--limit` per request, so `order list --status failed --limit 2`
-  sent 52 requests and `domain list --expiring-after … --limit 1` one per
-  matching domain. A filtered list now fetches one page, like an unfiltered
-  one, and the footer (or `nextPage` in JSON) says when there are more;
-  `--all` fetches every match. `dns list --type` and `--host` filter the
-  records on the page fetched, since the API cannot filter them; a page with
-  no match says when there are more. `order list --status`, `dns list --type`
-  and `domain claims --purchase-type` reject an unknown value with exit 2
-  before any request; the API ignored it, so `--status bogus` listed every
-  order. **Scripts:** a filtered list without `--all` now prints one page.
-- Paging edges on every list (#290). `--limit` must be between 1 and 1000,
-  the API's maximum: `--limit 0` silently meant the default page, and
-  `--limit 1001` failed at the API with exit 1; both are now usage errors
-  (exit 2) before any request. `--all`, and `-q` without `--page` or
-  `--limit`, request 1000 items a page whatever `--limit` says, so
-  `domain list --limit 2 --all` sends one request per thousand domains, not
-  per two; `--limit` with `--all` prints a warning that it does not apply,
-  and `--all --page N` starts at page N of 1000. The whole-zone reads of
-  `dns export`, `dns sync`, `dns import --skip-existing` and
-  `dns create --if-not-exists` also page at 1000. `dns list --page N` past
-  the last page is an empty page (`{"data":[]}`, exit 0); the API answers
-  it with page 1, so a script paging until empty never stopped. A page past
-  the end of any list says so, rather than suggesting you create the first
-  item. `contact unverified` under `--limit` shows
-  `Showing 1–1 of 2 unverified contacts`, as `domain list` does.
-- `domain update` leaves out a flag that restates the domain's current
-  setting (#287). `--lock=true` on a domain already locked was sent, and
-  during the 60-day transfer lock the API refuses any body carrying `locked`,
-  so the other changes in the same command failed with it. `--lock` now
-  reads the domain first, as `domain lock` does; when every flag is unchanged
-  nothing is sent and the result reports `"changed": false`. `domain update
-  --lock=false` and `domain lock off` warn, before the prompt or dry-run
-  preview, when the domain is inside its transfer lock and the unlock will be
-  refused.
-- `domain check` handles repeated and unanswered names (#288). A name given
-  twice, in any case (`example.com EXAMPLE.com`), is checked and shown once,
-  as `domain get` does; the second copy was reported "availability unknown"
-  and the command exited 1. A name the registry did not answer reads
-  `unknown` in the AVAILABILITY column, not `taken`. **Scripts:** in JSON and
-  YAML its row has `"purchasable": null` rather than `false`, so it can be
-  told apart from a taken name, and `--exit-status` finding a name
-  unavailable reports error type `unavailable` instead of `api` (still exit
-  1).
-- Dry runs check their target where the real command would fail, and some
-  write commands check their input more strictly (#292). Under `--dry-run`,
-  `vanity-ns update` and `vanity-ns delete` of a nameserver that does not
-  exist, and `dnssec delete` of a digest the domain does not have, fail
-  `not_found` (exit 4); `domain renew` of a domain not in the account fails
-  `not_found` instead of quoting a charge; and `transfer create` of a domain
-  already in the account is a usage error (exit 2). Each makes one read, and
-  only under `--dry-run`; a real run still sends the write alone.
-  `vanity-ns create`/`update --ips` takes only IPv4 and IPv6 addresses.
-  `dnssec create` takes a `--key-tag` of 0–65535 and a hexadecimal
-  `--digest` of the length its `--digest-type` produces (40, 64, 64 or 96
-  characters for types 1–4). `domain set-ns` accepts a trailing dot and any
-  case, as `vanity-ns` does, and refuses a nameserver listed twice.
-  `order refund 12345` is a usage error whose hint is the command with
-  `--order-id`; it was reported as an unknown command.
-- `open --dry-run` prints the URL and opens nothing (#292). It launched the
-  browser and reported `"opened": true`. **Scripts:** its JSON is now
-  `{"url": …, "opened": false, "dryRun": true}`; a real `open` reports `"dryRun": false`, so the key is always there.
-- `auth logout --dry-run` names the profile that would be the default
-  afterwards (#292). Removing the default profile with one other left
-  previewed `"default": ""`, though the one left becomes the implied default.
-  **Scripts:** `default` now holds that profile, and a new `defaultSource`
-  key says `config` (the file's `default:` key) or `implied`; the table line
-  ends `(leaving "prod" as the default)`.
 - `-o tsv` and `--fields` have one shape per command, whatever the data
   (#289). `namecom help formatting` states the rules: a list is a header row
   and a row per item, with fixed columns; one object is `field<TAB>value`
@@ -297,6 +280,49 @@ Releases before `0.2.0` predate this file. Their notes are on the
     `warnings` on stderr, and a piped table prints it as `! …`, like every
     other warning, rather than `WARNING: …`. `domain contacts get` does the
     same for unverified contacts.
+- A date shortened to fit the terminal keeps the date and drops its whole
+  relative phrase (#293). It was cut mid-phrase, so `contact unverified`
+  showed a missed deadline as `2026-07-19 (3 month…`, without "ago".
+- Help indented under a heading, such as `namecom help formatting`, reflows
+  in a narrow terminal (#293). Each line was wrapped on its own, leaving a
+  word or two ("the", "data:") on every other line at 70 columns. Command
+  lines in help are still never wrapped.
+- `dns create` and `dns update` no longer warn that a CNAME target without a
+  trailing dot "resolves relative to the zone". On name.com it never does:
+  the API reads every target as absolute.
+- `dns list --host www` with no match says `No DNS records at www found.`
+  instead of `No DNS record at wwws found.`
+- `transfer eligibility` for a domain already in your account says so
+  (`name.com (this account)`) instead of suggesting `transfer internal-in`
+  (#293). It reads the domain to find out, in a table only; JSON, YAML, TSV
+  and `-q` still send one request.
+- `status` suggests `domain renew` "to renew expired domains" when the
+  domains it lists have expired, rather than "expiring" (#293).
+- `dnssec` messages say "DS record", as its help does, rather than
+  "DNSSEC key": `No DS records found`, `DS record <digest> not found on …`
+  (#293).
+- `auth logout --dry-run` names the profile that would be the default
+  afterwards (#292). Removing the default profile with one other left
+  previewed `"default": ""`, though the one left becomes the implied default.
+  **Scripts:** `default` now holds that profile, and a new `defaultSource`
+  key says `config` (the file's `default:` key) or `implied`; the table line
+  ends `(leaving "prod" as the default)`.
+- The README said every write needs `--yes` off a terminal (#293). Only the
+  writes that confirm do: deletes; register, renew, transfers, transfer
+  cancels and refunds; `domain set-ns`, `domain contacts set`, unlocking,
+  turning privacy off and auto-renew on or off; `dns sync`; `auth login`
+  replacing a profile; and `namecom api` writes. `dns create`, `update` and
+  `import`, `email` and `url` `create` and `update`, `vanity-ns create` and
+  `update`, `dnssec create`, `domain lock on`, `domain privacy on`,
+  `contact resend` and `verify`, `auth logout` and `config use` run without
+  asking. The README now lists both, and how lists page; no command changed.
+- `domain get --help` said several domains print a JSON array; they print
+  `{"data": [...]}` (#293). `domain check --help` says an unanswered name's
+  `purchasable` is `null` and `--exit-status` reports `unavailable`, and
+  `auth logout --help` describes its dry run's `defaultSource`, as the
+  README's JSON contract now does too.
+- The README's "expiring within 60 days" example works with macOS's `date`
+  as well as GNU's (#293).
 
 ## [0.5.1] - 2026-10-05
 
@@ -2217,7 +2243,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/patramsey/namecom-cli/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/patramsey/namecom-cli/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/patramsey/namecom-cli/compare/v0.4.9...v0.5.0
 [0.4.9]: https://github.com/patramsey/namecom-cli/compare/v0.4.8...v0.4.9
