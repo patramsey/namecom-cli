@@ -102,7 +102,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	stop := out.Spin("Fetching DNSSEC keys…")
+	stop := out.Spin("Fetching DS records…")
 	result, err := client.SDK().DnsseCs.ListDnsseCs(cmd.Context(),
 		&coreapigo.ListDnsseCsRequest{DomainName: domain})
 	stop()
@@ -134,14 +134,14 @@ func runList(cmd *cobra.Command, args []string) error {
 	default:
 		headers := []string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"}
 		if len(result.Dnssec) == 0 {
-			out.EmptyTable(headers, "DNSSEC key", fmt.Sprintf("Run 'namecom dnssec create %s --algorithm 8 --digest-type 2 --key-tag N --digest HEX' to add one", domain))
+			out.EmptyTable(headers, "DS record", fmt.Sprintf("Run 'namecom dnssec create %s --algorithm 8 --digest-type 2 --key-tag N --digest HEX' to add one", domain))
 			return nil
 		}
 		out.Table(
 			headers,
 			dnssecRows(result.Dnssec),
 		)
-		out.Count(len(result.Dnssec), "DNSSEC key")
+		out.Count(len(result.Dnssec), "DS record")
 	}
 	return nil
 }
@@ -154,7 +154,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	stop := out.Spin("Fetching DNSSEC key…")
+	stop := out.Spin("Fetching DS record…")
 	key, err := client.SDK().DnsseCs.GetDnssec(cmd.Context(),
 		&coreapigo.GetDnssecRequest{DomainName: domain, Digest: args[1]})
 	stop()
@@ -210,7 +210,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec", domain),
 		Body:   body,
-		Spin:   "Adding DNSSEC key…",
+		Spin:   "Adding DS record…",
 	}, func(ctx context.Context, body coreapigo.CreateDnssecBody) error {
 		var err error
 		key, err = client.SDK().DnsseCs.CreateDnssec(ctx, &body)
@@ -236,7 +236,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(key)
 	default:
-		out.Success(fmt.Sprintf("Added DNSSEC key tag %d to %s (algorithm %d, digest type %d, digest %s)",
+		out.Success(fmt.Sprintf("Added DS record with key tag %d to %s (algorithm %d, digest type %d, digest %s)",
 			body.KeyTag, domain, body.Algorithm, body.DigestType, body.Digest))
 	}
 	return nil
@@ -277,8 +277,8 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
 		Method: "DELETE",
 		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec/%s", domain, url.PathEscape(digest)),
-		Prompt: fmt.Sprintf("Remove DNSSEC key %s from %s?", digest, domain),
-		Spin:   "Removing DNSSEC key…",
+		Prompt: fmt.Sprintf("Remove DS record %s from %s?", digest, domain),
+		Spin:   "Removing DS record…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
 		return api.FromSDKError(client.SDK().DnsseCs.DeleteDnssec(ctx,
 			&coreapigo.DeleteDnssecRequest{DomainName: domain, Digest: digest}))
@@ -286,16 +286,16 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	if err != nil || !sent {
 		return err
 	}
-	out.Success(fmt.Sprintf("Removed DNSSEC key from %s", domain))
+	out.Success(fmt.Sprintf("Removed DS record from %s", domain))
 	return nil
 }
 
-// keyError names the key when the API found none: its own "Not Found" does
+// keyError names the DS record when the API found none: its own "Not Found" does
 // not say what was missing.
 func keyError(err error, domain, digest string) error {
 	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("DNSSEC key %s not found on %s", digest, domain),
-			fmt.Sprintf("run 'namecom dnssec list %s' to see its keys", domain))
+		return cmdutil.NotFound(err, fmt.Sprintf("DS record %s not found on %s", digest, domain),
+			fmt.Sprintf("run 'namecom dnssec list %s' to see its digests", domain))
 	}
 	return api.FromSDKError(err)
 }
