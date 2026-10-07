@@ -48,7 +48,9 @@ stdin when stdin is a pipe or a file; an empty stdin sends no body.
 
 --paginate follows nextPage until the last page and prints one document: each
 list in it is every page's items end to end, and nextPage and lastPage are
-gone. The global --jq filters that merged document.
+gone. The global --jq filters that merged document. It asks for 1000 items
+a page, the most the API serves, unless the path or -f sets perPage, and in
+a terminal it shows on stderr which page it is fetching.
 
 --include prints the response status line and headers before the body; with
 --paginate, those of each page, then the merged body. --jq and --fields
@@ -343,7 +345,19 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 
 	if apiPaginate {
-		return paginate(cmd.Context(), u, body, do, out.Writer)
+		// A walk asks for the largest page the API serves, unless the
+		// path or -f chose a size, and shows its progress in a terminal:
+		// at a small perPage it was hundreds of silent requests (#290).
+		if u, err = withPageSize(u); err != nil {
+			return fmt.Errorf("building URL: %w", err)
+		}
+		// --include prints each page's head as it comes, which is progress
+		// enough and would land in the middle of the line.
+		var progress io.Writer
+		if progressTTY() && !apiInclude {
+			progress = out.EWriter
+		}
+		return paginate(cmd.Context(), u, body, do, out.Writer, progress)
 	}
 	// Reads still run under --dry-run, as the flag's help promises. Every
 	// other method is previewed: a raw passthrough cannot tell whether a POST
@@ -389,11 +403,32 @@ func runAPI(cmd *cobra.Command, args []string) error {
 // merged into one document. A reply that is not a JSON object has no pages,
 // and is printed as it came. Nothing is printed when a page fails: half a
 // list would read as all of it.
+//
+// When progress is not nil, each page after the first is announced on it —
+// "Fetching page 12 of 183…" — on one line, cleared at the end.
 func paginate(ctx context.Context, target string, body []byte,
-	do func(context.Context, string, []byte) ([]byte, error), w io.Writer) error {
+	do func(context.Context, string, []byte) ([]byte, error), w, progress io.Writer) error {
 	var merged pages
 	seen := map[int]bool{startPage(target): true}
+	// The line is cleared before anything else is printed — the document,
+	// or the error — since stdout may be the same terminal.
+	shown := false
+	endProgress := func() {
+		if shown {
+			fmt.Fprint(progress, "\r\033[K")
+			shown = false
+		}
+	}
+	defer endProgress()
 	for n := 1; ; n++ {
+		if progress != nil && n > 1 {
+			shown = true
+			of := ""
+			if merged.last > 0 {
+				of = fmt.Sprintf(" of %d", merged.last)
+			}
+			fmt.Fprintf(progress, "\rFetching page %d%s…\033[K", n, of)
+		}
 		page, err := do(ctx, target, body)
 		if err != nil {
 			return err
@@ -418,6 +453,7 @@ func paginate(ctx context.Context, target string, body []byte,
 			return fmt.Errorf("building URL: %w", err)
 		}
 	}
+	endProgress()
 	doc, err := merged.bytes()
 	if err != nil {
 		return err
@@ -425,6 +461,10 @@ func paginate(ctx context.Context, target string, body []byte,
 	_, err = fmt.Fprintf(w, "%s\n", doc)
 	return err
 }
+
+// progressTTY reports whether --paginate shows its progress: when stderr is
+// a terminal. A variable so tests can say it is.
+var progressTTY = output.IsStderrTTY
 
 // writeHead prints resp's status line and headers, sorted by name, then a
 // blank line, as `curl -i` and `gh api -i` do. They are the response's

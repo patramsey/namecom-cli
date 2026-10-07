@@ -513,7 +513,7 @@ func TestAPI_MethodFlag(t *testing.T) {
 		{"-X GET with fields", []string{"/core/v1/x"}, func() { apiMethod = "GET"; apiFields = []string{"perPage=2"} }, "GET", "/core/v1/x?perPage=2", ""},
 		{"-X DELETE without a body", []string{"/core/v1/x"}, func() { apiMethod = "Delete"; stdinWith(t, "") }, "DELETE", "/core/v1/x", ""},
 		{"-X matching the argument", []string{"put", "/core/v1/x"}, func() { apiMethod = "PUT"; apiBody = `{}` }, "PUT", "/core/v1/x", `{}`},
-		{"-X GET with --paginate", []string{"/core/v1/x"}, func() { apiMethod = "get"; apiPaginate = true }, "GET", "/core/v1/x", ""},
+		{"-X GET with --paginate", []string{"/core/v1/x"}, func() { apiMethod = "get"; apiPaginate = true }, "GET", "/core/v1/x?perPage=1000", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, got := recordServer(t, `{}`)

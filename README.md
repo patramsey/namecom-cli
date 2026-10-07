@@ -273,7 +273,8 @@ else. `-f key=value` adds a string, and `-F key=value` keeps `true`, `false`,
 `null` and numbers as JSON and reads `@file` (or `@-`, stdin). Keys nest as
 `contact[firstName]=Ada`, and `ns[]=x` appends to a list. On a GET the fields are query parameters instead.
 `--paginate` follows `nextPage` and prints one document whose lists hold every
-page's items, without `nextPage` and `lastPage`. `--include` prints the
+page's items, without `nextPage` and `lastPage`; it asks for 1000 items a
+page unless the path or `-f` sets `perPage`. `--include` prints the
 status line and headers ahead of the body, and `--jq` and `--fields` filter
 the body alone. Any method but GET and HEAD is a write: it asks first in a
 terminal, needs `--yes` in a script or a pipe (exit 2,

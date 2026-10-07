@@ -73,6 +73,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   **Scripts** (breaking): an `api` write run off a terminal now needs
   `--yes`; without it, it exits 2 with `confirmation_required` and sends
   nothing. GET, HEAD and `--dry-run` are unchanged.
+- `namecom api --paginate` asks for 1000 items a page, the API's maximum,
+  unless the path or `-f` sets `perPage` (#290). It used the API's default
+  page size, and a `-f perPage=5` walk of an order history made 900
+  requests. In a terminal it now shows the page it is fetching on stderr
+  (`Fetching page 3 of 7…`), where a long walk printed nothing until it
+  ended. The merged document is unchanged.
 
 ## [0.5.1] - 2026-10-05
 
