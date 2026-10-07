@@ -11,7 +11,7 @@ import (
 	"github.com/patramsey/namecom-cli/internal/output"
 )
 
-// TestURLUpdate_NothingToChange pins ISSUE-06: flags that ask for what the
+// TestURLUpdate_NothingToChange pins #312: flags that ask for what the
 // forwarding already is sent the PATCH anyway and printed "no values
 // changed", with no "changed" in JSON. Now only the GET the read-modify-write
 // needs is sent, under --dry-run too, and JSON says "changed": false; a real

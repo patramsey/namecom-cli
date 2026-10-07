@@ -63,7 +63,7 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--priority`, and `--priority` on other types, now exit 2.
 - An apex `url create` that the API answers with `400 … Duplicate Record`
   is checked against the domain's forwardings before it is reported
-  (ISSUE-02). The API can store the forwarding and still send that error,
+  (#308). The API can store the forwarding and still send that error,
   when the A record it picks for the apex matches one left by a deleted
   forwarding. If the forwarding is there, the create succeeds with a warning
   naming the left-over apex A records as the likely cause (in JSON, the entry
@@ -72,22 +72,22 @@ Releases before `0.2.0` predate this file. Their notes are on the
   them. Only that error costs the extra request.
 - `url update` whose flags ask for what the forwarding already is sends
   nothing, under `--dry-run` too, and says `already has these values:
-  nothing to change` (ISSUE-06). It sent the PATCH anyway and printed "no
+  nothing to change` (#312). It sent the PATCH anyway and printed "no
   values changed". **Scripts:** `url update -o json` now prints the entry
   with `"changed": true`, or `false` for a no-op, as `dns update` does.
 - `email update --dry-run` and `email delete --dry-run` check that the
   mailbox exists, and `email create --dry-run` checks for one that already
-  forwards elsewhere, each with one GET (ISSUE-07). They previewed the
+  forwards elsewhere, each with one GET (#313). They previewed the
   request and exited 0 where the real command exits 4 (not found) or 1
   (conflict). The real commands send what they did before.
 - The notes about the DNS records forwarding adds or leaves — the apex A
   record a `url delete` leaves, the MX and SPF records of `email create` and
   `email delete` — printed only in a table. In JSON and YAML they are now
-  warnings, in `{"warnings": […]}` on stderr (ISSUE-07).
+  warnings, in `{"warnings": […]}` on stderr (#313).
 - `url update` of a missing forwarding ID says `URL forwarding N not found
   on <domain>` and how to list the IDs, as `url get` and `url delete` do,
-  rather than the API's own message (ISSUE-07).
-- `url create --host` reads a host as `dns create` does (ISSUE-03): `www`,
+  rather than the API's own message (#313).
+- `url create --host` reads a host as `dns create` does (#309): `www`,
   `www.example.com` and `www.example.com.` all forward www, and
   `example.com` is the apex. A fully qualified host was sent as typed and
   made a forwarding for `www.example.com.example.com`, and one with a

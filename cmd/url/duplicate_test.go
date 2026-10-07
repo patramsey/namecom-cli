@@ -38,7 +38,7 @@ func duplicateServer(t *testing.T, list string, seen *[]string) *httptest.Server
 	return srv
 }
 
-// TestURLCreate_DuplicateRecordThatLanded pins ISSUE-02: an apex create the
+// TestURLCreate_DuplicateRecordThatLanded pins #308: an apex create the
 // API answered with 400 Duplicate Record had been stored anyway, and the CLI
 // exited 1. One list of the forwardings now finds it: the create succeeds,
 // with a warning naming the left-over apex A records as the likely cause,

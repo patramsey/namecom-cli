@@ -37,7 +37,7 @@ func mailboxServer(t *testing.T, mailbox string, seen *[]string) *httptest.Serve
 
 const getInfo = "GET /core/v1/domains/example.com/email/forwarding/info"
 
-// TestEmailDryRun_ChecksTheMailbox pins ISSUE-07: email update and delete
+// TestEmailDryRun_ChecksTheMailbox pins #313: email update and delete
 // previewed a request for a mailbox that did not exist, and exited 0, where
 // the real run exits 4. A dry run now checks the mailbox with one GET, as
 // `url delete --dry-run` and `dns delete --dry-run` check theirs.
@@ -112,7 +112,7 @@ func TestEmailCreateDryRun_ChecksForAnExistingMailbox(t *testing.T) {
 	}
 }
 
-// TestEmailNotes_ReachJSON pins ISSUE-07: the notes about the DNS records
+// TestEmailNotes_ReachJSON pins #313: the notes about the DNS records
 // forwarding adds and leaves printed only in a table. In JSON they are
 // warnings, which come out as {"warnings": […]} on stderr.
 func TestEmailNotes_ReachJSON(t *testing.T) {

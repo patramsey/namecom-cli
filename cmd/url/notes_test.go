@@ -14,7 +14,7 @@ import (
 	"github.com/patramsey/namecom-cli/internal/output"
 )
 
-// TestURLUpdate_MissingIDNamesIt pins ISSUE-07: update of a missing ID
+// TestURLUpdate_MissingIDNamesIt pins #313: update of a missing ID
 // showed the API's "URL forwarding entry not found.", where get and delete
 // name the ID and domain and say how to list them.
 func TestURLUpdate_MissingIDNamesIt(t *testing.T) {
@@ -44,7 +44,7 @@ func TestURLUpdate_MissingIDNamesIt(t *testing.T) {
 	}
 }
 
-// TestURLDelete_ApexNoteReachesJSON pins ISSUE-07: the note that an apex
+// TestURLDelete_ApexNoteReachesJSON pins #313: the note that an apex
 // delete leaves its A record printed only in a table. It is the only pointer
 // to the record that makes a later apex create answer Duplicate Record, so
 // in JSON it is a warning, on stderr as {"warnings": […]}.
