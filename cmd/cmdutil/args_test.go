@@ -204,22 +204,28 @@ func TestMinimumNArgs(t *testing.T) {
 	}
 }
 
-// UseLine() includes the full command path which appears after "try:" in the error.
-// Confirm the hint is present so users know the correct syntax.
+// The usage line, with the full command path, is the hint, so users know the
+// correct syntax. #313 moved it out of the message into error.hint, where the
+// extra-argument and unknown-flag errors put theirs.
 func TestExactArgs_HintContainsUseLine(t *testing.T) {
 	root := &cobra.Command{Use: "namecom"}
-	sub := &cobra.Command{Use: "dns list <domain>"}
+	sub := &cobra.Command{Use: "list <domain>"}
 	root.AddCommand(sub)
 
-	err := ExactArgs(1)(sub, nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "try:") {
-		t.Errorf("error = %q, missing 'try:' hint", err.Error())
-	}
-	if !strings.Contains(err.Error(), "namecom dns list") {
-		t.Errorf("error = %q, missing command path in hint", err.Error())
+	for name, check := range map[string]cobra.PositionalArgs{"ExactArgs": ExactArgs(1), "MinimumNArgs": MinimumNArgs(1)} {
+		t.Run(name, func(t *testing.T) {
+			err := check(sub, nil)
+			uerr, ok := errors.AsType[*UsageError](err)
+			if !ok {
+				t.Fatalf("want a usage error, got %v", err)
+			}
+			if got := err.Error(); got != "domain is required" {
+				t.Errorf("message = %q, want just %q", got, "domain is required")
+			}
+			if got, want := uerr.UserHint(), "usage: namecom list <domain>"; got != want {
+				t.Errorf("hint = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

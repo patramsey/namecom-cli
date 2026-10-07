@@ -75,7 +75,8 @@ Exit codes:
   0  success
   1  API or other runtime error, a prompt declined or cancelled, or a name
      'domain check --exit-status' found unavailable
-  2  usage error: a bad command, flag, argument or value
+  2  usage error or confirmation required: a bad command, flag, argument or
+     value, or a write with no terminal to confirm it and no --yes
   3  authentication: credentials missing, failing or rejected, or access denied
   4  not found
   5  rate limited
@@ -351,6 +352,7 @@ func init() {
 	// Apply styled help to every command in the tree.
 	cobra.AddTemplateFunc("styleHelp", func() bool { return true }) // trigger late-bind
 	rootCmd.SetHelpFunc(styledHelp)
+	rootCmd.SetHelpCommand(helpCommand)
 }
 
 func persistentPreRunE(cmd *cobra.Command, _ []string) error {

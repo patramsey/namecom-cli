@@ -246,7 +246,7 @@ namecom url create acme.io --to https://new-site.com      # redirect apex to ano
 **Publish DNSSEC DS records** (values from your DNS host, which signs the zone):
 ```bash
 namecom dnssec list acme.io
-namecom dnssec create acme.io --algorithm 13 --digest-type 2 --key-tag 12345 --digest abc123
+namecom dnssec create acme.io --algorithm 13 --digest-type 2 --key-tag 12345 --digest 187A3A5B12591918A105DCF4E78C182C2FDA3D108D53526AE8117139748F21D3
 ```
 
 **Set up vanity nameservers:**
@@ -498,6 +498,10 @@ of them is a breaking change and is called out in the
 - **`domain check`** gives each name `purchasable`: `true`, `false` for a
   taken name, or `null` when the registry did not answer for it (the table
   says `unknown`).
+- **`domain claims` and `domain pricing`** print the API's response as it
+  comes. Claims names the domain `domain`, not `domainName`, because the
+  API does; pricing does not name it at all. Both take one domain, so a
+  script that checks several has the name it passed for each.
 - **`dns sync`** prints what it did: `{"domain", "changed", "applied": [ … ],
   "unchanged"}`. When a change fails, that document still goes to stdout,
   with `failed` (and `outcomeUnknown: true` when it may have gone through)
@@ -517,8 +521,8 @@ of them is a breaking change and is called out in the
     "error": {
       "type": "not_found",
       "status": 404,
-      "message": "Not Found",
-      "hint": "check the name or ID for typos"
+      "message": "domain \"example.com\" not found",
+      "hint": "run 'namecom domain list' to see your domains"
     }
   }
   ```
@@ -548,8 +552,7 @@ of them is a breaking change and is called out in the
   set when a write's outcome is unknown (exit 6): the `X-Idempotency-Key`
   the request carried. The envelope also has
   a top-level `hint`, a copy of `error.hint` where older versions put it.
-  **It is deprecated**, kept for this release only so scripts can move to
-  `error.hint`.
+  **It is deprecated** and will be removed in 0.6.0; read `error.hint`.
 
 `namecom api` is the one exception: it prints the API's response body exactly
 as received (`{"domains": [...]}`, not `{"data": [...]}`). It exists to reach
@@ -707,7 +710,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 |---|---|
 | `0` | Success |
 | `1` | API or other runtime error, a confirmation declined or a prompt cancelled (Ctrl-C), or — with `domain check --exit-status` — a name that is not available |
-| `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value |
+| `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value. Also a write with no terminal to confirm it and no `--yes` (`confirmation_required`) |
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
 | `4` | Not found (HTTP 404) |
 | `5` | Rate limited (HTTP 429), after the CLI's own retries |

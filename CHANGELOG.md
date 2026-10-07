@@ -87,6 +87,21 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `url update` of a missing forwarding ID says `URL forwarding N not found
   on <domain>` and how to list the IDs, as `url get` and `url delete` do,
   rather than the API's own message (#313).
+- More argument mistakes are usage errors (exit 2) before any request
+  (#313). `domain requirements` refuses an empty TLD, one with spaces, and
+  `.`; it exited 1 or sent them to the API. A leading dot is dropped, so
+  `domain requirements .fr` works as `domain list --tld .io` does; it was a
+  not-found. A date range that runs backwards — `domain list
+  --expiring-after` later than `--expiring-before`, `order list --since`
+  later than `--until` — is refused rather than answered with an empty
+  list. `namecom help bogus`, `help domain bogus` and `help dns lsit` are
+  usage errors with a "did you mean" (`namecom help dns list`); they printed
+  some help and exited 0. `order refund 12345 6789` is answered with the
+  `--order-id 12345 --item-ids 6789` command, as one stray ID already was,
+  and `transfer cancel-outbound --dry-run` fails not_found (exit 4) for a
+  domain not in the account, with one GET. **Scripts:** a missing argument's
+  JSON error is `"message": "domain is required"` with the usage line in
+  `error.hint`; the usage line was appended to the message.
 - `url create --host` reads a host as `dns create` does (#309): `www`,
   `www.example.com` and `www.example.com.` all forward www, and
   `example.com` is the apex. A fully qualified host was sent as typed and
@@ -130,6 +145,21 @@ Releases before `0.2.0` predate this file. Their notes are on the
   domain to make room for headers it did not print. A date's "(in 3
   months)" now goes first, and any width left over goes back to the values
   that were cut.
+- Help and README fixes (#314). `namecom --help` lists a write with no
+  terminal to confirm it and no `--yes` (`confirmation_required`) under
+  exit 2, as the README's table does; it said only "usage error". The
+  `dnssec create` example in its help and in the README used a digest that
+  0.5.2's check refuses; both now pass it, and `--digest`, `--digest-type`
+  and `--key-tag` say what they accept. The README's error example shows
+  the not-found wording 0.5.2 introduced, and its JSON contract notes that
+  `domain claims` names the domain `domain` (the API's key) and
+  `domain pricing` does not name it.
+
+### Deprecated
+
+- The error envelope's top-level `hint`, a copy of `error.hint`, will be
+  removed in 0.6.0 (#314). It was announced in 0.5.0 as kept "for this
+  release only" and is still printed; read `error.hint`.
 
 ## [0.5.2] - 2026-10-07
 

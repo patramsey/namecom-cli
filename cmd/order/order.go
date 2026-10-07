@@ -91,22 +91,34 @@ refunded.`,
 // `order refund 12345`, as `order get 12345` takes it — gets the command
 // rewritten with --order-id as the hint (#292). cobra.NoArgs reported it as
 // an unknown command "12345".
+//
+// Any number of IDs gets the rewrite (#313): `order refund 12345 6789` fell
+// back to "takes no arguments". The first is read as the order and the rest
+// as its items, unless --order-id is given, when all of them are items.
 func refundArgs(cmd *cobra.Command, args []string) error {
-	if len(args) == 1 && !cmd.Flags().Changed("order-id") {
-		if _, err := strconv.ParseInt(args[0], 10, 32); err == nil {
-			items := "<item-ids>"
-			if len(refundItemIDs) > 0 {
-				ids := make([]string, len(refundItemIDs))
-				for i, id := range refundItemIDs {
-					ids[i] = strconv.Itoa(int(id))
-				}
-				items = strings.Join(ids, ",")
-			}
-			return cmdutil.NewUsageErrorHint(fmt.Errorf("order refund takes the order ID in --order-id, not as an argument"),
-				fmt.Sprintf("run '%s --order-id %s --item-ids %s'", cmd.CommandPath(), args[0], items))
+	if len(args) == 0 {
+		return nil
+	}
+	for _, a := range args {
+		if _, err := strconv.ParseInt(a, 10, 32); err != nil {
+			return cmdutil.NoArgs(cmd, args)
 		}
 	}
-	return cmdutil.NoArgs(cmd, args)
+	order, items := args[0], args[1:]
+	msg := "order refund takes the order ID in --order-id, not as an argument"
+	if cmd.Flags().Changed("order-id") {
+		order, items = strconv.Itoa(int(refundOrderID)), args
+		msg = "order refund takes item IDs in --item-ids, not as arguments"
+	}
+	for _, id := range refundItemIDs {
+		items = append(items, strconv.Itoa(int(id)))
+	}
+	itemList := "<item-ids>"
+	if len(items) > 0 {
+		itemList = strings.Join(items, ",")
+	}
+	return cmdutil.NewUsageErrorHint(errors.New(msg),
+		fmt.Sprintf("run '%s --order-id %s --item-ids %s'", cmd.CommandPath(), order, itemList))
 }
 
 func init() {
@@ -148,6 +160,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		d, _ := time.Parse("2006-01-02", listUntil)
 		until = d.AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	if err := cmdutil.ValidDateRange(listSince, "since", listUntil, "until"); err != nil {
+		return err
 	}
 
 	// --status bogus is not rejected by the API, only ignored, so it listed

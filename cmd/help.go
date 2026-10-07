@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -46,6 +47,109 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 		out = output.DefaultConfig()
 	}
 	printHelpWidth(w, cmd, out.ColorEnabled(), helpWidth(out))
+}
+
+// helpCommand replaces cobra's `help`, which answered an unknown topic with
+// "Unknown help topic", cobra's unstyled usage template and exit 0, and
+// `help domain bogus` with the domain help and exit 0 (#313). An unknown word
+// is a usage error, with suggestions, as `namecom domain bogus` is under
+// GroupCmd. Words after a leaf command are ignored, as cobra's did:
+// `help dns list example.com` shows the help for dns list.
+var helpCommand = &cobra.Command{
+	Use:   "help [command]",
+	Short: "Help about any command",
+	Long: `Help provides help for any command in the application.
+Simply type namecom help [path to command] for full details.`,
+	ValidArgsFunction: completeHelp,
+	RunE:              runHelp,
+}
+
+func runHelp(c *cobra.Command, args []string) error {
+	parent := c.Root()
+	for _, word := range args {
+		next := findSubcommand(parent, word)
+		if next == nil {
+			if !parent.HasAvailableSubCommands() {
+				break
+			}
+			return unknownHelpTopic(parent, word)
+		}
+		parent = next
+	}
+	// Cobra's help command passes its context down; the help text uses none
+	// today, but a command reached here should not see a nil one.
+	if parent.Context() == nil {
+		parent.SetContext(c.Context())
+	}
+	parent.InitDefaultHelpFlag()
+	parent.InitDefaultVersionFlag()
+	return parent.Help()
+}
+
+// findSubcommand is the subcommand of c named, or aliased, word, or nil.
+func findSubcommand(c *cobra.Command, word string) *cobra.Command {
+	for _, sub := range c.Commands() {
+		if sub.Name() == word || sub.HasAlias(word) {
+			return sub
+		}
+	}
+	return nil
+}
+
+// unknownHelpTopic is the usage error for word, not a subcommand of parent.
+// Suggestions are given as help commands, `namecom help dns list`, since
+// that is what was being typed.
+func unknownHelpTopic(parent *cobra.Command, word string) error {
+	if parent.SuggestionsMinimumDistance <= 0 {
+		parent.SuggestionsMinimumDistance = 2
+	}
+	root := parent.Root()
+	path := root.CommandPath() + " help"
+	if rel := strings.TrimPrefix(parent.CommandPath(), root.CommandPath()); rel != "" {
+		path += rel
+	}
+	var suggestions []string
+	if parent == root {
+		// `help records` is as likely as `namecom records`; rootSuggestFor's
+		// "help environment" is already a help topic.
+		if s, ok := rootSuggestFor[strings.ToLower(word)]; ok {
+			suggestions = append(suggestions, strings.TrimPrefix(s, "help "))
+		}
+	}
+	for _, s := range parent.SuggestionsFor(word) {
+		if !slices.Contains(suggestions, s) {
+			suggestions = append(suggestions, s)
+		}
+	}
+	e := &cmdutil.UnknownCommandError{Word: word, Path: path}
+	hint := fmt.Sprintf("run '%s' to list the commands", path)
+	if len(suggestions) > 0 {
+		quoted := make([]string, len(suggestions))
+		for i, s := range suggestions {
+			e.Suggestions = append(e.Suggestions, path+" "+s)
+			quoted[i] = "'" + path + " " + s + "'"
+		}
+		hint = "did you mean " + strings.Join(quoted, " or ") + "?"
+	}
+	return cmdutil.NewUsageErrorHint(e, hint)
+}
+
+// completeHelp completes `namecom help` with the subcommands of the command
+// typed so far, as cobra's own help command did.
+func completeHelp(c *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	parent := c.Root()
+	for _, word := range args {
+		if parent = findSubcommand(parent, word); parent == nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+	}
+	var completions []cobra.Completion
+	for _, sub := range parent.Commands() {
+		if (sub.IsAvailableCommand() || sub == c) && strings.HasPrefix(sub.Name(), toComplete) {
+			completions = append(completions, cobra.CompletionWithDesc(sub.Name(), sub.Short))
+		}
+	}
+	return completions, cobra.ShellCompDirectiveNoFileComp
 }
 
 // helpWidth is the width help wraps to: the terminal's, or $COLUMNS when

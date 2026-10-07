@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -36,8 +37,16 @@ func ExactArgs(n int) cobra.PositionalArgs {
 		if len(args) < len(names) {
 			missing = names[len(args):]
 		}
-		return NewUsageError(fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine()))
+		return missingArgs(cmd, missing)
 	}
+}
+
+// missingArgs is the usage error for positional arguments left out: what is
+// missing in the message, and the usage line in the hint, where the
+// extra-argument and unknown-flag errors put theirs (#313). The usage line
+// used to be in the message, so a script reading error.hint got nothing.
+func missingArgs(cmd *cobra.Command, missing []string) error {
+	return NewUsageErrorHint(errors.New(needsMessage(missing)), "usage: "+cmd.UseLine())
 }
 
 // NoArgs is a drop-in for cobra.NoArgs. Cobra reports an argument to a
@@ -112,7 +121,7 @@ func MinimumNArgs(n int) cobra.PositionalArgs {
 		if len(args) < len(names) {
 			missing = names[len(args):]
 		}
-		return NewUsageError(fmt.Errorf("%s — try: %s", needsMessage(missing), cmd.UseLine()))
+		return missingArgs(cmd, missing)
 	}
 }
 

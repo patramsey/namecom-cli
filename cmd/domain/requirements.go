@@ -39,11 +39,12 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	// TLDs are given without a leading dot; punycode TLDs must be the ASCII
-	// form ("for the `онлайн` TLD, you would submit `xn--80asehdb`").
-	tld := cmdutil.CanonicalDomain(args[0])
-	if tld == "" {
-		return fmt.Errorf("tld is required (e.g. 'namecom domain requirements fr')")
+	// The API takes TLDs without a leading dot, and punycode TLDs in their
+	// ASCII form ("for the `онлайн` TLD, you would submit `xn--80asehdb`").
+	// TLDArg gives both, and refuses before any request what cannot be a TLD.
+	tld, err := cmdutil.TLDArg(args[0], "tld")
+	if err != nil {
+		return err
 	}
 
 	stop := out.Spin("Fetching TLD requirements…")
@@ -52,11 +53,11 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 	stop()
 	if err != nil {
 		// Converted before classifying: IsNotFound inspects *api.APIError, and
-		// the "pass the TLD without a leading dot" hint is the whole value of
-		// recognising a 404 here.
+		// a 404 here is a TLD name.com does not sell, which deserves better
+		// than the API's text. A leading dot no longer gets here (TLDArg).
 		err = api.FromSDKError(err)
 		if cmdutil.IsNotFound(err) {
-			return cmdutil.NotFound(err, fmt.Sprintf("no requirements found for TLD %q", tld), "pass the TLD without a leading dot (e.g. 'fr', not '.fr')")
+			return cmdutil.NotFound(err, fmt.Sprintf("no requirements found for TLD %q", tld), "check the TLD for typos (e.g. 'fr', 'co.uk')")
 		}
 		return err
 	}

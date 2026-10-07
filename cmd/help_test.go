@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -375,6 +378,149 @@ func TestRootHelp_ListsExitCodes(t *testing.T) {
 		if !strings.Contains(rootCmd.Long, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, rootCmd.Long)
 		}
+	}
+}
+
+// TestRootHelp_ExitCodesMatchREADME pins #314: the README's error-type table
+// put confirmation_required under exit 2, and `namecom --help` said only
+// "usage error", so a script author reading --help did not expect a write
+// to exit 2. Every type the README lists under a code is named, with spaces
+// for underscores, in that code's entry of root help.
+func TestRootHelp_ExitCodesMatchREADME(t *testing.T) {
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout has CRLF line endings; compare as LF.
+	readme = bytes.ReplaceAll(readme, []byte("\r\n"), []byte("\n"))
+	// Rows such as "  | `usage` | The command line is wrong… | 2 |".
+	row := regexp.MustCompile("(?m)^\\s*\\| `([a-z_]+)` \\|.*\\| ([0-9]) \\|$")
+	rows := row.FindAllStringSubmatch(string(readme), -1)
+	if len(rows) < 5 {
+		t.Fatalf("found %d error-type rows in the README; the table moved or changed shape", len(rows))
+	}
+	// Each code's entry in root help: "  2  …" and its indented continuation.
+	entries := map[string]string{}
+	code := ""
+	for line := range strings.SplitSeq(rootLongBody, "\n") {
+		if m := regexp.MustCompile(`^  ([0-9])  (.*)`).FindStringSubmatch(line); m != nil {
+			code = m[1]
+			entries[code] = m[2]
+		} else if code != "" && strings.HasPrefix(line, "     ") {
+			entries[code] += " " + strings.TrimSpace(line)
+		}
+	}
+	for _, r := range rows {
+		typ, code := r[1], r[2]
+		// Exit 1 is "API or other runtime error": its types are kinds of that.
+		if code == "1" {
+			continue
+		}
+		if want := strings.ReplaceAll(typ, "_", " "); !strings.Contains(entries[code], want) {
+			t.Errorf("root help's exit %s entry %q does not mention %q, which the README lists under %s", code, entries[code], want, code)
+		}
+	}
+}
+
+// TestDNSSECExamples_PassValidation pins #314: the `dnssec create` example in
+// its help and in the README used the digest abc123, which 0.5.2's check
+// (#292) refuses for digest type 2. Each runs as a dry run, which validates
+// the flags and sends nothing.
+func TestDNSSECExamples_PassValidation(t *testing.T) {
+	withConfig(t, loneProfile)
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout has CRLF line endings; compare as LF.
+	readme = bytes.ReplaceAll(readme, []byte("\r\n"), []byte("\n"))
+	create := mustFind(t, []string{"dnssec", "create"})
+	// The flag help states the limits the check applies.
+	for flag, want := range map[string]string{"digest": "64 for 2", "key-tag": "0-65535"} {
+		if usage := create.Flags().Lookup(flag).Usage; !strings.Contains(usage, want) {
+			t.Errorf("--%s help %q does not state its limit (%q)", flag, usage, want)
+		}
+	}
+	examples := strings.Split(create.Example, "\n")
+	for line := range strings.SplitSeq(string(readme), "\n") {
+		if strings.HasPrefix(line, "namecom dnssec create ") {
+			examples = append(examples, line)
+		}
+	}
+	if len(examples) < 2 {
+		t.Fatalf("found %d examples, want the help's and the README's", len(examples))
+	}
+	for _, ex := range examples {
+		args := strings.Fields(ex)[1:] // without "namecom"
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			resetFlags(t, []string{"dnssec", "create"})
+			srv, requests := apiStub(t, nil)
+			_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL, "--dry-run"}, args...)...)
+			if code != 0 {
+				t.Errorf("exit %d, want 0; stderr:\n%s", code, stderr)
+			}
+			if got := requests(); len(got) != 0 {
+				t.Errorf("a dry run sent %v", got)
+			}
+		})
+	}
+}
+
+// TestHelpCommand_UnknownTopic pins #313: `namecom help bogus` printed
+// "Unknown help topic" and cobra's unstyled usage and exited 0, and
+// `help dns lsit` printed the dns help and exited 0. Both are usage errors
+// with suggestions, as `namecom dns lsit` is; known topics still print help.
+func TestHelpCommand_UnknownTopic(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args       []string
+		message    string
+		suggestion string // "" for none
+	}{
+		{[]string{"help", "bogus"}, `unknown command "bogus" for "namecom help"`, ""},
+		{[]string{"help", "domian"}, `unknown command "domian" for "namecom help"`, "namecom help domain"},
+		{[]string{"help", "records"}, `unknown command "records" for "namecom help"`, "namecom help dns"},
+		{[]string{"help", "domain", "bogus"}, `unknown command "bogus" for "namecom help domain"`, ""},
+		{[]string{"help", "dns", "lsit"}, `unknown command "lsit" for "namecom help dns"`, "namecom help dns list"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			stdout, stderr, code := runContract(t, append(tc.args, "-o", "json")...)
+			if code != 2 {
+				t.Errorf("exit = %d, want 2", code)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want nothing: no help for an unknown topic", stdout)
+			}
+			var env struct {
+				Error struct {
+					Type        string   `json:"type"`
+					Message     string   `json:"message"`
+					Hint        string   `json:"hint"`
+					Suggestions []string `json:"suggestions"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+				t.Fatalf("stderr is not the error envelope: %v\n%s", err, stderr)
+			}
+			if env.Error.Type != "usage" || env.Error.Message != tc.message {
+				t.Errorf("error = %+v, want usage %q", env.Error, tc.message)
+			}
+			if tc.suggestion != "" && !slices.Contains(env.Error.Suggestions, tc.suggestion) {
+				t.Errorf("suggestions = %v, want %q", env.Error.Suggestions, tc.suggestion)
+			}
+			if env.Error.Hint == "" {
+				t.Error("no hint")
+			}
+		})
+	}
+
+	for _, args := range [][]string{{"help"}, {"help", "dns"}, {"help", "dns", "list"}, {"help", "dns", "list", "example.com"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout, stderr, code := runContract(t, args...)
+			if code != 0 || !strings.Contains(stdout, "Usage:") {
+				t.Errorf("exit %d, stdout:\n%s\nstderr:\n%s\nwant help and exit 0", code, stdout, stderr)
+			}
+		})
 	}
 }
 
