@@ -495,4 +495,40 @@ func TestHelp_WrapsToWidth(t *testing.T) {
 	if got != want {
 		t.Errorf("wrapBlock row:\n%s\nwant:\n%s", got, want)
 	}
+
+	// Indented prose reflows as one paragraph; an indented command line and
+	// a list item do not join it, and the command line is never wrapped.
+	got = wrapBlock("  one two three four five six seven\n  eight nine ten\n    namecom dns create example.com --type A\n  - item one two three four five six\n    seven", 30)
+	want = "  one two three four five six\n  seven eight nine ten\n    namecom dns create example.com --type A\n  - item one two three four\n    five six seven"
+	if got != want {
+		t.Errorf("wrapBlock indented prose:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestHelp_NoOrphanWordsAtWidth wraps every command's and help topic's
+// description to 70 columns and fails on a line of one or two words that the
+// next line, at the same indentation, continues and that its next word would
+// have fit on: text wrapped by hand and then wrapped again (#293).
+// `help formatting` printed "the\ndata:" and "written\n\\, \t".
+func TestHelp_NoOrphanWordsAtWidth(t *testing.T) {
+	const width = 70
+	indent := func(s string) int { return len(s) - len(strings.TrimLeft(s, " ")) }
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		lines := strings.Split(wrapBlock(c.Long, width), "\n")
+		for i := 0; i+1 < len(lines); i++ {
+			l, next := lines[i], lines[i+1]
+			words, nextWords := strings.Fields(l), strings.Fields(next)
+			row := strings.Contains(strings.TrimLeft(l, " "), "  ") // "  0  success"
+			if row || len(words) == 0 || len(words) > 2 || len(nextWords) == 0 || indent(next) != indent(l) ||
+				utf8.RuneCountInString(l)+1+utf8.RuneCountInString(nextWords[0]) > width {
+				continue
+			}
+			t.Errorf("%s: orphan line %q before %q", c.CommandPath(), l, next)
+		}
+		for _, s := range c.Commands() {
+			walk(s)
+		}
+	}
+	walk(rootCmd)
 }

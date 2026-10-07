@@ -290,10 +290,14 @@ func wrapWords(s string, width int) []string {
 // long; instead each paragraph is reflowed, and only when one of its lines
 // does not fit, so a wide terminal shows the text as written.
 //
-// A paragraph is a run of unindented lines, or an indented line with its
-// continuations. An indented two-column row ("  NAMECOM_TOKEN   API
-// token.") continues under its second column, and any other indented line
-// at its own indentation.
+// A paragraph is a run of lines at one indentation, or an indented
+// two-column row ("  NAMECOM_TOKEN   API token.") with its continuations
+// under its second column. Indented prose reflows like unindented prose
+// (#293): `help formatting` is indented under its headings, and wrapping
+// each of its lines alone left a word or two on every other line. An
+// indented command line ("    namecom ...") or "# comment" is a paragraph of
+// its own and is never wrapped, as Examples are not, so it can be copied.
+// An indented "- " starts a list item, which continues under its text.
 func wrapBlock(s string, width int) string {
 	if width <= 0 {
 		return s
@@ -302,24 +306,34 @@ func wrapBlock(s string, width int) string {
 		lead string   // first-line prefix: indentation, plus the first column of a row
 		hang int      // indentation of continuation lines
 		row  bool     // an indented two-column row
+		code bool     // a command line or comment, left as written
 		text string   // the words to wrap
 		raw  []string // the lines as written
+	}
+	isCode := func(body string, indent int) bool {
+		return indent > 0 && (strings.HasPrefix(body, "namecom ") || strings.HasPrefix(body, "#"))
 	}
 	var paras []*para
 	for _, line := range strings.Split(s, "\n") {
 		body := strings.TrimLeft(line, " ")
 		indent := len(line) - len(body)
-		if n := len(paras); n > 0 && body != "" {
+		code := isCode(body, indent)
+		bullet := indent > 0 && strings.HasPrefix(body, "- ")
+		if n := len(paras); n > 0 && body != "" && !code && !bullet {
 			p := paras[n-1]
-			prose := !p.row && p.hang == 0 && indent == 0
+			prose := !p.row && !p.code && p.hang == indent
 			if p.text != "" && (prose || (p.row && indent == p.hang)) {
 				p.text += " " + body
 				p.raw = append(p.raw, line)
 				continue
 			}
 		}
-		p := &para{lead: line[:indent], text: body, raw: []string{line}}
-		if gap := strings.Index(body, "  "); indent > 0 && gap > 0 {
+		p := &para{lead: line[:indent], text: body, raw: []string{line}, code: code}
+		switch gap := strings.Index(body, "  "); {
+		case bullet:
+			p.lead += "- "
+			p.text = body[2:]
+		case indent > 0 && gap > 0 && !code:
 			p.text = strings.TrimLeft(body[gap:], " ")
 			p.lead += body[:len(body)-len(p.text)]
 			p.row = true
@@ -334,7 +348,7 @@ func wrapBlock(s string, width int) string {
 		for _, l := range p.raw {
 			fits = fits && utf8.RuneCountInString(l) <= width
 		}
-		if fits {
+		if fits || p.code {
 			out = append(out, p.raw...)
 			continue
 		}
