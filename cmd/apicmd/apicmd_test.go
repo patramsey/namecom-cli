@@ -37,6 +37,9 @@ func apiCmd(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes.Buffer) 
 	ctx := context.WithValue(context.Background(), cmdutil.KeyOutput, out)
 	ctx = context.WithValue(ctx, cmdutil.KeyClient, client)
 	cmd.SetContext(ctx)
+	// A write confirms, and off a terminal that needs --yes (#282). The
+	// tests send as a script does; withRoot(cmd, false, false) takes it away.
+	withRoot(cmd, false, true)
 	t.Cleanup(func() {
 		apiBody, apiHeaders, apiInput, apiMethod = "", nil, "", ""
 		apiFields, apiTyped = nil, nil
@@ -355,11 +358,15 @@ func TestAPI_ReadsBodyFromStdin(t *testing.T) {
 }
 
 // dryRun hangs cmd under a root carrying --dry-run set to on, which is where
-// cmdutil.IsDryRun looks for it.
-func dryRun(cmd *cobra.Command, on bool) {
+// cmdutil.IsDryRun looks for it, and --yes.
+func dryRun(cmd *cobra.Command, on bool) { withRoot(cmd, on, true) }
+
+// withRoot hangs cmd under a root carrying --dry-run and --yes as given.
+func withRoot(cmd *cobra.Command, dryRun, yes bool) {
 	root := &cobra.Command{Use: "namecom"}
-	var dr bool
-	root.PersistentFlags().BoolVar(&dr, "dry-run", on, "")
+	var dr, y bool
+	root.PersistentFlags().BoolVar(&dr, "dry-run", dryRun, "")
+	root.PersistentFlags().BoolVar(&y, "yes", yes, "")
 	cmd.Use = "api"
 	root.AddCommand(cmd)
 }

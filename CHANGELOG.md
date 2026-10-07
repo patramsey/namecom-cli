@@ -63,6 +63,16 @@ Releases before `0.2.0` predate this file. Their notes are on the
   (exit 2), as `domain update` is. **Scripts:** `dns update` JSON and YAML
   now carry `"changed"` — `false` for a no-op, `true` for a real update — on
   the record they print.
+- `namecom api` writes are confirmed like every other write (#282). Any
+  method but GET and HEAD asks first in a terminal, naming the method and
+  path, and the account under it. `namecom api /core/v1/domains -f
+  perPage=2` was an unconfirmed POST to the registration endpoint: `-f`
+  gives the request a body, which makes it a POST. That inference stays,
+  as in `gh api`, but the question and a `!` warning now say
+  `POST (inferred from -f)` and that `-X GET` sends the fields as a query.
+  **Scripts** (breaking): an `api` write run off a terminal now needs
+  `--yes`; without it, it exits 2 with `confirmation_required` and sends
+  nothing. GET, HEAD and `--dry-run` are unchanged.
 
 ## [0.5.1] - 2026-10-05
 

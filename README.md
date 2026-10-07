@@ -260,8 +260,8 @@ namecom domain set-ns acme.io --ns ns1.acme.io,ns2.acme.io
 ```bash
 namecom api /core/v1/domains/acme.io                      # the method defaults to GET
 namecom api /core/v1/domains --paginate --jq '.domains[].domainName'   # every page as one list
-namecom api /core/v1/domains/acme.io/records -f host=www -f type=A -f answer=1.2.3.4 -F ttl=300 --dry-run
-namecom api PUT /core/v1/domains/acme.io/records/123 --input record.json
+namecom api POST /core/v1/domains/acme.io/records -f host=www -f type=A -f answer=1.2.3.4 -F ttl=300 --dry-run
+namecom api PUT /core/v1/domains/acme.io/records/123 --input record.json --yes   # in a script, a write needs --yes
 namecom api -X DELETE /core/v1/domains/acme.io/records/123 --dry-run
 namecom api /core/v1/hello --include                      # status line and headers, then the body
 namecom api /core/v1/domains -i --jq '.totalCount'       # headers as they came, then the filtered body
@@ -275,8 +275,11 @@ else. `-f key=value` adds a string, and `-F key=value` keeps `true`, `false`,
 `--paginate` follows `nextPage` and prints one document whose lists hold every
 page's items, without `nextPage` and `lastPage`. `--include` prints the
 status line and headers ahead of the body, and `--jq` and `--fields` filter
-the body alone. Any method but GET and HEAD is previewed, not sent, under
-`--dry-run`.
+the body alone. Any method but GET and HEAD is a write: it asks first in a
+terminal, needs `--yes` in a script or a pipe (exit 2,
+`confirmation_required`, without it), and is previewed, not sent, under
+`--dry-run`. A POST inferred from `-f` or `-F` says so in the question and
+in a warning; pass `-X GET` to send the fields as a query instead.
 
 **Scripting and automation:**
 ```bash

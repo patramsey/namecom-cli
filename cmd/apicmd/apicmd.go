@@ -54,15 +54,21 @@ gone. The global --jq filters that merged document.
 --paginate, those of each page, then the merged body. --jq and --fields
 filter the body alone.
 
-With --dry-run, any method other than GET or HEAD is printed — method, path,
-and body — instead of sent. GET and HEAD still run.`,
+Any method other than GET or HEAD is a write, and is confirmed as other
+writes are: a question in a terminal, and --yes when not in one. A POST
+inferred from a body says so, in the question and in a warning: to send -f
+fields as a GET's query, pass -X GET. With --dry-run, a write is printed —
+method, path, and body — instead of sent. GET and HEAD still run.`,
 	Example: `  namecom api /core/v1/domains
+  namecom api /core/v1/domains -X GET -f perPage=1000
   namecom api /core/v1/domains --paginate --jq '.domains[].domainName'
   namecom api GET /core/v1/domains/example.com --include
   namecom api /core/v1/domains --include --jq '.totalCount'
-  namecom api /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
-  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records
+  namecom api POST /core/v1/domains/example.com/records -f host=@ -f type=A -f answer=1.2.3.4 -F ttl=300
   namecom api PUT /core/v1/domains/example.com/records/123 --input record.json
+
+  # In a script, skip the confirmation:
+  echo '{"host":"www","type":"CNAME","answer":"example.com.","ttl":300}' | namecom api POST /core/v1/domains/example.com/records --yes
   namecom api -X PATCH /core/v1/domains/example.com -F autorenewEnabled=true --dry-run
   namecom api DELETE /core/v1/domains/example.com/records/123 --dry-run`,
 	Args: func(cmd *cobra.Command, args []string) error {
@@ -143,6 +149,24 @@ func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, pat
 		return "", "", cmdutil.NewUsageError(fmt.Errorf("the method is given twice, as %s and as -X %s; use one", args[0], apiMethod))
 	}
 	return method, args[1], nil
+}
+
+// inferredFrom names the flag that made method POST when neither an argument
+// nor -X gave a method, and is "" when the method was given. nargs is the
+// number of arguments: with two, the first is the method.
+func inferredFrom(nargs int, method string, dataSet bool) string {
+	if nargs != 1 || apiMethod != "" || method != http.MethodPost {
+		return ""
+	}
+	switch {
+	case len(apiFields) > 0:
+		return "-f"
+	case len(apiTyped) > 0:
+		return "-F"
+	case dataSet:
+		return "--data"
+	}
+	return "--input"
 }
 
 // checkMethod returns m in upper case, or a usage error when it is not a
@@ -336,8 +360,24 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	if len(body) > 0 {
 		payload = rawBody(body)
 	}
+	// A write confirms like every other write: a question in a terminal,
+	// --yes off one (#282). It used to go straight out, so adding -f to a
+	// list's path to page it sent an unconfirmed POST to that path — for
+	// /core/v1/domains, a registration. The question says when the method
+	// was inferred, since that is the surprise; so does a warning, which a
+	// dry run and --yes print too.
+	label := method
+	if from := inferredFrom(len(args), method, dataSet); from != "" {
+		label += " (inferred from " + from + ")"
+		hint := "; pass -X POST to say so"
+		if from == "-f" || from == "-F" {
+			hint = "; pass -X GET to send the fields as query parameters instead"
+		}
+		out.Warn(label + hint)
+	}
 	_, err = cmdutil.RunWrite(cmd, cmdutil.Write[any]{
 		Method: method, Path: parsed.RequestURI(), Body: payload,
+		Prompt: fmt.Sprintf("Send %s %s?", label, parsed.RequestURI()),
 	}, func(ctx context.Context, b any) error {
 		rb, _ := b.(rawBody) // nil for NoBody
 		return send(ctx, rb)
