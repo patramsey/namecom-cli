@@ -68,7 +68,7 @@ func FuzzValidators(f *testing.F) {
 					t.Fatalf("SRV accepted %q", s)
 				}
 			}
-			_ = DNSAnswerWarnings(typ, s, 0, false)
+			_ = DNSAnswerWarnings(typ, s)
 		}
 
 		if err := ValidDomainName(s); err != nil {

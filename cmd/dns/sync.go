@@ -433,6 +433,12 @@ func prepareRecords(recs []inputRecord, allowCAA bool) error {
 				return fail(err)
 			}
 		}
+		// The API drops a priority on any type but MX and SRV, so one in
+		// the file is not sent. (`dns create --priority` on such a type is
+		// an error: there it is a mistake, here a field the file carries.)
+		if !typeHasPriority(r.Type) {
+			r.Priority = nil
+		}
 		r.Host, r.Answer = host, answer
 	}
 	return nil

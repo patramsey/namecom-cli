@@ -69,11 +69,26 @@ func readRecordsFile(path, domain string) ([]inputRecord, string, error) {
 		}
 		return recs, formatJSON, nil
 	}
+	// YAML (`dns export -o yaml`) is not read. Parsed as a zone file it
+	// failed with "parsing zone file: line 1: missing record type", which
+	// called it a zone file and did not say what to use instead.
+	if ext := strings.ToLower(filepath.Ext(path)); ext == ".yaml" || ext == ".yml" || bytes.HasPrefix(trimmed, []byte("data:")) {
+		return nil, "", cmdutil.NewUsageError(fmt.Errorf("%s is YAML, which this command does not read: give it the JSON 'dns export %s' writes (without -o yaml), or a zone file ('dns export %s --zone')",
+			fileName(path), domain, domain))
+	}
 	recs, err := parseZone(string(data), domain)
 	if err != nil {
-		return nil, "", cmdutil.NewUsageError(fmt.Errorf("parsing zone file: %w", err))
+		return nil, "", cmdutil.NewUsageError(fmt.Errorf("%s is not JSON, so it was read as a zone file: %w", fileName(path), err))
 	}
 	return recs, formatZone, nil
+}
+
+// fileName is how an error names the --file path: "stdin" for "-".
+func fileName(path string) string {
+	if path == "-" {
+		return "stdin"
+	}
+	return path
 }
 
 // parseRecordsJSON reads the `dns export` JSON: an array of records. An

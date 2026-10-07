@@ -144,7 +144,8 @@ var exportCmd = &cobra.Command{
 	Use:   "export <domain>",
 	Short: "Export DNS records as JSON (default) or a zone-file snapshot",
 	Long: `Write a domain's records as a file 'dns import' and 'dns sync' read: JSON
-(the default, or -o yaml), or a zone file with --zone.
+(the default), or a zone file with --zone. -o yaml writes YAML, which they do
+not read.
 
 The output is a file format, so -o table, -o tsv and -q are usage errors;
 'dns list' prints records as a table, as TSV, or one ID per line.`,
@@ -185,7 +186,7 @@ func init() {
 	createCmd.Flags().StringVar(&createHost, "host", "@", "host: www or www.example.com (@ or the domain for the apex)")
 	createCmd.Flags().StringVar(&createAnswer, "answer", "", "record value (required; prompted in a terminal)")
 	createCmd.Flags().Int64Var(&createTTL, "ttl", defaultTTL, "TTL in seconds (minimum 300)")
-	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records")
+	createCmd.Flags().Int64Var(&createPriority, "priority", 0, "priority for MX/SRV records, lower preferred (required for them; not taken by other types)")
 	createCmd.Flags().BoolVar(&createIfNotExists, "if-not-exists", false, "succeed without creating when a record with this host, type and answer exists, printing its ID")
 	// --type and --answer are required, but not marked so: cobra would reject
 	// the command before runCreate could offer the guided form (#230).
@@ -395,7 +396,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, w := range cmdutil.DNSAnswerWarnings(createType, answer, createPriority, cmd.Flags().Changed("priority")) {
+	if err := checkPriority(createType, cmd.Flags().Changed("priority"), "--priority"); err != nil {
+		return err
+	}
+	for _, w := range cmdutil.DNSAnswerWarnings(createType, answer) {
 		out.Warn(w)
 	}
 	if cmd.Flags().Changed("ttl") {
@@ -468,6 +472,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatJSON, output.FormatYAML:
 		return printCreated(out, record, true)
 	default:
+		// The value the API stored, which can differ from the one sent:
+		// `"a" "b"` is stored as `"a""b"`.
+		if stored := derefStr(record.Answer); stored != "" {
+			answer = stored
+		}
 		out.Success(fmt.Sprintf("Created %s %s → %s (id %d)",
 			strings.ToUpper(createType), recordName(host, domain), answer, derefInt(record.ID)))
 	}
@@ -537,9 +546,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if current.Priority != nil {
 		body.Priority = current.Priority
 	}
-	// Merge --priority before anything reads body.Priority, so the warnings
-	// below reason about the value we will actually send rather than an unset
-	// flag variable.
+	// Merge --priority before anything reads body.Priority, so the check
+	// below reasons about the value we will actually send rather than an
+	// unset flag variable.
 	if cmd.Flags().Changed("priority") {
 		body.Priority = &updatePriority
 	}
@@ -550,6 +559,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
+	}
+	// As create: --priority on a type without one, or an MX or SRV record
+	// left with none (a --type change), is refused rather than sent.
+	set := cmd.Flags().Changed("priority")
+	if typeHasPriority(strings.ToUpper(string(body.Type))) {
+		set = body.Priority != nil
+	}
+	if err := checkPriority(string(body.Type), set, "--priority"); err != nil {
+		return err
 	}
 	if cmd.Flags().Changed("host") {
 		body.Host = &newHost
@@ -564,7 +582,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, w := range cmdutil.DNSAnswerWarnings(rtype, answer, derefInt64(body.Priority), body.Priority != nil) {
+		for _, w := range cmdutil.DNSAnswerWarnings(rtype, answer) {
 			out.Warn(w)
 		}
 		body.Answer = answer
@@ -887,6 +905,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 		records = kept
 	}
+	// Every record to be created, checked before the first is sent: an MX
+	// or SRV record without a priority would be refused by the API.
+	for _, r := range records {
+		if err := checkPriority(r.Type, r.Priority != nil, "a priority in the file"); err != nil {
+			return fmt.Errorf("%s (%s %s): %w", r.Source, r.Type, r.Host, err)
+		}
+	}
 
 	created := 0
 	var previews []output.DryRunRequest
@@ -915,9 +940,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.
 			if created > 0 {
-				out.Warn(fmt.Sprintf("%d of %s were already created on %s before this failure — "+
-					"re-run with --skip-existing to continue without duplicating them",
-					created, output.Plural(len(records), "record"), domain))
+				// Under --skip-existing, "re-run with --skip-existing" was
+				// advice to do what had just been done.
+				next := "re-run with --skip-existing to continue without duplicating them"
+				if importSkipExisting {
+					next = "fix the failing record and re-run the same command; --skip-existing skips those already created"
+				}
+				out.Warn(fmt.Sprintf("%d of %s were already created on %s before this failure — %s",
+					created, output.Plural(len(records), "record"), domain, next))
 			}
 			return fmt.Errorf("creating %s %s (after %d of %d succeeded): %w",
 				body.Type, body.Host, created, len(records), err)
@@ -1495,6 +1525,13 @@ func escapeTXT(s string) string {
 // is complete (\X, or \DDD with DDD at most 255), and every string fits in
 // 255 bytes. A raw control character inside the quotes is taken as itself.
 func parseQuotedTXT(s string) (parts []string, ok bool) {
+	return parseQuotedStrings(s, false)
+}
+
+// parseQuotedStrings is parseQuotedTXT that, with adjacent set, also reads
+// strings with nothing between them, `"a""b"`: the form the API stores a
+// multi-string TXT value in.
+func parseQuotedStrings(s string, adjacent bool) (parts []string, ok bool) {
 	i := 0
 	for {
 		if i >= len(s) || s[i] != '"' {
@@ -1540,6 +1577,9 @@ func parseQuotedTXT(s string) (parts []string, ok bool) {
 		parts = append(parts, b.String())
 		if i == len(s) {
 			return parts, true
+		}
+		if adjacent && s[i] == '"' {
+			continue
 		}
 		if s[i] != ' ' && s[i] != '\t' {
 			return nil, false

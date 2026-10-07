@@ -213,20 +213,21 @@ func ValidPriority(p int64) error {
 
 // DNSAnswerWarnings returns soft-warning messages for valid-but-suspicious record values.
 // Callers should print each returned string with out.Warn().
-func DNSAnswerWarnings(recordType, answer string, priority int64, priorityChanged bool) []string {
+//
+// There is no MX priority warning. It said "priority is 0 because --priority
+// was not set" while the request carried no priority and the API refused it,
+// and it fired on an explicit --priority 0 too; `dns create` and `dns
+// update` now require a priority for MX and SRV instead.
+//
+// Nor is there a CNAME trailing-dot warning: name.com reads every target as
+// absolute and strips the dot on storage, so "has no trailing dot — it
+// resolves relative to the zone" was never true there (#285).
+func DNSAnswerWarnings(recordType, answer string) []string {
 	var warnings []string
-	switch strings.ToUpper(recordType) {
-	case "A":
+	if strings.EqualFold(recordType, "A") {
 		if ip := net.ParseIP(answer); ip != nil && isPrivateIP(ip) {
 			warnings = append(warnings, fmt.Sprintf(
 				"A record answer %q is a private/RFC1918 address — public DNS with private IPs is usually unintentional", answer))
-		}
-	// No CNAME trailing-dot warning: name.com reads every target as absolute
-	// and strips the dot on storage, so "has no trailing dot — it resolves
-	// relative to the zone" was never true there (#285).
-	case "MX":
-		if !priorityChanged && priority == 0 {
-			warnings = append(warnings, "MX record priority is 0 (highest preference) because --priority was not set; use --priority 10 (or higher) unless this is intentional")
 		}
 	}
 	return warnings

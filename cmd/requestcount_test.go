@@ -569,6 +569,26 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"dns", "create", "example.com", "--type", "A", "--host", "api.example.org.", "--answer", "192.0.2.9", "--if-not-exists", "--yes"},
 			code: 2,
 		},
+		"dns create MX without --priority": {
+			args: []string{"dns", "create", "example.com", "--type", "MX", "--answer", "mail.example.com", "--if-not-exists", "--yes"},
+			code: 2,
+		},
+		"dns create MX without --priority --dry-run": {
+			args: []string{"dns", "create", "example.com", "--type", "MX", "--answer", "mail.example.com", "--dry-run"},
+			code: 2,
+		},
+		"dns create A with --priority": {
+			args: []string{"dns", "create", "example.com", "--type", "A", "--answer", "192.0.2.9", "--priority", "10", "--yes"},
+			code: 2,
+		},
+		"dns update A with --priority": {
+			args: []string{"dns", "update", "example.com", "42", "--priority", "10", "--yes"},
+			why:  "the record's type is known only from the GET",
+			code: 2,
+			want: []string{
+				"GET /core/v1/domains/example.com/records/42",
+			},
+		},
 		"dns update, absolute host outside the zone": {
 			args: []string{"dns", "update", "example.com", "42", "--host", "api.example.org.", "--yes"},
 			why:  "the host is checked before the record is fetched",

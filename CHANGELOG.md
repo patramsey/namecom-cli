@@ -44,6 +44,23 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `www.`; write `www`. `--host .example.com` now says it has an empty label,
   not that `--host` is empty. `dns update --host` checks the host before
   fetching the record.
+- DNS record values (ISSUE-04). `dns create` of an MX or SRV record without
+  `--priority` is a usage error (exit 2) before any request, `--dry-run`
+  included. It used to warn that the priority was 0, send none, and fail at
+  the API (exit 1). `--priority` on any other type is a usage error too: the
+  API dropped it without saying so. `dns update` checks the same once it
+  has fetched the record, and `dns import` and `dns sync` refuse an MX or
+  SRV record they would create without a priority, before sending anything.
+  An explicit `--priority 0` no longer warns. A multi-string TXT value
+  (`"a" "b"`, as a split DKIM key is written) now matches the `"a""b"` the
+  API stores. Before, `--if-not-exists` sent it again (exit 6), and `sync`
+  planned a second record. The `dns create` success line shows the value the
+  API stored. `dns export --help` no longer says `-o yaml` can be read by
+  `import` and `sync`, and those commands say a YAML file is YAML rather
+  than failing to parse it as a zone file. After a partial
+  `dns import --skip-existing`, the advice is to fix the record and re-run,
+  not to add `--skip-existing`. **Scripts:** MX/SRV creates without
+  `--priority`, and `--priority` on other types, now exit 2.
 
 ## [0.5.2] - 2026-10-07
 
