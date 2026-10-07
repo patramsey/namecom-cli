@@ -221,6 +221,11 @@ func runClaims(cmd *cobra.Command, args []string) error {
 		return out.JSON(result)
 	case output.FormatYAML:
 		return out.YAML(result)
+	case output.FormatTSV:
+		// The JSON document's keys and values. It printed a write's
+		// success/changed/message rows, with "changed true", for a read
+		// (#289).
+		return out.TSVObject(result)
 	default:
 		if !claimed {
 			out.Success(fmt.Sprintf("No trademark claims found for %s", domainName))

@@ -239,7 +239,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return out.YAMLList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
 		if len(orders) == 0 {
-			cmdutil.EmptyPage(out, listPage, "order", "")
+			cmdutil.EmptyPage(out, listPage, orderHeaders, "order", "")
 			return nil
 		}
 		orderTable(out, orders)

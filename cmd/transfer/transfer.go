@@ -211,12 +211,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		return out.YAMLList(transfers, np, 0)
 	default:
+		headers := []string{"DOMAIN", "STATUS"}
 		if len(transfers) == 0 {
-			cmdutil.EmptyPage(out, listPage, "transfer", "Run 'namecom transfer create <domain> --auth-code XXXXXX' to initiate a transfer")
+			cmdutil.EmptyPage(out, listPage, headers, "transfer", "Run 'namecom transfer create <domain> --auth-code XXXXXX' to initiate a transfer")
 			return nil
 		}
 		out.Table(
-			[]string{"DOMAIN", "STATUS"},
+			headers,
 			transferRows(out, transfers),
 		)
 		if hasMore {

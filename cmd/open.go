@@ -81,7 +81,7 @@ func renderOpenDryRun(out *output.Config, target string) error {
 type openResult struct {
 	URL    string `json:"url"              yaml:"url"`
 	Opened bool   `json:"opened"           yaml:"opened"`
-	DryRun bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
+	DryRun bool   `json:"dryRun" yaml:"dryRun"`
 }
 
 // renderOpen reports the outcome of handing target to a browser. Failing to
@@ -95,6 +95,9 @@ func renderOpen(out *output.Config, target string, launchErr error) error {
 		return out.JSON(res)
 	case output.FormatYAML:
 		return out.YAML(res)
+	case output.FormatTSV:
+		// The JSON document's url and opened rows: TSV printed nothing (#289).
+		return out.TSVObject(res)
 	}
 	if res.Opened {
 		// Hint, not bare fmt.Println: this is commentary, not data.

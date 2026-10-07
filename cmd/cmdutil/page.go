@@ -111,9 +111,9 @@ func Showing(from, to, total int, noun string) string {
 // says nothing about the list, only that --page ran past its end, so the
 // usual hint — "add the first one", or for unverified contacts "new ones
 // take ~10 minutes to appear" — would be wrong (#290).
-func EmptyPage(out *output.Config, page int, noun, hint string) {
-	if page <= 1 {
-		out.Empty(noun, hint)
+func EmptyPage(out *output.Config, page int, headers []string, noun, hint string) {
+	if page <= 1 || out.Format == output.FormatTSV {
+		out.EmptyTable(headers, noun, hint)
 		return
 	}
 	if out.Format != output.FormatTable || out.QuietMode {

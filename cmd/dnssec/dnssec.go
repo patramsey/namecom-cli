@@ -129,12 +129,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAMLList(result.Dnssec, nil, 0)
 	default:
+		headers := []string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"}
 		if len(result.Dnssec) == 0 {
-			out.Empty("DNSSEC key", fmt.Sprintf("Run 'namecom dnssec create %s --algorithm 8 --digest-type 2 --key-tag N --digest HEX' to add one", domain))
+			out.EmptyTable(headers, "DNSSEC key", fmt.Sprintf("Run 'namecom dnssec create %s --algorithm 8 --digest-type 2 --key-tag N --digest HEX' to add one", domain))
 			return nil
 		}
 		out.Table(
-			[]string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"},
+			headers,
 			dnssecRows(result.Dnssec),
 		)
 		out.Count(len(result.Dnssec), "DNSSEC key")

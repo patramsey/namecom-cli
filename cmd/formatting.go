@@ -17,16 +17,32 @@ Formats (-o, --output):
   json    The default when output is not a terminal. The README's "JSON
           contract" describes the documents: a list is {"data": [...]}.
   yaml    The same keys as json.
-  tsv     The table's columns as tab-separated values, with a header row
-          unless --no-header. No colour, a date without "(in 3 months)",
-          and an empty cell where a table shows "—". A command that shows one
-          object prints it as field<TAB>value rows (status and version name
-          the fields as -o json does, and a list in a value is a JSON array);
-          several objects (domain get a.com b.com) are one table, a row
-          each, headed by the same field names one object's rows use.
-          A write prints its result's keys as field<TAB>value
-          rows; a dry run prints method, path and body, and dns sync's plan
-          a row per change: action, type, host, answer, TTL, priority.
+  tsv     Tab-separated values for scripts. No colour, a date without
+          "(in 3 months)", and an empty cell where a table shows "—".
+
+  TSV has two shapes, and which one a command prints never depends on the
+  data:
+
+    A list      A header row (unless --no-header), then a row per item.
+                The header prints for an empty list too. The columns are
+                the table's, and the same whatever the items hold: dns list
+                always has PRIORITY. Several objects (domain get a.com
+                b.com, domain contacts get's roles) are a list, headed by
+                the field names one object's rows use.
+    One object  field<TAB>value rows, the same rows whatever it holds: a
+                value it lacks is an empty cell, not a missing row. A
+                command with a detail table (domain get) uses the table's
+                field names; one without (status, version, auth status,
+                config show, domain claims, open) uses the -o json keys,
+                with bare values — where a value came from is a key of its
+                own, such as profileSource — and a list in a value is a
+                JSON array.
+
+  A write prints its result's keys (success, changed, message) as one
+  object, and a write to several targets a row each; a read never prints
+  them. A dry run prints method, path and body as a list, and dns sync's
+  plan a row per change: action, type, host, answer, TTL, priority. dns export writes a file, JSON or a zone file, so -o table,
+  -o tsv and -q are usage errors there.
 
   In TSV a cell's backslash, tab, line feed and carriage return are written
   \\, \t, \n and \r, so every row is one line.
@@ -35,10 +51,16 @@ Picking fields (--fields a,b,c):
 
   Keeps only those keys, in that order, of each item of a list, or of the
   object a command prints. A list keeps its envelope ({"data": [...]} with
-  nextPage and total). Works with every -o: in a table or TSV the fields are
-  the columns. Names are the JSON keys (see -o json); nested keys are not
-  addressed, use --jq for those. An item without a field gets null for it.
-  A field no item has is a usage error that lists the fields there are.
+  nextPage and total). Works with every -o, in the shapes above: for a list
+  the fields are the columns, and for one object the rows. A table keeps
+  the list's footer on stderr, so a list cut short by --limit says so.
+  Names are the JSON keys (see -o json); nested keys are not addressed, use
+  --jq for those. An item without a field gets null for it. A field the
+  output cannot have is a usage error that lists the fields there are,
+  whether or not the list is empty.
+
+  The values are the JSON's, not the table's: true rather than yes, a
+  timestamp rather than a date, and an empty host, not @, for a zone apex.
 
     namecom domain list --fields domainName,expireDate -o tsv
     namecom domain get example.com --fields locked,autorenewEnabled

@@ -125,10 +125,26 @@ func TestFields(t *testing.T) {
 			want:   "{\n  \"renewalPrice\": 12.99,\n  \"domainName\": \"a.com\"\n}\n",
 		},
 		{
-			name:   "an object in tsv is one row",
+			// field<TAB>value rows, as domain get prints without --fields
+			// (#289); it was a one-row table.
+			name:   "an object in tsv is field and value rows",
 			routes: get,
 			args:   []string{"domain", "get", "a.com", "-o", "tsv", "--fields", "domainName,renewalPrice"},
-			want:   "domainName\trenewalPrice\na.com\t12.99\n",
+			want:   "domainName\ta.com\nrenewalPrice\t12.99\n",
+		},
+		{
+			name:   "an object in a table is field and value rows",
+			routes: get,
+			args:   []string{"domain", "get", "a.com", "-o", "table", "--fields", "domainName,renewalPrice"},
+			want:   "domainName    a.com\nrenewalPrice  12.99\n",
+		},
+		{
+			// A field the type has but this domain left out is null, not a
+			// typo.
+			name:   "a field the response left out",
+			routes: get,
+			args:   []string{"domain", "get", "a.com", "-o", "tsv", "--fields", "domainName,transferLockExpiresAt"},
+			want:   "domainName\ta.com\ntransferLockExpiresAt\t\n",
 		},
 		{
 			name: "a write result",
@@ -137,7 +153,7 @@ func TestFields(t *testing.T) {
 				"PATCH /core/v1/domains/a.com": {200, `{"domainName":"a.com","locked":true}`},
 			},
 			args: []string{"domain", "lock", "on", "a.com", "--yes", "-o", "tsv", "--fields", "changed"},
-			want: "changed\ntrue\n",
+			want: "changed\ttrue\n",
 		},
 		{
 			name: "a dry run",
@@ -145,10 +161,10 @@ func TestFields(t *testing.T) {
 			want: "{\n  \"method\": \"POST\",\n  \"path\": \"/core/v1/domains/example.com/records\"\n}\n",
 		},
 		{
-			name:   "an empty list",
+			name:   "an empty list prints its header",
 			routes: map[string]reply{"GET /core/v1/domains": {200, `{"domains":[]}`}},
-			args:   []string{"domain", "list", "-o", "tsv", "--fields", "anything"},
-			want:   "anything\n",
+			args:   []string{"domain", "list", "-o", "tsv", "--fields", "domainName,locked"},
+			want:   "domainName\tlocked\n",
 		},
 	}
 	for _, tc := range tests {
@@ -173,7 +189,7 @@ func TestFields_WarningsKeepTheirFormat(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr:\n%s", code, stderr)
 	}
-	if !strings.HasPrefix(stderr, "! --base-url is set") {
+	if !strings.HasPrefix(stderr, "! --base-url is set") && !strings.Contains(stderr, "\n! --base-url is set") {
 		t.Errorf("want the --base-url warning as a \"! \" line, got:\n%s", stderr)
 	}
 }
@@ -195,8 +211,16 @@ func TestFields_Unknown(t *testing.T) {
 	e, _ := env["error"].(map[string]any)
 	msg, _ := e["message"].(string)
 	if e["type"] != output.ErrorTypeUsage || !strings.Contains(msg, `"domainNme"`) ||
-		!strings.Contains(msg, "domainName, autorenewEnabled, locked") {
+		!strings.Contains(msg, "domainName, createDate, expireDate, autorenewEnabled, locked") {
 		t.Errorf("want a usage error naming domainNme and the fields available, got %v", e)
+	}
+
+	// An empty list has no items to check against, but the command's item
+	// type says what fields there are, so a typo fails there too (#289).
+	stdout, stderr, code = runFormatting(t, map[string]reply{"GET /core/v1/domains": {200, `{"domains":[]}`}},
+		"domain", "list", "-o", "tsv", "--fields", "domainNme")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, `unknown field "domainNme"`) {
+		t.Errorf("empty list: exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
 	}
 
 	stdout, stderr, code = runFormatting(t, map[string]reply{
@@ -267,7 +291,7 @@ func TestJQ_API(t *testing.T) {
 		body   string
 	}{
 		{[]string{"--jq", ".domains[].domainName"}, "a.com\nb.com\n"},
-		{[]string{"--fields", "totalCount", "-o", "tsv"}, "totalCount\n2\n"},
+		{[]string{"--fields", "totalCount", "-o", "tsv"}, "totalCount\t2\n"},
 	} {
 		stdout, stderr, code = runFormatting(t, list, append([]string{"api", "/core/v1/domains", "-i"}, tc.filter...)...)
 		head, body, _ := strings.Cut(stdout, "\n\n")

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -31,6 +33,13 @@ type Filter struct {
 	format Format    // the format asked for, which the result is printed in
 	out    io.Writer // the writer the command would have printed to
 	buf    bytes.Buffer
+
+	// known are the keys the document's objects — a list's items, or the
+	// object itself — can have, read from the Go type the command encoded
+	// (see noteKeys), or nil when it encoded no struct. noted is set once
+	// the first document has been looked at.
+	known []string
+	noted bool
 }
 
 // FilterError is a --fields or --jq that does not fit the command's output:
@@ -152,7 +161,7 @@ func (c *Config) renderFiltered(w *bytes.Buffer, raw []byte, f *Filter) error {
 	}
 	for _, doc := range docs {
 		if len(f.Fields) > 0 {
-			if doc, err = project(doc, f.Fields); err != nil {
+			if doc, err = project(doc, f.Fields, f.known); err != nil {
 				return err
 			}
 		}
@@ -205,14 +214,41 @@ func runJQ(w io.Writer, code *gojq.Code, doc any) error {
 	}
 }
 
-// fieldTable prints doc, already projected to fields, as a table or as TSV:
-// fields are the columns, in order, and each list item — or the object, for a
-// document that is not a list — is a row.
+// fieldTable prints doc, already projected to fields, as a table or as TSV,
+// in the shape the command's own table or TSV has (#289):
+//
+//   - a list is a table: the fields are the columns, in order, and each item
+//     is a row. In TSV the header row prints even when the list is empty,
+//     so a script reads the same shape whether or not there were items. A
+//     table keeps the list's footer on stderr, saying how many there are
+//     and that there are more pages, as the command's own table does.
+//   - one object is field<TAB>value rows, as a command that shows one object
+//     prints it. It was a one-row table, so --fields changed the layout of
+//     `domain get` from rows to columns.
 func (c *Config) fieldTable(w io.Writer, doc any, fields []string) error {
-	items, _ := listItems(doc)
-	if items == nil {
-		items = []any{doc}
+	prev := c.Writer
+	c.Writer = w
+	defer func() { c.Writer = prev }()
+
+	items, isList := listItems(doc)
+	if !isList {
+		obj, _ := doc.(*object)
+		rows := make([][]string, len(fields))
+		for i, f := range fields {
+			var v any
+			if obj != nil {
+				v = obj.vals[f]
+			}
+			rows[i] = []string{f, cellString(v)}
+		}
+		if c.Format == FormatTSV {
+			c.writeTSV(nil, rows)
+		} else {
+			c.KVTable(rows)
+		}
+		return nil
 	}
+
 	rows := make([][]string, 0, len(items))
 	for _, it := range items {
 		obj, _ := it.(*object)
@@ -224,9 +260,6 @@ func (c *Config) fieldTable(w io.Writer, doc any, fields []string) error {
 		}
 		rows = append(rows, row)
 	}
-	prev := c.Writer
-	c.Writer = w
-	defer func() { c.Writer = prev }()
 	if c.Format == FormatTSV {
 		c.writeTSV(fields, rows)
 		return nil
@@ -234,7 +267,83 @@ func (c *Config) fieldTable(w io.Writer, doc any, fields []string) error {
 	if len(rows) > 0 {
 		c.Table(fields, rows)
 	}
+	c.listFooter(doc, len(rows))
 	return nil
+}
+
+// listFooter prints the footer of a list --fields shows as a table: how many
+// items there are, of how many, and the page to ask for next. The command ran
+// in JSON mode, which prints no footer, so a list cut short by --limit looked
+// whole (#289). The document does not name what it lists, so the noun is
+// "result"; "--page N for more" is what cmdutil.MorePages says.
+func (c *Config) listFooter(doc any, n int) {
+	count := Plural(n, "result")
+	var more string
+	if obj, ok := doc.(*object); ok {
+		if t, ok := obj.vals["total"].(json.Number); ok {
+			if total, err := t.Int64(); err == nil && total > int64(n) {
+				count = Thousands(n) + " of " + Plural(int(total), "result")
+			}
+		}
+		if np, ok := obj.vals["nextPage"].(json.Number); ok {
+			more = "--page " + np.String() + " for more, --all for everything"
+		}
+	}
+	c.Footer(count, more)
+}
+
+// noteKeys records, while a filter runs, the JSON keys v's Go type can have —
+// of its elements when list is set, of v itself otherwise — so that --fields
+// can tell a mistyped field from one this output happens to leave out (#289).
+// Only the first document counts: JSONList notes its items before its
+// envelope reaches JSON.
+func (c *Config) noteKeys(v any, list bool) {
+	f := c.filter
+	if f == nil || f.noted {
+		return
+	}
+	f.noted = true
+	t := reflect.TypeOf(v)
+	if list {
+		if t == nil || t.Kind() != reflect.Slice {
+			return
+		}
+		t = t.Elem()
+	}
+	f.known = jsonKeys(t)
+}
+
+// jsonKeys returns the keys encoding/json writes for a struct of type t, or a
+// pointer to one, in field order, those omitempty may leave out included;
+// nil for any other type. An embedded struct's keys are its own fields'.
+func jsonKeys(t reflect.Type) []string {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
+	}
+	var keys []string
+	for i := range t.NumField() {
+		sf := t.Field(i)
+		tag := sf.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if sf.Anonymous && name == "" {
+			keys = append(keys, jsonKeys(sf.Type)...)
+			continue
+		}
+		if !sf.IsExported() {
+			continue
+		}
+		if name == "" {
+			name = sf.Name
+		}
+		keys = append(keys, name)
+	}
+	return keys
 }
 
 // TSVObject prints v, which must encode as a JSON object, as field<TAB>value
@@ -242,6 +351,10 @@ func (c *Config) fieldTable(w io.Writer, doc any, fields []string) error {
 // It is -o tsv for a command that shows one object without a field table of
 // its own — `status`, `version` — whose text report a program cannot read
 // (#268). The field names are the ones --fields and -o json use.
+//
+// When v is a struct, every key its type has gets a row, in field order, an
+// empty value where omitempty left the key out of the JSON: the rows are the
+// same whatever the data, so a script can read them by position (#289).
 func (c *Config) TSVObject(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -255,8 +368,14 @@ func (c *Config) TSVObject(v any) error {
 	if len(docs) != 1 || !ok {
 		return fmt.Errorf("TSVObject: %s is not a JSON object", b)
 	}
-	rows := make([][]string, len(obj.keys))
-	for i, k := range obj.keys {
+	keys := jsonKeys(reflect.TypeOf(v))
+	for _, k := range obj.keys {
+		if !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	rows := make([][]string, len(keys))
+	for i, k := range keys {
 		rows[i] = []string{k, cellString(obj.vals[k])}
 	}
 	c.writeTSV(nil, rows)
@@ -305,11 +424,13 @@ func listItems(doc any) ([]any, bool) {
 // document, leaving the envelope's own keys (nextPage, total, changed) alone,
 // or of the object itself. An item without a field gets null for it.
 //
-// A field that no item has is an error naming the fields there are. Absent
-// from some items is not: the API leaves out empty values, so the first item
-// alone is no guide to what a list holds. An empty list has nothing to check
-// against, and passes.
-func project(doc any, fields []string) (any, error) {
+// A field that no item has, and that known — the keys the items' Go type can
+// have, when the command said — does not name, is an error naming the fields
+// there are. Absent from some items is not: the API leaves out empty values,
+// so the first item alone is no guide to what a list holds. An empty list is
+// checked against known alone, so a typo fails whether or not there were
+// items (#289); without known it has nothing to check against, and passes.
+func project(doc any, fields []string, known []string) (any, error) {
 	if items, ok := listItems(doc); ok {
 		var avail []string
 		seen := map[string]bool{}
@@ -327,8 +448,8 @@ func project(doc any, fields []string) (any, error) {
 			}
 			out[i] = obj.pick(fields)
 		}
-		if len(items) > 0 {
-			if err := checkFields(fields, seen, avail); err != nil {
+		if len(items) > 0 || known != nil {
+			if err := checkFields(fields, seen, withKnown(avail, known, seen)); err != nil {
 				return nil, err
 			}
 		}
@@ -345,10 +466,28 @@ func project(doc any, fields []string) (any, error) {
 	for _, k := range obj.keys {
 		seen[k] = true
 	}
-	if err := checkFields(fields, seen, obj.keys); err != nil {
+	if err := checkFields(fields, seen, withKnown(obj.keys, known, seen)); err != nil {
 		return nil, err
 	}
 	return obj.pick(fields), nil
+}
+
+// withKnown returns the fields available: known, in order, then any of avail
+// it lacks. Each is added to seen. Without known it is avail.
+func withKnown(avail, known []string, seen map[string]bool) []string {
+	if known == nil {
+		return avail
+	}
+	out := slices.Clone(known)
+	for _, k := range avail {
+		if !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	for _, k := range out {
+		seen[k] = true
+	}
+	return out
 }
 
 // checkFields returns an error naming any of fields not in seen, and the
