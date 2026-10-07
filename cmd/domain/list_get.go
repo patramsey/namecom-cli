@@ -41,7 +41,8 @@ var getCmd = &cobra.Command{
 	Use:   "get <domain> [<domain>...]",
 	Short: "Get details for one or more domains",
 	Long: `Get details for one or more domains. With more than one, or with '-'
-(read domains from stdin, one per line), JSON and YAML output is an array.`,
+(read domains from stdin, one per line), JSON and YAML output is a list,
+{"data": [...]}, with one object per domain.`,
 	Example: `  namecom domain get example.com
   namecom domain get example.com example.net
   namecom domain list -q | namecom domain get - -o json`,

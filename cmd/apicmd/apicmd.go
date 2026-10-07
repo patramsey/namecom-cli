@@ -60,8 +60,8 @@ errors.
 --paginate, those of each page, then the merged body. --jq and --fields
 filter the body alone.
 
-Any method other than GET or HEAD is a write, and is confirmed as other
-writes are: a question in a terminal, and --yes when not in one. A POST
+Any method other than GET or HEAD is a write, and is confirmed: a question
+in a terminal, and --yes when not in one. A POST
 inferred from a body says so, in the question and in a warning: to send -f
 fields as a GET's query, pass -X GET. With --dry-run, a write is printed —
 method, path, and body — instead of sent. GET and HEAD still run.`,

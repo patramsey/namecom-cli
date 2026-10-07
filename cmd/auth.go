@@ -60,6 +60,12 @@ var authStatusCmd = &cobra.Command{
 var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Remove credentials for the active profile",
+	Long: `Remove the active profile, and its credentials, from the config file. It
+does not ask first.
+
+--dry-run names the profile that would be the default afterwards: in JSON,
+"default" is that profile and "defaultSource" says whether the file's
+default: key names it ("config") or the profiles left imply it ("implied").`,
 	Example: `  namecom auth logout
   namecom auth logout --profile staging`,
 	Args: cmdutil.NoArgs,

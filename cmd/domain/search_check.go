@@ -163,7 +163,12 @@ var checkCmd = &cobra.Command{
 	Long: `Check exact availability and price for one or more domains. Any number
 of names may be given; the API answers 50 per request, so a longer list is
 sent 50 at a time. '-' reads names from stdin, one per line; blank lines and
-# comments are skipped.`,
+# comments are skipped. A name given twice, in any case, is checked once.
+
+A name the registry did not answer for reads "unknown", not taken: in JSON
+and YAML its "purchasable" is null, where a taken name's is false, and the
+command exits 1. With --exit-status a name that is not available exits 1
+too, with error type "unavailable".`,
 	Example: `  namecom domain check example.com
   namecom domain check example.com myidea.io coolname.dev
   namecom domain check - < names.txt                # one name per line

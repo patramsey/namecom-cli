@@ -121,6 +121,38 @@ Releases before `0.2.0` predate this file. Their notes are on the
   as received, so they were ignored: raw JSON, exit 0. `-q` is no longer
   listed on `namecom api --help`. **Scripts** that passed them get exit 2
   and no request is sent; `-o json` and `-o table` are unchanged.
+- The README said every write needs `--yes` off a terminal (#293). Only the
+  writes that confirm do: deletes; register, renew, transfers, transfer
+  cancels and refunds; `domain set-ns`, `domain contacts set`, unlocking,
+  turning privacy off and auto-renew on or off; `dns sync`; `auth login`
+  replacing a profile; and `namecom api` writes. `dns create`, `update` and
+  `import`, `email` and `url` `create` and `update`, `vanity-ns create` and
+  `update`, `dnssec create`, `domain lock on`, `domain privacy on`,
+  `contact resend` and `verify`, `auth logout` and `config use` run without
+  asking. The README now lists both, and how lists page; no command changed.
+- `domain get --help` said several domains print a JSON array; they print
+  `{"data": [...]}` (#293). `domain check --help` says an unanswered name's
+  `purchasable` is `null` and `--exit-status` reports `unavailable`, and
+  `auth logout --help` describes its dry run's `defaultSource`, as the
+  README's JSON contract now does too.
+- Help indented under a heading, such as `namecom help formatting`, reflows
+  in a narrow terminal (#293). Each line was wrapped on its own, leaving a
+  word or two ("the", "data:") on every other line at 70 columns. Command
+  lines in help are still never wrapped.
+- `transfer eligibility` for a domain already in your account says so
+  (`name.com (this account)`) instead of suggesting `transfer internal-in`
+  (#293). It reads the domain to find out, in a table only; JSON, YAML, TSV
+  and `-q` still send one request.
+- `status` suggests `domain renew` "to renew expired domains" when the
+  domains it lists have expired, rather than "expiring" (#293).
+- A date shortened to fit the terminal keeps the date and drops its whole
+  relative phrase (#293). It was cut mid-phrase, so `contact unverified`
+  showed a missed deadline as `2026-07-19 (3 month…`, without "ago".
+- `dnssec` messages say "DS record", as its help does, rather than
+  "DNSSEC key": `No DS records found`, `DS record <digest> not found on …`
+  (#293).
+- The README's "expiring within 60 days" example works with macOS's `date`
+  as well as GNU's (#293).
 - A filter on `domain list`, `order list` or `dns list` no longer fetches
   every page (#281). It ignored `--page` and `--limit` and walked the whole
   account at `--limit` per request, so `order list --status failed --limit 2`
