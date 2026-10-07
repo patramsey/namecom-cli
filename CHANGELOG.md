@@ -15,6 +15,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   of domains to count them; the expiring domains and the transfers are
   fetched 1,000 a page. `status -q`, which prints only the domains expired
   or expiring, sends that one request instead of five.
+- `domain check` prices the names ZoneCheck finds free with one registry
+  check for up to 50 of them, where it sent a pricing request per name: 50
+  free names cost 2 requests, not 51, and seconds less behind the rate
+  limit (#294). The registry's answer is the authoritative one, so a name
+  that is in no zone but cannot be registered now reads taken, and an
+  aftermarket or premium name shows the price `domain register` would pay.
+  **Scripts**: in JSON, a free name's result now carries the registry's
+  fields (`purchaseType`, `premium`, `renewalPrice` as the registry gives
+  them) rather than the pricing endpoint's.
 
 ### Fixed
 - Mistakes caught before any request is sent are usage errors (exit 2), not

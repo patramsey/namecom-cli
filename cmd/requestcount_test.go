@@ -339,18 +339,15 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"domain", "check", "a.com"},
 			want: []string{
 				"POST /core/v1/zonecheck",
-				"GET /core/v1/domains/a.com:getPricing",
+				"POST /core/v1/domains:checkAvailability",
 			},
 		},
 		"domain check, three": {
 			args: []string{"domain", "check", "a.com", "b.com", "c.com"},
+			why:  "ZoneCheck rules out the taken names; the rest go to the registry together, 50 a request, which prices them",
 			want: []string{
 				"POST /core/v1/zonecheck",
-				together(
-					"GET /core/v1/domains/a.com:getPricing",
-					"GET /core/v1/domains/b.com:getPricing",
-					"GET /core/v1/domains/c.com:getPricing",
-				),
+				"POST /core/v1/domains:checkAvailability",
 			},
 		},
 		"domain check --authoritative": {

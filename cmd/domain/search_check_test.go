@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -139,7 +140,6 @@ func cmdForCheckJSON(t *testing.T, srv *httptest.Server) (*cobra.Command, *bytes
 // so `domain check <domain> -o json` emitted `"sld": "", "tld": ""` depending
 // on which code path served the request.
 func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
-	price := 12.99
 	free, taken := true, false
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,8 +151,9 @@ func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
 				{DomainName: "taken.co.uk", Available: &taken},
 			}
 			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 2})
-		case "/core/v1/domains/free.com:getPricing":
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case "/core/v1/domains:checkAvailability":
+			// The registry leaves free.com out, so its row is the zone's.
+			_, _ = w.Write([]byte(`{"results":[]}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -173,10 +174,10 @@ func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d: %s", len(got), buf.String())
 	}
 
-	// free.com is filled in by the pricing goroutine, taken.co.uk by the plain
-	// unavailable branch — the two branches build SearchResult separately, so
-	// both need covering. The split is at the FIRST dot, per the spec ("TLD is
-	// the rest of the domain_name after the SLD"), keeping co.uk intact.
+	// Both rows are built from the zone's answer, free.com's because the
+	// registry did not answer for it. The split is at the FIRST dot, per the
+	// spec ("TLD is the rest of the domain_name after the SLD"), keeping
+	// co.uk intact.
 	want := []struct{ domain, sld, tld string }{
 		{"free.com", "free", "com"},
 		{"taken.co.uk", "taken", "co.uk"},
@@ -194,20 +195,34 @@ func TestCheck_ZoneCheckPathPopulatesSldTld(t *testing.T) {
 	}
 }
 
-func TestCheck_ZoneCheckAvailableGetsPricing(t *testing.T) {
-	avail := true
-	price := 12.99
-	var pricingCalled bool
+// TestCheck_ZoneCheckAvailableGoesToRegistry pins #294: the names ZoneCheck
+// finds free are priced by one CheckAvailability request for all of them,
+// where each was a GetPricingForDomain of its own. The taken one is not sent.
+func TestCheck_ZoneCheckAvailableGoesToRegistry(t *testing.T) {
+	free, taken := true, false
+	var asked [][]string
+	var pricing int
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/core/v1/zonecheck":
-			results := []*coreapigo.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
-			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
-		case "/core/v1/domains/free.com:getPricing":
-			pricingCalled = true
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		switch {
+		case r.URL.Path == "/core/v1/zonecheck":
+			results := []*coreapigo.ZoneCheckResult{
+				{DomainName: "a.com", Available: &free},
+				{DomainName: "b.com", Available: &taken},
+				{DomainName: "c.com", Available: &free},
+			}
+			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 3})
+		case r.URL.Path == "/core/v1/domains:checkAvailability":
+			var body struct {
+				DomainNames []string `json:"domainNames"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			asked = append(asked, body.DomainNames)
+			_, _ = w.Write([]byte(`{"results":[{"domainName":"a.com","purchasable":true,"purchasePrice":12.99},` +
+				`{"domainName":"c.com","purchasable":true,"purchasePrice":15.99}]}`))
+		case strings.HasSuffix(r.URL.Path, ":getPricing"):
+			pricing++
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -215,12 +230,19 @@ func TestCheck_ZoneCheckAvailableGetsPricing(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cmd := cmdForCheck(t, srv)
-	if err := runCheck(cmd, []string{"free.com"}); err != nil {
+	cmd, buf := cmdForCheckJSON(t, srv)
+	if err := runCheck(cmd, []string{"a.com", "b.com", "c.com"}); err != nil {
 		t.Fatalf("runCheck: %v", err)
 	}
-	if !pricingCalled {
-		t.Error("expected GetPricingForDomain to be called for available domain")
+	if pricing != 0 || len(asked) != 1 || !slices.Equal(asked[0], []string{"a.com", "c.com"}) {
+		t.Errorf("want one CheckAvailability for [a.com c.com] and no pricing lookups, got %v and %d", asked, pricing)
+	}
+	var got []*coreapigo.SearchResult
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 3 || got[2].PurchasePrice == nil || *got[2].PurchasePrice != 15.99 || got[1].Purchasable {
+		t.Errorf("want c.com at 15.99 and b.com taken, got %s", buf.String())
 	}
 }
 
@@ -371,10 +393,24 @@ func TestRenderSearchResults_QuietMode(t *testing.T) {
 	}
 }
 
-func TestCheck_UnexpectedZoneCheckDomainSkippedForPricing(t *testing.T) {
+// freeReply answers a CheckAvailability request with every name it carried
+// purchasable at price, and returns the names.
+func freeReply(w http.ResponseWriter, r *http.Request, price float64) []string {
+	var body struct {
+		DomainNames []string `json:"domainNames"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	results := make([]*coreapigo.SearchResult, len(body.DomainNames))
+	for i, n := range body.DomainNames {
+		results[i] = &coreapigo.SearchResult{DomainName: n, Purchasable: true, PurchasePrice: &price}
+	}
+	_ = json.NewEncoder(w).Encode(coreapigo.SearchResponse{Results: results})
+	return body.DomainNames
+}
+
+func TestCheck_UnexpectedZoneCheckDomainSkippedForRegistry(t *testing.T) {
 	avail := true
-	price := 12.99
-	var pricingCalls []string
+	var asked []string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -386,11 +422,9 @@ func TestCheck_UnexpectedZoneCheckDomainSkippedForPricing(t *testing.T) {
 				{DomainName: "unexpected.com", Available: &avail},
 			}
 			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 2})
-		case "/core/v1/domains/free.com:getPricing":
-			pricingCalls = append(pricingCalls, r.URL.Path)
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case "/core/v1/domains:checkAvailability":
+			asked = append(asked, freeReply(w, r, 12.99)...)
 		default:
-			// Any request for "unexpected.com" pricing would land here.
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
 		}
@@ -401,15 +435,14 @@ func TestCheck_UnexpectedZoneCheckDomainSkippedForPricing(t *testing.T) {
 	if err := runCheck(cmd, []string{"free.com"}); err != nil {
 		t.Fatalf("runCheck: %v", err)
 	}
-	if len(pricingCalls) != 1 {
-		t.Errorf("expected exactly 1 pricing call (for free.com), got %d: %v", len(pricingCalls), pricingCalls)
+	if !slices.Equal(asked, []string{"free.com"}) {
+		t.Errorf("the registry should be asked about free.com alone, got %v", asked)
 	}
 }
 
-func TestCheck_PricingPopulatedFromGetPricing(t *testing.T) {
+func TestCheck_PricingPopulatedFromRegistry(t *testing.T) {
 	avail := true
 	price := 12.99
-	var pricingPrice float64
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -417,9 +450,8 @@ func TestCheck_PricingPopulatedFromGetPricing(t *testing.T) {
 		case "/core/v1/zonecheck":
 			results := []*coreapigo.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
 			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
-		case "/core/v1/domains/free.com:getPricing":
-			pricingPrice = price
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case "/core/v1/domains:checkAvailability":
+			freeReply(w, r, price)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -427,12 +459,16 @@ func TestCheck_PricingPopulatedFromGetPricing(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cmd := cmdForCheck(t, srv)
+	cmd, buf := cmdForCheckJSON(t, srv)
 	if err := runCheck(cmd, []string{"free.com"}); err != nil {
 		t.Fatalf("runCheck: %v", err)
 	}
-	if pricingPrice != price {
-		t.Errorf("expected GetPricing to be called and return %.2f, got %.2f", price, pricingPrice)
+	var got []*coreapigo.SearchResult
+	if err := unmarshalData(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 1 || got[0].PurchasePrice == nil || *got[0].PurchasePrice != price {
+		t.Errorf("want free.com priced at %.2f, got %s", price, buf.String())
 	}
 }
 
@@ -519,20 +555,19 @@ func TestInlineRegister_ForwardsPurchaseType(t *testing.T) {
 	}
 }
 
-// checkRegisterServer answers a ZoneCheck+pricing check for one available
+// checkRegisterServer answers a ZoneCheck+registry check for one available
 // domain and records whether CreateDomain was ever called.
 func checkRegisterServer(t *testing.T, registered *bool) *httptest.Server {
 	t.Helper()
 	avail := true
-	price := 12.99
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "zonecheck"):
 			results := []*coreapigo.ZoneCheckResult{{DomainName: "free.com", Available: &avail}}
 			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
-		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			freeReply(w, r, 12.99)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/domains"):
 			*registered = true
 			_ = json.NewEncoder(w).Encode(coreapigo.CreateDomainResponse{})
@@ -712,8 +747,8 @@ func TestCheck_NormalizesDomainArgs(t *testing.T) {
 			// The API answers with the canonical lowercase name.
 			results := []*coreapigo.ZoneCheckResult{{DomainName: "example.com", Available: &avail}}
 			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
-		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			freeReply(w, r, price)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -758,8 +793,8 @@ func TestCheck_MatchesPunycodeResponse(t *testing.T) {
 			// Canonical punycode reply for the Unicode name we asked about.
 			results := []*coreapigo.ZoneCheckResult{{DomainName: "xn--caf-dma.com", Available: &avail}}
 			_ = json.NewEncoder(w).Encode(coreapigo.ZoneCheckResponse{Results: results, Total: 1})
-		case strings.Contains(r.URL.Path, "getPricing"):
-			_ = json.NewEncoder(w).Encode(coreapigo.PricingResponse{PurchasePrice: &price})
+		case strings.Contains(r.URL.Path, "checkAvailability"):
+			freeReply(w, r, price)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -814,7 +849,7 @@ func TestArgMatcher(t *testing.T) {
 		if !ok || i != 0 {
 			t.Fatalf("a lone outstanding argument should absorb the reply, got %d ok=%v", i, ok)
 		}
-		// Idempotent: the pricing pass looks the same name up again.
+		// Idempotent: the registry pass looks the same name up again.
 		if j, ok2 := m.match("xn--caf-dma.com"); !ok2 || j != i {
 			t.Errorf("second lookup must resolve identically, got %d ok=%v", j, ok2)
 		}
@@ -904,7 +939,7 @@ func TestInlineRegister_ChecksTrademarkClaims(t *testing.T) {
 func TestArgMatcher_DefectsFoundInReview(t *testing.T) {
 	t.Run("duplicate arguments leave the extra slot unclaimed, not mis-claimable", func(t *testing.T) {
 		// `check a.com a.com` is degenerate input. Idempotency wins over
-		// distributing duplicates: the zone pass and the pricing pass both look
+		// distributing duplicates: the zone pass and the registry pass both look
 		// up the same API name and MUST resolve to the same slot, so a repeated
 		// lookup returns the cached index rather than advancing to the next
 		// duplicate. The leftover slot must then stay unclaimed — if elimination

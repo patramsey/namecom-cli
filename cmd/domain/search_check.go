@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -22,10 +21,10 @@ import (
 // together. "registration" is the API's own default, so we omit it rather than
 // send a redundant field.
 //
-// Note this is only ever populated from a real SearchResult. The ZoneCheck path
-// in runCheck cannot supply one: neither ZoneCheck nor GetPricingForDomain
-// returns a purchaseType, so results synthesized there can structurally only
-// represent a plain registration.
+// Note this is only ever populated from a real SearchResult. A result runCheck
+// synthesizes from ZoneCheck alone — a free name the registry then left out —
+// has no purchaseType, so it can structurally only represent a plain
+// registration.
 func nonDefaultPurchaseType(r *coreapigo.SearchResult) (*string, *float64) {
 	if r.PurchaseType == nil {
 		return nil, nil
@@ -288,14 +287,21 @@ func checkRegistry(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult
 	return results, nil
 }
 
-// checkZone is checkRegistry by way of ZoneCheck, a pricing lookup for each
-// available name, and CheckAvailability for the TLDs ZoneCheck does not cover.
+// checkZone is checkRegistry by way of ZoneCheck: the names ZoneCheck finds
+// in a zone are taken, and the rest — available, or in a TLD ZoneCheck does
+// not cover — go to the registry in one CheckAvailability request.
+//
+// That request is what prices them. It used to be a GetPricingForDomain per
+// available name, so a list of 50 free names cost 50 requests and several
+// seconds behind the rate limiter (#294); CheckAvailability answers 50 at
+// once, with the price, the renewal price, premium status and the purchase
+// type, and it is the registry's answer rather than the zone file's.
 func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, error) {
 	client := cmdutil.APIClient(cmd)
 
 	// Step 1: ZoneCheck — fast DNS zone file lookup for all domains at once.
-	// Available==true: available; Available==false: taken; Available==nil: TLD
-	// not supported by ZoneCheck, fall back to CheckAvailability for those.
+	// Available==true: not in a zone; Available==false: taken; Available==nil:
+	// TLD not supported by ZoneCheck.
 	stop := cmdutil.Out(cmd).Spin("Checking availability…")
 	zoneResult, err := client.SDK().Domains.ZoneCheck(cmd.Context(),
 		&coreapigo.ZoneCheckRequest{DomainNames: args})
@@ -309,7 +315,7 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 	finalResults := make([]*coreapigo.SearchResult, len(args))
 	matcher := newArgMatcher(args)
 
-	var unsupported []string
+	var registry []string
 	seen := make(map[string]bool, len(args))
 	for _, r := range zoneResult.Results {
 		idx, ok := matcher.match(r.DomainName)
@@ -319,73 +325,35 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 		seen[args[idx]] = true
 		if r.Available == nil {
 			// Null means this TLD isn't supported by ZoneCheck.
-			unsupported = append(unsupported, r.DomainName)
+			registry = append(registry, r.DomainName)
 			continue
 		}
 		sld, tld, _ := strings.Cut(r.DomainName, ".")
+		// The zone's answer stands for a taken name, and for a free one
+		// until the registry answers below — without a price, should it
+		// leave the name out.
 		finalResults[idx] = &coreapigo.SearchResult{
 			DomainName:  r.DomainName,
 			Purchasable: *r.Available,
 			Sld:         sld,
 			Tld:         tld,
 		}
+		if *r.Available {
+			registry = append(registry, r.DomainName)
+		}
 	}
 	// Domains absent from ZoneCheck results entirely (pre-validation failure)
-	// fall back to CheckAvailability rather than rendering as a blank row.
+	// go to the registry rather than rendering as a blank row.
 	for _, name := range args {
 		if !seen[name] {
-			unsupported = append(unsupported, name)
+			registry = append(registry, name)
 		}
 	}
 
-	// Step 2: Fetch pricing in parallel for domains ZoneCheck says are available.
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var pricingErr error
-
-	for _, r := range zoneResult.Results {
-		if r.Available == nil || !*r.Available {
-			continue
-		}
-		idx, ok := matcher.match(r.DomainName)
-		if !ok {
-			continue // unexpected domain from API; skip
-		}
-		wg.Add(1)
-		go func(domainName string, idx int) {
-			defer wg.Done()
-			pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
-				&coreapigo.GetPricingForDomainRequest{DomainName: domainName})
-			if err != nil {
-				mu.Lock()
-				pricingErr = api.FromSDKError(err)
-				mu.Unlock()
-				return
-			}
-			premium := pricing.Premium
-			sld, tld, _ := strings.Cut(domainName, ".")
-			mu.Lock()
-			finalResults[idx] = &coreapigo.SearchResult{
-				DomainName:    domainName,
-				Purchasable:   true,
-				PurchasePrice: pricing.PurchasePrice,
-				RenewalPrice:  pricing.RenewalPrice,
-				Premium:       &premium,
-				Sld:           sld,
-				Tld:           tld,
-			}
-			mu.Unlock()
-		}(r.DomainName, idx)
-	}
-	wg.Wait()
-	if pricingErr != nil {
-		return nil, fmt.Errorf("fetching pricing: %w", pricingErr)
-	}
-
-	// Step 3: CheckAvailability for TLDs ZoneCheck returned null for.
-	if len(unsupported) > 0 {
+	// Step 2: CheckAvailability for every name not known to be taken.
+	if len(registry) > 0 {
 		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
-			&coreapigo.AvailabilityRequest{DomainNames: unsupported})
+			&coreapigo.AvailabilityRequest{DomainNames: registry})
 		if err != nil {
 			return nil, fmt.Errorf("checking availability: %w", api.FromSDKError(err))
 		}
@@ -635,7 +603,7 @@ type argMatcher struct {
 	args    []string
 	claimed []bool
 	// alias remembers resolutions so repeated lookups (the zone pass and the
-	// pricing pass both ask) return the same slot.
+	// registry pass both ask) return the same slot.
 	alias map[string]int
 }
 
