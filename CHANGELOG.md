@@ -30,6 +30,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   contains the advice, which is in `error.hint`, and `transfer get` and
   `transfer cancel` say `transfer of "x" not found` where they said `no
   transfer found for "x"`. The exit code is still 4.
+- `--jq` with `-o table` or `-o tsv`, and `-q` with `--fields`, printed
+  their usage error as the JSON envelope when stdout was not a terminal,
+  though `-o` had asked for text (#291). They now print the `✗` line, as
+  other usage errors do. **Scripts**: with `-o table` or `-o tsv`, stderr
+  for these is no longer JSON.
 - `email create` for a mailbox that already exists reported "Created … →
   <your --to>" and exited 0, though the API had changed nothing and the
   mailbox still forwarded to its old address (#283). It now fails (exit 1)

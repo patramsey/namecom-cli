@@ -299,3 +299,27 @@ func TestErrorOutput_EarlyFailureHonoursOutputFlag(t *testing.T) {
 		})
 	}
 }
+
+// TestErrorOutput_FilterConflictHonoursOutputFlag pins #291: a --jq or
+// --fields that cannot go with the other output flags failed in
+// buildOutputConfig, and the error then fell back to the TTY default, so
+// `--jq … -o table` in a pipe printed the JSON envelope. A valid -o is still
+// the format the error is shown in.
+func TestErrorOutput_FilterConflictHonoursOutputFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"domain", "list", "--jq", ".data", "-o", "table"},
+		{"domain", "list", "--jq", ".data", "-o", "tsv"},
+		{"domain", "list", "-q", "--fields", "domainName", "-o", "table"},
+	} {
+		t.Run(strings.Join(args[2:], " "), func(t *testing.T) {
+			resetFlags(t, args)
+			_, stderr, code := runContract(t, args...)
+			if code != 2 {
+				t.Errorf("exit %d, want 2", code)
+			}
+			if !strings.HasPrefix(stderr, "✗ ") {
+				t.Errorf("want a ✗ line, as -o asked for text, got:\n%s", stderr)
+			}
+		})
+	}
+}

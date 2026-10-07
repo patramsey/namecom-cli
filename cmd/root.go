@@ -489,7 +489,18 @@ func errorOutput() *output.Config {
 	if out, _, err := buildOutputConfig(); err == nil {
 		return out
 	}
-	return output.DefaultConfig()
+	// The flags do not go together — `--jq … -o table`, `-q --fields` — but
+	// a valid -o and --color still say how to show that (#291). Only a bad
+	// value for one of them leaves its default.
+	out := output.DefaultConfig()
+	if f, err := output.ParseFormat(gf.output); gf.output != "" && err == nil {
+		out.Format = f
+	}
+	if cm, err := output.ParseColorMode(gf.color); gf.color != "auto" && err == nil {
+		out.Color = cm
+	}
+	out.ApplyColorProfile()
+	return out
 }
 
 // scanOutputFlag returns the value of the last -o/--output in args, in any
