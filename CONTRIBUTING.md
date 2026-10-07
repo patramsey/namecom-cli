@@ -91,6 +91,17 @@ against an `httptest` stub to capture what is *sent*) and assert the two
 agree, body included (`drifttest.AssertDryRunBodyMatches`). Hand-written
 dry-run strings drift silently otherwise.
 
+Every request a command sends is pinned by `TestRequestCounts` in
+`cmd/requestcount_test.go`: method, path and query, in order, per command
+and per mode that changes them (`--dry-run`, `--yes`, a prompt, `-q`,
+`-o table`). A new command, or a change to what an existing one sends,
+needs a row there. Send no request the command does not need: read once and
+reuse the answer; when walking every page, ask for `cmdutil.MaxPerPage`
+(1000), not the display `--limit`; read several targets with
+`cmdutil.FetchEach`; and do not fetch for a prompt that will not be shown.
+A request kept as a deliberate trade-off, such as a read before a
+destructive write, gets a `why` in its row.
+
 Send the write through `cmdutil.RunWrite` rather than checking `--dry-run`
 and calling `Confirm` by hand. Build the request body once and put it in the
 `Write`: RunWrite previews that value under `--dry-run` without prompting,
