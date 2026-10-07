@@ -61,6 +61,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `dns import --skip-existing`, the advice is to fix the record and re-run,
   not to add `--skip-existing`. **Scripts:** MX/SRV creates without
   `--priority`, and `--priority` on other types, now exit 2.
+- `url create --host` reads a host as `dns create` does (ISSUE-03): `www`,
+  `www.example.com` and `www.example.com.` all forward www, and
+  `example.com` is the apex. A fully qualified host was sent as typed and
+  made a forwarding for `www.example.com.example.com`, and one with a
+  trailing dot was refused. A trailing-dot name outside the domain, such as
+  `www.other.org.`, is a usage error (exit 2) before any request.
 
 ## [0.5.2] - 2026-10-07
 

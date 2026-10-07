@@ -114,7 +114,7 @@ var deleteCmd = &cobra.Command{
 func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "forwarding entries")
 
-	createCmd.Flags().StringVar(&createHost, "host", "@", "host to forward (@ for apex); forwarding a subdomain replaces its A records")
+	createCmd.Flags().StringVar(&createHost, "host", "@", "host to forward: www, www.example.com, or @ for the apex; forwarding a subdomain replaces its A records")
 	createCmd.Flags().StringVar(&createForwardsTo, "to", "", "destination URL "+cmdutil.PromptedRequired)
 	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: "+urlTypes)
 	createCmd.Flags().StringVar(&createTitle, "title", "", "page title (masked only)")
@@ -297,8 +297,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// The API treats host "" as distinct from "@": a forwarding on "" replaces
 	// every apex A record and adds a "*" wildcard, and deleting it removes
 	// every apex A record. Refuse it the way `dns create` does, before the
-	// form asks for anything else.
-	if err := cmdutil.ValidDNSHost(createHost); err != nil {
+	// form asks for anything else. A fully qualified host is made relative,
+	// as `dns create` makes it: sent as typed, www.example.com became a
+	// forwarding for www.example.com.example.com.
+	host, err := cmdutil.ZoneHost(createHost, domain)
+	if err != nil {
 		return err
 	}
 
@@ -315,7 +318,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			huh.NewGroup(
 				huh.NewInput().
 					Title("Destination URL").
-					Description(fmt.Sprintf("Where should %s forward to?", forwardingName(domain, createHost))).
+					Description(fmt.Sprintf("Where should %s forward to?", forwardingName(domain, host))).
 					Placeholder("https://example.com").
 					Value(&createForwardsTo).
 					Validate(validateDestination),
@@ -347,7 +350,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// /core/v1/domains//url/forwarding with an empty segment.
 	body := coreapigo.URLForwardingInput{
 		DomainName: domain,
-		Host:       createHost,
+		Host:       host,
 		ForwardsTo: createForwardsTo,
 		Type:       coreapigo.URLForwardingInputType(createType),
 	}
@@ -396,7 +399,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(entry)
 	default:
-		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, createHost, createForwardsTo))
+		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, host, createForwardsTo))
 	}
 	return nil
 }
