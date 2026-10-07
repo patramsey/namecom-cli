@@ -672,11 +672,13 @@ func renderAuthStatus(out *output.Config, rows [][]string) {
 		return
 	}
 	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
+	case output.FormatJSON, output.FormatYAML, output.FormatTSV:
+		// A row with a source has its Source key even when the source is
+		// empty, so the keys are the same whatever the credentials (#289).
 		fields := make(map[string]any, 2*len(rows)+1)
 		for _, r := range rows {
 			key := strings.ToLower(strings.ReplaceAll(r[0], " ", "_"))
-			if len(r) > 2 && r[2] != "" {
+			if len(r) > 2 {
 				fields[key+"Source"] = r[2]
 			}
 			if key != "token" {
@@ -685,11 +687,18 @@ func renderAuthStatus(out *output.Config, rows [][]string) {
 		}
 		// A boolean, not the string "true" it used to be (#187).
 		fields["verified"] = true
-		if out.Format == output.FormatJSON {
+		switch out.Format {
+		case output.FormatJSON:
 			_ = out.JSON(fields)
-			return
+		case output.FormatYAML:
+			_ = out.YAML(fields)
+		default:
+			// The JSON document's keys and bare values, its source a key of
+			// its own. TSV printed the table's labels, each value with its
+			// source appended, after a write's success/changed/message rows
+			// (#289).
+			_ = out.TSVObject(fields)
 		}
-		_ = out.YAML(fields)
 	default:
 		out.Success("Credentials verified")
 		table := make([][]string, 0, len(rows))

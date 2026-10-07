@@ -207,12 +207,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		return out.YAMLList(all, np, 0)
 	default:
+		headers := []string{"ID", "HOST", "FORWARDS TO", "TYPE"}
 		if len(all) == 0 {
-			cmdutil.EmptyPage(out, listPage, "URL forwarding", fmt.Sprintf("Run 'namecom url create %s --to https://example.com' to add one", domain))
+			cmdutil.EmptyPage(out, listPage, headers, "URL forwarding", fmt.Sprintf("Run 'namecom url create %s --to https://example.com' to add one", domain))
 			return nil
 		}
 		out.Table(
-			[]string{"ID", "HOST", "FORWARDS TO", "TYPE"},
+			headers,
 			urlRows(all),
 		)
 		if hasMore {

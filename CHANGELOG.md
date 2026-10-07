@@ -146,13 +146,55 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--order-id`; it was reported as an unknown command.
 - `open --dry-run` prints the URL and opens nothing (#292). It launched the
   browser and reported `"opened": true`. **Scripts:** its JSON is now
-  `{"url": …, "opened": false, "dryRun": true}`.
+  `{"url": …, "opened": false, "dryRun": true}`; a real `open` reports `"dryRun": false`, so the key is always there.
 - `auth logout --dry-run` names the profile that would be the default
   afterwards (#292). Removing the default profile with one other left
   previewed `"default": ""`, though the one left becomes the implied default.
   **Scripts:** `default` now holds that profile, and a new `defaultSource`
   key says `config` (the file's `default:` key) or `implied`; the table line
   ends `(leaving "prod" as the default)`.
+- `-o tsv` and `--fields` have one shape per command, whatever the data
+  (#289). `namecom help formatting` states the rules: a list is a header row
+  and a row per item, with fixed columns; one object is `field<TAB>value`
+  rows, the same rows whatever it holds; a read never prints a write's
+  `success`/`changed`/`message` rows. **Scripts:** each of these changes
+  what a script reads.
+  - An empty list prints its header row under `-o tsv` (none with
+    `--no-header`), as `domain search` and `--fields` already did. `domain`,
+    `dns`, `transfer`, `url`, `email`, `vanity-ns`, `dnssec` and
+    `order list`, and `contact unverified`, printed nothing.
+  - `domain get` always has `Renews at`, `Transfer lock` and `Registrant`,
+    empty when unset: several domains had a `Transfer lock` column only when
+    one of them was in a transfer lock, which moved `Privacy` and every
+    later column. `dns list -o tsv` always has `PRIORITY`. `status` and
+    `version` print every key their JSON can have, empty when unset.
+  - `domain contacts get` prints a table, a block per role, and under
+    `-o tsv` one table with a row per role (registrant, admin, tech,
+    billing). It printed its JSON whatever `-o` said.
+  - `domain claims`, `auth status` and `config show` print their JSON keys
+    and bare values under `-o tsv`. `domain claims` and `auth status` printed
+    `success`/`changed true`/`message` rows for a read; `auth status` and
+    `config show` keyed rows by their table labels with the source appended
+    to each value (`work  (profile default)`), where the source is now a key
+    of its own (`profileSource`). `auth status` JSON always has
+    `profileSource` and `environmentSource`, empty when there is none.
+  - `open -o tsv` prints `url` and `opened` rows; it printed nothing.
+  - `dns export -o table`, `-o tsv` and `-q` are usage errors (exit 2),
+    sent before any request. `dns export` writes a file, JSON, YAML or a zone
+    file, and those flags were ignored.
+  - `--fields` on one object prints `field<TAB>value` rows in TSV and a
+    table, as the object prints without it; it was a header row and one
+    value row.
+  - `--fields` names a field the output cannot have as a usage error on an
+    empty list too, checked against the fields the items can have; it
+    printed `{"data": []}` and exited 0. A field an object's type has but
+    this response left out is `null` rather than an error.
+  - `--fields` with a table keeps the list's footer on stderr ("2 of 6,522
+    results · --page 2 for more"), so a list cut short by `--limit` says so.
+  - `contact unverified -o json` includes the deadline warning in the
+    `warnings` on stderr, and a piped table prints it as `! …`, like every
+    other warning, rather than `WARNING: …`. `domain contacts get` does the
+    same for unverified contacts.
 
 ## [0.5.1] - 2026-10-05
 

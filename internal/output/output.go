@@ -44,7 +44,9 @@ const (
 	// FormatTSV is the table as tab-separated values (#241): the same
 	// columns, a header row unless --no-header, no styling, and each cell
 	// escaped so that a row is one line. An object a table shows as fields
-	// and values prints as field<TAB>value rows.
+	// and values prints as field<TAB>value rows. Neither shape depends on
+	// the data (#289): an empty list prints its header, and a value an
+	// object lacks is an empty cell. `namecom help formatting` has the rules.
 	FormatTSV Format = "tsv"
 )
 
@@ -77,8 +79,9 @@ type Config struct {
 	//
 	// Hints, success lines, counts and spinners never print in quiet mode.
 	// Warnings and errors still go to stderr. Quiet() is the helper commands
-	// use to honour this. A --dry-run preview, `dns export` and `api` print
-	// their document regardless: that document is what was asked for.
+	// use to honour this. A --dry-run preview and `api` print their document
+	// regardless: that document is what was asked for. `dns export`, which
+	// writes a file, refuses -q.
 	QuietMode bool
 	NoHeader  bool      // --no-header: omit header row from table output
 	Color     ColorMode // --color flag value
@@ -225,6 +228,7 @@ var (
 
 // JSON encodes v as indented JSON to the configured writer.
 func (c *Config) JSON(v any) error {
+	c.noteKeys(v, false)
 	return encodeJSON(c.Writer, v)
 }
 
@@ -417,6 +421,7 @@ func newListEnvelope(data any, nextPage *int32, total int32) listEnvelope {
 // JSONList encodes data as a pagination envelope: {"data":[…],"nextPage":N,"total":N}.
 // nextPage is omitted when nil or zero; total is omitted when zero.
 func (c *Config) JSONList(data any, nextPage *int32, total int32) error {
+	c.noteKeys(data, true)
 	return c.JSON(newListEnvelope(data, nextPage, total))
 }
 
@@ -758,7 +763,9 @@ func (c *Config) KVTables(titles []string, objs [][][]string) {
 			if i > 0 && c.Format == FormatTable && !c.QuietMode {
 				fmt.Fprintln(c.Writer)
 			}
-			c.Title(titles[i])
+			if titles[i] != "" {
+				c.Title(titles[i])
+			}
 			c.KVTable(rows)
 		}
 		return
@@ -2079,6 +2086,21 @@ func (c *Config) Empty(noun, hint string) {
 	}
 }
 
+// EmptyTable is Empty for a list whose table has headers. In TSV it prints
+// the header row alone (none with --no-header), so a list prints the same
+// shape with or without items (#289): most lists printed nothing at all when
+// empty, while `domain search` and --fields printed the header. In a table it
+// is Empty, or nothing when noun is "", for a list that has said so already.
+func (c *Config) EmptyTable(headers []string, noun, hint string) {
+	if c.Format == FormatTSV && !c.QuietMode {
+		c.writeTSV(headers, nil)
+		return
+	}
+	if noun != "" {
+		c.Empty(noun, hint)
+	}
+}
+
 // WarnBox prints a bordered warning box to stderr. Use for important notices
 // that warrant more visual weight than a single Warn line.
 //
@@ -2106,7 +2128,9 @@ func (c *Config) WarnBox(lines ...string) {
 		}
 		fmt.Fprintln(c.EWriter, style.Render(body))
 	} else {
-		fmt.Fprintln(c.EWriter, "WARNING: "+body)
+		// The "! " every other warning has, not "WARNING: ", which a piped
+		// table printed where TSV printed "! " for the same box (#289).
+		c.warnLine(strings.Join(lines, "\n  "))
 	}
 }
 

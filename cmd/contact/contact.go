@@ -146,26 +146,40 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// The deadline warning goes with the list in every format: in JSON and
+	// YAML it is one of the "warnings" on stderr, where it was left out
+	// (#289).
+	warn := func() {
+		if len(contacts) > 0 {
+			out.WarnBox(
+				deadlineWarning(contacts, time.Now()),
+				"Run 'namecom contact resend <id>' to send the verification email again.",
+			)
+		}
+	}
 	switch out.Format {
 	case output.FormatJSON:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
+		warn() // kept back, and printed with the other warnings at the end
 		return out.JSONList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
+		warn() // kept back, and printed with the other warnings at the end
 		return out.YAMLList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
+		headers := []string{"ID", "EMAIL", "DEADLINE", "DOMAINS"}
 		if len(contacts) == 0 {
-			cmdutil.EmptyPage(out, listPage, "unverified contact", "Newly triggered verifications can take ~10 minutes to appear")
+			cmdutil.EmptyPage(out, listPage, headers, "unverified contact", "Newly triggered verifications can take ~10 minutes to appear")
 			return nil
 		}
 		out.Table(
-			[]string{"ID", "EMAIL", "DEADLINE", "DOMAINS"},
+			headers,
 			unverifiedRows(out, contacts),
 			output.Essential("DOMAINS"),
 		)
@@ -178,10 +192,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		default:
 			out.Count(len(contacts), "unverified contact")
 		}
-		out.WarnBox(
-			deadlineWarning(contacts, time.Now()),
-			"Run 'namecom contact resend <id>' to send the verification email again.",
-		)
+		warn()
 	}
 	return nil
 }

@@ -267,6 +267,10 @@ func runShow(cmd *cobra.Command, _ []string) error {
 		return out.JSON(fields)
 	case output.FormatYAML:
 		return out.YAML(fields)
+	case output.FormatTSV:
+		// The JSON document's keys and bare values. TSV printed the table's
+		// labels, each value with its source appended (#289).
+		return out.TSVObject(fields)
 	default:
 		profileDisplay := profileName
 		if profileDisplay == "" {

@@ -328,8 +328,9 @@ until you pass `--yes`.
 ## Output formats
 
 Every command supports `--output table`, `--output json`, `--output yaml`
-and `--output tsv`. The default is `table` in a terminal and `json` when
-output is piped or redirected:
+and `--output tsv`, except `dns export`, which writes a file: JSON, YAML or
+a zone file. The default is `table` in a terminal and `json` when output is
+piped or redirected:
 
 ```bash
 namecom domain list                     # rich table with colors and expiry urgency
@@ -345,8 +346,11 @@ namecom domain list --quiet             # one domain per line, for scripting
 `--fields a,b,c` keeps only those keys — the JSON keys `-o json` shows — of
 each list item, or of the object a command prints, in that order. A list
 keeps its `{"data": [...]}` envelope, so `nextPage` and `total` are still
-there. It works with every `-o`: in a table or TSV the fields are the
-columns.
+there. It works with every `-o`, in the TSV shapes below: for a list the
+fields are the columns, and for one object the `field<TAB>value` rows. A
+table keeps the list's footer on stderr, so a list cut short by `--limit`
+says so. The values are the JSON's, not the table's: `true` rather than
+`yes`, a timestamp rather than a date, an empty host rather than `@`.
 
 ```bash
 namecom domain list --all --fields domainName,expireDate -o tsv --no-header |
@@ -356,7 +360,8 @@ namecom dns list example.com --fields id,type,host,answer -o table
 
 An item without a field gets `null` for it (an empty TSV cell): the API
 leaves out empty values, so items do not all have the same keys. A field
-that no item has is a usage error (exit 2) that lists the fields there are.
+the output cannot have is a usage error (exit 2) that lists the fields there
+are — on an empty list too.
 `--fields` names top-level keys only; reach into nested ones with `--jq`.
 
 `--jq <expr>` runs a jq expression over the document `-o json` would print,
@@ -385,12 +390,21 @@ on stderr with its usual exit code.
 unless `--no-header`. There is no colour, a date has no "(in 3 months)", and
 a missing value is an empty cell, not "—". A backslash, tab, line feed or
 carriage return in a value is written `\\`, `\t`, `\n` or `\r`, so every row
-is one line. A command that shows one object (`domain get`) prints
-`field<TAB>value` rows; a write prints its result's keys the same way
-(`changed<TAB>true`); a dry run prints `method`, `path` and `body` (as
-compact JSON) columns. `status` and `version`, whose terminal output is a
-report rather than a table, print that report; use `--fields` or `--jq`
-with them.
+is one line. The shape never depends on the data:
+
+- A list prints a header row and a row per item, with the same columns
+  whatever the items hold, and the header alone when it is empty. Several
+  objects (`domain get a.com b.com`, the roles of `domain contacts get`)
+  are a list.
+- One object prints `field<TAB>value` rows, the same rows whatever it holds:
+  a value it lacks is an empty cell. `domain get` uses its table's field
+  names; a command without a detail table (`status`, `version`,
+  `auth status`, `config show`, `domain claims`, `open`) uses the `-o json`
+  keys with bare values, a value's source as a key of its own
+  (`profileSource`).
+- A write prints its result's keys the same way (`changed<TAB>true`); a read
+  never does. A dry run prints `method`, `path` and `body` (as compact JSON)
+  columns.
 
 `-q` still wins over `-o`, `tsv` included. With `--fields` or `--jq`, which
 choose what to print as well, it is a usage error.

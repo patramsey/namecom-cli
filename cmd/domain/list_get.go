@@ -253,15 +253,16 @@ func runList(cmd *cobra.Command, _ []string) error {
 		}
 		return out.YAMLList(domains, np, cmdutil.Int32Count(lastResult.TotalCount))
 	default:
+		headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
 		if len(domains) == 0 {
 			if isFiltered(cmd) && listPage == 1 {
 				out.Warn("no domains matched — try a different filter")
+				out.EmptyTable(headers, "", "") // the warning says it; TSV still gets its header
 			} else {
-				cmdutil.EmptyPage(out, listPage, "domain", "Run 'namecom domain register <domain>' to register your first domain")
+				cmdutil.EmptyPage(out, listPage, headers, "domain", "Run 'namecom domain register <domain>' to register your first domain")
 			}
 			return nil
 		}
-		headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
 		rows := make([][]string, 0, len(domains))
 		for _, d := range domains {
 			rows = append(rows, []string{
@@ -370,7 +371,14 @@ func runGet(cmd *cobra.Command, args []string) error {
 // appear only when the response carries them: the JSON had all three while
 // the table showed none, so the renewal price, the date an unlock becomes
 // possible, and whose name the domain is in were a `-o json` away (#235).
+//
+// In TSV every row is there, empty when the response has no value: the rows
+// of one domain, and the columns of several, are the same whatever the
+// domains hold, so a script can read them by position (#289). Several
+// domains of which only one was in a transfer lock had a Transfer lock
+// column; without one, Privacy moved a column left.
 func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time.Time) [][]string {
+	always := out.Format == output.FormatTSV
 	rows := [][]string{
 		{"Domain", d.DomainName},
 		{"Created", out.Dim(formatTime(d.CreateDate))},
@@ -378,6 +386,8 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 	}
 	if d.RenewalPrice != nil {
 		rows = append(rows, []string{"Renews at", output.Money(*d.RenewalPrice)})
+	} else if always {
+		rows = append(rows, []string{"Renews at", ""})
 	}
 	rows = append(rows,
 		[]string{"Auto-Renew", out.BoolBadge(d.AutorenewEnabled)},
@@ -390,12 +400,16 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 			lock = t.Format("2006-01-02") // a date, as TSV prints Expires
 		}
 		rows = append(rows, []string{"Transfer lock", lock})
+	} else if always {
+		rows = append(rows, []string{"Transfer lock", ""})
 	}
 	rows = append(rows, []string{"Privacy", out.BoolBadge(d.PrivacyEnabled)})
+	registrant := ""
 	if d.Contacts != nil {
-		if r := registrantLabel(d.Contacts.Registrant); r != "" {
-			rows = append(rows, []string{"Registrant", r})
-		}
+		registrant = registrantLabel(d.Contacts.Registrant)
+	}
+	if registrant != "" || always {
+		rows = append(rows, []string{"Registrant", registrant})
 	}
 	return append(rows, []string{"Nameservers", out.Dim(formatNS(d.Nameservers))})
 }

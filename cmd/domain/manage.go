@@ -511,17 +511,89 @@ func runContactsGet(cmd *cobra.Command, args []string) error {
 
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSON(d.Contacts)
+		err = out.JSON(d.Contacts)
 	case output.FormatYAML:
-		return out.YAML(d.Contacts)
+		err = out.YAML(d.Contacts)
 	default:
-		if err := out.JSON(d.Contacts); err != nil {
-			return err
-		}
+		// A block per role in a table; one table, a row per role, in TSV.
+		// Both printed the JSON document, whatever -o said (#289).
+		var c coreapigo.Contacts
 		if d.Contacts != nil {
-			warnUnverifiedContacts(out, *d.Contacts)
+			c = *d.Contacts
 		}
-		return nil
+		roles := contactRoles(c)
+		blocks := make([][][]string, len(roles))
+		for i, r := range roles {
+			blocks[i] = contactRows(out, r.name, r.contact)
+		}
+		out.KVTables(make([]string, len(roles)), blocks)
+	}
+	// In every format: in JSON and YAML the warning joins the "warnings" on
+	// stderr, where it was left out.
+	if err == nil && d.Contacts != nil {
+		warnUnverifiedContacts(out, *d.Contacts)
+	}
+	return err
+}
+
+// contactRole is one of a domain's contacts, as contacts get shows it.
+type contactRole struct {
+	name    string
+	contact *coreapigo.Contact
+}
+
+// contactRoles returns c's four roles, registrant first, as the owner of
+// record. A role the response lacks is there, empty, so the rows are the same
+// for every domain. The registrant is the SDK's RegistrantContact, field for
+// field a Contact; it is copied into one so the four print alike.
+func contactRoles(c coreapigo.Contacts) []contactRole {
+	var registrant *coreapigo.Contact
+	if r := c.Registrant; r != nil {
+		registrant = &coreapigo.Contact{
+			FirstName: r.FirstName, LastName: r.LastName, CompanyName: r.CompanyName,
+			Address1: r.Address1, Address2: r.Address2, City: r.City, State: r.State,
+			Zip: r.Zip, Country: r.Country, Email: r.Email, Phone: r.Phone, Fax: r.Fax,
+			IsVerified: r.IsVerified, VerificationID: r.VerificationID,
+		}
+	}
+	return []contactRole{{"registrant", registrant}, {"admin", c.Admin}, {"tech", c.Tech}, {"billing", c.Billing}}
+}
+
+// contactRows is one role's detail view: every field, empty when unset, so
+// that in TSV, where the roles are one table, each has the same columns.
+func contactRows(out *output.Config, name string, c *coreapigo.Contact) [][]string {
+	if c == nil {
+		c = &coreapigo.Contact{}
+	}
+	s := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	verified, verificationID := "", ""
+	if c.IsVerified != nil {
+		verified = out.BoolBadge(*c.IsVerified)
+	}
+	if c.VerificationID != nil {
+		verificationID = strconv.FormatInt(*c.VerificationID, 10)
+	}
+	return [][]string{
+		{"Role", name},
+		{"First name", s(c.FirstName)},
+		{"Last name", s(c.LastName)},
+		{"Company", s(c.CompanyName)},
+		{"Address 1", s(c.Address1)},
+		{"Address 2", s(c.Address2)},
+		{"City", s(c.City)},
+		{"State", s(c.State)},
+		{"Zip", s(c.Zip)},
+		{"Country", s(c.Country)},
+		{"Email", s(c.Email)},
+		{"Phone", s(c.Phone)},
+		{"Fax", s(c.Fax)},
+		{"Verified", verified},
+		{"Verification ID", verificationID},
 	}
 }
 

@@ -143,6 +143,11 @@ confirmed once and deleted in order; the first failure stops the rest.`,
 var exportCmd = &cobra.Command{
 	Use:   "export <domain>",
 	Short: "Export DNS records as JSON (default) or a zone-file snapshot",
+	Long: `Write a domain's records as a file 'dns import' and 'dns sync' read: JSON
+(the default, or -o yaml), or a zone file with --zone.
+
+The output is a file format, so -o table, -o tsv and -q are usage errors;
+'dns list' prints records as a table, as TSV, or one ID per line.`,
 	Example: `  namecom dns export example.com > records.json          # save for later import
   namecom dns export example.com --zone > example.com.zone
   namecom dns export old.com | namecom dns import new.com --file -   # clone records to another domain`,
@@ -294,8 +299,15 @@ func runList(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAMLList(records, cmdutil.Int32Page(nextPage), 0)
 	default:
+		headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
+		if priorityColumn(out, records) {
+			headers = append(headers, "PRIORITY")
+		}
 		if len(records) == 0 && hasMore {
 			// The filter matched nothing on this page, not in the zone.
+			if out.Format == output.FormatTSV {
+				out.EmptyTable(headers, "", "")
+			}
 			next := listPage + 1
 			if nextPage != nil {
 				next = *nextPage
@@ -314,8 +326,8 @@ func runList(cmd *cobra.Command, args []string) error {
 					noun = strings.ToUpper(listType) + " record"
 				}
 				hint := fmt.Sprintf("Run 'namecom dns list %s' to see every record", domain)
-				if listHost == "" {
-					cmdutil.EmptyPage(out, listPage, noun, hint)
+				if listHost == "" || out.Format == output.FormatTSV {
+					cmdutil.EmptyPage(out, listPage, headers, noun, hint)
 					return nil
 				}
 				// Not out.Empty, which pluralises the last word: "No DNS
@@ -326,16 +338,12 @@ func runList(cmd *cobra.Command, args []string) error {
 				}
 				return nil
 			}
-			cmdutil.EmptyPage(out, listPage, "DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
+			cmdutil.EmptyPage(out, listPage, headers, "DNS record", fmt.Sprintf("Run 'namecom dns create %s --type A --answer 1.2.3.4' to add the first record", domain))
 			return nil
 		}
 		// Filtered, or TSV, where a section heading would be read as a row:
 		// a single flat table.
 		if filtered || out.Format == output.FormatTSV {
-			headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
-			if hasPriority(records) {
-				headers = append(headers, "PRIORITY")
-			}
 			out.Table(headers, recordRows(out, records), output.Essential("ANSWER"))
 		} else {
 			// Unfiltered: group by type with section headers.
@@ -730,6 +738,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := exportFormat(cmd, domain); err != nil {
+		return err
+	}
 
 	records, _, _, err := fetchRecords(cmd, domain, 1, nil, true)
 	if err != nil {
@@ -780,6 +791,26 @@ func runExport(cmd *cobra.Command, args []string) error {
 		}
 	}
 	out.Hint(fmt.Sprintf("Use --zone for RFC 1035 zone-file format, or pipe to a file: namecom dns export %s > records.json", domain))
+	return nil
+}
+
+// exportFormat refuses the output flags an export cannot honour: -o table,
+// -o tsv and -q. They were ignored, so `dns export -o tsv` printed JSON and
+// `-q` broke its "one ID per line" promise (#289). A terminal's default
+// table, with no -o, still exports JSON: the export is a file format, and
+// that is what it is for.
+func exportFormat(cmd *cobra.Command, domain string) error {
+	if cmdutil.Out(cmd).QuietMode {
+		return cmdutil.NewUsageError(fmt.Errorf("dns export writes a file, not IDs, so it does not take --quiet; use 'namecom dns list %s -q' for record IDs", domain))
+	}
+	f := cmd.Flags().Lookup("output")
+	if f == nil || !f.Changed {
+		return nil
+	}
+	switch format, _ := output.ParseFormat(f.Value.String()); format {
+	case output.FormatTable, output.FormatTSV:
+		return cmdutil.NewUsageError(fmt.Errorf("dns export writes JSON, YAML (-o yaml) or a zone file (--zone), so it does not take -o %s; use 'namecom dns list %s -o %s'", format, domain, format))
+	}
 	return nil
 }
 
@@ -1041,10 +1072,17 @@ func hasPriority(records []*coreapigo.Record) bool {
 	return false
 }
 
+// priorityColumn reports whether a table of records has a PRIORITY column:
+// when one of them is an MX or SRV record, and always in TSV, whose columns
+// do not depend on which records there are (#289).
+func priorityColumn(out *output.Config, records []*coreapigo.Record) bool {
+	return out.Format == output.FormatTSV || hasPriority(records)
+}
+
 // recordRows renders records with a TYPE column, and a PRIORITY column when
-// hasPriority says so.
+// priorityColumn says so.
 func recordRows(out *output.Config, records []*coreapigo.Record) [][]string {
-	withPriority := hasPriority(records)
+	withPriority := priorityColumn(out, records)
 	rows := make([][]string, 0, len(records))
 	for _, r := range records {
 		row := recordRow(out, r, withPriority)

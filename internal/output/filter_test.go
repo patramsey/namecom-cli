@@ -62,8 +62,9 @@ func TestProject_Shapes(t *testing.T) {
 	if _, err := filtered(t, FormatJSON, `{"data":["a","b"]}`, []string{"a"}, ""); err == nil {
 		t.Error("want an error for a list of strings")
 	}
-	// A nested value is compact JSON in a cell.
-	if got, err := filtered(t, FormatTSV, `{"n":{"x":[1,"a<b"]}}`, []string{"n"}, ""); err != nil || got != "n\n{\"x\":[1,\"a<b\"]}\n" {
+	// A nested value is compact JSON in a cell, and one object is
+	// field<TAB>value rows.
+	if got, err := filtered(t, FormatTSV, `{"n":{"x":[1,"a<b"]}}`, []string{"n"}, ""); err != nil || got != "n\t{\"x\":[1,\"a<b\"]}\n" {
 		t.Errorf("nested: %q, %v", got, err)
 	}
 	// Numbers are not rounded on the way through.

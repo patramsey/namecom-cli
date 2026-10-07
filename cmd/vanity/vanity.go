@@ -172,12 +172,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		return out.YAMLList(all, np, 0)
 	default:
+		headers := []string{"HOSTNAME", "IPS"}
 		if len(all) == 0 {
-			cmdutil.EmptyPage(out, listPage, "vanity nameserver", fmt.Sprintf("Run 'namecom vanity-ns create %s --hostname ns1.%s --ips 1.2.3.4' to add one", domain, domain))
+			cmdutil.EmptyPage(out, listPage, headers, "vanity nameserver", fmt.Sprintf("Run 'namecom vanity-ns create %s --hostname ns1.%s --ips 1.2.3.4' to add one", domain, domain))
 			return nil
 		}
 		out.Table(
-			[]string{"HOSTNAME", "IPS"},
+			headers,
 			vanityRows(all),
 		)
 		if hasMore {
