@@ -58,6 +58,12 @@ func readRecordsFile(path, domain string) ([]inputRecord, string, error) {
 		if err != nil {
 			return nil, "", cmdutil.NewUsageError(fmt.Errorf("parsing import file: %w", err))
 		}
+		// A host written fully qualified names the record in this zone, as
+		// `dns create --host` reads it (#285). A zone file needs no such
+		// step: its owner names are resolved against $ORIGIN.
+		for i := range recs {
+			recs[i].Host = relHost(recs[i].Host, domain)
+		}
 		return recs, formatJSON, nil
 	}
 	recs, err := parseZone(string(data), domain)

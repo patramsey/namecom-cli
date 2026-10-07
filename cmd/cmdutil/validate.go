@@ -220,11 +220,9 @@ func DNSAnswerWarnings(recordType, answer string, priority int64, priorityChange
 			warnings = append(warnings, fmt.Sprintf(
 				"A record answer %q is a private/RFC1918 address — public DNS with private IPs is usually unintentional", answer))
 		}
-	case "CNAME":
-		if !strings.HasSuffix(answer, ".") {
-			warnings = append(warnings, fmt.Sprintf(
-				"CNAME answer %q has no trailing dot — it resolves relative to the zone (becomes %q + zone); add a trailing dot for an absolute hostname", answer, answer))
-		}
+	// No CNAME trailing-dot warning: name.com reads every target as absolute
+	// and strips the dot on storage, so "has no trailing dot — it resolves
+	// relative to the zone" was never true there (#285).
 	case "MX":
 		if !priorityChanged && priority == 0 {
 			warnings = append(warnings, "MX record priority is 0 (highest preference) because --priority was not set; use --priority 10 (or higher) unless this is intentional")

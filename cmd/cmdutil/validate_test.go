@@ -227,8 +227,8 @@ func TestDNSAnswerWarnings(t *testing.T) {
 		{"A", "172.16.0.1", 0, false, "private"},
 		{"A", "192.168.1.1", 0, false, "private"},
 		{"A", "8.8.8.8", 0, false, ""},
-		{"A", "::1", 0, false, ""}, // IPv6 addr: isPrivateIP returns false for non-IPv4
-		{"CNAME", "target.example.com", 0, false, "trailing dot"},
+		{"A", "::1", 0, false, ""},                    // IPv6 addr: isPrivateIP returns false for non-IPv4
+		{"CNAME", "target.example.com", 0, false, ""}, // name.com reads it as absolute (#285)
 		{"CNAME", "target.example.com.", 0, false, ""},
 		{"MX", "mail.example.com", 0, false, "priority"},
 		{"MX", "mail.example.com", 0, true, ""},   // priority explicitly set

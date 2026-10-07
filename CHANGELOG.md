@@ -43,6 +43,26 @@ Releases before `0.2.0` predate this file. Their notes are on the
   run — and `dns sync --prune` planned to delete the live record. Both
   spellings now compare as one, whether the value comes from `--answer`, a
   hand-written zone line (`"v=spf1 \"quoted\" ~all"`) or a `dns export`.
+- DNS hosts are read the same way everywhere (#285). `dns create --host
+  sweep.example.com` created `sweep.example.com.example.com`, and the same
+  value in `dns list --host` found the `sweep` record, so `--if-not-exists`
+  never matched. `dns create`, `dns update`, `dns list` and a host in a JSON
+  file for `dns import` or `dns sync` now all take `sweep`,
+  `sweep.example.com` or `sweep.example.com.` as the same record, and the
+  domain itself as the apex; a trailing-dot FQDN is no longer refused as
+  "an empty label". Zone files keep BIND's reading, relative to `$ORIGIN`.
+- `dns create` and `dns update` no longer warn that a CNAME target without a
+  trailing dot "resolves relative to the zone". On name.com it never does:
+  the API reads every target as absolute.
+- `dns list --host www` with no match says `No DNS records at www found.`
+  instead of `No DNS record at wwws found.`
+- `dns update` with nothing to change sends nothing (#285). It sent the PUT
+  anyway and reported "no values changed". Now, when the flags ask for what
+  the record already is, it reads the record, sends no PUT, and says
+  `nothing to change`; with no value flags at all it is a usage error
+  (exit 2), as `domain update` is. **Scripts:** `dns update` JSON and YAML
+  now carry `"changed"` — `false` for a no-op, `true` for a real update — on
+  the record they print.
 
 ## [0.5.1] - 2026-10-05
 

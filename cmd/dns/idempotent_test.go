@@ -384,7 +384,7 @@ func TestDNSList_HostFilter(t *testing.T) {
 		if err := runList(cmd, []string{"example.com"}); err != nil {
 			t.Fatal(err)
 		}
-		if out := cmdutil.Out(cmd).Writer.(interface{ String() string }).String() + stderr.String(); !strings.Contains(out, "DNS record at nothing") {
+		if out := cmdutil.Out(cmd).Writer.(interface{ String() string }).String() + stderr.String(); !strings.Contains(out, "No DNS records at nothing found.") {
 			t.Errorf("output = %q", out)
 		}
 	})

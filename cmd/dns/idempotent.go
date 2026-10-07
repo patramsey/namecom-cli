@@ -17,16 +17,43 @@ import (
 // the labels before the domain, so "www" and "www.example.com." both match
 // the record for www.
 func filterHost(h, domain string) (string, error) {
-	h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
-	if h == "@" || h == domain {
-		return "", nil
-	}
-	h = strings.TrimSuffix(h, "."+domain)
-	a, err := cmdutil.ASCIIHostname(h, "--host")
+	z, err := zoneHost(strings.TrimSpace(h), domain)
 	if err != nil {
 		return "", err
 	}
-	return normHost(a), nil
+	return normHost(z), nil
+}
+
+// zoneHost is a --host value in the form the API takes, validated and with
+// Unicode labels in punycode: relative to the zone, and "@" for the apex.
+// `dns list`, `dns create` and `dns update` all read it this way, so one
+// value names one record in each (#285). "www", "www.example.com" and
+// "www.example.com." are all www; "example.com" is the apex. Create used to
+// send a fully qualified host as typed, and the API made
+// www.example.com.example.com.
+func zoneHost(h, domain string) (string, error) {
+	return asciiHost(relHost(h, domain))
+}
+
+// relHost strips the zone from a fully qualified host, with or without its
+// trailing dot, and makes the domain itself "@". Any other host is returned
+// without a trailing dot, and is left to asciiHost to validate.
+func relHost(h, domain string) string {
+	t := strings.TrimSuffix(h, ".")
+	if t == "" {
+		return h
+	}
+	a, err := cmdutil.ASCIIHostname(t, "--host")
+	if err != nil {
+		return t
+	}
+	switch la := strings.ToLower(a); {
+	case la == domain:
+		return "@"
+	case strings.HasSuffix(la, "."+domain):
+		return a[:len(a)-len(domain)-1]
+	}
+	return t
 }
 
 // findRecord returns the live record on domain with this host, type and
