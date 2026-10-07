@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 
@@ -2191,9 +2192,10 @@ func TestUpdate_ReadsStateOnlyToPromptOrWarn(t *testing.T) {
 		want                string
 	}{
 		{"privacy on", "privacy=true", `"privacyEnabled":false`, false, false, "PATCH"},
-		{"autorenew already on", "autorenew=true", `"autorenewEnabled":true`, false, false, "GET PATCH"},
+		{"autorenew already on", "autorenew=true", `"autorenewEnabled":true`, false, false, "GET"},
 		{"unlock a locked domain", "lock=false", `"locked":true`, true, true, "GET PATCH"},
-		{"unlock an unlocked domain", "lock=false", `"locked":false`, false, false, "GET PATCH"},
+		{"unlock an unlocked domain", "lock=false", `"locked":false`, false, false, "GET"},
+		{"lock an unlocked domain", "lock=true", `"locked":false`, false, false, "GET PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests []string
@@ -2224,6 +2226,132 @@ func TestUpdate_ReadsStateOnlyToPromptOrWarn(t *testing.T) {
 			stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
 			if got := strings.Contains(stderr, "Transfer lock removed"); got != tc.warn {
 				t.Errorf("unlock warning shown = %v, want %v; stderr: %q", got, tc.warn, stderr)
+			}
+		})
+	}
+}
+
+// TestUpdate_DropsFieldsAlreadySet reproduces #287. During the 60-day
+// transfer lock the API refuses any body carrying `locked`, even an unchanged
+// true, so `--lock=true --autorenew=true` on a locked domain failed and took
+// the auto-renewal change with it. A field already in the requested state is
+// left out; when every field is, nothing is sent, and the result says so.
+// The stub refuses `locked` the way the sandbox does.
+func TestUpdate_DropsFieldsAlreadySet(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	for _, tc := range []struct {
+		name     string
+		flags    []string
+		dryRun   bool
+		requests string
+		body     string // the PATCH body, or the previewed one under dryRun
+		stdout   string
+	}{
+		{"lock and autorenew", []string{"--lock=true", "--autorenew=true"}, false, "GET PATCH", `{"autorenewEnabled":true}`, ""},
+		{"lock and autorenew, dry run", []string{"--lock=true", "--autorenew=true"}, true, "GET", `{"autorenewEnabled":true}`, ""},
+		{"lock alone", []string{"--lock=true"}, false, "GET", "", `"changed":false`},
+		{"lock alone, dry run", []string{"--lock=true"}, true, "GET", "", `"changed":false`},
+		{"every flag unchanged", []string{"--lock=true", "--privacy=false", "--autorenew=false"}, false, "GET", "", `"changed":false`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			var body string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPatch {
+					b, _ := io.ReadAll(r.Body)
+					body = string(b)
+					if strings.Contains(body, "locked") {
+						w.WriteHeader(http.StatusBadRequest)
+						_, _ = w.Write([]byte(`{"message":"Invalid Argument","details":"Domain can not be unlocked until 2026-11-28 06:37:39"}`))
+						return
+					}
+				}
+				_, _ = w.Write([]byte(updateTransferLockedDomain))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := withRootFlags(t, cmdForUpdate(t, srv))
+			out := cmdutil.Out(cmd)
+			out.Format = output.FormatJSON
+			if err := cmd.Root().PersistentFlags().Set("yes", "true"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.dryRun {
+				if err := cmd.Root().PersistentFlags().Set("dry-run", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cmd.ParseFlags(tc.flags); err != nil {
+				t.Fatal(err)
+			}
+			if err := runUpdate(cmd, []string{"example.com"}); err != nil {
+				t.Fatalf("runUpdate: %v", err)
+			}
+			if got := strings.Join(requests, " "); got != tc.requests {
+				t.Errorf("requests = %s, want %s", got, tc.requests)
+			}
+			stdout := out.Writer.(*bytes.Buffer).String()
+			if tc.dryRun {
+				body = stdout
+			}
+			squash := strings.NewReplacer(" ", "", "\n", "").Replace
+			if tc.body != "" && !strings.Contains(squash(body), tc.body) {
+				t.Errorf("body = %s, want %s", body, tc.body)
+			}
+			if strings.Contains(body, "locked") {
+				t.Errorf("an unchanged lock must not be sent: %s", body)
+			}
+			if tc.stdout != "" && !strings.Contains(squash(stdout), tc.stdout) {
+				t.Errorf("stdout = %s, want it to contain %s", stdout, tc.stdout)
+			}
+		})
+	}
+}
+
+// TestUnlock_WarnsOfTransferLock: unlocking a domain in its 60-day transfer
+// lock will be refused, and the GET each command already makes says until
+// when (#287). The dry run says so instead of previewing a clean unlock.
+func TestUnlock_WarnsOfTransferLock(t *testing.T) {
+	defer output.StubInteractive(false)()
+
+	for _, tc := range []struct {
+		name string
+		run  func(*cobra.Command) error
+	}{
+		{"domain update --lock=false", func(cmd *cobra.Command) error {
+			if err := cmd.Flags().Set("lock", "false"); err != nil {
+				return err
+			}
+			return runUpdate(cmd, []string{"example.com"})
+		}},
+		{"domain lock off", func(cmd *cobra.Command) error { return runLock(cmd, []string{"off", "example.com"}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			future := time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"domainName":"example.com","locked":true,"transferLockExpiresAt":"` + future + `"}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			cmd := withRootFlags(t, cmdForUpdate(t, srv))
+			if err := cmd.Root().PersistentFlags().Set("dry-run", "true"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.run(cmd); err != nil {
+				t.Fatalf("dry run: %v", err)
+			}
+			if got := strings.Join(requests, " "); got != "GET" {
+				t.Errorf("requests = %s, want GET", got)
+			}
+			stderr := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
+			if !strings.Contains(stderr, "transfer lock until "+future[:10]) || !strings.Contains(stderr, "refuse") {
+				t.Errorf("want the transfer-lock warning, stderr: %q", stderr)
 			}
 		})
 	}

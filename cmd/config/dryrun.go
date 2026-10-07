@@ -29,7 +29,13 @@ type Change struct {
 	// (`auth login --token-cmd`) rather than store one.
 	UsesTokenCmd bool `json:"usesTokenCmd,omitempty"`
 	// Default is the file's `default:` key after the change; "" for none.
+	// remove_profile reports the profile that is the default afterwards
+	// instead, which may be implied by the profiles that remain, and says
+	// which in DefaultSource.
 	Default string `json:"default"`
+	// DefaultSource is "config" for a `default:` key and "implied" for a
+	// default the remaining profiles imply. Set only by remove_profile.
+	DefaultSource string `json:"defaultSource,omitempty"`
 
 	// Summary is the table-mode sentence, e.g. `remove profile "staging"`.
 	Summary string `json:"-"`

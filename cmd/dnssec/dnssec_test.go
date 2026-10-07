@@ -113,7 +113,7 @@ func TestDNSSECList_Empty(t *testing.T) {
 func TestDNSSECCreate_BadDomain(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForCreate(t, srv)
-	createAlgorithm, createDigest, createDigestType, createKeyTag = 8, "abc123", 2, 12345
+	createAlgorithm, createDigest, createDigestType, createKeyTag = 8, sha256Digest, 2, 12345
 
 	err := runCreate(cmd, []string{"nodot"})
 	if err == nil {
@@ -134,7 +134,7 @@ func TestDNSSECCreate_DomainNormalized(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForCreate(t, srv)
-	createAlgorithm, createDigest, createDigestType, createKeyTag = 8, "abc123", 2, 12345
+	createAlgorithm, createDigest, createDigestType, createKeyTag = 8, sha256Digest, 2, 12345
 
 	if err := runCreate(cmd, []string{"EXAMPLE.COM"}); err != nil {
 		t.Fatalf("runCreate: %v", err)
@@ -301,7 +301,7 @@ func TestDNSSECCreate_SendsEachFieldToItsOwnKey(t *testing.T) {
 		"--algorithm", "8",
 		"--digest-type", "2",
 		"--key-tag", "54321",
-		"--digest", "ABC123DEF456",
+		"--digest", sha256Digest,
 	}); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestDNSSECCreate_SendsEachFieldToItsOwnKey(t *testing.T) {
 		"algorithm":  float64(8),
 		"digestType": float64(2),
 		"keyTag":     float64(54321),
-		"digest":     "ABC123DEF456",
+		"digest":     sha256Digest,
 	} {
 		if got[key] != want {
 			t.Errorf("body[%q] = %#v, want %#v (full body: %#v)", key, got[key], want, got)

@@ -35,9 +35,12 @@ func neverCalledServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// cmdForTransferCreate's client reaches srv through notInAccount, so the
+// domain a dry run checks for (#292) is not in the account unless a test
+// says otherwise, and srv sees every other request as before.
 func cmdForTransferCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	t.Helper()
-	client, err := api.New(api.Options{BaseURL: srv.URL})
+	client, err := api.New(api.Options{BaseURL: notInAccount(t, srv).URL})
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
 	}

@@ -1185,6 +1185,7 @@ const (
 	ErrorTypeConfirmationRequired = "confirmation_required"
 	ErrorTypeAborted              = "aborted"
 	ErrorTypeNetwork              = "network"
+	ErrorTypeUnavailable          = "unavailable"
 	ErrorTypeAPI                  = "api"
 )
 

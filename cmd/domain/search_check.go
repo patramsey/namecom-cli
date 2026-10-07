@@ -208,24 +208,19 @@ const maxCheckNames = 50
 func runCheck(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 
-	// Not DomainArgs: a name given twice is checked, and shown, twice.
-	args, err := cmdutil.ExpandStdinArgs(cmd, args)
-	if err != nil {
-		return err
-	}
-
 	// Normalize (and validate) every argument up front. This was the only
 	// command that skipped cmdutil.DomainArg, and the results below are keyed by
 	// domain name: with a mixed-case argument like "Example.COM" the API's
 	// canonical lowercase reply never matched, leaving a zero-valued slot that
 	// renders as a blank "taken" row — and exits 0. Same failure for an IDN
 	// entered as Unicode and returned as punycode.
-	for i := range args {
-		normalized, err := cmdutil.DomainArg(args, i)
-		if err != nil {
-			return err
-		}
-		args[i] = normalized
+	//
+	// A name given twice, in any case, is checked once, in the order first
+	// given, as `domain get` does. The API answers it once, so the second copy
+	// was left unanswered and failed the command (#288).
+	args, err := cmdutil.DomainArgs(cmd, args)
+	if err != nil {
+		return err
 	}
 
 	// ZoneCheck queries production DNS zone files and has no sandbox equivalent —
@@ -417,6 +412,7 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 func finishCheck(cmd *cobra.Command, out *output.Config, args []string,
 	results []*coreapigo.SearchResult, warning string) error {
 	var unknown []string
+	unanswered := make([]bool, len(results))
 	for i := range results {
 		// nil, not just zero-valued: the SDK returns []*SearchResult, so a slot
 		// no reply filled is a nil pointer rather than an empty struct. Reading
@@ -427,10 +423,11 @@ func finishCheck(cmd *cobra.Command, out *output.Config, args []string,
 			results[i] = &coreapigo.SearchResult{DomainName: args[i], Sld: sld, Tld: tld}
 			out.Warn(fmt.Sprintf(warning, args[i]))
 			unknown = append(unknown, args[i])
+			unanswered[i] = true
 		}
 	}
 
-	if err := renderSearchResults(out, results); err != nil {
+	if err := renderResults(out, results, unanswered); err != nil {
 		return err
 	}
 	// A row that answers nothing is not a successful check: exit non-zero so a
@@ -466,7 +463,7 @@ func unavailableError(results []*coreapigo.SearchResult) error {
 	if len(taken) > shown {
 		list += fmt.Sprintf(", and %d more", len(taken)-shown)
 	}
-	return fmt.Errorf("%d of %d names not available: %s", len(taken), len(results), list)
+	return &cmdutil.UnavailableError{Msg: fmt.Sprintf("%d of %d names not available: %s", len(taken), len(results), list)}
 }
 
 // maybeOfferRegister offers to register a domain that `check` just found
@@ -514,6 +511,23 @@ func maybeOfferRegister(cmd *cobra.Command, out *output.Config, results []*corea
 }
 
 func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) error {
+	return renderResults(out, results, nil)
+}
+
+// unansweredResult is a checked name no reply answered, as JSON and YAML show
+// it: "purchasable" is null, not the false a taken name reads (#288). Its
+// other keys are a SearchResult's.
+type unansweredResult struct {
+	DomainName  string `json:"domainName"`
+	Purchasable *bool  `json:"purchasable"`
+	Sld         string `json:"sld"`
+	Tld         string `json:"tld"`
+}
+
+// renderResults is renderSearchResults with the rows unanswered marks shown
+// as unknown rather than taken. unanswered may be nil.
+func renderResults(out *output.Config, results []*coreapigo.SearchResult, unanswered []bool) error {
+	isUnanswered := func(i int) bool { return i < len(unanswered) && unanswered[i] }
 	if results == nil {
 		results = []*coreapigo.SearchResult{}
 	}
@@ -532,14 +546,22 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 	// In the {"data": [...]} envelope every list uses; it was a bare array
 	// (#240).
 	switch out.Format {
-	case output.FormatJSON:
-		return out.JSONList(results, nil, 0)
-	case output.FormatYAML:
-		return out.YAMLList(results, nil, 0)
+	case output.FormatJSON, output.FormatYAML:
+		docs := make([]any, len(results))
+		for i, r := range results {
+			docs[i] = r
+			if isUnanswered(i) {
+				docs[i] = unansweredResult{DomainName: r.DomainName, Sld: r.Sld, Tld: r.Tld}
+			}
+		}
+		if out.Format == output.FormatYAML {
+			return out.YAMLList(docs, nil, 0)
+		}
+		return out.JSONList(docs, nil, 0)
 	default:
 		headers := []string{"DOMAIN", "AVAILABILITY", "PRICE", "RENEWS", "PREMIUM"}
 		rows := make([][]string, 0, len(results))
-		for _, r := range results {
+		for i, r := range results {
 			price := out.Dim("—")
 			if r.Purchasable && r.PurchasePrice != nil {
 				price = searchPriceLabel(r)
@@ -556,9 +578,13 @@ func renderSearchResults(out *output.Config, results []*coreapigo.SearchResult) 
 			if r.Purchasable {
 				premium = out.BoolBadge(derefBool(r.Premium))
 			}
+			availability := out.AvailabilityBadge(r.Purchasable)
+			if isUnanswered(i) {
+				availability = "unknown"
+			}
 			rows = append(rows, []string{
 				r.DomainName,
-				out.AvailabilityBadge(r.Purchasable),
+				availability,
 				price,
 				searchRenewLabel(out, r),
 				premium,

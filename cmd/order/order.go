@@ -83,8 +83,30 @@ refunded.`,
 
   # In a script, skip the confirmation:
   namecom order refund --order-id 12345 --item-ids 67890 --yes`,
-	Args: cobra.NoArgs,
+	Args: refundArgs,
 	RunE: runRefund,
+}
+
+// refundArgs is NoArgs, except that an order ID given as an argument —
+// `order refund 12345`, as `order get 12345` takes it — gets the command
+// rewritten with --order-id as the hint (#292). cobra.NoArgs reported it as
+// an unknown command "12345".
+func refundArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 && !cmd.Flags().Changed("order-id") {
+		if _, err := strconv.ParseInt(args[0], 10, 32); err == nil {
+			items := "<item-ids>"
+			if len(refundItemIDs) > 0 {
+				ids := make([]string, len(refundItemIDs))
+				for i, id := range refundItemIDs {
+					ids[i] = strconv.Itoa(int(id))
+				}
+				items = strings.Join(ids, ",")
+			}
+			return cmdutil.NewUsageErrorHint(fmt.Errorf("order refund takes the order ID in --order-id, not as an argument"),
+				fmt.Sprintf("run '%s --order-id %s --item-ids %s'", cmd.CommandPath(), args[0], items))
+		}
+	}
+	return cmdutil.NoArgs(cmd, args)
 }
 
 func init() {

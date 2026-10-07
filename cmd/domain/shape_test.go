@@ -77,6 +77,9 @@ func TestRequestShape_Domain(t *testing.T) {
 	// modelled them as an exclusive union that kept only the first — so the
 	// combinations also pin that every passed flag reaches the wire. See
 	// docs/upstream/core-api-go-updatedomain-union.md.
+	//
+	// Every flag here differs from domainStub: a field already in the
+	// requested state is left out (#287).
 	for _, tc := range []struct {
 		name  string
 		flags []string
@@ -85,10 +88,10 @@ func TestRequestShape_Domain(t *testing.T) {
 		{"update --autorenew alone", []string{"--autorenew=false"}, `{"autorenewEnabled":false}`},
 		{"update --privacy alone", []string{"--privacy=true"}, `{"privacyEnabled":true}`},
 		{"update --lock alone", []string{"--lock=false"}, `{"locked":false}`},
-		{"update --autorenew --privacy", []string{"--autorenew=true", "--privacy=false"},
-			`{"autorenewEnabled":true,"privacyEnabled":false}`},
-		{"update all three", []string{"--autorenew=false", "--privacy=true", "--lock=true"},
-			`{"autorenewEnabled":false,"privacyEnabled":true,"locked":true}`},
+		{"update --autorenew --privacy", []string{"--autorenew=false", "--privacy=true"},
+			`{"autorenewEnabled":false,"privacyEnabled":true}`},
+		{"update all three", []string{"--autorenew=false", "--privacy=true", "--lock=false"},
+			`{"autorenewEnabled":false,"privacyEnabled":true,"locked":false}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			build := func(t *testing.T, srv *httptest.Server) *cobra.Command {

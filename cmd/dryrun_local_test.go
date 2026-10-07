@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +61,51 @@ func TestAuthLogout_DryRunLeavesConfig(t *testing.T) {
 	// prod stays the default, so the preview says so.
 	if got["default"] != "prod" {
 		t.Errorf("default after the change = %v, want prod", got["default"])
+	}
+}
+
+// TestAuthLogout_DryRunNamesTheResultingDefault pins #292: removing the
+// default profile with one other left previewed "default": "", though the
+// one left becomes the implied default. The preview names it, and where it
+// comes from, in JSON and in the table line.
+func TestAuthLogout_DryRunNamesTheResultingDefault(t *testing.T) {
+	const contents = "default: default\nprofiles:\n  default:\n    username: a\n    token: t1\n  prod:\n    username: b\n    token: t2\n"
+	for _, tc := range []struct {
+		name, profile, wantDefault, wantSource string
+	}{
+		{"implied by the one left", "default", "prod", "implied"},
+		{"the default: key", "prod", "default", "config"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := withConfig(t, contents)
+			prev := logoutProfile
+			logoutProfile = tc.profile
+			t.Cleanup(func() { logoutProfile = prev })
+
+			cmd, buf := jsonCmd(t)
+			cmd.PersistentFlags().Bool("dry-run", true, "")
+			if err := runAuthLogout(cmd, nil); err != nil {
+				t.Fatalf("runAuthLogout --dry-run: %v", err)
+			}
+			unchanged(t, path, contents)
+			var got map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, buf.String())
+			}
+			if got["default"] != tc.wantDefault || got["defaultSource"] != tc.wantSource {
+				t.Errorf("default = %v (%v), want %s (%s)", got["default"], got["defaultSource"], tc.wantDefault, tc.wantSource)
+			}
+
+			cmd, buf = jsonCmd(t)
+			cmdutil.Out(cmd).Format = output.FormatTable
+			cmd.PersistentFlags().Bool("dry-run", true, "")
+			if err := runAuthLogout(cmd, nil); err != nil {
+				t.Fatalf("runAuthLogout --dry-run: %v", err)
+			}
+			if want := fmt.Sprintf("leaving %q as the default", tc.wantDefault); !strings.Contains(buf.String(), want) {
+				t.Errorf("table = %q, want it to say %s", buf.String(), want)
+			}
+		})
 	}
 }
 

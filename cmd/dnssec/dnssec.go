@@ -3,6 +3,7 @@ package dnssec
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -153,11 +154,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 	key, err := client.SDK().DnsseCs.GetDnssec(cmd.Context(),
 		&coreapigo.GetDnssecRequest{DomainName: domain, Digest: args[1]})
 	stop()
-	if cmdutil.IsNotFound(err) {
-		return cmdutil.NotFound(err, fmt.Sprintf("DNSSEC key %s not found on %s — run 'namecom dnssec list %s' to see its digests", args[1], domain, domain))
-	}
 	if err != nil {
-		return err
+		return keyError(err, domain, args[1])
 	}
 	if err := cmdutil.RequireField("the key's digest", key.Digest); err != nil {
 		return err
@@ -188,6 +186,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	client := cmdutil.APIClient(cmd)
 	domain, err := cmdutil.DomainArg(args, 0)
 	if err != nil {
+		return err
+	}
+
+	if err := validKey(createKeyTag, createDigestType, createDigest); err != nil {
 		return err
 	}
 
@@ -245,6 +247,17 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	digest := args[1]
 
+	// A dry run reads the key first, so one for a digest the domain does not
+	// have fails not_found, as the delete would, rather than previewing it
+	// with the DS warning (#292). A real run sends the delete alone and lets
+	// the API refuse it: one request, not two.
+	if cmdutil.IsDryRun(cmd) {
+		if _, err := client.SDK().DnsseCs.GetDnssec(cmd.Context(),
+			&coreapigo.GetDnssecRequest{DomainName: domain, Digest: digest}); err != nil {
+			return keyError(err, domain, digest)
+		}
+	}
+
 	// The delete gave no warning at all (#235). What these "keys" are is the
 	// DS records the registry publishes for the zone, so what removing one
 	// can break depends on what is left: resolvers that validate fail the
@@ -270,6 +283,36 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out.Success(fmt.Sprintf("Removed DNSSEC key from %s", domain))
+	return nil
+}
+
+// keyError names the key when the API found none: its own "Not Found" does
+// not say what was missing.
+func keyError(err error, domain, digest string) error {
+	if cmdutil.IsNotFound(err) {
+		return cmdutil.NotFound(err, fmt.Sprintf("DNSSEC key %s not found on %s — run 'namecom dnssec list %s' to see its digests", digest, domain, domain))
+	}
+	return api.FromSDKError(err)
+}
+
+// digestLengths is the hex length of each DS digest type's digest: SHA-1 (1),
+// SHA-256 (2), GOST R 34.11-94 (3) and SHA-384 (4), per the IANA registry.
+var digestLengths = map[int32]int{1: 40, 2: 64, 3: 64, 4: 96}
+
+// validKey refuses a DS record the registry could not accept, before any
+// request (#292). The key tag is a 16-bit field, and the digest is hex of the
+// length its type produces; "xyz" and a key tag of 99999999 were previewed
+// and sent. A digest type the table does not know is checked for hex alone.
+func validKey(keyTag, digestType int32, digest string) error {
+	if keyTag < 0 || keyTag > 65535 {
+		return cmdutil.NewUsageError(fmt.Errorf("--key-tag must be between 0 and 65535, got %d", keyTag))
+	}
+	if _, err := hex.DecodeString(digest); err != nil || digest == "" {
+		return cmdutil.NewUsageError(fmt.Errorf("--digest must be hexadecimal, got %q", digest))
+	}
+	if want, ok := digestLengths[digestType]; ok && len(digest) != want {
+		return cmdutil.NewUsageError(fmt.Errorf("--digest must be %d hex characters for digest type %d, got %d", want, digestType, len(digest)))
+	}
 	return nil
 }
 

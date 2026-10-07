@@ -20,7 +20,7 @@ func TestRequestShape_DNSSEC(t *testing.T) {
 			cmd := cmdForCreate(t, srv)
 			if err := cmd.ParseFlags([]string{
 				"--key-tag", "2371", "--algorithm", "13",
-				"--digest-type", "2", "--digest", "ABC123",
+				"--digest-type", "2", "--digest", sha256Digest,
 			}); err != nil {
 				t.Fatalf("ParseFlags: %v", err)
 			}
@@ -29,7 +29,7 @@ func TestRequestShape_DNSSEC(t *testing.T) {
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "POST",
 			Path:   "/core/v1/domains/example.com/dnssec",
-			Body:   `{"algorithm":13,"digest":"ABC123","digestType":2,"keyTag":2371}`,
+			Body:   `{"algorithm":13,"digest":"` + sha256Digest + `","digestType":2,"keyTag":2371}`,
 		}, build, runCreate, []string{"example.com"}, stub)
 	})
 }

@@ -487,6 +487,7 @@ of them is a breaking change and is called out in the
   | `conflict` | The thing already exists (the API answers a duplicate DNS record with a 400 that says so), or HTTP 409, which the API uses for a reused idempotency key | 1 |
   | `aborted` | A confirmation was declined or a prompt cancelled | 1 |
   | `network` | No HTTP response: a timeout, or a connection that failed | 1 |
+  | `unavailable` | `domain check --exit-status` found a name that is not available; nothing failed | 1 |
   | `api` | Any other failure: another API error, or a local one such as an unreadable file | 1 |
 
   `status` is the HTTP status, present only when the API answered. `message`

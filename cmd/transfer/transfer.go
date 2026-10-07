@@ -321,6 +321,21 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A dry run reads the domain first: one already in this account cannot be
+	// transferred in, and the dry run quoted the transfer fee for it anyway
+	// (#292). A 404 is the expected answer. A real run lets the transfer
+	// itself refuse: the GET would be a second request for the same answer.
+	if cmdutil.IsDryRun(cmd) {
+		_, gerr := client.SDK().Domains.GetDomain(cmd.Context(), &coreapigo.GetDomainRequest{DomainName: domain})
+		switch {
+		case gerr == nil:
+			return cmdutil.NewUsageErrorHint(fmt.Errorf("%s is already in this account — there is nothing to transfer in", domain),
+				fmt.Sprintf("run 'namecom domain get %s' to see it", domain))
+		case !cmdutil.IsNotFound(gerr):
+			return api.FromSDKError(gerr)
+		}
+	}
+
 	// Quote the transfer before asking. register/renew both show the amount in
 	// their prompt; transfer asked only "Initiate transfer of X?", so the user
 	// approved a charge they had never seen. A pricing failure must not block

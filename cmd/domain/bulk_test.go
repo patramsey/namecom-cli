@@ -198,6 +198,10 @@ func TestCheck_ExitStatus(t *testing.T) {
 				if _, ok := errors.AsType[*cmdutil.UsageError](err); ok {
 					t.Error("--exit-status must not be a usage error (exit 2)")
 				}
+				// Typed "unavailable" in the envelope, not "api" (#288).
+				if _, ok := errors.AsType[*cmdutil.UnavailableError](err); !ok {
+					t.Errorf("want an *UnavailableError, got %T", err)
+				}
 			}
 			var got []*coreapigo.SearchResult
 			if err := unmarshalData(buf.Bytes(), &got); err != nil || len(got) != len(tc.names) {
