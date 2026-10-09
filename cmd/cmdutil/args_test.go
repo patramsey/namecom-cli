@@ -181,6 +181,22 @@ func TestExactArgs_SingleArg(t *testing.T) {
 	}
 }
 
+func TestMaximumNArgs(t *testing.T) {
+	cmd := &cobra.Command{Use: "open [domain]"}
+	for _, args := range [][]string{nil, {"a.com"}} {
+		if err := MaximumNArgs(1)(cmd, args); err != nil {
+			t.Errorf("%d args: unexpected error: %v", len(args), err)
+		}
+	}
+	err := MaximumNArgs(1)(cmd, []string{"a.com", "b.com"})
+	if err == nil || err.Error() != "too many arguments — expected: domain" {
+		t.Fatalf("2 args: error = %v, want 'too many arguments — expected: domain'", err)
+	}
+	if !isUsage(err) {
+		t.Errorf("2 args: %T is not a usage error", err)
+	}
+}
+
 func TestMinimumNArgs(t *testing.T) {
 	cmd := &cobra.Command{Use: "check <domain>"}
 

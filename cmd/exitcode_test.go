@@ -391,8 +391,17 @@ func TestExitCode_OpenTooManyArgs(t *testing.T) {
 	if err == nil {
 		t.Fatal("namecom open a.com b.com succeeded; want a usage error")
 	}
-	if !strings.Contains(err.Error(), "at most 1 arg") {
-		t.Fatalf("failed for another reason: %v", err)
+	// Worded as every other command's extra argument is, not cobra's
+	// "accepts at most 1 arg(s), received 2" (#327).
+	if got, want := err.Error(), "too many arguments — expected: domain"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+	u, ok := errors.AsType[*cmdutil.UsageError](err)
+	if !ok {
+		t.Fatalf("not a usage error: %T %v", err, err)
+	}
+	if got, want := u.UserHint(), "usage: namecom open [domain] [flags]"; got != want {
+		t.Errorf("hint = %q, want %q", got, want)
 	}
 	if got := exitCode(err); got != 2 {
 		t.Errorf("exited %d (%v); want 2", got, err)

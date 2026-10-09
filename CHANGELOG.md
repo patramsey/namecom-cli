@@ -77,6 +77,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - An empty `NO_COLOR` (`NO_COLOR=`) no longer turns colour off: no-color.org
   counts it only when it is not empty. Any non-empty value, `0` included,
   still disables colour, and `help environment` now says so.
+- `open a.com b.com` says `too many arguments — expected: domain`, with the
+  usage line in `error.hint`, as every other command does. It said cobra's
+  "accepts at most 1 arg(s), received 2" with no hint; still exit 2.
 
 ## [0.5.3] - 2026-10-07
 

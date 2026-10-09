@@ -196,7 +196,7 @@ var cobraUsagePrefixes = []string{
 	// Positional-arg validators: MaximumNArgs, ExactArgs and RangeArgs say
 	// "arg(s), received", MinimumNArgs "arg(s), only received". NoArgs reports
 	// "unknown command", above. cmdutil.ExactArgs/MinimumNArgs classify
-	// themselves; these catch cobra's own, as on `namecom open`.
+	// themselves; these catch any of cobra's own still in use.
 	" arg(s), received ",
 	" arg(s), only received ",
 }
