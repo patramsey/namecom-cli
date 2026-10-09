@@ -38,8 +38,8 @@ status' say where each value came from.
 
 Other variables:
 
-  NO_COLOR                    Set to anything to turn colour off. --color
-                              overrides it.
+  NO_COLOR                    Set to any non-empty value to turn colour off.
+                              --color overrides it.
   CLICOLOR_FORCE              Set to 1 to keep colour on when output is not a
                               terminal. --color overrides it.
   BROWSER                     The browser 'namecom open' starts.

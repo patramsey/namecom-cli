@@ -73,6 +73,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `pass --yes to confirm when not running in a terminal`. A script matching
   "pass --yes" in the message should read `error.type`
   (`confirmation_required`) or `error.hint` instead.
+### Fixed
+- An empty `NO_COLOR` (`NO_COLOR=`) no longer turns colour off: no-color.org
+  counts it only when it is not empty. Any non-empty value, `0` included,
+  still disables colour, and `help environment` now says so.
 
 ## [0.5.3] - 2026-10-07
 
