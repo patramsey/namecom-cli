@@ -507,6 +507,25 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode:   3,
 		},
 		{
+			// A 403 about the domain, not the credentials, is not an auth
+			// failure: a loop stopping on exit 3 stopped at the first
+			// expired domain (#324).
+			name:       "403 for an expired domain",
+			args:       []string{"dns", "list", "example.com"},
+			routes:     map[string]reply{"GET /core/v1/domains/example.com/records": {403, `{"message":"Permission denied. The domain is expired."}`}},
+			wantType:   output.ErrorTypeAPI,
+			wantStatus: 403,
+			wantCode:   1,
+		},
+		{
+			name:       "403 for the account",
+			args:       []string{"domain", "get", "example.com"},
+			routes:     map[string]reply{"GET /core/v1/domains/example.com": {403, `{"message":"Permission Denied","details":"IP not whitelisted"}`}},
+			wantType:   output.ErrorTypeAuth,
+			wantStatus: 403,
+			wantCode:   3,
+		},
+		{
 			name:       "rate limited",
 			args:       []string{"domain", "get", "example.com", "--timeout", "500ms"},
 			routes:     map[string]reply{"GET /core/v1/domains/example.com": {429, `{"message":"Too Many Requests"}`}},

@@ -143,13 +143,14 @@ func (e *RestrictedError) UserHint() string {
 
 // AsRestricted converts a 403 into a RestrictedError explaining the gate.
 // Any other error is returned unchanged, so genuine auth failures still read as
-// auth failures.
+// auth failures, and a 403 about the domain itself — "The domain is expired."
+// — keeps its own message (#324).
 func AsRestricted(err error, operation, program string) error {
 	if err == nil {
 		return nil
 	}
 	var apiErr *api.APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden && !apiErr.DomainStateDenied() {
 		return &RestrictedError{Err: err, Program: program, Operation: operation}
 	}
 	return err

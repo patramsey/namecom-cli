@@ -41,6 +41,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
 ### Fixed
+- A 403 about the domain rather than the credentials — the API answers
+  `dns list` and `url list` of an expired domain with "Permission denied.
+  The domain is expired." — is an `api` error that exits 1 and shows the
+  API's message, with no hint. It was typed `auth`, exited 3 and pointed at
+  the account's API settings, so a script looping over `domain list -q` that
+  stops on exit 3 stopped at the first expired domain. Other 403s are still
+  `auth` and exit 3. `transfer internal-in` and `contact verify` no longer
+  call such a 403 a missing reseller enrolment.
 - A write refused for want of `--yes` puts its advice in `error.hint`, as
   not-found and missing-argument errors do: `message` is now
   `confirmation required for "…"` and `error.hint` is

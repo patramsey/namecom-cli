@@ -835,7 +835,7 @@ func errorInfo(err error) output.ErrorInfo {
 	}
 	if isAPI {
 		switch {
-		case apiErr.StatusCode == 401, apiErr.StatusCode == 403:
+		case apiErr.AuthFailure():
 			info.Type = output.ErrorTypeAuth
 		case apiErr.StatusCode == 404:
 			info.Type = output.ErrorTypeNotFound
@@ -906,9 +906,12 @@ func exitCode(err error) int {
 		return 6
 	}
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
-		switch apiErr.StatusCode {
-		case 401, 403:
+		// A 403 about the domain, such as an expired one, is not a
+		// credential problem and exits 1 (#324).
+		if apiErr.AuthFailure() {
 			return 3
+		}
+		switch apiErr.StatusCode {
 		case 404:
 			return 4
 		case 429:

@@ -133,6 +133,9 @@ func TestReportError_HintsMatchTheStatus(t *testing.T) {
 		want, not string
 	}{
 		{"403", &api.APIError{StatusCode: 403, Message: "Permission Denied", Details: "IP not whitelisted"}, false, "IP address", "auth login"},
+		// #324: the API's message says what is wrong; the account settings
+		// are not it.
+		{"403 expired domain", &api.APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}, false, "The domain is expired.", "API settings"},
 		{"401 production", &api.APIError{StatusCode: 401, Message: "Unauthorized"}, false, "auth login", "sandbox"},
 		{"401 sandbox", &api.APIError{StatusCode: 401, Message: "Unauthorized"}, true, "sandbox uses a separate API token", ""},
 		{"undecodable read", api.NormalizeError(&json.SyntaxError{}), false, "--debug", "change"},

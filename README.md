@@ -533,7 +533,7 @@ of them is a breaking change and is called out in the
   |---|---|---|
   | `usage` | The command line is wrong: an unknown command or flag, a bad argument or value | 2 |
   | `confirmation_required` | A write needs `--yes`, because there is no terminal to ask | 2 |
-  | `auth` | Credentials missing, failing or rejected, or access denied (HTTP 401/403) | 3 |
+  | `auth` | Credentials missing, failing or rejected, or access denied (HTTP 401, or a 403 about the account or its IP address; a 403 about the domain itself, such as "The domain is expired.", is `api`) | 3 |
   | `not_found` | HTTP 404 | 4 |
   | `rate_limited` | HTTP 429, after the CLI's own retries | 5 |
   | `conflict` | The thing already exists (the API answers a duplicate DNS record with a 400 that says so), or HTTP 409, which the API uses for a reused idempotency key | 1 |
@@ -711,7 +711,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | `0` | Success |
 | `1` | API or other runtime error, a confirmation declined or a prompt cancelled (Ctrl-C), or — with `domain check --exit-status` — a name that is not available |
 | `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value. Also a write with no terminal to confirm it and no `--yes` (`confirmation_required`) |
-| `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401/403) |
+| `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401, or a 403 that is not about the domain itself — an expired domain's 403 exits 1) |
 | `4` | Not found (HTTP 404) |
 | `5` | Rate limited (HTTP 429), after the CLI's own retries |
 | `6` | Write outcome unknown: a request that changes something got a 5xx, or timed out or lost its connection after it was sent, so it may or may not have been carried out — see [Idempotency keys](#idempotency-keys) |

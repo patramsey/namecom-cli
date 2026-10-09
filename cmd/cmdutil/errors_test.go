@@ -215,3 +215,18 @@ func TestRequireField(t *testing.T) {
 		t.Errorf("message = %q", got)
 	}
 }
+
+// TestAsRestricted_DomainState403PassesThrough pins #324: a 403 about the
+// domain ("The domain is expired.") is not the account's missing enrolment,
+// and saying "your credentials are fine — this account is not enrolled"
+// would send the user to support for an expired domain.
+func TestAsRestricted_DomainState403PassesThrough(t *testing.T) {
+	expired := &api.APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}
+	if err := AsRestricted(expired, "internal transfer-in", "approved enterprise reseller"); err != error(expired) {
+		t.Errorf("AsRestricted(expired) = %T %v, want the 403 unchanged", err, err)
+	}
+	denied := &api.APIError{StatusCode: 403, Message: "Permission Denied"}
+	if _, ok := AsRestricted(denied, "internal transfer-in", "approved enterprise reseller").(*RestrictedError); !ok {
+		t.Error("a plain 403 should still be a RestrictedError")
+	}
+}
