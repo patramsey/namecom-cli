@@ -9,6 +9,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Security
+- The Go toolchain moves to 1.26.9 and `golang.org/x/net` to v0.60.0,
+  clearing nine standard-library advisories in `net/http`, `net/textproto`
+  and `crypto/tls` that `govulncheck` reports as reachable from this binary
+  (`GO-2026-6603`, `-6605`, `-6607`, `-6608`, `-6610`, `-6611`, `-6612`,
+  `-6613`, `-6617`). They were published after the v0.5.3 build; no code
+  here changed. Building now needs Go 1.26.9.
+
 ## [0.5.3] - 2026-10-07
 
 Fixes from a second live sandbox sweep (#307–#314). Lists stop looping past
