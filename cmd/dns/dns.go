@@ -466,6 +466,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 		return api.FromSDKError(err)
 	})
+	if err != nil && !createIfNotExists {
+		err = hintExisting(err, "pass --if-not-exists to treat an existing record as success")
+	}
 	if err != nil || !sent {
 		return err
 	}
@@ -953,6 +956,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		_, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
 		if err != nil {
 			err = api.MarkWrite(err) // not sent through RunWrite, so marked here
+			if !importSkipExisting {
+				err = hintExisting(err, "pass --skip-existing to skip records already in the zone")
+			}
 			// Report what already landed. Import is not transactional, so bailing
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.

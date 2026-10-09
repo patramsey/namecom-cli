@@ -1,7 +1,9 @@
 package dns
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -175,4 +177,29 @@ func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
 	}
 	res.Print(fmt.Sprintf("None of the %d records is on %s: nothing to delete", len(ids), domain))
 	return nil
+}
+
+// existsError is the API refusing a create because the record is already
+// there, with the flag that makes that a success: the API said only "Record
+// already exists" (#323). It wraps the API error, so the exit code and the
+// envelope's "conflict" type are unchanged.
+type existsError struct {
+	err  error
+	hint string
+}
+
+func (e *existsError) Error() string    { return e.err.Error() }
+func (e *existsError) Unwrap() error    { return e.err }
+func (e *existsError) UserHint() string { return e.hint }
+
+// hintExisting gives err the hint when it is the API's duplicate-record
+// refusal — a 400 "Parameter Value Error - Record already exists" — and
+// returns any other error as it is.
+func hintExisting(err error, hint string) error {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	if !ok || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusUnprocessableEntity) ||
+		!strings.Contains(strings.ToLower(apiErr.Message+" "+apiErr.Details), "already exists") {
+		return err
+	}
+	return &existsError{err: err, hint: hint}
 }

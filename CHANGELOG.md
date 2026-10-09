@@ -122,6 +122,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `dns update --type A` on an MX or SRV record no longer sends the old
   priority. The API dropped it, so the dry run previewed a `"priority"` the
   stored record never had; the update line now says `priority 20 → —`.
+- A `dns create` or `dns import` the API refuses with "Record already
+  exists" now says what to do in `error.hint`: pass `--if-not-exists`, or
+  `--skip-existing` for an import. The error type (`conflict`) and exit code
+  are unchanged.
 
 ## [0.5.3] - 2026-10-07
 
