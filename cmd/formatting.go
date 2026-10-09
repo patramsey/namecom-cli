@@ -39,9 +39,9 @@ Formats (-o, --output):
                 — and a list in a value is a JSON array: order get's items
                 are one orderItems cell.
 
-  A write prints its result's keys (success, changed, message) as one
-  object, and a write to several targets a row each; a read never prints
-  them. A dry run prints method, path and body as a list, with or without
+  A write prints its result's -o json keys as one object — the record it
+  made, with changed where JSON has it, or success, changed and message —
+  and a write to several targets a row each. A dry run prints method, path and body as a list, with or without
   --fields, and dns sync's plan a row per change: action, type, host,
   answer, TTL, priority.
   dns export writes a file, JSON or a zone file, so -o table, -o tsv and
@@ -87,10 +87,11 @@ Filtering with jq (--jq <expr>):
 Errors and exit codes:
 
   A malformed expression, an unknown jq function, -q with --fields or --jq,
-  and --jq with another -o are usage errors (exit 2) before anything is sent.
-  An expression that fails on the output, and a field no item has, are usage
-  errors too, with nothing printed — except after a write, where the change
-  has been made: the output is printed unfiltered, with a warning.
+  --jq with another -o, and a field a write's result does not have are usage
+  errors (exit 2) before anything is sent. An expression that fails on the
+  output, and a field no item has, are usage errors too, with nothing
+  printed — except after a write, where the change has been made: the output
+  is printed unfiltered, in the -o format asked for, with a warning.
 
   --fields and --jq act on stdout only. A command that fails prints its
   error on stderr, in the error envelope, with its own exit code.

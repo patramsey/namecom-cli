@@ -113,6 +113,10 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
+	// "changed" on every create and update, and on a dry run's no-op (#326).
+	forwardingResult := append(output.KeysOf(coreapigo.EmailForwarding{}), "changed")
+	cmdutil.SetResult(createCmd, forwardingResult...)
+	cmdutil.SetResult(updateCmd, forwardingResult...)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 
@@ -331,7 +335,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 				out.Quiet(box)
 				return nil
 			}
-			return printResult(out, current, false, unchangedMsg(box, domain, current.EmailTo))
+			return out.WrittenChanged(current, false, unchangedMsg(box, domain, current.EmailTo))
 		}
 	}
 
@@ -375,7 +379,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// From the response, so the line shows what the API stored.
-	err = printResult(out, entry, true, fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
+	err = out.WrittenChanged(entry, true, fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
 	// Said rather than checked: a DNS list would be a second request on
 	// every create, to report records the help already describes. A warning
 	// in JSON and YAML, where a note printed nothing.
@@ -444,7 +448,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			if out.Quiet() {
 				return nil
 			}
-			return printResult(out, current, false, unchangedMsg(mailbox, domain, current.EmailTo))
+			return out.WrittenChanged(current, false, unchangedMsg(mailbox, domain, current.EmailTo))
 		}
 	}
 
@@ -468,31 +472,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return printResult(out, entry, true, fmt.Sprintf("Updated forwarding %s@%s → %s", mailbox, domain, updateEmailTo))
-}
-
-// printResult prints the forwarding a create or update made, or a dry run
-// found already as asked: in JSON and YAML the entry with "changed", so a
-// script can tell a no-op from a change as it can for `url update` (#326),
-// and otherwise msg. The caller handles --quiet.
-func printResult(out *output.Config, entry *coreapigo.EmailForwarding, changed bool, msg string) error {
-	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
-		doc, err := output.WithChanged(entry, changed)
-		if err != nil {
-			return err
-		}
-		if out.Format == output.FormatYAML {
-			return out.YAML(doc)
-		}
-		return out.JSON(doc)
-	}
-	if changed {
-		out.Success(msg)
-	} else {
-		out.Unchanged(msg)
-	}
-	return nil
+	return out.WrittenChanged(entry, true, fmt.Sprintf("Updated forwarding %s@%s → %s", mailbox, domain, updateEmailTo))
 }
 
 // unchangedMsg is a dry run's report of a mailbox already forwarding where

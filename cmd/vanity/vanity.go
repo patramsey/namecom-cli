@@ -99,6 +99,8 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
+	cmdutil.SetResult(createCmd, output.KeysOf(coreapigo.VanityNameserverResponse{})...)
+	cmdutil.SetResult(updateCmd, output.KeysOf(coreapigo.VanityNameserverResponse{})...)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 
@@ -366,15 +368,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(ns)
-	case output.FormatYAML:
-		return out.YAML(ns)
-	default:
-		out.Success(fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(createIPs))))
-	}
-	return nil
+	return out.Written(ns, fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(createIPs))))
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -417,15 +411,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(ns)
-	case output.FormatYAML:
-		return out.YAML(ns)
-	default:
-		out.Success(fmt.Sprintf("Updated vanity nameserver %s: IPs now %s", hostname, ipList(ips)))
-	}
-	return nil
+	return out.Written(ns, fmt.Sprintf("Updated vanity nameserver %s: IPs now %s", hostname, ipList(ips)))
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {

@@ -145,6 +145,9 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, internalCmd, cancelCmd, cancelOutboundCmd)
+	cmdutil.SetResult(createCmd, output.KeysOf(coreapigo.CreateTransferResponse{})...)
+	cmdutil.SetResult(internalCmd, output.KeysOf(coreapigo.DomainResponsePayload{})...)
+	cmdutil.SetResult(cancelOutboundCmd, output.KeysOf(coreapigo.CancelTransferOutResponse{})...)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
@@ -431,6 +434,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if err := out.YAML(result); err != nil {
 			return err
 		}
+	case out.Format == output.FormatTSV:
+		// The result's keys, as JSON has them (#325).
+		if err := out.TSVObject(result); err != nil {
+			return err
+		}
 	default:
 		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total %s)",
 			domain, result.Order, output.Money(result.TotalPaid)))
@@ -612,6 +620,8 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return out.JSON(t)
 	case output.FormatYAML:
 		return out.YAML(t)
+	case output.FormatTSV:
+		return out.TSVObject(t) // the keys JSON has (#325)
 	default:
 		// No status is reported here, and that is a fix rather than a
 		// simplification. This endpoint returns a DomainResponsePayload — the
@@ -723,15 +733,7 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(result)
-	case output.FormatYAML:
-		return out.YAML(result)
-	default:
-		out.Success(fmt.Sprintf("Cancelled outbound transfer of %s (status: %s)", domain, result.Status))
-	}
-	return nil
+	return out.Written(result, fmt.Sprintf("Cancelled outbound transfer of %s (status: %s)", domain, result.Status))
 }
 
 func runEligibility(cmd *cobra.Command, args []string) error {

@@ -76,7 +76,13 @@ func resetDNSCreateFlags(t *testing.T) {
 	}
 	reset := func() {
 		c.Flags().VisitAll(func(f *pflag.Flag) {
-			_ = f.Value.Set(f.DefValue)
+			// Set appends to a slice flag, so a slice is emptied instead:
+			// setting --fields to its default "[]" asked for a field "[]".
+			if sv, ok := f.Value.(pflag.SliceValue); ok {
+				_ = sv.Replace(nil)
+			} else {
+				_ = f.Value.Set(f.DefValue)
+			}
 			f.Changed = false
 		})
 	}

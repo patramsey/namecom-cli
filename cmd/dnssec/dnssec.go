@@ -90,6 +90,7 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, deleteCmd)
+	cmdutil.SetResult(createCmd, output.KeysOf(coreapigo.Dnssec{})...)
 	cmdutil.MarkList(listCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, deleteCmd)
 }
@@ -246,16 +247,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(key)
-	case output.FormatYAML:
-		return out.YAML(key)
-	default:
-		out.Success(fmt.Sprintf("Added DS record with key tag %d to %s (algorithm %d, digest type %d, digest %s)",
-			body.KeyTag, domain, body.Algorithm, body.DigestType, body.Digest))
-	}
-	return nil
+	return out.Written(key, fmt.Sprintf("Added DS record with key tag %d to %s (algorithm %d, digest type %d, digest %s)",
+		body.KeyTag, domain, body.Algorithm, body.DigestType, body.Digest))
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {

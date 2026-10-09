@@ -130,27 +130,18 @@ func reportExisting(cmd *cobra.Command, existing *coreapigo.Record, body coreapi
 		out.Quiet(strconv.Itoa(id))
 		return nil
 	}
-	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
-		return printCreated(out, existing, false)
-	}
-	out.Success(fmt.Sprintf("%s already exists on %s (id %d): nothing created", recordSummary(existing), body.DomainName, id))
-	return nil
+	return printCreated(out, existing, false,
+		fmt.Sprintf("%s already exists on %s (id %d): nothing created", recordSummary(existing), body.DomainName, id))
 }
 
 // printCreated prints the record `dns create` made, or with --if-not-exists
-// found, in JSON or YAML. The record carries "changed": false when it was
-// already there and true when it was created, so a script can tell which
-// (#240). A plain create carries it too, so the key is always there (#326).
-func printCreated(out *output.Config, rec *coreapigo.Record, changed bool) error {
-	doc, err := output.WithChanged(rec, changed)
-	if err != nil {
-		return err
-	}
-	if out.Format == output.FormatYAML {
-		return out.YAML(doc)
-	}
-	return out.JSON(doc)
+// found: the record in JSON, YAML and TSV, and msg in a table. The record
+// carries "changed": false when it was already there and true when it was
+// created, so a script can tell which (#240); a plain create carries it too,
+// so the key is always there (#326). TSV printed "changed true" for a record
+// that was already there (#325).
+func printCreated(out *output.Config, rec *coreapigo.Record, changed bool, msg string) error {
+	return out.WrittenChanged(rec, changed, msg)
 }
 
 // deleteAbsent is `dns delete --if-exists` when the API says none of the

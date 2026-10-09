@@ -1099,6 +1099,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return out.JSON(updated)
 	case output.FormatYAML:
 		return out.YAML(updated)
+	case output.FormatTSV:
+		return out.TSVObject(updated) // the keys JSON has (#325)
 	default:
 		out.Success(fmt.Sprintf("Updated %s: %s", domain, updateSummary(req)))
 	}

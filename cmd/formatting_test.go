@@ -252,18 +252,15 @@ func TestFields_Unknown(t *testing.T) {
 		t.Errorf("empty list: exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
 	}
 
+	// A write's result keys are known before it is sent, so a typo is a
+	// usage error then, not a warning after the change was made (#325).
+	// TestWriteResultKeys checks every write sends nothing first.
 	stdout, stderr, code = runFormatting(t, map[string]reply{
 		"GET /core/v1/domains/a.com":   {200, `{"domainName":"a.com","locked":false}`},
 		"PATCH /core/v1/domains/a.com": {200, `{"domainName":"a.com","locked":true}`},
 	}, "domain", "lock", "on", "a.com", "--yes", "-o", "json", "--fields", "nope")
-	if code != 0 {
-		t.Fatalf("after a write: exit %d, want 0; stderr:\n%s", code, stderr)
-	}
-	if doc := decodeDoc(t, "stdout", stdout); doc["changed"] != true {
-		t.Errorf("want the unfiltered write result, got %v", doc)
-	}
-	if !strings.Contains(stderr, `unknown field \"nope\"`) || !strings.Contains(stderr, "printed unfiltered") {
-		t.Errorf("want a warning about the field, got:\n%s", stderr)
+	if code != 2 || stdout != "" || !strings.Contains(stderr, `unknown field \"nope\"`) {
+		t.Errorf("write: exit %d, stdout %q, want exit 2 and nothing printed; stderr:\n%s", code, stdout, stderr)
 	}
 }
 

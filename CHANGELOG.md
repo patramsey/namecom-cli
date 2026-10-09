@@ -135,6 +135,23 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `error.hint`. `dns` used to put the advice in the message, and `url` left
   the value unquoted. A record in a `dns import` file says `host`, not
   `--host`, since no flag was passed.
+### Fixed
+- `-o tsv` after a write prints the keys `-o json` prints, so `--fields`
+  picks from what TSV shows. A write that returns what it made — `dns
+  create`, `dns update`, `url create`/`update`, `email create`/`update`,
+  `vanity-ns create`/`update`, `dnssec create`, `domain register`/`renew`/
+  `update`, `transfer create`/`internal-in`/`cancel-outbound`,
+  `contact resend`, `order refund`, `dns sync` — printed `success`,
+  `changed` and `message` rows in TSV and the resource in JSON. Its TSV is
+  now the resource's `field<TAB>value` rows, a script reading the old rows
+  will notice. And a no-op `dns update`, `url update` or
+  `dns create --if-not-exists` of a record already there says
+  `changed<TAB>false` in TSV, as JSON says `false`; it said `true` (#325).
+- A `--fields` naming a key a write's result does not have is a usage error
+  (exit 2) before anything is sent. It was found after the change was made,
+  warned about, and the result printed as indented JSON whatever `-o` said;
+  where the keys cannot be known in advance (`api`), the unfiltered result
+  is now printed in the format asked for (#325).
 
 ## [0.5.3] - 2026-10-07
 

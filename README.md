@@ -404,10 +404,11 @@ namecom dns create example.com --type A --answer 192.0.2.1 --dry-run --jq .body
 `--jq` means JSON: without `-o` it prints JSON in a terminal too, and with
 `-o table`, `yaml` or `tsv` it is a usage error. With `--fields`, the fields
 are picked first. A malformed expression is a usage error with gojq's
-message, reported before the command sends anything. An expression that
-fails on the output, and an unknown field, are usage errors too, with
-nothing printed — except after a write, where the change has been made:
-the output is printed unfiltered, with a warning, and the exit code is 0.
+message, reported before the command sends anything, and so is a field a
+write's result does not have. An expression that fails on the output, and
+an unknown field, are usage errors too, with nothing printed — except after
+a write, where the change has been made: the output is printed unfiltered,
+in the `-o` format asked for, with a warning, and the exit code is 0.
 Both flags act on stdout only; a failing command prints its error envelope
 on stderr with its usual exit code.
 
@@ -428,9 +429,10 @@ is one line. The shape never depends on the data:
   `order get`, `open`) uses the `-o json` keys with bare values, a value's
   source as a key of its own (`profileSource`), and a list in a value as a
   JSON array (`order get`'s items are one `orderItems` cell).
-- A write prints its result's keys the same way (`changed<TAB>true`); a read
-  never does. A dry run prints `method`, `path` and `body` (as compact JSON)
-  columns.
+- A write prints its result's `-o json` keys the same way: the record it
+  made, with `changed` where JSON has it, or `success`, `changed` and
+  `message`; a read never does. A dry run prints `method`, `path` and
+  `body` (as compact JSON) columns.
 
 `-q` still wins over `-o`, `tsv` included. With `--fields` or `--jq`, which
 choose what to print as well, it is a usage error.

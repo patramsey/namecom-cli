@@ -136,6 +136,7 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(refundCmd)
+	cmdutil.SetResult(refundCmd, output.KeysOf(coreapigo.RefundResponse{})...)
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 
@@ -474,6 +475,14 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	case out.Format == output.FormatYAML:
 		if err := out.YAML(result); err != nil {
 			return err
+		}
+	case out.Format == output.FormatTSV:
+		// The result's keys, as JSON has them, whatever was refunded.
+		if err := out.TSVObject(result); err != nil {
+			return err
+		}
+		for _, p := range problems {
+			out.Warn(p)
 		}
 	default:
 		if refunded > 0 {

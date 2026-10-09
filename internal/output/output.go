@@ -1113,6 +1113,8 @@ func (r *Results) Print(summary string) {
 		c.writeTSV([]string{"domain", "id", "changed", "message"}, rows)
 		return
 	}
+	// The items' keys, for --fields: omitempty leaves out an item's id.
+	c.noteKeys(r.items, true)
 	doc := writeResults{Success: true, Message: summary, Data: r.items}
 	for _, it := range r.items {
 		doc.Changed = doc.Changed || it.Changed
@@ -1148,10 +1150,55 @@ func WithChanged(v any, changed bool) (json.RawMessage, error) {
 	return append(out, '}'), nil
 }
 
+// Written prints the result of a write that returns what it wrote, v — a
+// record, a forwarding, an order: v itself in JSON and YAML, and in TSV the
+// same keys as field<TAB>value rows, as TSVObject prints them. A table prints
+// msg, as Success does. --quiet prints nothing.
+//
+// TSV printed Success's success/changed/message rows, so -o tsv and -o json
+// had different keys for the same write, and --fields, which picks the JSON
+// keys, could not pick what TSV had printed (#325).
+func (c *Config) Written(v any, msg string) error { return c.written(v, nil, msg) }
+
+// WrittenChanged is Written for a write that may have found nothing to do,
+// such as `dns update` asked for the values a record already has: v gets a
+// "changed" key, in TSV too, and a table prints msg as Unchanged when changed
+// is false. TSV said "changed true" for a no-op whatever JSON said (#325).
+func (c *Config) WrittenChanged(v any, changed bool, msg string) error {
+	return c.written(v, &changed, msg)
+}
+
+func (c *Config) written(v any, changed *bool, msg string) error {
+	if c.QuietMode {
+		return nil
+	}
+	doc := v
+	keys := jsonKeys(reflect.TypeOf(v))
+	if changed != nil {
+		raw, err := WithChanged(v, *changed)
+		if err != nil {
+			return err
+		}
+		doc, keys = raw, append(slices.Clone(keys), "changed")
+		c.noteKnown(keys)
+	}
+	switch c.Format {
+	case FormatJSON:
+		return c.JSON(doc)
+	case FormatYAML:
+		return c.YAML(doc)
+	case FormatTSV:
+		return c.tsvObject(doc, keys)
+	}
+	c.result(msg, changed == nil || *changed)
+	return nil
+}
+
 func (c *Config) result(msg string, changed bool) {
 	if c.QuietMode {
 		return
 	}
+	c.noteKeys(writeResult{}, false)
 	switch c.Format {
 	case FormatJSON:
 		_ = encodeJSON(c.Writer, writeResult{Success: true, Changed: changed, Message: msg})

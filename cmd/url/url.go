@@ -132,6 +132,9 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
+	entryResult := append(output.KeysOf(coreapigo.URLForwardingResponse{}), "changed")
+	cmdutil.SetResult(createCmd, entryResult...)
+	cmdutil.SetResult(updateCmd, entryResult...)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 
@@ -409,23 +412,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// Every create says "changed": true, as `url update` says whether it
 	// changed anything (#326) — a recovered one especially, since the error
 	// it recovered from could read as nothing having been made.
-	var doc any = entry
-	if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
-		withChanged, err := output.WithChanged(entry, true)
-		if err != nil {
-			return err
-		}
-		doc = withChanged
-	}
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(doc)
-	case output.FormatYAML:
-		return out.YAML(doc)
-	default:
-		out.Success(fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, host, createForwardsTo))
-	}
-	return nil
+	msg := fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, host, createForwardsTo)
+	return out.WrittenChanged(entry, true, msg)
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -600,25 +588,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 // printUpdated prints the forwarding `url update` changed, or found already
-// as asked: in JSON and YAML the entry with "changed", so a script can tell
-// a no-op from a change, and otherwise msg. --quiet prints nothing.
+// as asked: the entry with "changed", so a script can tell a no-op from a
+// change, in TSV as in JSON, and msg in a table. --quiet prints nothing.
 func printUpdated(out *output.Config, entry *coreapigo.URLForwardingResponse, changed bool, msg string) error {
 	if out.Quiet() {
 		return nil
 	}
-	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
-		doc, err := output.WithChanged(entry, changed)
-		if err != nil {
-			return err
-		}
-		if out.Format == output.FormatYAML {
-			return out.YAML(doc)
-		}
-		return out.JSON(doc)
-	}
-	out.Success(msg)
-	return nil
+	return out.WrittenChanged(entry, changed, msg)
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {

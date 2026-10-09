@@ -1,6 +1,11 @@
 package cmdutil
 
-import "github.com/spf13/cobra"
+import (
+	"strings"
+
+	"github.com/patramsey/namecom-cli/internal/output"
+	"github.com/spf13/cobra"
+)
 
 // KindAnnotation is the command annotation saying what kind of command it is,
 // so help can show the global flags that apply to it (#237). Every leaf
@@ -53,3 +58,45 @@ func Kind(cmd *cobra.Command) string { return cmd.Annotations[KindAnnotation] }
 // global flag is listed under, such as "Output". A flag without one is
 // listed first, under "Flags".
 const FlagSection = "namecom_flag_section"
+
+// ResultAnnotation is the command annotation naming the keys of the JSON
+// document a write prints once it is made, comma-separated. See SetResult.
+const ResultAnnotation = "namecom_result"
+
+// SetResult names the keys of the document cmd, a write, prints when the
+// write is made: the keys -o json prints and --fields picks from. A write
+// without it prints what output.Config.Success and Results print, whose keys
+// are output.ResultKeys.
+//
+// The keys are known before anything is sent, so CheckResultFields can refuse
+// a mistyped --fields then. Found after the write, it could only be warned
+// about, since the change had been made (#325).
+func SetResult(cmd *cobra.Command, keys ...string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[ResultAnnotation] = strings.Join(keys, ",")
+}
+
+// ResultKeys returns the keys of what cmd, a write, prints once it is made.
+func ResultKeys(cmd *cobra.Command) []string {
+	if v, ok := cmd.Annotations[ResultAnnotation]; ok {
+		return strings.Split(v, ",")
+	}
+	return output.ResultKeys()
+}
+
+// CheckResultFields refuses, as a usage error, a --fields that names a key a
+// write's result does not have, before the command runs and so before any
+// request is sent. A dry run prints the request instead, which EndFilter
+// checks the fields against; `api` prints whatever the API returned, whose
+// keys are not known in advance.
+func CheckResultFields(cmd *cobra.Command) error {
+	if Kind(cmd) != KindWrite || cmd.Annotations[RawOutputAnnotation] != "" || IsDryRun(cmd) {
+		return nil
+	}
+	if err := Out(cmd).CheckFields(ResultKeys(cmd)); err != nil {
+		return NewUsageError(err)
+	}
+	return nil
+}

@@ -96,6 +96,7 @@ func init() {
 	cmdutil.AddPageFlags(unverifiedCmd, &listAll, &listPage, &listLimit, "unverified contacts")
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(resendCmd, verifyCmd)
+	cmdutil.SetResult(resendCmd, output.KeysOf(coreapigo.ContactVerificationResendResponse{})...)
 	Cmd.AddCommand(unverifiedCmd, resendCmd, verifyCmd)
 }
 
@@ -327,15 +328,10 @@ func runResend(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(result)
-	case output.FormatYAML:
-		return out.YAML(result)
-	default:
-		out.Success(fmt.Sprintf("Verification email resent for record %d", result.VerificationID))
-		out.Hint("The contact must click the link in the email; it cannot be confirmed from here")
+	if err := out.Written(result, fmt.Sprintf("Verification email resent for record %d", result.VerificationID)); err != nil {
+		return err
 	}
+	out.Hint("The contact must click the link in the email; it cannot be confirmed from here")
 	return nil
 }
 
