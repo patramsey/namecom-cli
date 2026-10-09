@@ -119,6 +119,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   previewed `"type": "a"` with exit 0 and the real request failed with a 400.
   `url create --type` and `url update --type` now also accept any case
   (`MASKED` was refused), and send it lower-cased as the API names it.
+- `dns update --type A` on an MX or SRV record no longer sends the old
+  priority. The API dropped it, so the dry run previewed a `"priority"` the
+  stored record never had; the update line now says `priority 20 → —`.
 
 ## [0.5.3] - 2026-10-07
 

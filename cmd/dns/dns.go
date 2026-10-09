@@ -580,6 +580,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err := checkPriority(string(body.Type), set, "--priority"); err != nil {
 		return err
 	}
+	// An MX or SRV record made a type without a priority: the fetched one
+	// is not sent, as the API would drop it and the preview would show a
+	// body that is not what gets stored (#323).
+	if cmd.Flags().Changed("type") && !typeHasPriority(string(body.Type)) {
+		body.Priority = nil
+	}
 	if cmd.Flags().Changed("host") {
 		body.Host = &newHost
 	}
