@@ -313,6 +313,15 @@ func TestRegister_UnavailableDomain(t *testing.T) {
 	if !strings.Contains(err.Error(), "not available") {
 		t.Errorf("expected 'not available' in error, got: %v", err)
 	}
+	// #324: typed "unavailable", as `domain check --exit-status` is, not
+	// "api", and with a hint saying where to look next.
+	u, ok := errors.AsType[*cmdutil.UnavailableError](err)
+	if !ok {
+		t.Fatalf("want an *UnavailableError, got %T", err)
+	}
+	if !strings.Contains(u.UserHint(), "namecom domain check") {
+		t.Errorf("hint = %q, want it to point at domain check", u.UserHint())
+	}
 }
 
 func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {

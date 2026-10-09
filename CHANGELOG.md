@@ -41,6 +41,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
 ### Fixed
+- `domain register` of a name that is not available, `--dry-run` or not, is
+  typed `unavailable` in the JSON error envelope, as `domain check
+  --exit-status` is, with a hint pointing at `namecom domain check`. It was
+  `api` with no hint. The exit code is still 1.
 - A flag value that does not parse says so plainly: `--limit must be a whole
   number, got "abc"` in place of `invalid argument "abc" for "--limit" flag:
   strconv.ParseInt: parsing "abc": invalid syntax`, and likewise for every

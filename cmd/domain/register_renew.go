@@ -174,7 +174,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 			if r.Reason != nil && *r.Reason != "" {
 				msg += ": " + *r.Reason
 			}
-			return fmt.Errorf("%s", msg)
+			return &cmdutil.UnavailableError{Msg: msg,
+				Hint: "run 'namecom domain check <name>…' to find a name that is available"}
 		}
 		checkPurchaseType, checkPrice = nonDefaultPurchaseType(r)
 		quote = registerQuote(r)

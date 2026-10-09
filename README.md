@@ -539,7 +539,7 @@ of them is a breaking change and is called out in the
   | `conflict` | The thing already exists (the API answers a duplicate DNS record with a 400 that says so), or HTTP 409, which the API uses for a reused idempotency key | 1 |
   | `aborted` | A confirmation was declined or a prompt cancelled | 1 |
   | `network` | No HTTP response: a timeout, or a connection that failed | 1 |
-  | `unavailable` | `domain check --exit-status` found a name that is not available; nothing failed | 1 |
+  | `unavailable` | `domain check --exit-status` found a name that is not available, or `domain register` was given one; nothing failed | 1 |
   | `api` | Any other failure: another API error, or a local one such as an unreadable file | 1 |
 
   `status` is the HTTP status, present only when the API answered. `message`
@@ -709,7 +709,7 @@ Open a new shell afterwards. `namecom completion <shell> --help` has more.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | API or other runtime error, a confirmation declined or a prompt cancelled (Ctrl-C), or — with `domain check --exit-status` — a name that is not available |
+| `1` | API or other runtime error, a confirmation declined or a prompt cancelled (Ctrl-C), or a name that is not available — found by `domain check --exit-status`, or given to `domain register` |
 | `2` | Usage error: an unknown command or flag, a wrong number of arguments, or an invalid value. Also a write with no terminal to confirm it and no `--yes` (`confirmation_required`) |
 | `3` | Authentication: credentials missing (an unknown `--profile` included), failing or rejected, or access denied (HTTP 401, or a 403 that is not about the domain itself — an expired domain's 403 exits 1) |
 | `4` | Not found (HTTP 404) |

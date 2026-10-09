@@ -518,6 +518,14 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode:   1,
 		},
 		{
+			// #324: was "api", with no hint.
+			name:     "register a taken name",
+			args:     []string{"domain", "register", "example.com", "--dry-run"},
+			routes:   map[string]reply{"POST /core/v1/domains:checkAvailability": {200, `{"results":[{"domainName":"example.com","purchasable":false}]}`}},
+			wantType: output.ErrorTypeUnavailable,
+			wantCode: 1,
+		},
+		{
 			name:       "403 for the account",
 			args:       []string{"domain", "get", "example.com"},
 			routes:     map[string]reply{"GET /core/v1/domains/example.com": {403, `{"message":"Permission Denied","details":"IP not whitelisted"}`}},
