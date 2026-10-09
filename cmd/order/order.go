@@ -249,7 +249,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	foot := cmdutil.Page("order", listPage, len(orders), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	foot := cmdutil.Page("order", listPage, len(orders), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	if hasMore {
 		foot.Notes = []string{"newest first"}
 		foot.Narrow = narrowFlags(cmd)

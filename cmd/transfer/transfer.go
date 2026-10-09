@@ -211,7 +211,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	foot := cmdutil.Page("transfer", listPage, len(transfers), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	foot := cmdutil.Page("transfer", listPage, len(transfers), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints

@@ -172,7 +172,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			)
 		}
 	}
-	foot := cmdutil.Page("unverified contact", listPage, len(contacts), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	foot := cmdutil.Page("unverified contact", listPage, len(contacts), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints

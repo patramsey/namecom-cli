@@ -164,6 +164,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `TYPE`/`PRICE` rows of `$46.99` strings without `premium`, and
   `name.com (an account)` for `atName`. A script reading the old rows will
   notice (#325).
+- A list's footer at `--limit 1 --page 2` says "Showing 2–2 of N", not
+  "Showing 1–2 of N": the range is worked out from `--page`, `--limit` and
+  the rows shown rather than taken from the API, which gets it wrong for
+  that page (#325).
 
 ## [0.5.3] - 2026-10-07
 

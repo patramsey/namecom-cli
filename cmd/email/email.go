@@ -189,7 +189,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	foot := cmdutil.Page("forwarding", listPage, len(all), true, 0, 0, 0, nextPage) // the API gives this list no total
+	foot := cmdutil.Page("forwarding", listPage, len(all), true, nil, 0, 0, 0, nextPage) // the API gives this list no total
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints

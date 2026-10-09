@@ -310,10 +310,10 @@ func runList(cmd *cobra.Command, args []string) error {
 			next = *nextPage
 		}
 	}
-	foot := cmdutil.Page("record", listPage, len(records), paging.All, pos.from, pos.to, pos.total, next)
+	foot := cmdutil.Page("record", listPage, len(records), paging.All, paging.PerPage, pos.from, pos.to, pos.total, next)
 	total := cmdutil.ListTotal(listPage, pos.total)
 	if filtered {
-		foot = cmdutil.Page("record", listPage, len(records), true, 0, 0, 0, next)
+		foot = cmdutil.Page("record", listPage, len(records), true, nil, 0, 0, 0, next)
 		total = nil
 	}
 	switch out.Format {

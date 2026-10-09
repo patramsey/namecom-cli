@@ -146,6 +146,35 @@ func TestNonNil(t *testing.T) {
 	}
 }
 
+// TestPage_Range: where a page sits is worked out from page, perPage and the
+// rows shown. The API answers page 2 at perPage 1 with from 1, to 2, and the
+// footer said "Showing 1–2 of 4 records" for one record (#325).
+func TestPage_Range(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		page, shown      int
+		perPage          *int
+		from, to         int
+		wantFrom, wantTo int
+	}{
+		{"page 2 at perPage 1, the API's from wrong", 2, 1, intPtr(1), 1, 2, 2, 2},
+		{"page 2 at perPage 2", 2, 2, intPtr(2), 3, 4, 3, 4},
+		{"a short last page", 3, 1, intPtr(2), 5, 6, 5, 5},
+		{"the API's page size: its from, rows for to", 2, 250, nil, 251, 500, 251, 500},
+		{"an empty page", 1, 0, intPtr(1), 0, 0, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Page("record", tc.page, tc.shown, false, tc.perPage, tc.from, tc.to, 4, 0)
+			if p.From != tc.wantFrom || p.To != tc.wantTo {
+				t.Errorf("From–To %d–%d, want %d–%d", p.From, p.To, tc.wantFrom, tc.wantTo)
+			}
+		})
+	}
+	if p := Page("record", 2, 3, true, intPtr(1), 1, 2, 4, 0); p.From != 0 || p.To != 0 {
+		t.Errorf("--all: From–To %d–%d, want none", p.From, p.To)
+	}
+}
+
 func intPtr(n int) *int       { return &n }
 func int32Ptr(n int32) *int32 { return &n }
 
