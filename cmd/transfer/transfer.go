@@ -109,7 +109,10 @@ var cancelOutboundCmd = &cobra.Command{
 	Short: "Stop a domain transferring out to another registrar",
 	Long: `Cancel a pending transfer of a domain from name.com to another registrar, so
 the domain stays here. To cancel a transfer in to name.com, use
-'transfer cancel'.`,
+'transfer cancel'.
+
+--dry-run checks that the domain is in the account, but not that a transfer
+out is pending: the API has no read for an outbound transfer.`,
 	Example:           `  namecom transfer cancel-outbound example.com`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCancelOutbound,

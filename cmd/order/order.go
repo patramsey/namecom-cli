@@ -392,11 +392,13 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	}
 
 	// The prompt names what is refunded and for how much, which takes the
-	// order. It is fetched only when the question will be asked: --dry-run
-	// never prompts, --yes answers it unseen, and without a terminal there
-	// is no one to ask, so the command stops at needing --yes.
+	// order. It is fetched only when the question will be asked — --yes
+	// answers it unseen, and without a terminal there is no one to ask, so
+	// the command stops at needing --yes — and for a dry run, which never
+	// asks but fails, as the refund would, for an order or item that is not
+	// there rather than previewing it (#326).
 	prompt := refundFallbackPrompt(body)
-	if !cmdutil.IsDryRun(cmd) && !cmdutil.IsYes(cmd) && output.IsInteractive() {
+	if cmdutil.IsDryRun(cmd) || (!cmdutil.IsYes(cmd) && output.IsInteractive()) {
 		var err error
 		if prompt, err = refundPrompt(cmd, body); err != nil {
 			return err

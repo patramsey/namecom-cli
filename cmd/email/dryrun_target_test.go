@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/output"
+	"github.com/spf13/cobra"
 )
 
 // mailboxServer answers a GET of the mailbox with mailbox, or a 404 when it
@@ -79,16 +81,17 @@ func TestEmailDryRun_ChecksTheMailbox(t *testing.T) {
 const stubInfo = `{"domainName":"example.com","emailBox":"info","emailTo":"old@example.org"}`
 
 // A dry-run create of a mailbox that already forwards elsewhere is the
-// conflict the real create reports; one that is missing, or already forwards
-// to --to, previews the create.
+// conflict the real create reports, and one that already forwards to --to has
+// nothing to create (#326); one that is missing previews the create.
 func TestEmailCreateDryRun_ChecksForAnExistingMailbox(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mailbox, to string
 		conflict    bool
+		noop        bool
 	}{
-		"forwards elsewhere": {stubInfo, "new@example.org", true},
-		"forwards there":     {stubInfo, "Old@example.org", false},
-		"missing":            {"", "new@example.org", false},
+		"forwards elsewhere": {stubInfo, "new@example.org", true, false},
+		"forwards there":     {stubInfo, "Old@example.org", false, true},
+		"missing":            {"", "new@example.org", false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var seen []string
@@ -105,8 +108,106 @@ func TestEmailCreateDryRun_ChecksForAnExistingMailbox(t *testing.T) {
 				t.Errorf("sent %v, want only %s", seen, getInfo)
 			}
 			stdout := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String()
-			if got := strings.Contains(stdout, "POST"); got == tc.conflict {
-				t.Errorf("stdout = %q; want the POST previewed: %v", stdout, !tc.conflict)
+			wantPOST := !tc.conflict && !tc.noop
+			if got := strings.Contains(stdout, "POST"); got != wantPOST {
+				t.Errorf("stdout = %q; want the POST previewed: %v", stdout, wantPOST)
+			}
+			if got := strings.Contains(stdout, "already forwards to old@example.org: nothing to change"); got != tc.noop {
+				t.Errorf("stdout = %q; want nothing to change: %v", stdout, tc.noop)
+			}
+		})
+	}
+}
+
+// TestEmailDryRun_NothingToChange pins #326: a dry-run update or create for a
+// mailbox that already forwards to --to previewed the write. It now says
+// there is nothing to change — "changed": false in JSON, as `url update`
+// says it — from the GET the dry run already makes, and adds no warning
+// about the records forwarding adds.
+func TestEmailDryRun_NothingToChange(t *testing.T) {
+	for name, tc := range map[string]struct {
+		build func(*testing.T, *httptest.Server) *cobra.Command
+		run   func(*cobra.Command, []string) error
+	}{
+		"update": {cmdForEmailUpdate, runUpdate},
+		"create": {cmdForEmailCreate, runCreate},
+	} {
+		for _, format := range []output.Format{output.FormatTable, output.FormatJSON} {
+			t.Run(fmt.Sprintf("%s %v", name, format), func(t *testing.T) {
+				var seen []string
+				cmd := withDryRun(t, tc.build(t, mailboxServer(t, stubInfo, &seen)), true)
+				out := cmdutil.Out(cmd)
+				out.Format = format
+				if err := cmd.ParseFlags([]string{"--to", "old@example.org"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				if err := tc.run(cmd, []string{"example.com", "info"}); err != nil {
+					t.Fatalf("dry run: %v", err)
+				}
+				if strings.Join(seen, ",") != getInfo {
+					t.Errorf("sent %v, want only %s", seen, getInfo)
+				}
+				stdout := out.Writer.(*bytes.Buffer).String()
+				if format == output.FormatJSON {
+					var doc struct {
+						EmailTo string `json:"emailTo"`
+						Changed *bool  `json:"changed"`
+					}
+					if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc.Changed == nil || *doc.Changed || doc.EmailTo != "old@example.org" {
+						t.Errorf("stdout = %q, want the entry with \"changed\": false", stdout)
+					}
+				} else if !strings.Contains(stdout, "info@example.com already forwards to old@example.org: nothing to change") {
+					t.Errorf("stdout = %q, want nothing to change", stdout)
+				}
+				if w := out.TakeWarnings(); len(w) > 0 {
+					t.Errorf("warnings = %q, want none", w)
+				}
+				if e := out.EWriter.(*bytes.Buffer).String(); e != "" {
+					t.Errorf("stderr = %q, want nothing", e)
+				}
+			})
+		}
+	}
+}
+
+// TestEmailWrites_SayChanged pins #326: a real create or update printed the
+// entry in JSON with no "changed" key, where the dry run's no-op says
+// "changed": false. Each still sends its one request.
+func TestEmailWrites_SayChanged(t *testing.T) {
+	for name, tc := range map[string]struct {
+		build func(*testing.T, *httptest.Server) *cobra.Command
+		run   func(*cobra.Command, []string) error
+		want  string
+	}{
+		"create": {cmdForEmailCreate, runCreate, "POST /core/v1/domains/example.com/email/forwarding"},
+		"update": {cmdForEmailUpdate, runUpdate, "PUT /core/v1/domains/example.com/email/forwarding/info"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var seen []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = append(seen, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(stubInfo))
+			}))
+			t.Cleanup(srv.Close)
+			cmd := withDryRun(t, tc.build(t, srv), false)
+			out := cmdutil.Out(cmd)
+			out.Format = output.FormatJSON
+			if err := cmd.ParseFlags([]string{"--to", "old@example.org"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			if err := tc.run(cmd, []string{"example.com", "info"}); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if strings.Join(seen, ",") != tc.want {
+				t.Errorf("sent %v, want only %s", seen, tc.want)
+			}
+			var doc struct {
+				Changed *bool `json:"changed"`
+			}
+			stdout := out.Writer.(*bytes.Buffer).String()
+			if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc.Changed == nil || !*doc.Changed {
+				t.Errorf("stdout = %q, want \"changed\": true", stdout)
 			}
 		})
 	}

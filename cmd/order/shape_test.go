@@ -40,9 +40,10 @@ func TestRequestShape_Order(t *testing.T) {
 
 // TestDryRunMatchesRealRequest_RefundBody asserts the refund --dry-run prints
 // is the body sent. A refund cannot be undone, so the preview has to be the
-// request itself.
+// request itself. The stub is also the order the dry run reads to check the
+// items (#326).
 func TestDryRunMatchesRealRequest_RefundBody(t *testing.T) {
-	const stub = `{"orderId":88,"results":[{"orderItemId":5,"success":true}]}`
+	const stub = `{"orderId":88,"orderItems":[{"id":5},{"id":6}],"results":[{"orderItemId":5,"success":true}]}`
 	build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
 		cmd := cmdForRefund(t, srv, false)
 		refundOrderID, refundItemIDs = 0, nil // see TestRequestShape_Order

@@ -137,17 +137,13 @@ func reportExisting(cmd *cobra.Command, existing *coreapigo.Record, body coreapi
 }
 
 // printCreated prints the record `dns create` made, or with --if-not-exists
-// found, in JSON or YAML. Under --if-not-exists the record carries "changed":
-// false when it was already there and true when it was created, so a script
-// can tell which (#240); without the flag the record is printed as it is.
+// found, in JSON or YAML. The record carries "changed": false when it was
+// already there and true when it was created, so a script can tell which
+// (#240). A plain create carries it too, so the key is always there (#326).
 func printCreated(out *output.Config, rec *coreapigo.Record, changed bool) error {
-	var doc any = rec
-	if createIfNotExists {
-		withChanged, err := output.WithChanged(rec, changed)
-		if err != nil {
-			return err
-		}
-		doc = withChanged
+	doc, err := output.WithChanged(rec, changed)
+	if err != nil {
+		return err
 	}
 	if out.Format == output.FormatYAML {
 		return out.YAML(doc)

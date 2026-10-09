@@ -2,6 +2,7 @@ package email
 
 import (
 	"bytes"
+	"cmp"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,6 +111,12 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 		setup func(*testing.T, *httptest.Server) *cobra.Command
 		args  []string
 		run   func(*cobra.Command, []string) error
+		// resp replaces getResponse. The stub gives the dry run's GET and
+		// the real request one reply, so create's is a mailbox with no
+		// address yet: one already forwarding to --to is a no-op the dry run
+		// reports instead of previewing (#326), and one forwarding elsewhere
+		// is the conflict the real create reports.
+		resp string
 	}{
 		{
 			name: "create",
@@ -122,6 +129,7 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 			},
 			args: []string{"example.com", "hello"},
 			run:  runCreate,
+			resp: `{"domainName":"example.com","emailBox":"hello"}`,
 		},
 		{
 			name: "update",
@@ -164,6 +172,7 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			getResponse := cmp.Or(tc.resp, getResponse)
 			printed := captureDryRunLine(t, func(srv *httptest.Server) (*cobra.Command, error) {
 				cmd := withDryRun(t, tc.setup(t, srv), true)
 				return cmd, tc.run(cmd, tc.args)

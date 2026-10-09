@@ -2,6 +2,7 @@
 package email
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -63,7 +64,9 @@ var createCmd = &cobra.Command{
 part before the @: info, for info@example.com.
 
 A mailbox that already forwards elsewhere is left as it is, and create fails
-(exit 1) naming where it forwards; 'namecom email update' changes it.
+(exit 1) naming where it forwards; 'namecom email update' changes it. One
+that already forwards to --to is reported as created: the API's reply is the
+same either way. --dry-run checks first, and says so.
 
 To deliver forwarded mail, name.com adds DNS records to <domain> when they
 are missing: MX records for ` + forwardingMX + ` and the SPF record "` + forwardingSPF + `".
@@ -78,9 +81,13 @@ leaves them; 'namecom dns delete' removes them.`,
 }
 
 var updateCmd = &cobra.Command{
-	Use:               "update <domain> <mailbox>",
-	Short:             "Update an email forwarding entry",
-	Long:              `Change the address mail sent to <mailbox>@<domain> is forwarded to.`,
+	Use:   "update <domain> <mailbox>",
+	Short: "Update an email forwarding entry",
+	Long: `Change the address mail sent to <mailbox>@<domain> is forwarded to.
+
+The update is sent as asked, and reported as a change, even when the mailbox
+already forwards to --to: checking first would cost every update a second
+request. --dry-run checks, and says when there is nothing to change.`,
 	Example:           `  namecom email update example.com info --to newemail@gmail.com`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runUpdate,
@@ -307,14 +314,24 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// A dry run checks for a mailbox that already forwards elsewhere, which
 	// the real create reports as a conflict below, so the preview does not
 	// promise a create that would fail (#292). The real run learns it from
-	// the create's own response and spends no GET.
+	// the create's own response and spends no GET. One that already forwards
+	// to --to has nothing to create, and the dry run says so rather than
+	// previewing the POST (#326); the real run cannot tell it from a create.
 	if cmdutil.IsDryRun(cmd) {
 		current, err := fetchMailbox(cmd, domain, mailbox)
 		if err != nil && !cmdutil.IsNotFound(err) {
 			return api.FromSDKError(err)
 		}
-		if err == nil && current != nil && current.EmailTo != "" && !strings.EqualFold(current.EmailTo, createEmailTo) {
-			return alreadyForwards(domain, mailbox, current, createEmailTo)
+		if err == nil && current != nil && current.EmailTo != "" {
+			if !strings.EqualFold(current.EmailTo, createEmailTo) {
+				return alreadyForwards(domain, mailbox, current, createEmailTo)
+			}
+			box := cmp.Or(current.EmailBox, mailbox)
+			if out.QuietMode {
+				out.Quiet(box)
+				return nil
+			}
+			return printResult(out, current, false, unchangedMsg(box, domain, current.EmailTo))
 		}
 	}
 
@@ -357,15 +374,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		err = out.JSON(entry)
-	case output.FormatYAML:
-		err = out.YAML(entry)
-	default:
-		// From the response, so the line shows what the API stored.
-		out.Success(fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
-	}
+	// From the response, so the line shows what the API stored.
+	err = printResult(out, entry, true, fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
 	// Said rather than checked: a DNS list would be a second request on
 	// every create, to report records the help already describes. A warning
 	// in JSON and YAML, where a note printed nothing.
@@ -421,10 +431,20 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// A dry run checks that the mailbox exists, as the real PUT's 404 would
-	// (#292). The real run spends no GET: the PUT says so itself.
+	// (#292), and whether it already forwards to --to, which has nothing to
+	// change: that is said, as `url update` says it, instead of previewing
+	// the PUT (#326). The real run spends no GET: the PUT says the first
+	// itself, and the second is not worth a request on every update.
 	if cmdutil.IsDryRun(cmd) {
-		if _, err := fetchMailbox(cmd, domain, mailbox); err != nil {
+		current, err := fetchMailbox(cmd, domain, mailbox)
+		if err != nil {
 			return mailboxErr(err, mailbox, domain)
+		}
+		if current != nil && current.EmailTo != "" && strings.EqualFold(current.EmailTo, updateEmailTo) {
+			if out.Quiet() {
+				return nil
+			}
+			return printResult(out, current, false, unchangedMsg(mailbox, domain, current.EmailTo))
 		}
 	}
 
@@ -448,15 +468,37 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	return printResult(out, entry, true, fmt.Sprintf("Updated forwarding %s@%s → %s", mailbox, domain, updateEmailTo))
+}
+
+// printResult prints the forwarding a create or update made, or a dry run
+// found already as asked: in JSON and YAML the entry with "changed", so a
+// script can tell a no-op from a change as it can for `url update` (#326),
+// and otherwise msg. The caller handles --quiet.
+func printResult(out *output.Config, entry *coreapigo.EmailForwarding, changed bool, msg string) error {
 	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(entry)
-	case output.FormatYAML:
-		return out.YAML(entry)
-	default:
-		out.Success(fmt.Sprintf("Updated forwarding %s@%s → %s", mailbox, domain, updateEmailTo))
+	case output.FormatJSON, output.FormatYAML:
+		doc, err := output.WithChanged(entry, changed)
+		if err != nil {
+			return err
+		}
+		if out.Format == output.FormatYAML {
+			return out.YAML(doc)
+		}
+		return out.JSON(doc)
+	}
+	if changed {
+		out.Success(msg)
+	} else {
+		out.Unchanged(msg)
 	}
 	return nil
+}
+
+// unchangedMsg is a dry run's report of a mailbox already forwarding where
+// it was asked to.
+func unchangedMsg(box, domain, to string) string {
+	return fmt.Sprintf("%s@%s already forwards to %s: nothing to change", box, domain, to)
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {
