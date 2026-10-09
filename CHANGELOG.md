@@ -40,6 +40,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   wildcards; `domain check foo.com.` drops the trailing dot; and the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
+### Fixed
+- A write refused for want of `--yes` puts its advice in `error.hint`, as
+  not-found and missing-argument errors do: `message` is now
+  `confirmation required for "…"` and `error.hint` is
+  `pass --yes to confirm when not running in a terminal`. A script matching
+  "pass --yes" in the message should read `error.type`
+  (`confirmation_required`) or `error.hint` instead.
 
 ## [0.5.3] - 2026-10-07
 

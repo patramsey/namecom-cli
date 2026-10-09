@@ -587,6 +587,15 @@ func TestJSONContract_Errors(t *testing.T) {
 			if msg, _ := e["message"].(string); msg == "" {
 				t.Error("error.message is empty")
 			}
+			// The advice is in error.hint, not appended to the message (#324).
+			if tc.wantType == output.ErrorTypeConfirmationRequired {
+				if hint, _ := e["hint"].(string); hint != "pass --yes to confirm when not running in a terminal" {
+					t.Errorf("error.hint = %q, want the --yes advice", hint)
+				}
+				if msg, _ := e["message"].(string); strings.Contains(msg, "--yes") {
+					t.Errorf("error.message %q should leave the advice to the hint", msg)
+				}
+			}
 			if hint, _ := e["hint"].(string); hint != "" && doc["hint"] != hint {
 				t.Errorf("the deprecated top-level hint should repeat error.hint %q, got %v", hint, doc["hint"])
 			}

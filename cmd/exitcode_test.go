@@ -454,7 +454,7 @@ func TestExitCode_MissingRequiredFlagIsUsage(t *testing.T) {
 		{[]string{"order", "refund"}, `"item-ids"`},
 		{[]string{"domain", "contacts", "set", "example.com"}, `"contacts-file"`},
 		{[]string{"dns", "delete", "example.com", "123"}, "confirmation required for"},
-		{[]string{"email", "delete", "example.com", "info"}, "pass --yes"},
+		{[]string{"email", "delete", "example.com", "info"}, "confirmation required for"},
 	} {
 		t.Run(strings.Join(tc.args[:2], " "), func(t *testing.T) {
 			resetFlags(t, tc.args)

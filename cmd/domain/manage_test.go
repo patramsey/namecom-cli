@@ -1101,7 +1101,8 @@ func TestSetNSAndContactsSet_Confirm(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error without --yes in non-interactive mode")
 			}
-			if !strings.Contains(err.Error(), c.wantPrompt) || !strings.Contains(err.Error(), "--yes") {
+			var ue *cmdutil.UsageError
+			if !strings.Contains(err.Error(), c.wantPrompt) || !errors.As(err, &ue) || !strings.Contains(ue.UserHint(), "--yes") {
 				t.Errorf("error should carry the prompt and name --yes, got: %v", err)
 			}
 			if *hits != 0 {

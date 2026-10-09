@@ -337,8 +337,8 @@ terminal:
   and `namecom api` with any method but GET and HEAD
 
 In a script or a pipe there is no one to ask, so these stop with
-*"confirmation required for … — pass --yes to confirm when not running in a
-terminal"* and exit 2 until you pass `--yes`. Every other write runs without
+*"confirmation required for …"*, hinting *"pass --yes to confirm when not
+running in a terminal"*, and exit 2 until you pass `--yes`. Every other write runs without
 asking, in a terminal or not: `dns create`, `dns update`, `dns import`,
 `email create` and `update`, `url create` and `update`, `vanity-ns create`
 and `update`, `dnssec create`, `domain lock on`, `domain privacy on`,

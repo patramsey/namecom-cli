@@ -71,15 +71,16 @@ func Confirm(out *output.Config, yes bool, msg, detail string) (bool, error) {
 // and no --yes. It is a usage error (exit 2), since what is missing is a flag.
 // It used to exit 1 like an API failure, and it read as a question put to
 // nobody — "Delete x? — pass --yes …" (#236). The question is still quoted
-// whole, since it is what --yes would approve: a price, a year count.
+// whole, since it is what --yes would approve: a price, a year count. The
+// advice is the hint, where every other error puts it (#324).
 func needsYes(msg, detail string) error {
 	what := `"` + msg + `"`
 	if detail != "" {
 		what += " (" + detail + ")"
 	}
-	return NewUsageError(&ConfirmationRequiredError{
-		msg: fmt.Sprintf("confirmation required for %s — pass --yes to confirm when not running in a terminal", what),
-	})
+	return NewUsageErrorHint(&ConfirmationRequiredError{
+		msg: "confirmation required for " + what,
+	}, "pass --yes to confirm when not running in a terminal")
 }
 
 // ConfirmationRequiredError is the usage error needsYes returns, typed so the
