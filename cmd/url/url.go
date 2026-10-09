@@ -338,6 +338,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidURL(createForwardsTo, "to"); err != nil {
 		return err
 	}
+	// Any case, as `dns create --type` reads it; "MASKED" was refused (#323).
+	createType = strings.ToLower(createType)
 	if err := cmdutil.ValidURLForwardingType(createType, "type"); err != nil {
 		return err
 	}
@@ -440,8 +442,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// A --type that is not masked rules out --title and --meta before the
-	// GET; without --type, the current type decides, below.
+	// GET; without --type, the current type decides, below. Any case, as
+	// create reads it (#323).
 	if cmd.Flags().Changed("type") {
+		updateType = strings.ToLower(updateType)
 		if err := maskedOnly(updateType, updateTitle, updateMeta); err != nil {
 			return err
 		}

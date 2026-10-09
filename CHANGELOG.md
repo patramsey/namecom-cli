@@ -113,6 +113,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `contact verify` and `transfer cancel-outbound` have no read to check
   against, so their help now says what their dry run leaves unchecked: the
   verification record, and whether a transfer out is pending (#326).
+### Fixed
+- `dns create --type a` and `dns update --type txt` send the type upper-cased.
+  The value was checked in any case but sent as typed, so the dry run
+  previewed `"type": "a"` with exit 0 and the real request failed with a 400.
+  `url create --type` and `url update --type` now also accept any case
+  (`MASKED` was refused), and send it lower-cased as the API names it.
 
 ## [0.5.3] - 2026-10-07
 

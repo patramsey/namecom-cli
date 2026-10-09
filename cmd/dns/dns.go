@@ -396,6 +396,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
 	}
+	// Checked without regard to case, so sent in the case the API takes:
+	// "a" passed every check and the dry run, then the API refused it (#323).
+	createType = strings.ToUpper(createType)
 	host, err := zoneHost(createHost, domain)
 	if err != nil {
 		return err
@@ -566,7 +569,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSCreateType(updateType); err != nil {
 			return err
 		}
-		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
+		body.Type = coreapigo.DNSUpdateRecordBodyType(strings.ToUpper(updateType))
 	}
 	// As create: --priority on a type without one, or an MX or SRV record
 	// left with none (a --type change), is refused rather than sent.
