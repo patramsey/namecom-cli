@@ -9,6 +9,30 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-08
+
+Fixes from a third live sandbox sweep (#322–#327), and a Go toolchain update
+for nine standard-library advisories. A mistyped `--tld` no longer lists the
+whole account, `domain check` keeps its answers when one batch is rejected,
+and `dns delete` with several IDs reads the zone once instead of once per ID.
+
+Output a script might notice:
+
+- `domain list --tld` with a TLD the API ignores is a usage error (exit 2);
+  it listed every domain in the account.
+- A 403 about the domain itself (such as "The domain is expired.") is type
+  `api`, exit 1; it was `auth`, exit 3. Other 403s are still `auth`.
+- `domain register` of a taken name is type `unavailable`;
+  `confirmation_required` puts the `--yes` advice in `error.hint`.
+- `api` with a full URL, `completion <unknown>`, `help <command> <extra>`
+  and an unknown `--fields` on a write are usage errors (exit 2), the last
+  before any request.
+- `-o tsv` after a write prints the `-o json` keys, with the real `changed`;
+  every create's JSON carries `changed`; an empty counted list says
+  `"total": 0`; `domain pricing` and `transfer eligibility` TSV are
+  `field<TAB>value` rows.
+- An empty `NO_COLOR=` leaves colour on.
+
 ### Security
 - The Go toolchain moves to 1.26.9 and `golang.org/x/net` to v0.60.0,
   clearing nine standard-library advisories in `net/http`, `net/textproto`
@@ -16,6 +40,7 @@ Releases before `0.2.0` predate this file. Their notes are on the
   (`GO-2026-6603`, `-6605`, `-6607`, `-6608`, `-6610`, `-6611`, `-6612`,
   `-6613`, `-6617`). They were published after the v0.5.3 build; no code
   here changed. Building now needs Go 1.26.9.
+
 ### Fixed
 - `domain list --tld` with a TLD the API does not know (`cmo`, `zzzz`) is a
   usage error (exit 2) naming it. The API ignores such a TLD and answers
@@ -2572,7 +2597,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/patramsey/namecom-cli/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/patramsey/namecom-cli/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/patramsey/namecom-cli/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/patramsey/namecom-cli/compare/v0.5.0...v0.5.1

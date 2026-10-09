@@ -9,7 +9,7 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-Requires Go 1.26.6+. The `go` directive in `go.mod` carries a patch version
+Requires Go 1.26.9+. The `go` directive in `go.mod` carries a patch version
 because CI's `govulncheck` step resolves the toolchain from it — see the
 comment on that step in `.github/workflows/ci.yml`.
 
