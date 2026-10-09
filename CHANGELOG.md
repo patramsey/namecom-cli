@@ -40,7 +40,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   wildcards; `domain check foo.com.` drops the trailing dot; and the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
-### Fixed
 - `domain register` of a name that is not available, `--dry-run` or not, is
   typed `unavailable` in the JSON error envelope, as `domain check
   --exit-status` is, with a hint pointing at `namecom domain check`. It was
@@ -73,7 +72,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `pass --yes to confirm when not running in a terminal`. A script matching
   "pass --yes" in the message should read `error.type`
   (`confirmation_required`) or `error.hint` instead.
-### Fixed
 - An empty `NO_COLOR` (`NO_COLOR=`) no longer turns colour off: no-color.org
   counts it only when it is not empty. Any non-empty value, `0` included,
   still disables colour, and `help environment` now says so.
@@ -92,7 +90,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `help dns list bogus` printed the `dns list` help and exited 0.
   `help help` describes the help command instead of printing cobra's stock
   text.
-### Fixed
 - `email update --dry-run` and `email create --dry-run` for a mailbox that
   already forwards to `--to` say `… already forwards to …: nothing to
   change`, with `"changed": false` in JSON and YAML, instead of previewing
@@ -113,7 +110,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `contact verify` and `transfer cancel-outbound` have no read to check
   against, so their help now says what their dry run leaves unchecked: the
   verification record, and whether a transfer out is pending (#326).
-### Fixed
 - `dns create --type a` and `dns update --type txt` send the type upper-cased.
   The value was checked in any case but sent as typed, so the dry run
   previewed `"type": "a"` with exit 0 and the real request failed with a 400.
@@ -135,7 +131,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `error.hint`. `dns` used to put the advice in the message, and `url` left
   the value unquoted. A record in a `dns import` file says `host`, not
   `--host`, since no flag was passed.
-### Fixed
 - `-o tsv` after a write prints the keys `-o json` prints, so `--fields`
   picks from what TSV shows. A write that returns what it made — `dns
   create`, `dns update`, `url create`/`update`, `email create`/`update`,
