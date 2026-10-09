@@ -34,7 +34,7 @@ func filterHost(h, domain string) (string, error) {
 // send a fully qualified host as typed, and the API made
 // www.example.com.example.com.
 func zoneHost(h, domain string) (string, error) {
-	if err := inZone(h, domain); err != nil {
+	if err := inZone("--host", h, domain); err != nil {
 		return "", err
 	}
 	return asciiHost(relHost(h, domain))
@@ -44,8 +44,9 @@ func zoneHost(h, domain string) (string, error) {
 // or a name under it. The trailing dot says the name is complete, so
 // "sweep.example.org." on example.com names a host outside the zone; relHost
 // dropped the dot and created sweep.example.org.example.com instead. A
-// dotless name is relative, as in a zone file, and is not checked.
-func inZone(h, domain string) error {
+// dotless name is relative, as in a zone file, and is not checked. what
+// names the host in the error, as cmdutil.OutOfZone takes it.
+func inZone(what, h, domain string) error {
 	t, abs := strings.CutSuffix(h, ".")
 	if !abs || t == "" {
 		return nil
@@ -57,8 +58,7 @@ func inZone(h, domain string) error {
 	if la := strings.ToLower(a); la == domain || strings.HasSuffix(la, "."+domain) {
 		return nil
 	}
-	return cmdutil.NewUsageError(fmt.Errorf("--host %q is not in %s: a trailing dot makes a name absolute — use %q for the host %s.%s",
-		h, domain, t, t, domain))
+	return cmdutil.OutOfZone(what, h, domain)
 }
 
 // relHost strips the zone from a fully qualified host, with or without its

@@ -130,6 +130,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   one GET per ID, so deleting nine records sends 10 requests, not 18. A
   missing ID still fails before anything is deleted (exit 4), and one ID
   still costs one GET.
+- An out-of-zone `--host` ending in a dot is reported the same way by `dns`
+  and `url`: `--host "www." is not in example.com`, with the advice in
+  `error.hint`. `dns` used to put the advice in the message, and `url` left
+  the value unquoted. A record in a `dns import` file says `host`, not
+  `--host`, since no flag was passed.
 
 ## [0.5.3] - 2026-10-07
 

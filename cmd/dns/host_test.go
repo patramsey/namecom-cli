@@ -67,9 +67,32 @@ func TestZoneHost_AbsoluteOutsideZone(t *testing.T) {
 			t.Errorf("zoneHost(%q) err = %v, want a usage error containing %q", in, err, want)
 		}
 	}
+	// One shape with `url create` (#323): the quoted value in the message,
+	// the advice in the hint.
 	_, err := zoneHost("sweep.example.org.", "example.com")
-	if want := `use "sweep.example.org" for the host sweep.example.org.example.com`; err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("err = %v, want it to say %q", err, want)
+	if want := `--host "sweep.example.org." is not in example.com`; err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %q", err, want)
+	}
+	if want := `a trailing dot makes a name absolute; without it, "sweep.example.org" is a host under example.com`; errorHintOf(t, err) != want {
+		t.Errorf("hint = %q, want %q", errorHintOf(t, err), want)
+	}
+}
+
+// TestDNSImport_OutOfZoneHostNamesNoFlag pins #323: a record in the file
+// with an out-of-zone host was reported as `--host "…"`, a flag the command
+// was not given. It says host.
+func TestDNSImport_OutOfZoneHostNamesNoFlag(t *testing.T) {
+	z, srv := newFakeZone(t)
+	file := writeFile(t, "r.json", `[{"type":"A","host":"x.other.org.","answer":"192.0.2.1","ttl":300}]`)
+	_, _, err := runImportFile(t, srv, runOpts{yes: true}, file, false)
+	if want := `record 1: host "x.other.org." is not in example.com`; err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %q", err, want)
+	}
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+		t.Errorf("err = %T, want a usage error", err)
+	}
+	if got := z.requestLog(); len(got) != 0 {
+		t.Errorf("requests = %q, want none", got)
 	}
 }
 
