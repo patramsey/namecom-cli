@@ -158,6 +158,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `--jq .total` was `null` for none. A `--page` past the end is still a
   plain `{"data":[]}`, and `url`, `email` and `vanity-ns list`, which the
   API does not count, still have no `total` (#325).
+- `domain pricing -o tsv` and `transfer eligibility -o tsv` print
+  `field<TAB>value` rows with the `-o json` keys and values, with or without
+  `--fields`, as `url get` and `order get` do. They printed their tables:
+  `TYPE`/`PRICE` rows of `$46.99` strings without `premium`, and
+  `name.com (an account)` for `atName`. A script reading the old rows will
+  notice (#325).
 
 ## [0.5.3] - 2026-10-07
 

@@ -32,12 +32,13 @@ Formats (-o, --output):
     One object  field<TAB>value rows, the same rows whatever it holds: a
                 value it lacks is an empty cell, not a missing row. A
                 command with a detail table (domain get) uses the table's
-                field names; one without (status, version, auth status,
-                config show, domain claims, url get, email get, order get,
-                open) uses the -o json keys, with bare values — where a
-                value came from is a key of its own, such as profileSource
-                — and a list in a value is a JSON array: order get's items
-                are one orderItems cell.
+                field names; the rest (status, version, auth status,
+                config show, domain claims, domain pricing, transfer
+                eligibility, url get, email get, order get, open) use the
+                -o json keys, with bare values — where a value came from is
+                a key of its own, such as profileSource — and a list in a
+                value is a JSON array: order get's items are one orderItems
+                cell.
 
   A write prints its result's -o json keys as one object — the record it
   made, with changed where JSON has it, or success, changed and message —

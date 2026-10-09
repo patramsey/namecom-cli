@@ -487,11 +487,12 @@ func jsonKeys(t reflect.Type) []string {
 // When v is a struct, every key its type has gets a row, in field order, an
 // empty value where omitempty left the key out of the JSON: the rows are the
 // same whatever the data, so a script can read them by position (#289).
-func (c *Config) TSVObject(v any) error { return c.tsvObject(v, jsonKeys(reflect.TypeOf(v))) }
+func (c *Config) TSVObject(v any) error { return c.TSVObjectKeys(v, jsonKeys(reflect.TypeOf(v))) }
 
-// tsvObject is TSVObject with the keys that always get a row given: those of
-// v's type, and any more its JSON has after them.
-func (c *Config) tsvObject(v any, keys []string) error {
+// TSVObjectKeys is TSVObject with the keys that always get a row given, for a
+// v whose type does not say them, such as a map or json.RawMessage built from
+// a struct: keys, in order, and any more its JSON has after them.
+func (c *Config) TSVObjectKeys(v any, keys []string) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err

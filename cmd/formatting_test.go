@@ -76,8 +76,8 @@ func TestFormattingTopic_TSVListMatchesREADME(t *testing.T) {
 		}
 		return out
 	}
-	help := commands("help formatting", formattingCmd.Long, "one without")
-	doc := commands("README", text, "a command without a detail table")
+	help := commands("help formatting", strings.Join(strings.Fields(formattingCmd.Long), " "), "names; the rest")
+	doc := commands("README", strings.Join(strings.Fields(text), " "), "names; the rest")
 	if !slices.Equal(doc, help) {
 		t.Errorf("README lists %q, help formatting %q", doc, help)
 	}

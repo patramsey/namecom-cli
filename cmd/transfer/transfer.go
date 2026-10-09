@@ -769,6 +769,10 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 		return out.JSON(result)
 	case output.FormatYAML:
 		return out.YAML(result)
+	case output.FormatTSV:
+		// The JSON's keys and values, as for any one object. It was the
+		// table, with atName as "name.com (an account)" (#325).
+		return out.TSVObject(result)
 	default:
 		// atName is true for a domain in any name.com account, this one
 		// included, and the hint sent the owner to transfer in a domain they

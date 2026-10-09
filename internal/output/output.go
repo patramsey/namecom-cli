@@ -1189,7 +1189,7 @@ func (c *Config) written(v any, changed *bool, msg string) error {
 	case FormatYAML:
 		return c.YAML(doc)
 	case FormatTSV:
-		return c.tsvObject(doc, keys)
+		return c.TSVObjectKeys(doc, keys)
 	}
 	c.result(msg, changed == nil || *changed)
 	return nil
