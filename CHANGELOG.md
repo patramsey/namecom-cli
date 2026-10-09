@@ -41,6 +41,14 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
 ### Fixed
+- A flag value that does not parse says so plainly: `--limit must be a whole
+  number, got "abc"` in place of `invalid argument "abc" for "--limit" flag:
+  strconv.ParseInt: parsing "abc": invalid syntax`, and likewise for every
+  number, true/false and duration flag. The error message changes; the type
+  (`usage`) and exit code (2) do not.
+- An unknown flag given a value, such as `domain pricing D1 --years 3`, is no
+  longer asked "did you mean --yes?": boolean flags take no value, so they
+  are not suggested for one. `--pgae 2` still suggests `--page`.
 - `namecom api` given a full URL (`https://api.name.com/core/v1/hello`, or
   one starting `//`) is a usage error, exit 2, before any request, with a
   hint naming the path to pass instead. The URL was joined onto the API host

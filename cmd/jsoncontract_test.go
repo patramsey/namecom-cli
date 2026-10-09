@@ -872,3 +872,37 @@ func TestJSONContract_WrongTokenNamed(t *testing.T) {
 		})
 	}
 }
+
+// TestJSONContract_FlagValueErrors pins #324 through the real root: a bad
+// number named Go's strconv, and an unknown flag given a value was offered
+// the global --yes, which takes none.
+func TestJSONContract_FlagValueErrors(t *testing.T) {
+	for _, tc := range []struct {
+		args          []string
+		message, hint string
+		notInHint     string
+	}{
+		{[]string{"domain", "list", "--limit", "abc"}, `--limit must be a whole number, got "abc"`, "", ""},
+		{[]string{"domain", "pricing", "example.com", "--years", "3"}, "unknown flag: --years", "namecom domain pricing --help", "--yes"},
+		{[]string{"domain", "list", "--pgae", "2"}, "unknown flag: --pgae", "did you mean --page?", ""},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			prevArgs := os.Args
+			t.Cleanup(func() { os.Args = prevArgs })
+			args := append([]string{"-o", "json"}, tc.args...)
+			os.Args = append([]string{"namecom"}, args...)
+			_, stderr, code := runContract(t, args...)
+			if code != 2 {
+				t.Errorf("exit %d, want 2", code)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			hint, _ := e["hint"].(string)
+			if e["type"] != output.ErrorTypeUsage || e["message"] != tc.message {
+				t.Errorf("want type usage, message %q; got:\n%s", tc.message, stderr)
+			}
+			if !strings.Contains(hint, tc.hint) || (tc.notInHint != "" && strings.Contains(hint, tc.notInHint)) {
+				t.Errorf("hint = %q, want %q and not %q", hint, tc.hint, tc.notInHint)
+			}
+		})
+	}
+}

@@ -418,3 +418,84 @@ func TestStrayBoolHint(t *testing.T) {
 		}
 	})
 }
+
+// TestFlagError_BadValueIsPlain pins #324: a bad number was reported in
+// pflag's words, Go internals included — `invalid argument "abc" for
+// "--limit" flag: strconv.ParseInt: parsing "abc": invalid syntax`.
+func TestFlagError_BadValueIsPlain(t *testing.T) {
+	root := &cobra.Command{Use: "namecom"}
+	root.PersistentFlags().Bool("yes", false, "")
+	root.PersistentFlags().Duration("timeout", 0, "")
+	cmd := &cobra.Command{Use: "list", Run: func(*cobra.Command, []string) {}}
+	cmd.Flags().IntP("limit", "l", 0, "")
+	cmd.Flags().Uint("years", 0, "")
+	cmd.Flags().Float64("price", 0, "")
+	root.AddCommand(cmd)
+	root.SetFlagErrorFunc(FlagError)
+
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--limit", "abc"}, `--limit must be a whole number, got "abc"`},
+		{[]string{"-l", "1.5"}, `--limit must be a whole number, got "1.5"`},
+		{[]string{"--limit=99999999999999999999"}, `--limit is out of range, got "99999999999999999999"`},
+		{[]string{"--years", "-1"}, `--years must be a whole number, got "-1"`},
+		{[]string{"--price", "x"}, `--price must be a number, got "x"`},
+		{[]string{"--yes=maybe"}, `--yes takes true or false, got "maybe"`},
+		{[]string{"--timeout", "5"}, `--timeout must be a duration such as 30s or 2m, got "5"`},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			root.SetArgs(append([]string{"list"}, tt.args...))
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			err := root.Execute()
+			if _, ok := errors.AsType[*UsageError](err); !ok {
+				t.Fatalf("Execute = %v, want a *UsageError", err)
+			}
+			if err.Error() != tt.want {
+				t.Errorf("message = %q\nwant      %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+// TestFlagError_NoBooleanForAValue pins #324: `domain pricing D1 --years 3`
+// was asked "did you mean --yes?" — a global boolean, which takes no value,
+// suggested for a flag given one. A flag typed bare still gets it.
+func TestFlagError_NoBooleanForAValue(t *testing.T) {
+	root := &cobra.Command{Use: "namecom"}
+	root.PersistentFlags().Bool("yes", false, "")
+	cmd := &cobra.Command{Use: "pricing <domain>", Run: func(*cobra.Command, []string) {}}
+	cmd.Flags().Int("page", 0, "")
+	root.AddCommand(cmd)
+
+	for _, tt := range []struct {
+		args      []string
+		want, not string
+	}{
+		{[]string{"pricing", "x.com", "--years", "3"}, "run 'namecom pricing --help'", "--yes"},
+		{[]string{"pricing", "x.com", "--years=3"}, "run 'namecom pricing --help'", "--yes"},
+		{[]string{"pricing", "x.com", "--yse"}, "did you mean --yes?", ""},
+		{[]string{"pricing", "x.com", "--yse", "--page", "2"}, "did you mean --yes?", ""},
+		// A flag that takes a value is still suggested.
+		{[]string{"pricing", "x.com", "--pgae", "2"}, "did you mean --page?", ""},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			root.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+				return FlagErrorArgs(c, err, tt.args)
+			})
+			root.SetArgs(tt.args)
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			err := root.Execute()
+			u, ok := errors.AsType[*UsageError](err)
+			if !ok {
+				t.Fatalf("Execute = %v, want a *UsageError", err)
+			}
+			if h := u.UserHint(); !strings.Contains(h, tt.want) || (tt.not != "" && strings.Contains(h, tt.not)) {
+				t.Errorf("hint = %q, want %q and not %q", h, tt.want, tt.not)
+			}
+		})
+	}
+}

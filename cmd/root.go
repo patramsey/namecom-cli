@@ -113,12 +113,6 @@ func Execute() {
 		go func() { updateCh <- update.Check(Version) }()
 	}
 
-	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
-	// usage errors so they exit 2 rather than collapsing into the generic 1.
-	// Applies to every subcommand, not just root. An unknown flag also gets
-	// a did-you-mean and the usage line.
-	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
-
 	if code := run(); code != 0 {
 		os.Exit(code)
 	}
@@ -224,7 +218,7 @@ func misparsedFlag(err error, args []string) error {
 		case strings.HasPrefix(a, "--"):
 			name, _, _ := strings.Cut(a[2:], "=")
 			if f = flags.Lookup(name); f == nil {
-				return cmdutil.FlagError(rootCmd, fmt.Errorf("unknown flag: --%s", name))
+				return cmdutil.FlagErrorArgs(rootCmd, fmt.Errorf("unknown flag: --%s", name), args)
 			}
 		default:
 			if f = flags.ShorthandLookup(a[1:2]); f == nil {
@@ -258,6 +252,14 @@ func checksForUpdates(args []string) bool {
 
 func init() {
 	cobra.OnFinalize(closeDebugLog)
+	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
+	// usage errors so they exit 2 rather than collapsing into the generic 1.
+	// Applies to every subcommand, not just root. An unknown flag also gets
+	// a did-you-mean and the usage line. Set here rather than in Execute so
+	// that run, which the tests call, reports the same errors.
+	rootCmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return cmdutil.FlagErrorArgs(c, err, os.Args[1:])
+	})
 	rootCmd.AddGroup(
 		&cobra.Group{ID: "domains", Title: "Domain Commands:"},
 		&cobra.Group{ID: "account", Title: "Account Commands:"},
