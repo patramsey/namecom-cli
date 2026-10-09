@@ -96,6 +96,7 @@ func init() {
 	cmdutil.AddPageFlags(unverifiedCmd, &listAll, &listPage, &listLimit, "unverified contacts")
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(resendCmd, verifyCmd)
+	cmdutil.SetResult(resendCmd, output.KeysOf(coreapigo.ContactVerificationResendResponse{})...)
 	Cmd.AddCommand(unverifiedCmd, resendCmd, verifyCmd)
 }
 
@@ -171,7 +172,7 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			)
 		}
 	}
-	foot := cmdutil.Page("unverified contact", listPage, len(contacts), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	foot := cmdutil.Page("unverified contact", listPage, len(contacts), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints
@@ -180,14 +181,14 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
 		warn() // kept back, and printed with the other warnings at the end
-		return out.JSONList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(contacts, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
 		warn() // kept back, and printed with the other warnings at the end
-		return out.YAMLList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(contacts, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		headers := []string{"ID", "EMAIL", "DEADLINE", "DOMAINS"}
 		if len(contacts) == 0 {
@@ -327,15 +328,10 @@ func runResend(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(result)
-	case output.FormatYAML:
-		return out.YAML(result)
-	default:
-		out.Success(fmt.Sprintf("Verification email resent for record %d", result.VerificationID))
-		out.Hint("The contact must click the link in the email; it cannot be confirmed from here")
+	if err := out.Written(result, fmt.Sprintf("Verification email resent for record %d", result.VerificationID)); err != nil {
+		return err
 	}
+	out.Hint("The contact must click the link in the email; it cannot be confirmed from here")
 	return nil
 }
 

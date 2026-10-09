@@ -348,6 +348,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return out.JSON(created)
 	case output.FormatYAML:
 		return out.YAML(created)
+	case output.FormatTSV:
+		return out.TSVObject(created) // the keys JSON has (#325)
 	default:
 		// created.Domain is a pointer in the SDK where the generated client used
 		// a value, so a response without a "domain" object panics rather than
@@ -681,6 +683,8 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		return out.JSON(renewed)
 	case output.FormatYAML:
 		return out.YAML(renewed)
+	case output.FormatTSV:
+		return out.TSVObject(renewed) // the keys JSON has (#325)
 	default:
 		orderNum := 0
 		if renewed.Order != nil {

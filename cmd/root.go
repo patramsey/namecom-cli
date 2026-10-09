@@ -405,6 +405,11 @@ func persistentPreRunE(cmd *cobra.Command, _ []string) error {
 	// Stored before the skip below: `config show --profile x` never builds a
 	// client, and when only initContext stored these the flag never reached it.
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyOverrides, flagOverrides(cmd)))
+	// A write's result keys are known now, so a mistyped --fields is refused
+	// before anything is sent rather than warned about after (#325).
+	if err := cmdutil.CheckResultFields(cmd); err != nil {
+		return err
+	}
 	if skipClientInit(cmd) {
 		return nil
 	}

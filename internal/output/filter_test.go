@@ -100,3 +100,45 @@ func TestJQ_Results(t *testing.T) {
 		t.Errorf("error: %q, %v", got, err)
 	}
 }
+
+// TestEndFilter_AfterWriteKeepsFormat: a --fields that does not fit a write's
+// result is warned about, the change having been made, and the result is
+// printed unfiltered — in the format asked for. It came out as indented JSON
+// under -o tsv and -o table (#325).
+func TestEndFilter_AfterWriteKeepsFormat(t *testing.T) {
+	raw := `{"id":7,"host":"www","ttl":300}`
+	for _, tc := range []struct {
+		f    Format
+		want string
+	}{
+		{FormatTSV, "id\t7\nhost\twww\nttl\t300\n"},
+		{FormatYAML, "id: 7\nhost: www\nttl: 300\n"},
+		{FormatJSON, raw},
+	} {
+		var out, errOut bytes.Buffer
+		c := &Config{Format: tc.f, Writer: &out, EWriter: &errOut, Plain: true}
+		c.BeginFilter(&Filter{Fields: []string{"bogus"}})
+		_, _ = c.Writer.Write([]byte(raw))
+		if err := c.EndFilter(true); err != nil {
+			t.Fatalf("%s: %v", tc.f, err)
+		}
+		if out.String() != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.f, out.String(), tc.want)
+		}
+		if tc.f == FormatTSV && !strings.Contains(errOut.String(), `unknown field "bogus"`) {
+			t.Errorf("%s: no warning: %q", tc.f, errOut.String())
+		}
+	}
+
+	// A list keeps its rows, every item's keys the columns.
+	var out bytes.Buffer
+	c := &Config{Format: FormatTSV, Writer: &out, EWriter: &bytes.Buffer{}, Plain: true}
+	c.BeginFilter(&Filter{Fields: []string{"bogus"}})
+	_, _ = c.Writer.Write([]byte(`{"success":true,"data":[{"domain":"a.com","changed":true},{"domain":"b.com","id":3,"changed":false}]}`))
+	if err := c.EndFilter(true); err != nil {
+		t.Fatal(err)
+	}
+	if want := "domain\tchanged\tid\na.com\ttrue\t\nb.com\tfalse\t3\n"; out.String() != want {
+		t.Errorf("list: got %q, want %q", out.String(), want)
+	}
+}

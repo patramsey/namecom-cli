@@ -2,7 +2,9 @@
 package domain
 
 import (
+	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +17,11 @@ var Cmd = &cobra.Command{
 func init() {
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(registerCmd, renewCmd, updateCmd, lockCmd, autorenewCmd, privacyCmd, setNSCmd, contactsSetCmd)
+	cmdutil.SetResult(registerCmd, output.KeysOf(coreapigo.CreateDomainResponse{})...)
+	cmdutil.SetResult(renewCmd, output.KeysOf(coreapigo.RenewDomainResponse{})...)
+	// The domain as updated, or Unchanged's result when there was nothing to
+	// send.
+	cmdutil.SetResult(updateCmd, append(output.KeysOf(coreapigo.DomainResponsePayload{}), output.ResultKeys()...)...)
 	// check offers a register in a terminal, but never under --yes.
 	cmdutil.MarkList(searchCmd, checkCmd)
 	Cmd.AddCommand(

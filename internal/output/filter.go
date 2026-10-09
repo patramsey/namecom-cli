@@ -154,8 +154,70 @@ func (c *Config) EndFilter(wrote bool) error {
 		return err
 	}
 	c.Warn(err.Error() + " — the change was made, so its output is printed unfiltered")
-	_, werr := c.Writer.Write(raw)
-	return werr
+	// In the format asked for: it was the JSON the command ran in, under
+	// -o tsv and -o table too (#325).
+	rendered.Reset()
+	notes.Reset()
+	c.EWriter = &notes
+	err = c.renderUnfiltered(&rendered, raw, f)
+	c.EWriter = ew
+	if err != nil {
+		rendered.Reset()
+		rendered.Write(raw)
+	}
+	if _, err = c.Writer.Write(rendered.Bytes()); err != nil {
+		return err
+	}
+	_, err = c.EWriter.Write(notes.Bytes())
+	return err
+}
+
+// renderUnfiltered writes raw, one or more JSON documents, to w in f.format,
+// with every key: in a table or TSV, a list's columns are the keys its items
+// have, and an object's rows its own keys.
+func (c *Config) renderUnfiltered(w *bytes.Buffer, raw []byte, f *Filter) error {
+	if f.format == FormatJSON {
+		w.Write(raw)
+		return nil
+	}
+	docs, err := decodeOrdered(raw)
+	if err != nil {
+		return err
+	}
+	for _, doc := range docs {
+		if f.format == FormatYAML {
+			err = writeYAML(w, doc)
+		} else {
+			err = c.fieldTable(w, doc, allKeys(doc), f.dryRun, f.page)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// allKeys returns the keys of doc's items, in the order they first appear,
+// or of doc itself.
+func allKeys(doc any) []string {
+	items, isList := listItems(doc)
+	if !isList {
+		if obj, ok := doc.(*object); ok {
+			return obj.keys
+		}
+		return nil
+	}
+	var keys []string
+	for _, it := range items {
+		if obj, ok := it.(*object); ok {
+			for _, k := range obj.keys {
+				if !slices.Contains(keys, k) {
+					keys = append(keys, k)
+				}
+			}
+		}
+	}
+	return keys
 }
 
 // flagNames names the flags in use, for messages.
@@ -347,6 +409,42 @@ func (c *Config) noteKeys(v any, list bool) {
 	f.known = jsonKeys(t)
 }
 
+// noteKnown is noteKeys for a document whose keys are given rather than read
+// from a Go type: a write's result with "changed" added (see Written).
+func (c *Config) noteKnown(keys []string) {
+	if f := c.filter; f != nil && !f.noted {
+		f.noted, f.known = true, keys
+	}
+}
+
+// CheckFields returns a *FilterError when --fields names a key not in keys,
+// and nil when it does not or no --fields was given. It is for a write, whose
+// result has keys known before it is sent: a mistyped field is refused then,
+// as a usage error, rather than found after the change was made (#325).
+func (c *Config) CheckFields(keys []string) error {
+	f := c.filter
+	if f == nil || len(f.Fields) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		seen[k] = true
+	}
+	return checkFields(f.Fields, seen, keys)
+}
+
+// KeysOf returns the JSON keys v's type encodes, in field order, those
+// omitempty may leave out included, or nil when v is not a struct or a
+// pointer to one. A write names its result's keys with it.
+func KeysOf(v any) []string { return jsonKeys(reflect.TypeOf(v)) }
+
+// ResultKeys are the keys of what Success, Unchanged and Results print:
+// success, changed and message, and for several targets each item's domain
+// and id.
+func ResultKeys() []string {
+	return withKnown(jsonKeys(reflect.TypeFor[ResultItem]()), jsonKeys(reflect.TypeFor[writeResult]()), map[string]bool{})
+}
+
 // jsonKeys returns the keys encoding/json writes for a struct of type t, or a
 // pointer to one, in field order, those omitempty may leave out included;
 // nil for any other type. An embedded struct's keys are its own fields'.
@@ -389,7 +487,12 @@ func jsonKeys(t reflect.Type) []string {
 // When v is a struct, every key its type has gets a row, in field order, an
 // empty value where omitempty left the key out of the JSON: the rows are the
 // same whatever the data, so a script can read them by position (#289).
-func (c *Config) TSVObject(v any) error {
+func (c *Config) TSVObject(v any) error { return c.TSVObjectKeys(v, jsonKeys(reflect.TypeOf(v))) }
+
+// TSVObjectKeys is TSVObject with the keys that always get a row given, for a
+// v whose type does not say them, such as a map or json.RawMessage built from
+// a struct: keys, in order, and any more its JSON has after them.
+func (c *Config) TSVObjectKeys(v any, keys []string) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -402,7 +505,7 @@ func (c *Config) TSVObject(v any) error {
 	if len(docs) != 1 || !ok {
 		return fmt.Errorf("TSVObject: %s is not a JSON object", b)
 	}
-	keys := jsonKeys(reflect.TypeOf(v))
+	keys = slices.Clone(keys)
 	for _, k := range obj.keys {
 		if !slices.Contains(keys, k) {
 			keys = append(keys, k)

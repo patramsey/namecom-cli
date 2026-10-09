@@ -105,19 +105,33 @@ func QuietMorePages(out *output.Config, next int) {
 }
 
 // Page is the footer of one page of a list: noun names an item, page is the
-// --page asked for, shown is how many items were printed, and from, to and total are where the page sits, as
-// the response reports them. all says every page from --page on was
-// fetched, when the last response's from and to describe only the last
-// page, and so are left out. next is the page after, 0 for none.
+// --page asked for, shown is how many items were printed, perPage the page
+// size asked for (nil for the API's default), and from, to and total are
+// where the page sits, as the response reports them. all says every page
+// from --page on was fetched, when the last response's from and to describe
+// only the last page, and so are left out. next is the page after, 0 for
+// none.
 //
 // "1 unverified contact · --page 2 for more" read as the total (#290), and
 // the last page of a paged list said "1 domain" where page 1 said "Showing
 // 1–2 of 5 domains": with a total, every page says where it sits.
-func Page(noun string, page, shown int, all bool, from, to, total, next int) output.ListPage {
+//
+// Where the page starts is worked out from page and perPage when the size
+// was asked for, and where it ends from the rows shown. The API answers page
+// 2 at perPage 1 with from 1, to 2, and the footer printed "Showing 1–2" for
+// one record (#325).
+func Page(noun string, page, shown int, all bool, perPage *int, from, to, total, next int) output.ListPage {
 	p := output.ListPage{Noun: noun, Page: page, Count: shown, Total: total, Next: next}
-	if !all {
-		p.From, p.To = from, to
+	if all {
+		return p
 	}
+	if perPage != nil {
+		from = (page-1)*(*perPage) + 1
+	}
+	if shown > 0 && from > 0 {
+		to = from + shown - 1
+	}
+	p.From, p.To = from, to
 	return p
 }
 
@@ -215,6 +229,19 @@ func Int32Count(n int) int32 {
 		return 0
 	}
 	return int32(n)
+}
+
+// ListTotal is the total a counted list's JSON and YAML envelope carries:
+// total, the count the API reported, 0 included. It was left out when 0, so
+// `--jq .total` was null for an empty list and a number otherwise (#325).
+// Past page 1 a 0 is the empty page shown past the end of the list, which
+// says nothing about its length, so it is left out there.
+func ListTotal(page, total int) *int32 {
+	if total == 0 && page > 1 {
+		return nil
+	}
+	n := Int32Count(total)
+	return &n
 }
 
 // NonNil returns s without its nil elements, leaving s itself unchanged.

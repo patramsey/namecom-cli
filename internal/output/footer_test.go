@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TestListPage_Parts: every page of a list the API counts says where it
@@ -32,6 +34,46 @@ func TestListPage_Parts(t *testing.T) {
 	for _, tc := range tests {
 		if got := strings.Join(tc.p.parts(), " · "); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestHint_WrappedLinesNotPadded: a hint wrapped in a colour terminal has no
+// trailing spaces. The wrapped block was styled as one, and lipgloss pads
+// every line of a block to the widest, so a continuation line ended in
+// dozens of spaces after the colour reset (#325).
+func TestHint_WrappedLinesNotPadded(t *testing.T) {
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorAlways, MaxWidth: 50, Writer: &bytes.Buffer{}, EWriter: &buf}
+	c.Hint("Run 'namecom dns create example.com --type A --answer 1.2.3.4' to add the first record")
+	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("want the hint wrapped, got %q", buf.String())
+	}
+	for _, l := range lines {
+		if strings.HasSuffix(l, " ") || ansi.StringWidth(l) > 50 {
+			t.Errorf("line %q is padded or wider than 50", l)
+		}
+	}
+	if got := ansi.Strip(lines[1]); !strings.HasPrefix(got, "  ") || strings.HasPrefix(got, "   ") {
+		t.Errorf("continuation %q, want it under the text, two spaces in", got)
+	}
+}
+
+// TestTable_FitNoteWraps: the note under a table cut to fit the terminal
+// wraps to it, as the footer under it does. It was one line of up to 105
+// columns at 60 (#325).
+func TestTable_FitNoteWraps(t *testing.T) {
+	var out, errOut bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, MaxWidth: 60, Writer: &out, EWriter: &errOut}
+	c.Table([]string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"},
+		[][]string{{"a-rather-long-domain-name-for-the-terminal.com", "2027-01-01 (in 3 months)", "yes", "no", "yes"}})
+	if !strings.Contains(errOut.String(), "hidden") {
+		t.Fatalf("want a fitting note, got %q", errOut.String())
+	}
+	for l := range strings.SplitSeq(strings.TrimSuffix(errOut.String(), "\n"), "\n") {
+		if w := ansi.StringWidth(l); w > 60 {
+			t.Errorf("note line is %d columns, wider than 60: %q", w, l)
 		}
 	}
 }
@@ -75,7 +117,7 @@ func TestFields_ListFooterAfterTable(t *testing.T) {
 	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &both, EWriter: &both, Plain: true}
 	c.BeginFilter(&Filter{Fields: []string{"domainName"}})
 	c.ListFooter(ListPage{Noun: "domain", Count: 2, From: 1, To: 2, Total: 6522, Next: 2})
-	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}, {"domainName": "b.com"}}, nil, 6522); err != nil {
+	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}, {"domainName": "b.com"}}, nil, int32Ptr(6522)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.EndFilter(false); err != nil {
@@ -91,7 +133,7 @@ func TestFields_ListFooterAfterTable(t *testing.T) {
 	c.Format = FormatTSV
 	c.BeginFilter(&Filter{Fields: []string{"domainName"}})
 	c.ListFooter(ListPage{Noun: "domain", Count: 1, Next: 2})
-	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}}, nil, 0); err != nil {
+	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.EndFilter(false); err != nil {

@@ -880,6 +880,11 @@ func runPricing(cmd *cobra.Command, args []string) error {
 		return out.JSON(doc)
 	case output.FormatYAML:
 		return out.YAML(doc)
+	case output.FormatTSV:
+		// The JSON's keys and values, as for any one object. It was the
+		// table's TYPE/PRICE rows, "$46.99" strings without premium, and
+		// field rows only with --fields (#325).
+		return out.TSVObjectKeys(doc, output.KeysOf(coreapigo.PricingResponse{}))
 	}
 
 	fmtPrice := func(p *float64) string {
@@ -1099,6 +1104,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return out.JSON(updated)
 	case output.FormatYAML:
 		return out.YAML(updated)
+	case output.FormatTSV:
+		return out.TSVObject(updated) // the keys JSON has (#325)
 	default:
 		out.Success(fmt.Sprintf("Updated %s: %s", domain, updateSummary(req)))
 	}

@@ -568,9 +568,9 @@ func renderResults(out *output.Config, results []*coreapigo.SearchResult, unansw
 			}
 		}
 		if out.Format == output.FormatYAML {
-			return out.YAMLList(docs, nil, 0)
+			return out.YAMLList(docs, nil, nil)
 		}
-		return out.JSONList(docs, nil, 0)
+		return out.JSONList(docs, nil, nil)
 	default:
 		headers := []string{"DOMAIN", "AVAILABILITY", "PRICE", "RENEWS", "PREMIUM"}
 		rows := make([][]string, 0, len(results))

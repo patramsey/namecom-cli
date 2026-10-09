@@ -146,15 +146,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	if plan.changes() == 0 {
 		switch out.Format {
-		case output.FormatJSON, output.FormatYAML:
+		case output.FormatJSON, output.FormatYAML, output.FormatTSV:
 			return printResult(out, &syncResult{Domain: domain, Applied: []syncChange{}, Unchanged: plan.Unchanged})
 		}
-		// In TSV, an empty plan's header row before the result's rows would
-		// read as one table; the result alone says nothing changed.
-		if out.Format == output.FormatTable {
-			if err := printPlan(out, plan); err != nil {
-				return err
-			}
+		if err := printPlan(out, plan); err != nil {
+			return err
 		}
 		out.Unchanged(fmt.Sprintf("%s already matches the file: nothing to change", domain))
 		return nil
@@ -199,7 +195,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
+	case output.FormatJSON, output.FormatYAML, output.FormatTSV:
 		return printResult(out, res)
 	}
 	out.Success(fmt.Sprintf("Synced %s: %s", domain, appliedCounts(res.Applied)))
@@ -280,8 +276,13 @@ func (e *syncOutcomeUnknownError) UserHint() string {
 }
 
 func printResult(out *output.Config, res *syncResult) error {
-	if out.Format == output.FormatYAML {
+	switch out.Format {
+	case output.FormatYAML:
 		return out.YAML(res)
+	case output.FormatTSV:
+		// The result's keys, as JSON has them. TSV printed Success's
+		// success/changed/message rows, which --fields could not pick (#325).
+		return out.TSVObject(res)
 	}
 	return out.JSON(res)
 }

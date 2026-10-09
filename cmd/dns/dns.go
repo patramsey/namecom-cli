@@ -213,6 +213,10 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd, importCmd, syncCmd)
+	recordResult := append(output.KeysOf(coreapigo.Record{}), "changed")
+	cmdutil.SetResult(createCmd, recordResult...)
+	cmdutil.SetResult(updateCmd, recordResult...)
+	cmdutil.SetResult(syncCmd, output.KeysOf(syncResult{})...)
 	Cmd.AddCommand(listCmd, createCmd, updateCmd, deleteCmd, exportCmd, importCmd, syncCmd)
 }
 
@@ -306,16 +310,18 @@ func runList(cmd *cobra.Command, args []string) error {
 			next = *nextPage
 		}
 	}
-	foot := cmdutil.Page("record", listPage, len(records), paging.All, pos.from, pos.to, pos.total, next)
+	foot := cmdutil.Page("record", listPage, len(records), paging.All, paging.PerPage, pos.from, pos.to, pos.total, next)
+	total := cmdutil.ListTotal(listPage, pos.total)
 	if filtered {
-		foot = cmdutil.Page("record", listPage, len(records), true, 0, 0, 0, next)
+		foot = cmdutil.Page("record", listPage, len(records), true, nil, 0, 0, 0, next)
+		total = nil
 	}
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints
-		return out.JSONList(records, cmdutil.Int32Page(nextPage), cmdutil.Int32Count(foot.Total))
+		return out.JSONList(records, cmdutil.Int32Page(nextPage), total)
 	case output.FormatYAML:
-		return out.YAMLList(records, cmdutil.Int32Page(nextPage), cmdutil.Int32Count(foot.Total))
+		return out.YAMLList(records, cmdutil.Int32Page(nextPage), total)
 	default:
 		headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
 		if priorityColumn(out, records) {
@@ -483,19 +489,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
-		return printCreated(out, record, true)
-	default:
-		// The value the API stored, which can differ from the one sent:
-		// `"a" "b"` is stored as `"a""b"`.
-		if stored := derefStr(record.Answer); stored != "" {
-			answer = stored
-		}
-		out.Success(fmt.Sprintf("Created %s %s → %s (id %d)",
-			strings.ToUpper(createType), recordName(host, domain), answer, derefInt(record.ID)))
+	// The value the API stored, which can differ from the one sent:
+	// `"a" "b"` is stored as `"a""b"`.
+	if stored := derefStr(record.Answer); stored != "" {
+		answer = stored
 	}
-	return nil
+	return printCreated(out, record, true, fmt.Sprintf("Created %s %s → %s (id %d)",
+		strings.ToUpper(createType), recordName(host, domain), answer, derefInt(record.ID)))
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -653,25 +653,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 // printUpdated prints the record `dns update` changed, or found already as
-// asked: in JSON and YAML the record with "changed", so a script can tell a
-// no-op from a change, and otherwise msg. --quiet prints nothing.
+// asked: the record with "changed", so a script can tell a no-op from a
+// change, in TSV as in JSON, and msg in a table. --quiet prints nothing.
 func printUpdated(out *output.Config, rec *coreapigo.Record, changed bool, msg string) error {
 	if out.Quiet() {
 		return nil
 	}
-	switch out.Format {
-	case output.FormatJSON, output.FormatYAML:
-		doc, err := output.WithChanged(rec, changed)
-		if err != nil {
-			return err
-		}
-		if out.Format == output.FormatYAML {
-			return out.YAML(doc)
-		}
-		return out.JSON(doc)
-	}
-	out.Success(msg)
-	return nil
+	return out.WrittenChanged(rec, changed, msg)
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {
@@ -894,9 +882,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// empty zone's nil into `[]` rather than `null`.
 	switch out.Format {
 	case output.FormatYAML:
-		return out.YAMLList(records, nil, 0)
+		return out.YAMLList(records, nil, nil)
 	default:
-		if err := out.JSONList(records, nil, 0); err != nil {
+		if err := out.JSONList(records, nil, nil); err != nil {
 			return err
 		}
 	}

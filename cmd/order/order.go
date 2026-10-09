@@ -136,6 +136,7 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(refundCmd)
+	cmdutil.SetResult(refundCmd, output.KeysOf(coreapigo.RefundResponse{})...)
 	Cmd.AddCommand(listCmd, getCmd, refundCmd)
 }
 
@@ -248,7 +249,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	foot := cmdutil.Page("order", listPage, len(orders), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	foot := cmdutil.Page("order", listPage, len(orders), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	if hasMore {
 		foot.Notes = []string{"newest first"}
 		foot.Narrow = narrowFlags(cmd)
@@ -260,13 +261,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(orders, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(orders, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		if len(orders) == 0 {
 			cmdutil.EmptyPage(out, listPage, orderHeaders, "order", "")
@@ -474,6 +475,14 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	case out.Format == output.FormatYAML:
 		if err := out.YAML(result); err != nil {
 			return err
+		}
+	case out.Format == output.FormatTSV:
+		// The result's keys, as JSON has them, whatever was refunded.
+		if err := out.TSVObject(result); err != nil {
+			return err
+		}
+		for _, p := range problems {
+			out.Warn(p)
 		}
 	default:
 		if refunded > 0 {

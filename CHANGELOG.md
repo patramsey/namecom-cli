@@ -40,7 +40,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   wildcards; `domain check foo.com.` drops the trailing dot; and the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
-### Fixed
 - `domain register` of a name that is not available, `--dry-run` or not, is
   typed `unavailable` in the JSON error envelope, as `domain check
   --exit-status` is, with a hint pointing at `namecom domain check`. It was
@@ -73,7 +72,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `pass --yes to confirm when not running in a terminal`. A script matching
   "pass --yes" in the message should read `error.type`
   (`confirmation_required`) or `error.hint` instead.
-### Fixed
 - An empty `NO_COLOR` (`NO_COLOR=`) no longer turns colour off: no-color.org
   counts it only when it is not empty. Any non-empty value, `0` included,
   still disables colour, and `help environment` now says so.
@@ -92,7 +90,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `help dns list bogus` printed the `dns list` help and exited 0.
   `help help` describes the help command instead of printing cobra's stock
   text.
-### Fixed
 - `email update --dry-run` and `email create --dry-run` for a mailbox that
   already forwards to `--to` say `… already forwards to …: nothing to
   change`, with `"changed": false` in JSON and YAML, instead of previewing
@@ -113,7 +110,6 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `contact verify` and `transfer cancel-outbound` have no read to check
   against, so their help now says what their dry run leaves unchecked: the
   verification record, and whether a transfer out is pending (#326).
-### Fixed
 - `dns create --type a` and `dns update --type txt` send the type upper-cased.
   The value was checked in any case but sent as typed, so the dry run
   previewed `"type": "a"` with exit 0 and the real request failed with a 400.
@@ -135,6 +131,41 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `error.hint`. `dns` used to put the advice in the message, and `url` left
   the value unquoted. A record in a `dns import` file says `host`, not
   `--host`, since no flag was passed.
+- `-o tsv` after a write prints the keys `-o json` prints, so `--fields`
+  picks from what TSV shows. A write that returns what it made — `dns
+  create`, `dns update`, `url create`/`update`, `email create`/`update`,
+  `vanity-ns create`/`update`, `dnssec create`, `domain register`/`renew`/
+  `update`, `transfer create`/`internal-in`/`cancel-outbound`,
+  `contact resend`, `order refund`, `dns sync` — printed `success`,
+  `changed` and `message` rows in TSV and the resource in JSON. Its TSV is
+  now the resource's `field<TAB>value` rows, a script reading the old rows
+  will notice. And a no-op `dns update`, `url update` or
+  `dns create --if-not-exists` of a record already there says
+  `changed<TAB>false` in TSV, as JSON says `false`; it said `true` (#325).
+- A `--fields` naming a key a write's result does not have is a usage error
+  (exit 2) before anything is sent. It was found after the change was made,
+  warned about, and the result printed as indented JSON whatever `-o` said;
+  where the keys cannot be known in advance (`api`), the unfiltered result
+  is now printed in the format asked for (#325).
+- An empty list the API counts — `domain list`, `dns list`, `order list`,
+  `transfer list`, `contact unverified` — carries `"total": 0` in JSON and
+  YAML, as a non-empty one carries `"total": N`. It was left out, so
+  `--jq .total` was `null` for none. A `--page` past the end is still a
+  plain `{"data":[]}`, and `url`, `email` and `vanity-ns list`, which the
+  API does not count, still have no `total` (#325).
+- `domain pricing -o tsv` and `transfer eligibility -o tsv` print
+  `field<TAB>value` rows with the `-o json` keys and values, with or without
+  `--fields`, as `url get` and `order get` do. They printed their tables:
+  `TYPE`/`PRICE` rows of `$46.99` strings without `premium`, and
+  `name.com (an account)` for `atName`. A script reading the old rows will
+  notice (#325).
+- A list's footer at `--limit 1 --page 2` says "Showing 2–2 of N", not
+  "Showing 1–2 of N": the range is worked out from `--page`, `--limit` and
+  the rows shown rather than taken from the API, which gets it wrong for
+  that page (#325).
+- A `→` hint wrapped in a colour terminal no longer pads its continuation
+  line with trailing spaces, and the note under a table cut to fit the
+  terminal ("1 column hidden …") wraps to it as the footer does (#325).
 
 ## [0.5.3] - 2026-10-07
 

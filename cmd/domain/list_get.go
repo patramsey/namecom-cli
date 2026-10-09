@@ -279,7 +279,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 			next = *lastResult.NextPage
 		}
 	}
-	foot := cmdutil.Page("domain", listPage, len(domains), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, next)
+	foot := cmdutil.Page("domain", listPage, len(domains), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, next)
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints
@@ -287,13 +287,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(domains, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(domains, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(domains, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(domains, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
 		if len(domains) == 0 {
@@ -372,12 +372,12 @@ func runGet(cmd *cobra.Command, args []string) error {
 	switch out.Format {
 	case output.FormatJSON:
 		if list {
-			return out.JSONList(fetched, nil, 0)
+			return out.JSONList(fetched, nil, nil)
 		}
 		return out.JSON(fetched[0])
 	case output.FormatYAML:
 		if list {
-			return out.YAMLList(fetched, nil, 0)
+			return out.YAMLList(fetched, nil, nil)
 		}
 		return out.YAML(fetched[0])
 	default:

@@ -90,6 +90,7 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, deleteCmd)
+	cmdutil.SetResult(createCmd, output.KeysOf(coreapigo.Dnssec{})...)
 	cmdutil.MarkList(listCmd)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, deleteCmd)
 }
@@ -128,9 +129,9 @@ func runList(cmd *cobra.Command, args []string) error {
 		// Use the same {"data":[…]} envelope every other list command emits, so
 		// scripts can treat list output uniformly. ListDNSSECsResponseSchema has
 		// no pagination fields, hence the nil/0 arguments.
-		return out.JSONList(result.Dnssec, nil, 0)
+		return out.JSONList(result.Dnssec, nil, nil)
 	case output.FormatYAML:
-		return out.YAMLList(result.Dnssec, nil, 0)
+		return out.YAMLList(result.Dnssec, nil, nil)
 	default:
 		headers := []string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"}
 		if len(result.Dnssec) == 0 {
@@ -246,16 +247,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(key)
-	case output.FormatYAML:
-		return out.YAML(key)
-	default:
-		out.Success(fmt.Sprintf("Added DS record with key tag %d to %s (algorithm %d, digest type %d, digest %s)",
-			body.KeyTag, domain, body.Algorithm, body.DigestType, body.Digest))
-	}
-	return nil
+	return out.Written(key, fmt.Sprintf("Added DS record with key tag %d to %s (algorithm %d, digest type %d, digest %s)",
+		body.KeyTag, domain, body.Algorithm, body.DigestType, body.Digest))
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {

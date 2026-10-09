@@ -145,6 +145,9 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, internalCmd, cancelCmd, cancelOutboundCmd)
+	cmdutil.SetResult(createCmd, output.KeysOf(coreapigo.CreateTransferResponse{})...)
+	cmdutil.SetResult(internalCmd, output.KeysOf(coreapigo.DomainResponsePayload{})...)
+	cmdutil.SetResult(cancelOutboundCmd, output.KeysOf(coreapigo.CancelTransferOutResponse{})...)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, internalCmd, cancelCmd, cancelOutboundCmd, eligibilityCmd)
 }
 
@@ -208,7 +211,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	foot := cmdutil.Page("transfer", listPage, len(transfers), paging.All, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
+	foot := cmdutil.Page("transfer", listPage, len(transfers), paging.All, paging.PerPage, lastResult.From, lastResult.To, lastResult.TotalCount, nextPage)
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints
@@ -216,13 +219,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(transfers, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(transfers, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(transfers, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(transfers, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		headers := []string{"DOMAIN", "STATUS"}
 		if len(transfers) == 0 {
@@ -431,6 +434,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if err := out.YAML(result); err != nil {
 			return err
 		}
+	case out.Format == output.FormatTSV:
+		// The result's keys, as JSON has them (#325).
+		if err := out.TSVObject(result); err != nil {
+			return err
+		}
 	default:
 		out.Success(fmt.Sprintf("Transfer initiated for %s (order #%d, total %s)",
 			domain, result.Order, output.Money(result.TotalPaid)))
@@ -612,6 +620,8 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return out.JSON(t)
 	case output.FormatYAML:
 		return out.YAML(t)
+	case output.FormatTSV:
+		return out.TSVObject(t) // the keys JSON has (#325)
 	default:
 		// No status is reported here, and that is a fix rather than a
 		// simplification. This endpoint returns a DomainResponsePayload — the
@@ -723,15 +733,7 @@ func runCancelOutbound(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(result)
-	case output.FormatYAML:
-		return out.YAML(result)
-	default:
-		out.Success(fmt.Sprintf("Cancelled outbound transfer of %s (status: %s)", domain, result.Status))
-	}
-	return nil
+	return out.Written(result, fmt.Sprintf("Cancelled outbound transfer of %s (status: %s)", domain, result.Status))
 }
 
 func runEligibility(cmd *cobra.Command, args []string) error {
@@ -767,6 +769,10 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 		return out.JSON(result)
 	case output.FormatYAML:
 		return out.YAML(result)
+	case output.FormatTSV:
+		// The JSON's keys and values, as for any one object. It was the
+		// table, with atName as "name.com (an account)" (#325).
+		return out.TSVObject(result)
 	default:
 		// atName is true for a domain in any name.com account, this one
 		// included, and the hint sent the owner to transfer in a domain they

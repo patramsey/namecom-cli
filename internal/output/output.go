@@ -412,11 +412,12 @@ func jsonToNode(dec *json.Decoder) (*yaml.Node, error) {
 }
 
 // listEnvelope wraps paginated list results with metadata for agent consumers.
-// nextPage and total are omitted when zero/nil.
+// nextPage is omitted when zero or nil, and total when nil: a list the API
+// does not count has none, and a counted one says 0 when it is empty.
 type listEnvelope struct {
 	Data     any    `json:"data" yaml:"data"`
 	NextPage *int32 `json:"nextPage,omitempty" yaml:"nextPage,omitempty"`
-	Total    int32  `json:"total,omitempty" yaml:"total,omitempty"`
+	Total    *int32 `json:"total,omitempty" yaml:"total,omitempty"`
 }
 
 // newListEnvelope builds the envelope both list encoders share.
@@ -425,7 +426,7 @@ type listEnvelope struct {
 // append, and appending an empty page to a nil slice leaves it nil, so an
 // empty list encoded as `"data": null` — which `jq '.data[]'` refuses to
 // iterate — although the API itself had returned `[]`.
-func newListEnvelope(data any, nextPage *int32, total int32) listEnvelope {
+func newListEnvelope(data any, nextPage *int32, total *int32) listEnvelope {
 	if v := reflect.ValueOf(data); v.Kind() == reflect.Slice && v.IsNil() {
 		data = reflect.MakeSlice(v.Type(), 0, 0).Interface()
 	}
@@ -437,14 +438,14 @@ func newListEnvelope(data any, nextPage *int32, total int32) listEnvelope {
 }
 
 // JSONList encodes data as a pagination envelope: {"data":[…],"nextPage":N,"total":N}.
-// nextPage is omitted when nil or zero; total is omitted when zero.
-func (c *Config) JSONList(data any, nextPage *int32, total int32) error {
+// nextPage is omitted when nil or zero; total is omitted when nil.
+func (c *Config) JSONList(data any, nextPage *int32, total *int32) error {
 	c.noteKeys(data, true)
 	return c.JSON(newListEnvelope(data, nextPage, total))
 }
 
 // YAMLList encodes data as a pagination envelope in YAML.
-func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
+func (c *Config) YAMLList(data any, nextPage *int32, total *int32) error {
 	return c.YAML(newListEnvelope(data, nextPage, total))
 }
 
@@ -550,8 +551,12 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 		notes = append(notes, "long values cut short with …")
 	}
 	if len(notes) > 0 {
-		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(notes, "; ")+
-			" — widen the terminal, pass --wide, or use -o json"))
+		// Wrapped, as the footer under it is: in a terminal narrow enough to
+		// cut the table, it was the one line that overflowed (#325).
+		note := strings.Join(notes, "; ") + " — widen the terminal, pass --wide, or use -o json"
+		for _, line := range c.packParts([]string{note}, "") {
+			fmt.Fprintln(c.EWriter, c.Dim(line))
+		}
 	}
 }
 
@@ -1113,6 +1118,8 @@ func (r *Results) Print(summary string) {
 		c.writeTSV([]string{"domain", "id", "changed", "message"}, rows)
 		return
 	}
+	// The items' keys, for --fields: omitempty leaves out an item's id.
+	c.noteKeys(r.items, true)
 	doc := writeResults{Success: true, Message: summary, Data: r.items}
 	for _, it := range r.items {
 		doc.Changed = doc.Changed || it.Changed
@@ -1148,10 +1155,55 @@ func WithChanged(v any, changed bool) (json.RawMessage, error) {
 	return append(out, '}'), nil
 }
 
+// Written prints the result of a write that returns what it wrote, v — a
+// record, a forwarding, an order: v itself in JSON and YAML, and in TSV the
+// same keys as field<TAB>value rows, as TSVObject prints them. A table prints
+// msg, as Success does. --quiet prints nothing.
+//
+// TSV printed Success's success/changed/message rows, so -o tsv and -o json
+// had different keys for the same write, and --fields, which picks the JSON
+// keys, could not pick what TSV had printed (#325).
+func (c *Config) Written(v any, msg string) error { return c.written(v, nil, msg) }
+
+// WrittenChanged is Written for a write that may have found nothing to do,
+// such as `dns update` asked for the values a record already has: v gets a
+// "changed" key, in TSV too, and a table prints msg as Unchanged when changed
+// is false. TSV said "changed true" for a no-op whatever JSON said (#325).
+func (c *Config) WrittenChanged(v any, changed bool, msg string) error {
+	return c.written(v, &changed, msg)
+}
+
+func (c *Config) written(v any, changed *bool, msg string) error {
+	if c.QuietMode {
+		return nil
+	}
+	doc := v
+	keys := jsonKeys(reflect.TypeOf(v))
+	if changed != nil {
+		raw, err := WithChanged(v, *changed)
+		if err != nil {
+			return err
+		}
+		doc, keys = raw, append(slices.Clone(keys), "changed")
+		c.noteKnown(keys)
+	}
+	switch c.Format {
+	case FormatJSON:
+		return c.JSON(doc)
+	case FormatYAML:
+		return c.YAML(doc)
+	case FormatTSV:
+		return c.TSVObjectKeys(doc, keys)
+	}
+	c.result(msg, changed == nil || *changed)
+	return nil
+}
+
 func (c *Config) result(msg string, changed bool) {
 	if c.QuietMode {
 		return
 	}
+	c.noteKeys(writeResult{}, false)
 	switch c.Format {
 	case FormatJSON:
 		_ = encodeJSON(c.Writer, writeResult{Success: true, Changed: changed, Message: msg})
@@ -1197,14 +1249,18 @@ func (c *Config) Hint(msg string) {
 	}
 	// Wrapped to the terminal, continuation lines under the text rather than
 	// the arrow.
+	lines := []string{msg}
 	if c.MaxWidth > 2 && ansi.StringWidth(msg)+2 > c.MaxWidth {
-		msg = strings.Join(wrapWords(msg, c.MaxWidth-2), "\n  ")
+		lines = wrapWords(msg, c.MaxWidth-2)
 	}
-	if c.ColorEnabled() {
-		arrow := styleDim.Render("→")
-		fmt.Fprintln(c.EWriter, arrow+" "+styleDim.Render(msg))
-	} else {
-		fmt.Fprintln(c.EWriter, "→ "+msg)
+	// Each line styled on its own: lipgloss pads every line of a block to
+	// the widest, so the wrapped hint's last line ended in spaces (#325).
+	for i, line := range lines {
+		lead := "  "
+		if i == 0 {
+			lead = c.Dim("→") + " "
+		}
+		fmt.Fprintln(c.EWriter, lead+c.Dim(line))
 	}
 }
 

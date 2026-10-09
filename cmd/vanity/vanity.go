@@ -99,6 +99,8 @@ func init() {
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
+	cmdutil.SetResult(createCmd, output.KeysOf(coreapigo.VanityNameserverResponse{})...)
+	cmdutil.SetResult(updateCmd, output.KeysOf(coreapigo.VanityNameserverResponse{})...)
 	Cmd.AddCommand(listCmd, getCmd, createCmd, updateCmd, deleteCmd)
 }
 
@@ -171,7 +173,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	foot := cmdutil.Page("vanity nameserver", listPage, len(all), true, 0, 0, 0, nextPage) // the API gives this list no total
+	foot := cmdutil.Page("vanity nameserver", listPage, len(all), true, nil, 0, 0, 0, nextPage) // the API gives this list no total
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints
@@ -179,13 +181,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(all, np, 0)
+		return out.JSONList(all, np, nil)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(all, np, 0)
+		return out.YAMLList(all, np, nil)
 	default:
 		headers := []string{"HOSTNAME", "IPS"}
 		if len(all) == 0 {
@@ -366,15 +368,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(ns)
-	case output.FormatYAML:
-		return out.YAML(ns)
-	default:
-		out.Success(fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(createIPs))))
-	}
-	return nil
+	return out.Written(ns, fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(createIPs))))
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -417,15 +411,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch out.Format {
-	case output.FormatJSON:
-		return out.JSON(ns)
-	case output.FormatYAML:
-		return out.YAML(ns)
-	default:
-		out.Success(fmt.Sprintf("Updated vanity nameserver %s: IPs now %s", hostname, ipList(ips)))
-	}
-	return nil
+	return out.Written(ns, fmt.Sprintf("Updated vanity nameserver %s: IPs now %s", hostname, ipList(ips)))
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {
