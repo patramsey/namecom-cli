@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -222,7 +223,18 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// A name given twice, in any case, is checked once, in the order first
 	// given, as `domain get` does. The API answers it once, so the second copy
 	// was left unanswered and failed the command (#288).
-	args, err := cmdutil.DomainArgs(cmd, args)
+	//
+	// One trailing dot is dropped first: `check foo.com.` was a usage error
+	// while the dns commands take the FQDN form (#322).
+	names, err := cmdutil.ExpandStdinArgs(cmd, args)
+	if err != nil {
+		return err
+	}
+	trimmed := make([]string, len(names))
+	for i, n := range names {
+		trimmed[i] = strings.TrimSuffix(strings.TrimSpace(n), ".")
+	}
+	args, err = cmdutil.DomainArgs(cmd, trimmed)
 	if err != nil {
 		return err
 	}
@@ -269,6 +281,9 @@ func checkRegistry(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult
 	result, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
 		&coreapigo.AvailabilityRequest{DomainNames: args})
 	stop()
+	if noneValid(err) {
+		return make([]*coreapigo.SearchResult, len(args)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +321,11 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 	zoneResult, err := client.SDK().Domains.ZoneCheck(cmd.Context(),
 		&coreapigo.ZoneCheckRequest{DomainNames: args})
 	stop()
+	if noneValid(err) {
+		// Every name then goes to the registry, as a name ZoneCheck leaves
+		// out does below.
+		zoneResult, err = &coreapigo.ZoneCheckResponse{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +374,9 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 	if len(registry) > 0 {
 		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
 			&coreapigo.AvailabilityRequest{DomainNames: registry})
+		if noneValid(err) {
+			checkResult, err = &coreapigo.SearchResponse{}, nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("checking availability: %w", api.FromSDKError(err))
 		}
@@ -366,6 +389,23 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 		}
 	}
 	return finalResults, nil
+}
+
+// noneValid reports whether err is the API's answer to a request holding
+// only names it cannot answer: a 422, "None of the submitted domains are
+// valid". In a request with valid names those names are just left out of
+// the reply, and finishCheck shows them as unknown. The 422 failed the whole
+// command instead, throwing away every other batch's answers, so the result
+// depended on where a bad name fell among the batches of 50 (#322). It is
+// the same answer — none of these names — and is treated so. Any other 422
+// is still an error.
+func noneValid(err error) bool {
+	var apiErr *api.APIError
+	if err == nil || !errors.As(api.FromSDKError(err), &apiErr) {
+		return false
+	}
+	return apiErr.StatusCode == http.StatusUnprocessableEntity &&
+		strings.Contains(strings.ToLower(apiErr.Message), "none of the submitted domains are valid")
 }
 
 // finishCheck renders one row per argument and fails the command when any
@@ -564,7 +604,7 @@ func renderResults(out *output.Config, results []*coreapigo.SearchResult, unansw
 			})
 		}
 		out.Table(headers, rows)
-		out.Count(len(results), "result")
+		out.Count(len(results), "domain") // the noun, as every list names it (#322)
 		var available []string
 		for _, r := range results {
 			if r.Purchasable {

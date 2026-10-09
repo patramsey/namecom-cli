@@ -69,9 +69,13 @@ var (
 )
 
 func init() {
-	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter by domain name (supports * wildcard, e.g. '*acme*')")
+	// The API reads --filter as a SQL LIKE pattern, so % and _ are wildcards
+	// too. No domain name holds either, so they are documented rather than
+	// escaped: the API documents no escape (#322).
+	listCmd.Flags().StringVar(&listFilter, "filter", "", "filter by domain name: * matches any characters (e.g. '*acme*'); the API also reads % as * and _ as any one character")
 	listCmd.Flags().StringVar(&listTLD, "tld", "", "filter by TLD (e.g. com, io)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "sort by a domain property: "+strings.Join(sortFields, ", ")+" (passed to the API as is)")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "sort by a domain property: "+strings.Join(sortFields, ", ")+
+		" (passed to the API as is; it ignores keys it cannot sort by, such as renewalPrice and privacyEnabled)")
 	listCmd.Flags().StringVar(&listSortDir, "sort-dir", "", "sort direction: asc (default) or desc")
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
@@ -81,11 +85,14 @@ func init() {
 }
 
 // sortFields are the domain properties --sort lists and completes: the
-// scalar fields of a domain in `domain list -o json`. The API documents sort
-// only as "which domain property to order by", with no list, so the value is
-// still sent as typed rather than checked against these.
-var sortFields = []string{"domainName", "createDate", "expireDate", "renewalPrice",
-	"autorenewEnabled", "locked", "privacyEnabled"}
+// scalar fields of a domain in `domain list -o json` that the API sorts by.
+// renewalPrice and privacyEnabled are fields too, but the API ignores them
+// as sort keys and answers in its default order, so they are not offered
+// (#322). The API documents sort only as "which domain property to order
+// by", with no list, so the value is still sent as typed rather than checked
+// against these.
+var sortFields = []string{"domainName", "createDate", "expireDate",
+	"autorenewEnabled", "locked"}
 
 // isFiltered reports whether any server-side filter flag is set.
 func isFiltered(cmd *cobra.Command) bool {
@@ -105,7 +112,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := cmdutil.ValidSortDir(listSortDir); err != nil {
+	// Any case, as --status and --type are (#322).
+	sortDir := strings.ToLower(listSortDir)
+	if err := cmdutil.ValidSortDir(sortDir); err != nil {
 		return err
 	}
 	if listExpiringAfter != "" {
@@ -141,8 +150,8 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if listSort != "" {
 			p.Sort = &listSort
 		}
-		if listSortDir != "" {
-			p.Dir = &listSortDir
+		if sortDir != "" {
+			p.Dir = &sortDir
 		}
 		if listFilter != "" {
 			f := filterToWildcard(listFilter)
@@ -175,6 +184,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 	// are several pages: either way, an empty page.
 	if pastEnd || cmdutil.PastLastPage(listPage, paging.PerPage, len(lastResult.Domains), lastResult.TotalCount, lastResult.LastPage) {
 		lastResult = &coreapigo.ListDomainsResponse{}
+	}
+	if err := checkTLDApplied(tld, lastResult.Domains); err != nil {
+		spin.Stop()
+		return err
 	}
 	domains = append(domains, cmdutil.NonNil(lastResult.Domains)...)
 
@@ -284,12 +297,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 	default:
 		headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
 		if len(domains) == 0 {
-			if isFiltered(cmd) && listPage == 1 {
-				out.Warn("no domains matched — try a different filter")
-				out.EmptyTable(headers, "", "") // the warning says it; TSV still gets its header
-			} else {
-				cmdutil.EmptyPage(out, listPage, headers, "domain", "Run 'namecom domain register <domain>' to register your first domain")
+			// "No domains found.", as every list says: a filter that matched
+			// nothing is not a warning (#322).
+			hint := "Run 'namecom domain register <domain>' to register your first domain"
+			if isFiltered(cmd) {
+				hint = ""
 			}
+			cmdutil.EmptyPage(out, listPage, headers, "domain", hint)
 			return nil
 		}
 		rows := make([][]string, 0, len(domains))
@@ -483,6 +497,33 @@ func domainHint(d *coreapigo.DomainResponsePayload, now time.Time) string {
 		}
 	}
 	return fmt.Sprintf("Run 'namecom dns list %s' to manage DNS records", d.DomainName)
+}
+
+// checkTLDApplied fails --tld when the page the API returned shows it was
+// ignored. The API answers a tld it does not recognise (cmo, zzzz) with the
+// unfiltered account, which listed every domain under the filter — and a typo
+// in `domain list --tld cmo -q | xargs …` acted on all of them (#322).
+//
+// The page itself is the evidence, so this costs no request: a domain outside
+// .<tld> can only be there if the filter was not applied. A real TLD the
+// account holds none of comes back empty and passes, as does an empty
+// account, where there is nothing to list anyway. Checking the TLD up front
+// would mean a pricing or TLD-list request on every filtered list, or a
+// hard-coded TLD list that goes stale. Only the first page is checked: it
+// decides before --all fetches the rest.
+func checkTLDApplied(tld string, domains []*coreapigo.DomainResponsePayload) error {
+	if tld == "" {
+		return nil
+	}
+	for _, d := range domains {
+		if d == nil || strings.HasSuffix(strings.ToLower(d.DomainName), "."+tld) {
+			continue
+		}
+		return cmdutil.NewUsageErrorHint(
+			fmt.Errorf("--tld %s: the API ignored it and returned domains in other TLDs (%s), so it is not a TLD the API knows", tld, d.DomainName),
+			"check the spelling, e.g. --tld com")
+	}
+	return nil
 }
 
 // filterToWildcard wraps a bare search term in * wildcards so that --filter

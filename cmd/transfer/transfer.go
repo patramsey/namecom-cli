@@ -788,7 +788,12 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 			out.Hint(fmt.Sprintf("Run 'namecom transfer internal-in %s --auth-code XXXXXX' to transfer "+
 				"(requires enterprise reseller approval)", domain))
 		} else {
-			out.Hint(fmt.Sprintf("Run 'namecom transfer create %s --auth-code XXXXXX' to initiate transfer", domain))
+			// atName false is all the API says: the name may be at another
+			// registrar or registered nowhere, and it said "another registrar"
+			// and suggested a transfer for a name nobody holds (#322). So the
+			// advice is conditional, with the command that tells the two apart.
+			out.Hint(fmt.Sprintf("If %[1]s is registered at another registrar, run 'namecom transfer create %[1]s "+
+				"--auth-code XXXXXX' to transfer it in; 'namecom domain check %[1]s' says whether it is registered", domain))
 		}
 	}
 	return nil
@@ -797,11 +802,13 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 // eligibilityTable lays out an eligibility result. It showed "AT NAME.COM no"
 // beside "SUPPORTS INTERNAL yes", which read as a contradiction (#238): the
 // second is a TLD-level flag that matters only for a domain already at
-// name.com. REGISTERED AT says where the domain is, and the TLD column
-// appears only when it applies. mine says the domain is in this account.
+// name.com. REGISTERED AT says where the domain is, as far as the API knows
+// ("not at name.com", not "another registrar": it may be registered nowhere,
+// #322), and the TLD column appears only when it applies. mine says the
+// domain is in this account.
 func eligibilityTable(r *coreapigo.TransferEligibilityResponse, mine bool) ([]string, [][]string) {
 	if !r.AtName {
-		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "another registrar"}}
+		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "not at name.com"}}
 	}
 	if mine {
 		return []string{"DOMAIN", "REGISTERED AT"}, [][]string{{r.DomainName, "name.com (this account)"}}
