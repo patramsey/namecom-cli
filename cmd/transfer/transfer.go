@@ -219,13 +219,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(transfers, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(transfers, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(transfers, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(transfers, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		headers := []string{"DOMAIN", "STATUS"}
 		if len(transfers) == 0 {

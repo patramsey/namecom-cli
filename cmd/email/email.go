@@ -197,13 +197,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(all, np, 0)
+		return out.JSONList(all, np, nil)
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(all, np, 0)
+		return out.YAMLList(all, np, nil)
 	default:
 		headers := []string{"MAILBOX", "FORWARDS TO"}
 		if len(all) == 0 {

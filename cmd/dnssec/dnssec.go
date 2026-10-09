@@ -129,9 +129,9 @@ func runList(cmd *cobra.Command, args []string) error {
 		// Use the same {"data":[…]} envelope every other list command emits, so
 		// scripts can treat list output uniformly. ListDNSSECsResponseSchema has
 		// no pagination fields, hence the nil/0 arguments.
-		return out.JSONList(result.Dnssec, nil, 0)
+		return out.JSONList(result.Dnssec, nil, nil)
 	case output.FormatYAML:
-		return out.YAMLList(result.Dnssec, nil, 0)
+		return out.YAMLList(result.Dnssec, nil, nil)
 	default:
 		headers := []string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"}
 		if len(result.Dnssec) == 0 {

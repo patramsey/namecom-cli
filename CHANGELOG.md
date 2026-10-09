@@ -152,6 +152,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   warned about, and the result printed as indented JSON whatever `-o` said;
   where the keys cannot be known in advance (`api`), the unfiltered result
   is now printed in the format asked for (#325).
+- An empty list the API counts — `domain list`, `dns list`, `order list`,
+  `transfer list`, `contact unverified` — carries `"total": 0` in JSON and
+  YAML, as a non-empty one carries `"total": N`. It was left out, so
+  `--jq .total` was `null` for none. A `--page` past the end is still a
+  plain `{"data":[]}`, and `url`, `email` and `vanity-ns list`, which the
+  API does not count, still have no `total` (#325).
 
 ## [0.5.3] - 2026-10-07
 

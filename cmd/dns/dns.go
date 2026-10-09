@@ -311,15 +311,17 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 	}
 	foot := cmdutil.Page("record", listPage, len(records), paging.All, pos.from, pos.to, pos.total, next)
+	total := cmdutil.ListTotal(listPage, pos.total)
 	if filtered {
 		foot = cmdutil.Page("record", listPage, len(records), true, 0, 0, 0, next)
+		total = nil
 	}
 	switch out.Format {
 	case output.FormatJSON:
 		out.ListFooter(foot) // for a table --fields prints
-		return out.JSONList(records, cmdutil.Int32Page(nextPage), cmdutil.Int32Count(foot.Total))
+		return out.JSONList(records, cmdutil.Int32Page(nextPage), total)
 	case output.FormatYAML:
-		return out.YAMLList(records, cmdutil.Int32Page(nextPage), cmdutil.Int32Count(foot.Total))
+		return out.YAMLList(records, cmdutil.Int32Page(nextPage), total)
 	default:
 		headers := []string{"ID", "TYPE", "HOST", "ANSWER", "TTL"}
 		if priorityColumn(out, records) {
@@ -880,9 +882,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// empty zone's nil into `[]` rather than `null`.
 	switch out.Format {
 	case output.FormatYAML:
-		return out.YAMLList(records, nil, 0)
+		return out.YAMLList(records, nil, nil)
 	default:
-		if err := out.JSONList(records, nil, 0); err != nil {
+		if err := out.JSONList(records, nil, nil); err != nil {
 			return err
 		}
 	}

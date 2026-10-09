@@ -75,7 +75,7 @@ func TestFields_ListFooterAfterTable(t *testing.T) {
 	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &both, EWriter: &both, Plain: true}
 	c.BeginFilter(&Filter{Fields: []string{"domainName"}})
 	c.ListFooter(ListPage{Noun: "domain", Count: 2, From: 1, To: 2, Total: 6522, Next: 2})
-	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}, {"domainName": "b.com"}}, nil, 6522); err != nil {
+	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}, {"domainName": "b.com"}}, nil, int32Ptr(6522)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.EndFilter(false); err != nil {
@@ -91,7 +91,7 @@ func TestFields_ListFooterAfterTable(t *testing.T) {
 	c.Format = FormatTSV
 	c.BeginFilter(&Filter{Fields: []string{"domainName"}})
 	c.ListFooter(ListPage{Noun: "domain", Count: 1, Next: 2})
-	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}}, nil, 0); err != nil {
+	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.EndFilter(false); err != nil {

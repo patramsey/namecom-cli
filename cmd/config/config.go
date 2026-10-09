@@ -123,9 +123,9 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 		// not an empty stdout it cannot parse (#240).
 		switch out.Format {
 		case output.FormatJSON:
-			return out.JSONList([]profileView{}, nil, 0)
+			return out.JSONList([]profileView{}, nil, nil)
 		case output.FormatYAML:
-			return out.YAMLList([]profileView{}, nil, 0)
+			return out.YAMLList([]profileView{}, nil, nil)
 		}
 		return nil
 	}
@@ -151,9 +151,9 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 	// (#240).
 	switch out.Format {
 	case output.FormatJSON:
-		return out.JSONList(redactProfiles(cfgFile, names, active), nil, 0)
+		return out.JSONList(redactProfiles(cfgFile, names, active), nil, nil)
 	case output.FormatYAML:
-		return out.YAMLList(redactProfiles(cfgFile, names, active), nil, 0)
+		return out.YAMLList(redactProfiles(cfgFile, names, active), nil, nil)
 	default:
 		rows := make([][]string, 0, len(names))
 		for _, name := range names {

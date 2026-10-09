@@ -412,11 +412,12 @@ func jsonToNode(dec *json.Decoder) (*yaml.Node, error) {
 }
 
 // listEnvelope wraps paginated list results with metadata for agent consumers.
-// nextPage and total are omitted when zero/nil.
+// nextPage is omitted when zero or nil, and total when nil: a list the API
+// does not count has none, and a counted one says 0 when it is empty.
 type listEnvelope struct {
 	Data     any    `json:"data" yaml:"data"`
 	NextPage *int32 `json:"nextPage,omitempty" yaml:"nextPage,omitempty"`
-	Total    int32  `json:"total,omitempty" yaml:"total,omitempty"`
+	Total    *int32 `json:"total,omitempty" yaml:"total,omitempty"`
 }
 
 // newListEnvelope builds the envelope both list encoders share.
@@ -425,7 +426,7 @@ type listEnvelope struct {
 // append, and appending an empty page to a nil slice leaves it nil, so an
 // empty list encoded as `"data": null` — which `jq '.data[]'` refuses to
 // iterate — although the API itself had returned `[]`.
-func newListEnvelope(data any, nextPage *int32, total int32) listEnvelope {
+func newListEnvelope(data any, nextPage *int32, total *int32) listEnvelope {
 	if v := reflect.ValueOf(data); v.Kind() == reflect.Slice && v.IsNil() {
 		data = reflect.MakeSlice(v.Type(), 0, 0).Interface()
 	}
@@ -437,14 +438,14 @@ func newListEnvelope(data any, nextPage *int32, total int32) listEnvelope {
 }
 
 // JSONList encodes data as a pagination envelope: {"data":[…],"nextPage":N,"total":N}.
-// nextPage is omitted when nil or zero; total is omitted when zero.
-func (c *Config) JSONList(data any, nextPage *int32, total int32) error {
+// nextPage is omitted when nil or zero; total is omitted when nil.
+func (c *Config) JSONList(data any, nextPage *int32, total *int32) error {
 	c.noteKeys(data, true)
 	return c.JSON(newListEnvelope(data, nextPage, total))
 }
 
 // YAMLList encodes data as a pagination envelope in YAML.
-func (c *Config) YAMLList(data any, nextPage *int32, total int32) error {
+func (c *Config) YAMLList(data any, nextPage *int32, total *int32) error {
 	return c.YAML(newListEnvelope(data, nextPage, total))
 }
 

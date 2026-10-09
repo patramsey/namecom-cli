@@ -682,6 +682,28 @@ func TestColorEnabled_AutoIsOffWhenPipedWithNoEnv(t *testing.T) {
 
 // ---- YAMLList ---------------------------------------------------------------
 
+// TestJSONList_ZeroTotal: a counted list that is empty says "total": 0. It
+// was left out, so `--jq .total` was null for none and a number otherwise
+// (#325). A list given no total — one the API does not count — has none.
+func TestJSONList_ZeroTotal(t *testing.T) {
+	for _, tc := range []struct {
+		total *int32
+		want  string
+	}{
+		{int32Ptr(0), "{\n  \"data\": [],\n  \"total\": 0\n}\n"},
+		{nil, "{\n  \"data\": []\n}\n"},
+	} {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatJSON, Writer: &buf}
+		if err := c.JSONList([]string(nil), nil, tc.total); err != nil {
+			t.Fatal(err)
+		}
+		if buf.String() != tc.want {
+			t.Errorf("total %v: got %q, want %q", tc.total, buf.String(), tc.want)
+		}
+	}
+}
+
 // The pagination envelope is a documented output contract: nextPage is omitted
 // when there is no next page, so a script can test for its presence rather than
 // comparing it to zero.
@@ -689,12 +711,12 @@ func TestYAMLList_PaginationEnvelope(t *testing.T) {
 	tests := []struct {
 		name     string
 		nextPage *int32
-		total    int32
+		total    *int32
 		wantNext bool
 	}{
-		{"no next page", nil, 3, false},
-		{"explicit zero is not a next page", int32Ptr(0), 3, false},
-		{"a real next page is included", int32Ptr(2), 30, true},
+		{"no next page", nil, int32Ptr(3), false},
+		{"explicit zero is not a next page", int32Ptr(0), int32Ptr(3), false},
+		{"a real next page is included", int32Ptr(2), int32Ptr(30), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1306,10 +1328,10 @@ func TestYAML_MatchesJSON(t *testing.T) {
 			jc := &Config{Format: FormatJSON, Writer: &jb}
 			yc := &Config{Format: FormatYAML, Writer: &yb}
 			if tc.list {
-				if err := jc.JSONList(tc.v, &np, 3); err != nil {
+				if err := jc.JSONList(tc.v, &np, int32Ptr(3)); err != nil {
 					t.Fatalf("JSONList: %v", err)
 				}
-				if err := yc.YAMLList(tc.v, &np, 3); err != nil {
+				if err := yc.YAMLList(tc.v, &np, int32Ptr(3)); err != nil {
 					t.Fatalf("YAMLList: %v", err)
 				}
 			} else {

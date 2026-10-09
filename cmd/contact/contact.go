@@ -181,14 +181,14 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
 		warn() // kept back, and printed with the other warnings at the end
-		return out.JSONList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(contacts, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
 		warn() // kept back, and printed with the other warnings at the end
-		return out.YAMLList(contacts, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(contacts, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		headers := []string{"ID", "EMAIL", "DEADLINE", "DOMAINS"}
 		if len(contacts) == 0 {

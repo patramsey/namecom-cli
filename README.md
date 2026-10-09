@@ -462,7 +462,8 @@ of them is a breaking change and is called out in the
   most one document: the error envelope when the command fails, or
   `{"warnings": [...]}` when it succeeded with something to say.
 - **Lists are `{"data": [...]}`**, with `nextPage` and `total` added when the
-  list is paged. `data` is `[]`, never `null`, when there is nothing in it.
+  list is paged. `data` is `[]`, never `null`, when there is nothing in it,
+  and a list the API counts says `"total": 0` then.
   This covers every `list`, and `domain check`, `domain search`,
   `config list-profiles` and `dns export` too (`dns import` and `dns sync`
   read both that and the bare array older versions exported), and

@@ -217,6 +217,19 @@ func Int32Count(n int) int32 {
 	return int32(n)
 }
 
+// ListTotal is the total a counted list's JSON and YAML envelope carries:
+// total, the count the API reported, 0 included. It was left out when 0, so
+// `--jq .total` was null for an empty list and a number otherwise (#325).
+// Past page 1 a 0 is the empty page shown past the end of the list, which
+// says nothing about its length, so it is left out there.
+func ListTotal(page, total int) *int32 {
+	if total == 0 && page > 1 {
+		return nil
+	}
+	n := Int32Count(total)
+	return &n
+}
+
 // NonNil returns s without its nil elements, leaving s itself unchanged.
 //
 // The SDK decodes a JSON null inside a response list as a nil pointer, and

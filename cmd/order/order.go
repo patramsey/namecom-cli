@@ -261,13 +261,13 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.JSONList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.JSONList(orders, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	case output.FormatYAML:
 		var np *int32
 		if hasMore {
 			np = cmdutil.Int32Page(lastResult.NextPage)
 		}
-		return out.YAMLList(orders, np, cmdutil.Int32Count(lastResult.TotalCount))
+		return out.YAMLList(orders, np, cmdutil.ListTotal(listPage, lastResult.TotalCount))
 	default:
 		if len(orders) == 0 {
 			cmdutil.EmptyPage(out, listPage, orderHeaders, "order", "")
