@@ -424,9 +424,10 @@ is one line. The shape never depends on the data:
 - One object prints `field<TAB>value` rows, the same rows whatever it holds:
   a value it lacks is an empty cell. `domain get` uses its table's field
   names; a command without a detail table (`status`, `version`,
-  `auth status`, `config show`, `domain claims`, `open`) uses the `-o json`
-  keys with bare values, a value's source as a key of its own
-  (`profileSource`).
+  `auth status`, `config show`, `domain claims`, `url get`, `email get`,
+  `order get`, `open`) uses the `-o json` keys with bare values, a value's
+  source as a key of its own (`profileSource`), and a list in a value as a
+  JSON array (`order get`'s items are one `orderItems` cell).
 - A write prints its result's keys the same way (`changed<TAB>true`); a read
   never does. A dry run prints `method`, `path` and `body` (as compact JSON)
   columns.

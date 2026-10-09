@@ -54,6 +54,35 @@ func TestFormattingTopic(t *testing.T) {
 	}
 }
 
+// TestFormattingTopic_TSVListMatchesREADME pins #327: the README named the
+// commands whose TSV uses the -o json keys, and left out url get, email get
+// and order get, which help formatting lists.
+func TestFormattingTopic_TSVListMatchesREADME(t *testing.T) {
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout has CRLF line endings; compare as LF.
+	text := strings.ReplaceAll(string(readme), "\r\n", "\n")
+	commands := func(where, s, marker string) []string {
+		_, rest, ok := strings.Cut(s, marker+" (")
+		list, _, closed := strings.Cut(rest, ")")
+		if !ok || !closed {
+			t.Fatalf("%s: no %q list; the text moved or changed shape", where, marker)
+		}
+		var out []string
+		for _, name := range strings.Split(list, ",") {
+			out = append(out, strings.Join(strings.Fields(strings.Trim(strings.TrimSpace(name), "`")), " "))
+		}
+		return out
+	}
+	help := commands("help formatting", formattingCmd.Long, "one without")
+	doc := commands("README", text, "a command without a detail table")
+	if !slices.Equal(doc, help) {
+		t.Errorf("README lists %q, help formatting %q", doc, help)
+	}
+}
+
 // TestFields pins --fields (#241): it keeps the named keys, in the order
 // named, of each list item — leaving the list's envelope alone — or of a
 // single object, and prints them in whichever format was asked for.
