@@ -345,6 +345,16 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"domain", "list", "--tld", "c om"},
 			code: 2,
 		},
+		"domain list --tld the API ignores, --all": {
+			args: []string{"domain", "list", "--tld", "cmo", "--all"},
+			routes: map[string]reply{"GET /core/v1/domains": {200, `{"domains":[` + stubDomain("example.com") +
+				`],"totalCount":3,"nextPage":2,"lastPage":3}`}},
+			why:  "the first page shows the API ignored the tld; the rest of the account is not fetched",
+			code: 2,
+			want: []string{
+				"GET /core/v1/domains?page=1&perPage=1000&tld=cmo",
+			},
+		},
 		"domain list, reversed date range": {
 			args: []string{"domain", "list", "--expiring-after", "2027-01-01", "--expiring-before", "2026-01-01"},
 			code: 2,
@@ -384,6 +394,15 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"domain check --authoritative": {
 			args: []string{"domain", "check", "--authoritative", "a.com", "b.com"},
+			want: []string{
+				"POST /core/v1/domains:checkAvailability",
+			},
+		},
+		"domain check, a name the API calls invalid": {
+			args:   []string{"domain", "check", "--authoritative", "foo.notatld"},
+			routes: map[string]reply{"POST /core/v1/domains:checkAvailability": {422, `{"message":"None of the submitted domains are valid"}`}},
+			why:    "the 422 is the answer for the name: unknown, exit 1, nothing retried",
+			code:   1,
 			want: []string{
 				"POST /core/v1/domains:checkAvailability",
 			},

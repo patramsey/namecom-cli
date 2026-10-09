@@ -808,7 +808,7 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 			wantAbsent: "internal-in",
 			// Not "AT NAME.COM no" beside "SUPPORTS INTERNAL yes" (#238): the
 			// TLD flag is irrelevant here, so its column is not shown.
-			wantBadges: []string{"REGISTERED AT", "another registrar"},
+			wantBadges: []string{"REGISTERED AT", "not at name.com"},
 		},
 		{
 			name:       "at name.com recommends internal-in, with the approval caveat",
@@ -860,6 +860,28 @@ func TestTransferEligibility_RecommendsTheRightNextCommand(t *testing.T) {
 				t.Errorf("table should show the domain, got:\n%s", got)
 			}
 		})
+	}
+}
+
+// atName false is all the API says, and an unregistered name answers it too
+// (#322): the table said "another registrar" and the hint told the user to
+// transfer in a name nobody holds. The table no longer names a registrar,
+// and the advice is conditional, with the check that tells the two apart.
+func TestTransferEligibility_NotAtNameDoesNotClaimARegistrar(t *testing.T) {
+	srv, _ := eligibilityServer(t, `{"domainName":"example.com","atName":false,"supportsInternalTransfer":true}`)
+	var stdout bytes.Buffer
+	cmd := cmdForEligibility(t, srv, output.FormatTable, &stdout)
+	if err := runEligibility(cmd, []string{"example.com"}); err != nil {
+		t.Fatalf("runEligibility: %v", err)
+	}
+	if strings.Contains(stdout.String(), "another registrar") || !strings.Contains(stdout.String(), "not at name.com") {
+		t.Errorf("want REGISTERED AT \"not at name.com\", got:\n%s", stdout.String())
+	}
+	hint := cmdutil.Out(cmd).EWriter.(*bytes.Buffer).String()
+	for _, want := range []string{"If example.com is registered at another registrar", "domain check example.com"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint should say %q, got:\n%s", want, hint)
+		}
 	}
 }
 

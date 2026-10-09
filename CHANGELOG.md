@@ -16,6 +16,30 @@ Releases before `0.2.0` predate this file. Their notes are on the
   (`GO-2026-6603`, `-6605`, `-6607`, `-6608`, `-6610`, `-6611`, `-6612`,
   `-6613`, `-6617`). They were published after the v0.5.3 build; no code
   here changed. Building now needs Go 1.26.9.
+### Fixed
+- `domain list --tld` with a TLD the API does not know (`cmo`, `zzzz`) is a
+  usage error (exit 2) naming it. The API ignores such a TLD and answers
+  with every domain, which was printed as if filtered, so a typo in
+  `domain list --tld cmo -q | xargs …` acted on the whole account. The
+  first page the API returns is the evidence (a domain outside the TLD), so
+  no request is added, and `--all` stops there instead of fetching the
+  account. A real TLD you hold none of is still an empty list.
+  `domain check` no longer drops every answer when one batch of 50 holds
+  only names the API cannot answer: that batch's 422 "None of the submitted
+  domains are valid" makes its names `unknown`, the other rows print, and
+  the command exits 1, as for a bad name in a mixed batch. A single
+  `domain check foo.notatld` now gives that row and the "check the name and
+  its TLD" warning instead of a bare `api` error. `transfer eligibility` of
+  a domain not at name.com says `not at name.com` rather than `another
+  registrar`, since the API cannot tell a domain registered elsewhere from
+  one registered nowhere, and its `transfer create` advice is conditional,
+  pointing to `domain check`. `domain list --sort` no longer lists
+  `renewalPrice` and `privacyEnabled`, which the API ignores; `--sort-dir`
+  takes any case; a filter matching nothing says `No domains found.` instead
+  of a warning; `--filter` help says the API also reads `%` and `_` as
+  wildcards; `domain check foo.com.` drops the trailing dot; and the
+  `domain search` and `domain check` footers count `domains`, not `results`
+  (#322).
 
 ## [0.5.3] - 2026-10-07
 
