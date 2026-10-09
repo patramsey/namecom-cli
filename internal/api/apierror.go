@@ -76,11 +76,37 @@ func (e *APIError) MethodNotAllowed() bool {
 		(e.StatusCode == http.StatusNotFound && strings.EqualFold(strings.TrimSpace(e.Message), "Method Not Allowed"))
 }
 
+// DomainStateDenied reports whether e is a 403 about the domain the request
+// named rather than about the credentials or the account: the API answers
+// `dns list` and `url list` of an expired domain with "Permission denied. The
+// domain is expired." The 403s that are about access — "Permission Denied",
+// "IP not whitelisted", the edge's HTML page — do not mention a domain.
+//
+// It was reported as an auth failure, exit 3, with the API-settings hint, so
+// a loop over `domain list -q` that stops on 3 stopped at the first expired
+// domain (#324).
+func (e *APIError) DomainStateDenied() bool {
+	return e.StatusCode == http.StatusForbidden &&
+		strings.Contains(strings.ToLower(e.Message+" "+e.Details), "domain")
+}
+
+// AuthFailure reports whether e is the API refusing the credentials or the
+// account: a 401, or a 403 that is not DomainStateDenied. It is what exits 3
+// and is typed "auth".
+func (e *APIError) AuthFailure() bool {
+	return e.StatusCode == http.StatusUnauthorized ||
+		(e.StatusCode == http.StatusForbidden && !e.DomainStateDenied())
+}
+
 // UserHint returns an actionable next-step hint for display alongside the
 // error, chosen by status and by whether the request was a write (#234).
 func (e *APIError) UserHint() string {
 	if e.MethodNotAllowed() {
 		return "the path exists but does not accept this method — check which method the API documents for it"
+	}
+	if e.DomainStateDenied() {
+		// The API's message says what is wrong with the domain.
+		return ""
 	}
 	switch e.StatusCode {
 	case 401:

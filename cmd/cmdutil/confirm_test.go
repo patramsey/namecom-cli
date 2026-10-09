@@ -35,8 +35,8 @@ func TestConfirm_NonInteractiveError_SandboxTag(t *testing.T) {
 	if !strings.Contains(err.Error(), "[sandbox]") {
 		t.Errorf("error = %q, want it to contain '[sandbox]'", err.Error())
 	}
-	if !strings.Contains(err.Error(), "pass --yes") {
-		t.Errorf("error = %q, want it to mention --yes", err.Error())
+	if !strings.Contains(hintOf(err), "pass --yes") {
+		t.Errorf("hint = %q, want it to mention --yes", hintOf(err))
 	}
 }
 
@@ -65,9 +65,13 @@ func TestConfirm_NonInteractiveIsUsageError(t *testing.T) {
 	if !errors.As(err, &usage) {
 		t.Fatalf("error = %v (%T), want a *UsageError so it exits 2", err, err)
 	}
-	want := `confirmation required for "Delete acme.io?" (production · alice) — pass --yes`
-	if !strings.HasPrefix(err.Error(), want) {
-		t.Errorf("error = %q, want it to start %q", err, want)
+	want := `confirmation required for "Delete acme.io?" (production · alice)`
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
+	}
+	// The advice is the hint, where a script reads it, not the message (#324).
+	if got, want := usage.UserHint(), "pass --yes to confirm when not running in a terminal"; got != want {
+		t.Errorf("hint = %q, want %q", got, want)
 	}
 }
 
@@ -86,4 +90,15 @@ func TestRequiredFlags(t *testing.T) {
 	if h := RequiredFlags(false, "ns").(*UsageError).UserHint(); h != "" {
 		t.Errorf("a flag nothing prompts for got the terminal hint %q", h)
 	}
+}
+
+// hintOf returns the hint err carries, as the error renderer finds it.
+func hintOf(err error) string {
+	if h, ok := errors.AsType[interface {
+		error
+		UserHint() string
+	}](err); ok {
+		return h.UserHint()
+	}
+	return ""
 }

@@ -313,6 +313,15 @@ func TestRegister_UnavailableDomain(t *testing.T) {
 	if !strings.Contains(err.Error(), "not available") {
 		t.Errorf("expected 'not available' in error, got: %v", err)
 	}
+	// #324: typed "unavailable", as `domain check --exit-status` is, not
+	// "api", and with a hint saying where to look next.
+	u, ok := errors.AsType[*cmdutil.UnavailableError](err)
+	if !ok {
+		t.Fatalf("want an *UnavailableError, got %T", err)
+	}
+	if !strings.Contains(u.UserHint(), "namecom domain check") {
+		t.Errorf("hint = %q, want it to point at domain check", u.UserHint())
+	}
 }
 
 func TestRegister_AvailabilityCheckedBeforeForm(t *testing.T) {
@@ -1101,7 +1110,8 @@ func TestSetNSAndContactsSet_Confirm(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error without --yes in non-interactive mode")
 			}
-			if !strings.Contains(err.Error(), c.wantPrompt) || !strings.Contains(err.Error(), "--yes") {
+			var ue *cmdutil.UsageError
+			if !strings.Contains(err.Error(), c.wantPrompt) || !errors.As(err, &ue) || !strings.Contains(ue.UserHint(), "--yes") {
 				t.Errorf("error should carry the prompt and name --yes, got: %v", err)
 			}
 			if *hits != 0 {

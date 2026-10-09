@@ -74,7 +74,7 @@ Quick start:
 Exit codes:
   0  success
   1  API or other runtime error, a prompt declined or cancelled, or a name
-     'domain check --exit-status' found unavailable
+     that is not available ('domain check --exit-status', 'domain register')
   2  usage error or confirmation required: a bad command, flag, argument or
      value, or a write with no terminal to confirm it and no --yes
   3  authentication: credentials missing, failing or rejected, or access denied
@@ -112,12 +112,6 @@ func Execute() {
 	if checksForUpdates(os.Args[1:]) {
 		go func() { updateCh <- update.Check(Version) }()
 	}
-
-	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
-	// usage errors so they exit 2 rather than collapsing into the generic 1.
-	// Applies to every subcommand, not just root. An unknown flag also gets
-	// a did-you-mean and the usage line.
-	rootCmd.SetFlagErrorFunc(cmdutil.FlagError)
 
 	if code := run(); code != 0 {
 		os.Exit(code)
@@ -224,7 +218,7 @@ func misparsedFlag(err error, args []string) error {
 		case strings.HasPrefix(a, "--"):
 			name, _, _ := strings.Cut(a[2:], "=")
 			if f = flags.Lookup(name); f == nil {
-				return cmdutil.FlagError(rootCmd, fmt.Errorf("unknown flag: --%s", name))
+				return cmdutil.FlagErrorArgs(rootCmd, fmt.Errorf("unknown flag: --%s", name), args)
 			}
 		default:
 			if f = flags.ShorthandLookup(a[1:2]); f == nil {
@@ -258,6 +252,14 @@ func checksForUpdates(args []string) bool {
 
 func init() {
 	cobra.OnFinalize(closeDebugLog)
+	// Classify cobra's own flag-parse failures (unknown flag, bad value) as
+	// usage errors so they exit 2 rather than collapsing into the generic 1.
+	// Applies to every subcommand, not just root. An unknown flag also gets
+	// a did-you-mean and the usage line. Set here rather than in Execute so
+	// that run, which the tests call, reports the same errors.
+	rootCmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return cmdutil.FlagErrorArgs(c, err, os.Args[1:])
+	})
 	rootCmd.AddGroup(
 		&cobra.Group{ID: "domains", Title: "Domain Commands:"},
 		&cobra.Group{ID: "account", Title: "Account Commands:"},
@@ -835,7 +837,7 @@ func errorInfo(err error) output.ErrorInfo {
 	}
 	if isAPI {
 		switch {
-		case apiErr.StatusCode == 401, apiErr.StatusCode == 403:
+		case apiErr.AuthFailure():
 			info.Type = output.ErrorTypeAuth
 		case apiErr.StatusCode == 404:
 			info.Type = output.ErrorTypeNotFound
@@ -906,9 +908,12 @@ func exitCode(err error) int {
 		return 6
 	}
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
-		switch apiErr.StatusCode {
-		case 401, 403:
+		// A 403 about the domain, such as an expired one, is not a
+		// credential problem and exits 1 (#324).
+		if apiErr.AuthFailure() {
 			return 3
+		}
+		switch apiErr.StatusCode {
 		case 404:
 			return 4
 		case 429:

@@ -178,10 +178,8 @@ func TestRunWrite_NonInteractiveWithoutYesErrorsWithThePrompt(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the non-interactive confirmation error")
 	}
-	for _, want := range []string{"Create a thing for $5.00?", "pass --yes"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err, want)
-		}
+	if !strings.Contains(err.Error(), "Create a thing for $5.00?") || !strings.Contains(hintOf(err), "pass --yes") {
+		t.Errorf("error %q (hint %q) should carry the prompt and name --yes", err, hintOf(err))
 	}
 }
 
@@ -336,7 +334,7 @@ func TestRunWrite_PromptCarriesContext(t *testing.T) {
 	t.Run("non-interactive refusal", func(t *testing.T) {
 		defer output.StubInteractive(false)()
 		_, err := RunWrite(contextCmd(t, f, config.Overrides{}, false), w, failIfSent(t))
-		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "pass --yes") {
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(hintOf(err), "pass --yes") {
 			t.Errorf("error = %v, want it to carry %q and name --yes", err, want)
 		}
 	})

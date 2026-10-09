@@ -420,3 +420,32 @@ func TestMarkWrite(t *testing.T) {
 		t.Error("an unrelated error should come back unchanged")
 	}
 }
+
+// TestAPIError_DomainStateDenied pins #324: the API answers 403 for an
+// expired domain, which is not a credential or account problem, and was
+// reported as one, with exit 3 and the API-settings hint.
+func TestAPIError_DomainStateDenied(t *testing.T) {
+	tests := []struct {
+		e        *APIError
+		denied   bool
+		wantHint bool
+	}{
+		{&APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}, true, false},
+		{&APIError{StatusCode: 403, Message: "Permission Denied", Details: "The domain is locked"}, true, false},
+		{&APIError{StatusCode: 403, Message: "Permission Denied"}, false, true},
+		{&APIError{StatusCode: 403, Message: "Permission Denied", Details: "IP not whitelisted"}, false, true},
+		{&APIError{StatusCode: 403, Message: "HTTP 403 Forbidden (HTML error page)"}, false, true},
+		{&APIError{StatusCode: 401, Message: "domain"}, false, true},
+	}
+	for _, tt := range tests {
+		if got := tt.e.DomainStateDenied(); got != tt.denied {
+			t.Errorf("%v: DomainStateDenied() = %v, want %v", tt.e, got, tt.denied)
+		}
+		if got := tt.e.AuthFailure(); got == tt.denied {
+			t.Errorf("%v: AuthFailure() = %v, want %v", tt.e, got, !tt.denied)
+		}
+		if got := tt.e.UserHint() != ""; got != tt.wantHint {
+			t.Errorf("%v: hint %q, want one: %v", tt.e, tt.e.UserHint(), tt.wantHint)
+		}
+	}
+}

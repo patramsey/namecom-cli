@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -793,4 +794,45 @@ func TestAPI_StdinIgnoredWhenNotWanted(t *testing.T) {
 			t.Errorf("--data '' still read stdin: %q", *body)
 		}
 	})
+}
+
+// TestAPI_FullURLIsUsageError pins #324: a pasted URL was joined onto the
+// API's base as a path — GET https://api.dev.name.com/https:/api.dev.name.com/…
+// — and the edge's HTML 403 came back as an auth error (exit 3) pointing at
+// the account's API settings. It is a usage mistake, refused before any
+// request, and the hint gives the path to pass instead.
+func TestAPI_FullURLIsUsageError(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	t.Cleanup(srv.Close)
+	for in, wantHint := range map[string]string{
+		"https://api.dev.name.com/core/v1/hello":   "/core/v1/hello",
+		"https://example.invalid/core/v1/x?page=2": "/core/v1/x?page=2",
+		"HTTP://example.invalid":                   "/core/v1/hello",
+		"//example.invalid/x":                      "/x",
+		"ftp://example.invalid/core/v1/domains":    "/core/v1/domains",
+	} {
+		t.Run(in, func(t *testing.T) {
+			cmd, _ := apiCmd(t, srv)
+			err := runAPI(cmd, []string{"GET", in})
+			if !isUsage(err) {
+				t.Fatalf("runAPI(%q) = %v, want a usage error", in, err)
+			}
+			hint := err.(interface{ UserHint() string }).UserHint()
+			if !strings.Contains(hint, wantHint) {
+				t.Errorf("hint = %q, want it to suggest %q", hint, wantHint)
+			}
+		})
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("sent %d request(s), want none", n)
+	}
+	// A colon later in a path is not a scheme.
+	cmd, _ := apiCmd(t, srv)
+	if err := runAPI(cmd, []string{"GET", "/core/v1/domains/example.com:checkAvailability"}); isUsage(err) {
+		t.Errorf("a path with a colon was refused: %v", err)
+	}
 }

@@ -283,7 +283,7 @@ func TestDNSSync_Confirmation(t *testing.T) {
 		z, srv, file := syncFixture(t)
 		_, _, err := runSyncFile(t, srv, runOpts{}, file, true, false)
 		var ue *cmdutil.UsageError
-		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "--yes") {
+		if !errors.As(err, &ue) || !strings.Contains(ue.UserHint(), "--yes") {
 			t.Errorf("want the usage error asking for --yes, got %v", err)
 		}
 		if w := z.writeLog(); len(w) != 0 {

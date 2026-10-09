@@ -40,6 +40,39 @@ Releases before `0.2.0` predate this file. Their notes are on the
   wildcards; `domain check foo.com.` drops the trailing dot; and the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
+### Fixed
+- `domain register` of a name that is not available, `--dry-run` or not, is
+  typed `unavailable` in the JSON error envelope, as `domain check
+  --exit-status` is, with a hint pointing at `namecom domain check`. It was
+  `api` with no hint. The exit code is still 1.
+- A flag value that does not parse says so plainly: `--limit must be a whole
+  number, got "abc"` in place of `invalid argument "abc" for "--limit" flag:
+  strconv.ParseInt: parsing "abc": invalid syntax`, and likewise for every
+  number, true/false and duration flag. The error message changes; the type
+  (`usage`) and exit code (2) do not.
+- An unknown flag given a value, such as `domain pricing D1 --years 3`, is no
+  longer asked "did you mean --yes?": boolean flags take no value, so they
+  are not suggested for one. `--pgae 2` still suggests `--page`.
+- `namecom api` given a full URL (`https://api.name.com/core/v1/hello`, or
+  one starting `//`) is a usage error, exit 2, before any request, with a
+  hint naming the path to pass instead. The URL was joined onto the API host
+  as a path, and the edge's HTML 403 came back as an `auth` error, exit 3,
+  pointing at the account's API settings. Nothing was ever sent to another
+  host.
+- A 403 about the domain rather than the credentials — the API answers
+  `dns list` and `url list` of an expired domain with "Permission denied.
+  The domain is expired." — is an `api` error that exits 1 and shows the
+  API's message, with no hint. It was typed `auth`, exited 3 and pointed at
+  the account's API settings, so a script looping over `domain list -q` that
+  stops on exit 3 stopped at the first expired domain. Other 403s are still
+  `auth` and exit 3. `transfer internal-in` and `contact verify` no longer
+  call such a 403 a missing reseller enrolment.
+- A write refused for want of `--yes` puts its advice in `error.hint`, as
+  not-found and missing-argument errors do: `message` is now
+  `confirmation required for "…"` and `error.hint` is
+  `pass --yes to confirm when not running in a terminal`. A script matching
+  "pass --yes" in the message should read `error.type`
+  (`confirmation_required`) or `error.hint` instead.
 
 ## [0.5.3] - 2026-10-07
 

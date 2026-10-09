@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -200,23 +201,79 @@ const SuggestFlagFor = "namecom_suggest_for"
 // failure is a usage error (exit 2); an unknown flag also gets a hint with the
 // nearest flags the command has and its usage line (#234). It used to be a
 // bare "unknown flag: --nameservers".
-func FlagError(cmd *cobra.Command, err error) error {
+func FlagError(cmd *cobra.Command, err error) error { return FlagErrorArgs(cmd, err, nil) }
+
+// FlagErrorArgs is FlagError knowing the command line, args, so that an
+// unknown flag given a value — `--years 3`, `--years=3` — is not offered a
+// boolean flag such as --yes, which takes none (#324).
+func FlagErrorArgs(cmd *cobra.Command, err error, args []string) error {
+	if bad, ok := errors.AsType[*pflag.InvalidValueError](err); ok {
+		if plain := invalidValue(bad); plain != nil {
+			return NewUsageError(plain)
+		}
+	}
 	msg := err.Error()
 	name, ok := strings.CutPrefix(msg, "unknown flag: --")
 	if !ok {
 		return NewUsageError(err)
 	}
 	usage := "usage: " + cmd.UseLine()
-	if s := flagSuggestions(cmd, name); len(s) > 0 {
+	if s := flagSuggestions(cmd, name, givenValue(name, args)); len(s) > 0 {
 		return NewUsageErrorHint(err, "did you mean "+strings.Join(s, " or ")+"? "+usage)
 	}
 	return NewUsageErrorHint(err, usage+" — run '"+cmd.CommandPath()+" --help' for its flags")
 }
 
+// invalidValue restates a built-in flag type's parse failure without Go's
+// internals: pflag said `invalid argument "abc" for "--limit" flag:
+// strconv.ParseInt: parsing "abc": invalid syntax` (#324). It returns nil for
+// a failure it does not recognize, such as a custom flag type's own error,
+// which already says what is wrong.
+func invalidValue(e *pflag.InvalidValueError) error {
+	name, value := "--"+e.GetFlag().Name, e.GetValue()
+	if numErr, ok := errors.AsType[*strconv.NumError](e); ok {
+		if errors.Is(numErr.Err, strconv.ErrRange) {
+			return fmt.Errorf("%s is out of range, got %q", name, value)
+		}
+		switch numErr.Func {
+		case "ParseInt", "ParseUint", "Atoi":
+			return fmt.Errorf("%s must be a whole number, got %q", name, value)
+		case "ParseFloat":
+			return fmt.Errorf("%s must be a number, got %q", name, value)
+		case "ParseBool":
+			return fmt.Errorf("%s takes true or false, got %q", name, value)
+		}
+		return nil
+	}
+	if e.GetFlag().Value.Type() == "duration" {
+		return fmt.Errorf("%s must be a duration such as 30s or 2m, got %q", name, value)
+	}
+	return nil
+}
+
+// givenValue reports whether the unknown flag --name was given a value in
+// args: `--name=value`, or `--name` followed by a word that is not a flag.
+// The word may instead be a positional argument; then a boolean suggestion
+// is lost, and the hint still names the command's --help.
+func givenValue(name string, args []string) bool {
+	for i, a := range args {
+		if a == "--" {
+			return false
+		}
+		if strings.HasPrefix(a, "--"+name+"=") {
+			return true
+		}
+		if a == "--"+name {
+			return i+1 < len(args) && !strings.HasPrefix(args[i+1], "-")
+		}
+	}
+	return false
+}
+
 // flagSuggestions returns cmd's visible flags that name was probably meant to
 // be: within cobra's suggestion distance, a prefix of the flag, or listed in
-// its SuggestFlagFor annotation.
-func flagSuggestions(cmd *cobra.Command, name string) []string {
+// its SuggestFlagFor annotation. With hasValue, boolean flags are left out.
+func flagSuggestions(cmd *cobra.Command, name string, hasValue bool) []string {
 	dist := cmd.SuggestionsMinimumDistance
 	if dist <= 0 {
 		dist = 2
@@ -224,7 +281,7 @@ func flagSuggestions(cmd *cobra.Command, name string) []string {
 	name = strings.ToLower(name)
 	var out []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Hidden {
+		if f.Hidden || (hasValue && f.NoOptDefVal != "") {
 			return
 		}
 		match := levenshtein(name, f.Name) <= dist ||

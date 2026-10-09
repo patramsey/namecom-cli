@@ -47,6 +47,8 @@ func TestExitCode(t *testing.T) {
 		{"wrapped auth error", fmt.Errorf("ctx: %w", cmdutil.NewAuthError(errors.New("nope"))), 3},
 		{"api 401", &api.APIError{StatusCode: 401}, 3},
 		{"api 403", &api.APIError{StatusCode: 403}, 3},
+		// #324: a 403 about the domain is not a credential problem.
+		{"api 403 expired domain", &api.APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}, 1},
 		{"api 404", &api.APIError{StatusCode: 404}, 4},
 		{"api 429", &api.APIError{StatusCode: 429}, 5},
 		// #243: a write that may have gone through.
@@ -454,7 +456,7 @@ func TestExitCode_MissingRequiredFlagIsUsage(t *testing.T) {
 		{[]string{"order", "refund"}, `"item-ids"`},
 		{[]string{"domain", "contacts", "set", "example.com"}, `"contacts-file"`},
 		{[]string{"dns", "delete", "example.com", "123"}, "confirmation required for"},
-		{[]string{"email", "delete", "example.com", "info"}, "pass --yes"},
+		{[]string{"email", "delete", "example.com", "info"}, "confirmation required for"},
 	} {
 		t.Run(strings.Join(tc.args[:2], " "), func(t *testing.T) {
 			resetFlags(t, tc.args)

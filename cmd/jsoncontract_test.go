@@ -507,6 +507,33 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode:   3,
 		},
 		{
+			// A 403 about the domain, not the credentials, is not an auth
+			// failure: a loop stopping on exit 3 stopped at the first
+			// expired domain (#324).
+			name:       "403 for an expired domain",
+			args:       []string{"dns", "list", "example.com"},
+			routes:     map[string]reply{"GET /core/v1/domains/example.com/records": {403, `{"message":"Permission denied. The domain is expired."}`}},
+			wantType:   output.ErrorTypeAPI,
+			wantStatus: 403,
+			wantCode:   1,
+		},
+		{
+			// #324: was "api", with no hint.
+			name:     "register a taken name",
+			args:     []string{"domain", "register", "example.com", "--dry-run"},
+			routes:   map[string]reply{"POST /core/v1/domains:checkAvailability": {200, `{"results":[{"domainName":"example.com","purchasable":false}]}`}},
+			wantType: output.ErrorTypeUnavailable,
+			wantCode: 1,
+		},
+		{
+			name:       "403 for the account",
+			args:       []string{"domain", "get", "example.com"},
+			routes:     map[string]reply{"GET /core/v1/domains/example.com": {403, `{"message":"Permission Denied","details":"IP not whitelisted"}`}},
+			wantType:   output.ErrorTypeAuth,
+			wantStatus: 403,
+			wantCode:   3,
+		},
+		{
 			name:       "rate limited",
 			args:       []string{"domain", "get", "example.com", "--timeout", "500ms"},
 			routes:     map[string]reply{"GET /core/v1/domains/example.com": {429, `{"message":"Too Many Requests"}`}},
@@ -586,6 +613,15 @@ func TestJSONContract_Errors(t *testing.T) {
 			}
 			if msg, _ := e["message"].(string); msg == "" {
 				t.Error("error.message is empty")
+			}
+			// The advice is in error.hint, not appended to the message (#324).
+			if tc.wantType == output.ErrorTypeConfirmationRequired {
+				if hint, _ := e["hint"].(string); hint != "pass --yes to confirm when not running in a terminal" {
+					t.Errorf("error.hint = %q, want the --yes advice", hint)
+				}
+				if msg, _ := e["message"].(string); strings.Contains(msg, "--yes") {
+					t.Errorf("error.message %q should leave the advice to the hint", msg)
+				}
 			}
 			if hint, _ := e["hint"].(string); hint != "" && doc["hint"] != hint {
 				t.Errorf("the deprecated top-level hint should repeat error.hint %q, got %v", hint, doc["hint"])
@@ -840,6 +876,40 @@ func TestJSONContract_WrongTokenNamed(t *testing.T) {
 			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
 			if e["type"] != output.ErrorTypeUsage || e["message"] != tc.want {
 				t.Errorf("want type usage, message %q; got:\n%s", tc.want, stderr)
+			}
+		})
+	}
+}
+
+// TestJSONContract_FlagValueErrors pins #324 through the real root: a bad
+// number named Go's strconv, and an unknown flag given a value was offered
+// the global --yes, which takes none.
+func TestJSONContract_FlagValueErrors(t *testing.T) {
+	for _, tc := range []struct {
+		args          []string
+		message, hint string
+		notInHint     string
+	}{
+		{[]string{"domain", "list", "--limit", "abc"}, `--limit must be a whole number, got "abc"`, "", ""},
+		{[]string{"domain", "pricing", "example.com", "--years", "3"}, "unknown flag: --years", "namecom domain pricing --help", "--yes"},
+		{[]string{"domain", "list", "--pgae", "2"}, "unknown flag: --pgae", "did you mean --page?", ""},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			prevArgs := os.Args
+			t.Cleanup(func() { os.Args = prevArgs })
+			args := append([]string{"-o", "json"}, tc.args...)
+			os.Args = append([]string{"namecom"}, args...)
+			_, stderr, code := runContract(t, args...)
+			if code != 2 {
+				t.Errorf("exit %d, want 2", code)
+			}
+			e, _ := decodeDoc(t, "stderr", stderr)["error"].(map[string]any)
+			hint, _ := e["hint"].(string)
+			if e["type"] != output.ErrorTypeUsage || e["message"] != tc.message {
+				t.Errorf("want type usage, message %q; got:\n%s", tc.message, stderr)
+			}
+			if !strings.Contains(hint, tc.hint) || (tc.notInHint != "" && strings.Contains(hint, tc.notInHint)) {
+				t.Errorf("hint = %q, want %q and not %q", hint, tc.hint, tc.notInHint)
 			}
 		})
 	}
