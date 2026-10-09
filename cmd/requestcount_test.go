@@ -724,6 +724,13 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/dnssec",
 			},
 		},
+		"dnssec create --dry-run": {
+			args: []string{"dnssec", "create", "example.com", "--algorithm", "8", "--digest-type", "2", "--key-tag", "12345", "--digest", strings.Repeat("ab", 32), "--dry-run"},
+			why:  "the GET fails a dry run for a domain not in the account, as the create would (#326)",
+			want: []string{
+				"GET /core/v1/domains/example.com/dnssec",
+			},
+		},
 		"dnssec delete": {
 			args: []string{"dnssec", "delete", "example.com", "abc123", "--yes"},
 			want: []string{
@@ -993,7 +1000,7 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"transfer cancel-outbound --dry-run": {
 			args: []string{"transfer", "cancel-outbound", "example.com", "--dry-run"},
-			why:  "the GET fails a dry run for a domain not in the account, as the cancel would (#313); no endpoint reports an outbound transfer itself",
+			why:  "the GET fails a dry run for a domain not in the account, as the cancel would (#313); no endpoint reports an outbound transfer itself, which the help says (#326)",
 			want: []string{
 				"GET /core/v1/domains/example.com",
 			},
@@ -1050,6 +1057,13 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/refund",
 			},
 		},
+		"order refund --dry-run": {
+			args: []string{"order", "refund", "--order-id", "1", "--item-ids", "2", "--dry-run"},
+			why:  "the GET a prompted refund makes fails a dry run for a missing order or item, as the refund would (#326)",
+			want: []string{
+				"GET /core/v1/orders/1",
+			},
+		},
 		"order refund, IDs as arguments": {
 			args: []string{"order", "refund", "1", "2"},
 			code: 2,
@@ -1086,6 +1100,16 @@ func TestRequestCounts(t *testing.T) {
 			want: []string{
 				"POST /core/v1/contacts/verify/9911",
 			},
+		},
+		"contact resend --dry-run": {
+			args: []string{"contact", "resend", "9911", "--dry-run"},
+			why:  "no read for one verification record, so the dry run does not check it, and says so in its help (#326)",
+			want: nil,
+		},
+		"contact verify --dry-run": {
+			args: []string{"contact", "verify", "9911", "--dry-run"},
+			why:  "as resend",
+			want: nil,
 		},
 
 		// Shell completion: one request per TAB.

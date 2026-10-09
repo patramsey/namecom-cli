@@ -425,7 +425,7 @@ func TestRootHelp_ExitCodesMatchREADME(t *testing.T) {
 // TestDNSSECExamples_PassValidation pins #314: the `dnssec create` example in
 // its help and in the README used the digest abc123, which 0.5.2's check
 // (#292) refuses for digest type 2. Each runs as a dry run, which validates
-// the flags and sends nothing.
+// the flags and sends no write.
 func TestDNSSECExamples_PassValidation(t *testing.T) {
 	withConfig(t, loneProfile)
 	readme, err := os.ReadFile("../README.md")
@@ -459,8 +459,9 @@ func TestDNSSECExamples_PassValidation(t *testing.T) {
 			if code != 0 {
 				t.Errorf("exit %d, want 0; stderr:\n%s", code, stderr)
 			}
-			if got := requests(); len(got) != 0 {
-				t.Errorf("a dry run sent %v", got)
+			// The one read is the dry run's check of the domain (#326).
+			if got := requests(); len(got) > 1 || (len(got) == 1 && !strings.HasPrefix(got[0], "GET ")) {
+				t.Errorf("a dry run sent %v, want at most one GET", got)
 			}
 		})
 	}

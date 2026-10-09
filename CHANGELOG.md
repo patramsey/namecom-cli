@@ -104,6 +104,15 @@ Releases before `0.2.0` predate this file. Their notes are on the
   does, so a script can read `.changed` from any write; it was there only
   for `dns create --if-not-exists` and a `url create` recovered from a
   Duplicate Record (#326).
+- `order refund --dry-run` and `dnssec create --dry-run` check their target
+  before previewing, as `transfer cancel` and `dns delete` do: a refund of
+  an order or item that is not there fails (exit 4 for the order, 2 for an
+  item), from the order a prompted refund already reads, and a DS record
+  for a domain not in the account fails not_found (exit 4), from one list
+  of its DS records. A real run sends nothing more. `contact resend`,
+  `contact verify` and `transfer cancel-outbound` have no read to check
+  against, so their help now says what their dry run leaves unchecked: the
+  verification record, and whether a transfer out is pending (#326).
 
 ## [0.5.3] - 2026-10-07
 

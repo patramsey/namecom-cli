@@ -54,8 +54,55 @@ func TestCreate_ValidatesKey(t *testing.T) {
 			} else if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
 				t.Fatalf("want a usage error, got %v", err)
 			}
-			if requests != 0 {
-				t.Errorf("a dry run of create sends nothing, got %d requests", requests)
+			// A valid key's dry run lists the domain's DS records (#326); an
+			// invalid one is refused before any request.
+			if want := map[bool]int{true: 1, false: 0}[tc.ok]; requests != want {
+				t.Errorf("a dry run of create sent %d requests, want %d", requests, want)
+			}
+		})
+	}
+}
+
+// TestCreate_DryRunChecksTheDomain pins #326: `dnssec create --dry-run` for
+// a domain not in the account previewed the create and exited 0. The dry
+// run lists the domain's DS records — one GET — and fails not_found as the
+// create would. A real run sends the create alone.
+func TestCreate_DryRunChecksTheDomain(t *testing.T) {
+	for name, tc := range map[string]struct {
+		dryRun bool
+		status int
+		want   string
+	}{
+		"dry run, not in the account": {true, http.StatusNotFound, "GET /core/v1/domains/example.com/dnssec"},
+		"dry run, in the account":     {true, http.StatusOK, "GET /core/v1/domains/example.com/dnssec"},
+		"real run":                    {false, http.StatusOK, "POST /core/v1/domains/example.com/dnssec"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var requests []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				if tc.status == http.StatusNotFound {
+					_, _ = w.Write([]byte(`{"message":"Domain not found."}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"dnssec":[],"digest":"x"}`))
+			}))
+			t.Cleanup(srv.Close)
+			cmd := withDryRun(t, cmdForCreate(t, srv), tc.dryRun)
+			createAlgorithm, createDigest, createDigestType, createKeyTag = 13, sha256Digest, 2, 12345
+
+			err := runCreate(cmd, []string{"example.com"})
+			if tc.status == http.StatusNotFound {
+				if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "example.com") {
+					t.Errorf("want not found naming the domain, got %v", err)
+				}
+			} else if err != nil {
+				t.Errorf("runCreate: %v", err)
+			}
+			if got := strings.Join(requests, ","); got != tc.want {
+				t.Errorf("requests = %q, want %q", got, tc.want)
 			}
 		})
 	}

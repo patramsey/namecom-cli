@@ -110,3 +110,13 @@ func direct(t *testing.T, cmd *cobra.Command, srv *httptest.Server) *cobra.Comma
 	cmd.SetContext(context.WithValue(cmd.Context(), cmdutil.KeyClient, client))
 	return cmd
 }
+
+// TestCancelOutboundHelp_SaysWhatDryRunChecks pins #326: a dry run of
+// cancel-outbound for a domain in the account but not leaving it previews
+// the cancel, since no endpoint reports an outbound transfer. The help says
+// so.
+func TestCancelOutboundHelp_SaysWhatDryRunChecks(t *testing.T) {
+	if !strings.Contains(cancelOutboundCmd.Long, "but not that a transfer\nout is pending") {
+		t.Errorf("help does not say what --dry-run leaves unchecked:\n%s", cancelOutboundCmd.Long)
+	}
+}

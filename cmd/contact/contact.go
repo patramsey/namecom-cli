@@ -64,7 +64,10 @@ var resendCmd = &cobra.Command{
 
 Throttled by the API: at most one resend per verification record every 15
 minutes. The response always reports when the next attempt is allowed, including
-when a request is rejected for being too soon.`,
+when a request is rejected for being too soon.
+
+--dry-run does not check that the verification record exists: the API has no
+read for one record, only the 'contact unverified' list.`,
 	Example: `  namecom contact resend 9911`,
 	Args:    cmdutil.ExactArgs(1),
 	RunE:    runResend,
@@ -80,7 +83,10 @@ Requires an approved reseller account: the spec states "This API is only
 available to approved reseller accounts. Contact name.com support to request
 access." It exists for resellers who have already completed verification through
 their own process. Everyone else should use 'contact resend' and have the
-contact click the link.`,
+contact click the link.
+
+--dry-run does not check that the verification record exists: the API has no
+read for one record, only the 'contact unverified' list.`,
 	Example: `  namecom contact verify 9911`,
 	Args:    cmdutil.ExactArgs(1),
 	RunE:    runVerify,

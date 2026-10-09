@@ -205,6 +205,22 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		KeyTag:     int(createKeyTag),
 	}
 
+	// A dry run lists the domain's DS records, so one for a domain not in
+	// the account fails not_found, as the create would, rather than
+	// previewing it (#326) — as `dnssec delete --dry-run` reads its key. A
+	// real run sends the create alone and lets the API refuse it.
+	if cmdutil.IsDryRun(cmd) {
+		stop := out.Spin("Fetching DS records…")
+		_, err := client.SDK().DnsseCs.ListDnsseCs(cmd.Context(), &coreapigo.ListDnsseCsRequest{DomainName: domain})
+		stop()
+		if cmdutil.IsNotFound(err) {
+			return cmdutil.DomainNotFound(err, domain)
+		}
+		if err != nil {
+			return api.FromSDKError(err)
+		}
+	}
+
 	var key *coreapigo.Dnssec
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateDnssecBody]{
 		Method: "POST",
