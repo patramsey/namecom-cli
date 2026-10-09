@@ -759,7 +759,7 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"email create --dry-run": {
 			args: []string{"email", "create", "example.com", "info", "--to", "you@example.org", "--dry-run"},
-			why:  "a dry run checks for a mailbox that already forwards elsewhere, which the real create reports as a conflict from its own response (#313)",
+			why:  "a dry run checks for a mailbox that already forwards elsewhere, which the real create reports as a conflict from its own response (#313); here it already forwards to --to, which the dry run reports as nothing to change (#326)",
 			want: []string{
 				"GET /core/v1/domains/example.com/email/forwarding/info",
 			},
@@ -773,6 +773,20 @@ func TestRequestCounts(t *testing.T) {
 		"email update --dry-run": {
 			args: []string{"email", "update", "example.com", "info", "--to", "new@example.org", "--dry-run"},
 			why:  "a dry run checks the mailbox exists, as the real PUT's 404 would (#313)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email update, the address it has": {
+			args: []string{"email", "update", "example.com", "info", "--to", "you@example.org", "--yes"},
+			why:  "the PUT is sent without a GET to compare, which would cost every update a second request (#326)",
+			want: []string{
+				"PUT /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email update --dry-run, nothing to change": {
+			args: []string{"email", "update", "example.com", "info", "--to", "you@example.org", "--dry-run"},
+			why:  "the dry run's GET finds the mailbox already forwarding to --to (#326)",
 			want: []string{
 				"GET /core/v1/domains/example.com/email/forwarding/info",
 			},

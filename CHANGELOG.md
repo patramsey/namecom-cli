@@ -92,6 +92,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `help dns list bogus` printed the `dns list` help and exited 0.
   `help help` describes the help command instead of printing cobra's stock
   text.
+### Fixed
+- `email update --dry-run` and `email create --dry-run` for a mailbox that
+  already forwards to `--to` say `… already forwards to …: nothing to
+  change`, with `"changed": false` in JSON and YAML, instead of previewing
+  the write; the create's dry run no longer repeats the note about the MX
+  and SPF records. A real update or create is still sent as asked, since
+  telling would cost every one a second request, and their help says so.
+  JSON and YAML from `email create`, `email update`, `dns create` and
+  `url create` now always carry `"changed": true`, as every other update
+  does, so a script can read `.changed` from any write; it was there only
+  for `dns create --if-not-exists` and a `url create` recovered from a
+  Duplicate Record (#326).
 
 ## [0.5.3] - 2026-10-07
 

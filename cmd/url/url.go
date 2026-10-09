@@ -404,10 +404,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// A recovered create says "changed": true, since the error it recovered
-	// from could read as nothing having been made.
+	// Every create says "changed": true, as `url update` says whether it
+	// changed anything (#326) — a recovered one especially, since the error
+	// it recovered from could read as nothing having been made.
 	var doc any = entry
-	if recovered && (out.Format == output.FormatJSON || out.Format == output.FormatYAML) {
+	if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
 		withChanged, err := output.WithChanged(entry, true)
 		if err != nil {
 			return err
