@@ -168,6 +168,9 @@ Releases before `0.2.0` predate this file. Their notes are on the
   "Showing 1–2 of N": the range is worked out from `--page`, `--limit` and
   the rows shown rather than taken from the API, which gets it wrong for
   that page (#325).
+- A `→` hint wrapped in a colour terminal no longer pads its continuation
+  line with trailing spaces, and the note under a table cut to fit the
+  terminal ("1 column hidden …") wraps to it as the footer does (#325).
 
 ## [0.5.3] - 2026-10-07
 

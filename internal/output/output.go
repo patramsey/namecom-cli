@@ -551,8 +551,12 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 		notes = append(notes, "long values cut short with …")
 	}
 	if len(notes) > 0 {
-		fmt.Fprintln(c.EWriter, c.Dim(strings.Join(notes, "; ")+
-			" — widen the terminal, pass --wide, or use -o json"))
+		// Wrapped, as the footer under it is: in a terminal narrow enough to
+		// cut the table, it was the one line that overflowed (#325).
+		note := strings.Join(notes, "; ") + " — widen the terminal, pass --wide, or use -o json"
+		for _, line := range c.packParts([]string{note}, "") {
+			fmt.Fprintln(c.EWriter, c.Dim(line))
+		}
 	}
 }
 
@@ -1245,14 +1249,18 @@ func (c *Config) Hint(msg string) {
 	}
 	// Wrapped to the terminal, continuation lines under the text rather than
 	// the arrow.
+	lines := []string{msg}
 	if c.MaxWidth > 2 && ansi.StringWidth(msg)+2 > c.MaxWidth {
-		msg = strings.Join(wrapWords(msg, c.MaxWidth-2), "\n  ")
+		lines = wrapWords(msg, c.MaxWidth-2)
 	}
-	if c.ColorEnabled() {
-		arrow := styleDim.Render("→")
-		fmt.Fprintln(c.EWriter, arrow+" "+styleDim.Render(msg))
-	} else {
-		fmt.Fprintln(c.EWriter, "→ "+msg)
+	// Each line styled on its own: lipgloss pads every line of a block to
+	// the widest, so the wrapped hint's last line ended in spaces (#325).
+	for i, line := range lines {
+		lead := "  "
+		if i == 0 {
+			lead = c.Dim("→") + " "
+		}
+		fmt.Fprintln(c.EWriter, lead+c.Dim(line))
 	}
 }
 
