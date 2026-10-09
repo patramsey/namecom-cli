@@ -67,7 +67,7 @@ line, ready for `xargs`.
 
 ## Why
 
-The name.com web UI is great for humans. The CLI is for agents and terminal wizards
+The name.com web UI is great for humans. The CLI is for agents and terminal wizards.
 
 - **Automate** domain renewals, DNS changes, and email forwards in CI/CD pipelines
 - **Script** bulk operations across dozens of domains at once
@@ -210,17 +210,16 @@ namecom dns sync acme.io --file acme.io.zone               # 4. apply it, after 
 namecom dns sync acme.io --file acme.io.zone --prune       #    ...also deleting what the file dropped
 ```
 
-`dns sync` matches records on host, type and answer: a TTL or priority change
-is an update, and a changed answer is a new record (the old one is deleted
-only with `--prune`; a CNAME's target is updated in place, since a name holds
-one CNAME). Without `--prune` nothing is deleted. `--prune` never touches NS
-records at the apex — the domain's delegation — or CAA records, which the API
-cannot recreate; `--prune-all` does. A file with no records is refused with
-either, so a wrong path cannot empty the zone. Changes are applied creates first, then
-updates, then deletes. If one fails, sync stops, reports what was applied, and
-exits non-zero; fix the cause and run it again. The file can also be the JSON
-`dns export` writes. In CI, `--dry-run -o json` gives the plan as one
-document, and `--yes` skips the confirmation.
+- Records match on host, type and answer. A new TTL or priority is an
+  update; a new answer is a new record (a CNAME's target is updated in
+  place).
+- Nothing is deleted without `--prune`. Even then, apex NS records and CAA
+  records are kept unless you pass `--prune-all`. Either flag refuses an
+  empty file, so a wrong path cannot wipe the zone.
+- If a change fails, sync stops and reports what it applied. Fix the cause
+  and run it again.
+- The file can be a BIND zone or the JSON `dns export` writes. In CI,
+  `--dry-run -o json` prints the plan, and `--yes` skips the confirmation.
 
 For scripts that add or remove single records, `dns create --if-not-exists`,
 `dns delete --if-exists` and `dns import --skip-existing` succeed when the
@@ -267,22 +266,17 @@ namecom api /core/v1/hello --include                      # status line and head
 namecom api /core/v1/domains -i --jq '.totalCount'       # headers as they came, then the filtered body
 ```
 
-The method is GET, or POST when the request has a body (`--data`, `--input`,
-`-f` or `-F`); name it first, or with `-X`/`--method`, to send anything
-else. `-f key=value` adds a string, and `-F key=value` keeps `true`, `false`,
-`null` and numbers as JSON and reads `@file` (or `@-`, stdin). Keys nest as
-`contact[firstName]=Ada`, and `ns[]=x` appends to a list. On a GET the fields are query parameters instead.
-`--paginate` follows `nextPage` and prints one document whose lists hold every
-page's items, without `nextPage` and `lastPage`; it asks for 1000 items a
-page unless the path or `-f` sets `perPage`, and stops at `--max-pages`
-(100; `0` for no limit): a longer walk prints nothing and exits 2, naming
-the page count. `--include` prints the
-status line and headers ahead of the body, and `--jq` and `--fields` filter
-the body alone. Any method but GET and HEAD is a write: it asks first in a
-terminal, needs `--yes` in a script or a pipe (exit 2,
-`confirmation_required`, without it), and is previewed, not sent, under
-`--dry-run`. A POST inferred from `-f` or `-F` says so in the question and
-in a warning; pass `-X GET` to send the fields as a query instead.
+- The method is GET, or POST when you pass a body (`-f`, `-F`, `--data`,
+  `--input`). Name it to send anything else.
+- `-f key=value` sends a string; `-F` keeps numbers and `true`/`false`/`null`
+  as JSON, and reads `@file`. With `-X GET` they are query parameters.
+- `--paginate` fetches every page, 1000 items at a time, and prints them as
+  one document. It stops at 100 pages unless you raise `--max-pages`.
+- Anything but GET or HEAD is a write, and confirms like any other: pass
+  `--yes` in a script, or `--dry-run` to see the request first.
+- The response body prints exactly as the API sent it.
+
+`namecom api --help` has the full rules.
 
 **Scripting and automation:**
 ```bash
@@ -294,7 +288,7 @@ namecom domain list --all -q | xargs -I{} namecom dns create {} --type A --answe
 
 # '-' reads names from stdin, one per line (blank lines and # comments skipped)
 namecom domain check - < names.txt
-namecom domain list --all -q | namecom domain autorenew on - --yes   # one request per domain, one confirmation
+namecom domain list --all -q | namecom domain autorenew on - --yes   # one process, paced as a whole
 
 # Dry-run first, then apply
 namecom dns create acme.io --type TXT --answer "v=spf1 include:sendgrid.net ~all" --dry-run
@@ -336,14 +330,11 @@ terminal:
 - `dns sync` with changes to apply, `auth login` replacing a saved profile,
   and `namecom api` with any method but GET and HEAD
 
-In a script or a pipe there is no one to ask, so these stop with
-*"confirmation required for …"*, hinting *"pass --yes to confirm when not
-running in a terminal"*, and exit 2 until you pass `--yes`. Every other write runs without
-asking, in a terminal or not: `dns create`, `dns update`, `dns import`,
-`email create` and `update`, `url create` and `update`, `vanity-ns create`
-and `update`, `dnssec create`, `domain lock on`, `domain privacy on`,
-`contact resend` and `verify`, `auth logout` and `config use`. Any write can
-be previewed first with `--dry-run`.
+In a script or a pipe there is no one to ask, so these exit 2
+(`confirmation_required`) until you pass `--yes`. The rest — the other
+creates and updates, `dns import`, `domain lock on`, `domain privacy on`, `contact
+resend`/`verify`, `auth logout`, `config use` — run without asking. Any
+write can be previewed with `--dry-run`.
 
 **Paging.** A `list` prints one page: 1 to 1000 items with `--limit` (the
 API's page size without it) from `--page`, filtered or not, and its footer —
@@ -401,16 +392,14 @@ id=$(namecom dns create example.com --type A --answer 192.0.2.1 --yes --jq .id)
 namecom dns create example.com --type A --answer 192.0.2.1 --dry-run --jq .body
 ```
 
-`--jq` means JSON: without `-o` it prints JSON in a terminal too, and with
-`-o table`, `yaml` or `tsv` it is a usage error. With `--fields`, the fields
-are picked first. A malformed expression is a usage error with gojq's
-message, reported before the command sends anything, and so is a field a
-write's result does not have. An expression that fails on the output, and
-an unknown field, are usage errors too, with nothing printed — except after
-a write, where the change has been made: the output is printed unfiltered,
-in the `-o` format asked for, with a warning, and the exit code is 0.
-Both flags act on stdout only; a failing command prints its error envelope
-on stderr with its usual exit code.
+`--jq` implies JSON, so it can't be combined with `-o table`, `yaml` or
+`tsv`. With `--fields`, the fields are picked first. Mistakes are usage
+errors (exit 2): a malformed expression, or an unknown field on a write, is
+caught before anything is sent; an unknown field on a read, or an
+expression that fails on the output, prints nothing. The one exception is an
+expression that fails after a write went through: the result prints
+unfiltered with a warning, and exit 0, since the change was made. Errors
+still go to stderr as the usual envelope.
 
 `-o tsv` prints a table's columns as tab-separated values, with a header row
 unless `--no-header`. There is no colour, a date has no "(in 3 months)", and
@@ -469,9 +458,10 @@ of them is a breaking change and is called out in the
   read both that and the bare array older versions exported), and
   `domain get` given several domains or `-`.
 - **One resource is the object itself**, as the API returns it: `domain get`
-  with one domain, `dns create`, `email update`. With `--if-not-exists`,
-  `dns create` adds `"changed"` to the record: `false` when it was already
-  there, `true` when it was created.
+  with one domain, `dns create`, `email update`. A create or update adds
+  `"changed"` to it: `false` when there was nothing to do (`dns create
+  --if-not-exists` for a record already there, an update to the values it
+  has), `true` otherwise.
 - **Keys are camelCase** everywhere: `domainsTotal`, `dryRun`,
   `idempotencyKey`. Values that name a kind of thing, such as error types
   (`not_found`) or dry-run actions (`save_profile`), are snake_case.
