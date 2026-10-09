@@ -316,6 +316,14 @@ func flagSuggestions(cmd *cobra.Command, name string, hasValue bool) []string {
 	return out
 }
 
+// NearWord reports whether typed is likely a misspelling of name, by cobra's
+// rule for command suggestions: within dist edits, ignoring case, or a prefix
+// of name. For commands cobra's SuggestionsFor leaves out, such as help topics.
+func NearWord(typed, name string, dist int) bool {
+	typed, name = strings.ToLower(typed), strings.ToLower(name)
+	return levenshtein(typed, name) <= dist || strings.HasPrefix(name, typed)
+}
+
 // levenshtein is the edit distance between a and b, as cobra computes it for
 // command suggestions (its own is unexported).
 func levenshtein(a, b string) int {

@@ -166,20 +166,54 @@ var rootSuggestFor = map[string]string{
 	"env":       "help environment",
 }
 
+// wireCompletionCmd makes cobra's generated completion command a GroupCmd, as
+// every other group is: `completion bogus` printed its help and exited 0
+// (#327). An unknown shell with no near spelling is answered with the list of
+// shells, and a shell's NoArgs is cmdutil's, since cobra's called `completion
+// bash extra` an unknown command.
+func wireCompletionCmd(c *cobra.Command) {
+	cmdutil.GroupCmd(c)
+	var shells []string
+	for _, sub := range c.Commands() {
+		shells = append(shells, sub.Name())
+		sub.Args = cmdutil.NoArgs
+	}
+	groupArgs := c.Args
+	c.Args = func(cmd *cobra.Command, args []string) error {
+		err := groupArgs(cmd, args)
+		if u, ok := errors.AsType[*cmdutil.UsageError](err); ok && len(cmd.SuggestionsFor(args[0])) == 0 {
+			u.Hint = "supported shells: " + strings.Join(shells, ", ") + " — run '" + cmd.CommandPath() + " <shell> --help' for how to install one"
+		}
+		return err
+	}
+}
+
 // suggestFor adds rootSuggestFor's answer to an unknown top-level command
-// error, ahead of any suggestion cobra found itself.
+// error, ahead of any suggestion cobra found itself, and after them the help
+// topics cobra cannot suggest: `namecom formating` → `namecom help
+// formatting` (#327).
 func suggestFor(err error) error {
 	u, ok := errors.AsType[*cmdutil.UnknownCommandError](err)
 	if !ok || u.Path != rootCmd.CommandPath() {
 		return err
 	}
+	var topics []string
+	for _, t := range helpTopicSuggestions(rootCmd, u.Word) {
+		topics = append(topics, "help "+t)
+	}
 	target, ok := rootSuggestFor[strings.ToLower(u.Word)]
-	if !ok {
+	if !ok && len(topics) == 0 {
 		return err
 	}
-	suggestions := []string{target}
+	var all, suggestions []string
+	if ok {
+		all = append(all, target)
+	}
 	for _, s := range u.Suggestions {
-		if s = strings.TrimPrefix(s, u.Path+" "); s != target {
+		all = append(all, strings.TrimPrefix(s, u.Path+" "))
+	}
+	for _, s := range append(all, topics...) {
+		if !slices.Contains(suggestions, s) {
 			suggestions = append(suggestions, s)
 		}
 	}
@@ -300,6 +334,7 @@ func init() {
 	for _, c := range rootCmd.Commands() {
 		if c.Name() == "completion" {
 			c.GroupID = "utilities"
+			wireCompletionCmd(c)
 			break
 		}
 	}

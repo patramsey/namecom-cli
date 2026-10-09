@@ -80,6 +80,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - `open a.com b.com` says `too many arguments — expected: domain`, with the
   usage line in `error.hint`, as every other command does. It said cobra's
   "accepts at most 1 arg(s), received 2" with no hint; still exit 2.
+- `completion bogus` is a usage error (exit 2) naming the supported shells,
+  and `completion zhs` suggests `completion zsh`, as an unknown subcommand
+  of any other group does. Both printed the completion help and exited 0.
+  `completion bash extra` says it takes no arguments rather than calling
+  `extra` an unknown command.
+- `help formating` and `namecom formating` suggest `namecom help
+  formatting`, and `namecom help <TAB>` offers `environment` and
+  `formatting`. The help topics were left out of both.
+- A word after a command with no subcommands is a usage error (exit 2):
+  `help dns list bogus` printed the `dns list` help and exited 0.
+  `help help` describes the help command instead of printing cobra's stock
+  text.
 
 ## [0.5.3] - 2026-10-07
 

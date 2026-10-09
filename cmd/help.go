@@ -53,13 +53,15 @@ func styledHelp(cmd *cobra.Command, _ []string) {
 // "Unknown help topic", cobra's unstyled usage template and exit 0, and
 // `help domain bogus` with the domain help and exit 0 (#313). An unknown word
 // is a usage error, with suggestions, as `namecom domain bogus` is under
-// GroupCmd. Words after a leaf command are ignored, as cobra's did:
-// `help dns list example.com` shows the help for dns list.
+// GroupCmd. A word after a command with no subcommands is one too: cobra's
+// ignored it, so `help dns list bogus` showed the dns list help (#327).
 var helpCommand = &cobra.Command{
 	Use:   "help [command]",
 	Short: "Help about any command",
-	Long: `Help provides help for any command in the application.
-Simply type namecom help [path to command] for full details.`,
+	Long: `Show the help for a command, a command group or a help topic. A word that
+names none of them is a usage error, with suggestions.`,
+	Example: `  namecom help dns create
+  namecom help formatting`,
 	ValidArgsFunction: completeHelp,
 	RunE:              runHelp,
 }
@@ -70,7 +72,9 @@ func runHelp(c *cobra.Command, args []string) error {
 		next := findSubcommand(parent, word)
 		if next == nil {
 			if !parent.HasAvailableSubCommands() {
-				break
+				return cmdutil.NewUsageErrorHint(
+					fmt.Errorf("too many arguments — %s has no subcommands, got %q", parent.CommandPath(), word),
+					fmt.Sprintf("run '%s' for its help", helpPath(parent)))
 			}
 			return unknownHelpTopic(parent, word)
 		}
@@ -104,10 +108,7 @@ func unknownHelpTopic(parent *cobra.Command, word string) error {
 		parent.SuggestionsMinimumDistance = 2
 	}
 	root := parent.Root()
-	path := root.CommandPath() + " help"
-	if rel := strings.TrimPrefix(parent.CommandPath(), root.CommandPath()); rel != "" {
-		path += rel
-	}
+	path := helpPath(parent)
 	var suggestions []string
 	if parent == root {
 		// `help records` is as likely as `namecom records`; rootSuggestFor's
@@ -116,7 +117,7 @@ func unknownHelpTopic(parent *cobra.Command, word string) error {
 			suggestions = append(suggestions, strings.TrimPrefix(s, "help "))
 		}
 	}
-	for _, s := range parent.SuggestionsFor(word) {
+	for _, s := range append(parent.SuggestionsFor(word), helpTopicSuggestions(parent, word)...) {
 		if !slices.Contains(suggestions, s) {
 			suggestions = append(suggestions, s)
 		}
@@ -134,8 +135,31 @@ func unknownHelpTopic(parent *cobra.Command, word string) error {
 	return cmdutil.NewUsageErrorHint(e, hint)
 }
 
+// helpPath is the help command for c: `namecom help dns list`.
+func helpPath(c *cobra.Command) string {
+	root := c.Root()
+	return root.CommandPath() + " help" + strings.TrimPrefix(c.CommandPath(), root.CommandPath())
+}
+
+// helpTopicSuggestions names the help topics under parent (`environment`,
+// `formatting`) that word was probably meant to be. Cobra's SuggestionsFor
+// skips them: a topic has no Run, so it is not an available command (#327).
+func helpTopicSuggestions(parent *cobra.Command, word string) []string {
+	dist := parent.SuggestionsMinimumDistance
+	if dist <= 0 {
+		dist = 2
+	}
+	var out []string
+	for _, c := range parent.Commands() {
+		if c.IsAdditionalHelpTopicCommand() && cmdutil.NearWord(word, c.Name(), dist) {
+			out = append(out, c.Name())
+		}
+	}
+	return out
+}
+
 // completeHelp completes `namecom help` with the subcommands of the command
-// typed so far, as cobra's own help command did.
+// typed so far, as cobra's own help command did, and the help topics.
 func completeHelp(c *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
 	parent := c.Root()
 	for _, word := range args {
@@ -145,7 +169,7 @@ func completeHelp(c *cobra.Command, args []string, toComplete string) ([]cobra.C
 	}
 	var completions []cobra.Completion
 	for _, sub := range parent.Commands() {
-		if (sub.IsAvailableCommand() || sub == c) && strings.HasPrefix(sub.Name(), toComplete) {
+		if (sub.IsAvailableCommand() || sub.IsAdditionalHelpTopicCommand() || sub == c) && strings.HasPrefix(sub.Name(), toComplete) {
 			completions = append(completions, cobra.CompletionWithDesc(sub.Name(), sub.Short))
 		}
 	}

@@ -320,3 +320,53 @@ func TestEnumFlagsComplete(t *testing.T) {
 		t.Errorf("dns create offers CAA, which the API refuses on create: %q", got)
 	}
 }
+
+// TestComplete_HelpOffersTopics pins #327: `namecom help <TAB>` offered the
+// commands and not the two help topics, which have no Run.
+func TestComplete_HelpOffersTopics(t *testing.T) {
+	withConfig(t, loneProfile)
+	var names []string
+	for _, c := range runComplete(t, "help", "") {
+		name, _, _ := strings.Cut(c, "\t")
+		names = append(names, name)
+	}
+	for _, want := range []string{"environment", "formatting", "dns"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("help completions = %q, want %q among them", names, want)
+		}
+	}
+}
+
+// TestCompletionCommand_Arguments pins #327: cobra's completion command is
+// not a GroupCmd, so `completion bogus` printed its help and exited 0, and
+// `completion bash extra` called the argument an unknown command.
+func TestCompletionCommand_Arguments(t *testing.T) {
+	withConfig(t, loneProfile)
+	message, hint, _ := usageEnvelope(t, "completion", "bogus")
+	if message != `unknown command "bogus" for "namecom completion"` {
+		t.Errorf("completion bogus: message = %q", message)
+	}
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		if !strings.Contains(hint, shell) {
+			t.Errorf("completion bogus: hint %q does not name %s", hint, shell)
+		}
+	}
+	if _, _, s := usageEnvelope(t, "completion", "zhs"); !slices.Contains(s, "namecom completion zsh") {
+		t.Errorf("completion zhs: suggestions = %v, want namecom completion zsh", s)
+	}
+	message, _, _ = usageEnvelope(t, "completion", "bash", "extra")
+	if strings.Contains(message, "unknown command") || !strings.Contains(message, `"extra"`) {
+		t.Errorf("completion bash extra: message = %q, want an extra-argument error", message)
+	}
+	// Bare, it is a group: help, exit 0.
+	if stdout, stderr, code := runContract(t, "completion"); code != 0 || !strings.Contains(stdout, "Usage:") {
+		t.Errorf("completion: exit %d, stdout:\n%s\nstderr:\n%s\nwant help and exit 0", code, stdout, stderr)
+	}
+	// A shell is still accepted. (Running one would print its script to the
+	// stdout cobra captured when it built the command, the test's own.)
+	for _, sub := range mustFind(t, []string{"completion"}).Commands() {
+		if err := sub.Args(sub, nil); err != nil {
+			t.Errorf("completion %s: %v", sub.Name(), err)
+		}
+	}
+}
