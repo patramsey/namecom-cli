@@ -41,6 +41,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `domain search` and `domain check` footers count `domains`, not `results`
   (#322).
 ### Fixed
+- `namecom api` given a full URL (`https://api.name.com/core/v1/hello`, or
+  one starting `//`) is a usage error, exit 2, before any request, with a
+  hint naming the path to pass instead. The URL was joined onto the API host
+  as a path, and the edge's HTML 403 came back as an `auth` error, exit 3,
+  pointing at the account's API settings. Nothing was ever sent to another
+  host.
 - A 403 about the domain rather than the credentials — the API answers
   `dns list` and `url list` of an expired domain with "Permission denied.
   The domain is expired." — is an `api` error that exits 1 and shows the

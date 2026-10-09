@@ -27,6 +27,9 @@ var Cmd = &cobra.Command{
 	Short: "Make a raw API request",
 	Long: `Make a raw HTTP request to the name.com API. Auth, rate limiting, and retries are applied automatically.
 
+The path is the part after the host, such as /core/v1/hello: the request
+always goes to the configured API host, so a full URL is refused.
+
 The method is the first argument, or -X/--method; either way any case will
 do. It may be left out: it is GET, or POST when --data, --input, -f or -F
 gives the request a body. With --paginate it is always GET.
@@ -168,6 +171,34 @@ func methodAndPath(cmd *cobra.Command, args []string, hasBody bool) (method, pat
 	return method, args[1], nil
 }
 
+// checkPath refuses a URL where a path belongs: one with a scheme, or
+// starting "//". It was joined onto the base as a path —
+// GET https://api.name.com/https:/api.name.com/core/v1/hello — and the edge's
+// HTML 403 came back as an auth error, exit 3, pointing at the account's API
+// settings (#324). The hint gives the path to pass instead.
+func checkPath(rawPath string) error {
+	rest, ok := strings.CutPrefix(rawPath, "//")
+	if !ok {
+		i := strings.Index(rawPath, "://")
+		if i <= 0 || strings.ContainsAny(rawPath[:i], "/?#") {
+			return nil
+		}
+		rest = rawPath[i+3:]
+	}
+	err := fmt.Errorf("%q is a URL; namecom api takes a path, and sends it to the configured API host", rawPath)
+	path := ""
+	if j := strings.IndexAny(rest, "/?"); j >= 0 {
+		path = rest[j:]
+	}
+	if path == "" || path == "/" {
+		return cmdutil.NewUsageErrorHint(err, "pass a path such as /core/v1/hello, not a URL")
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return cmdutil.NewUsageErrorHint(err, "pass the path alone: "+path)
+}
+
 // inferredFrom names the flag that made method POST when neither an argument
 // nor -X gave a method, and is "" when the method was given. nargs is the
 // number of arguments: with two, the first is the method.
@@ -237,6 +268,9 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	hasBody := dataSet || apiInput != "" || len(apiFields)+len(apiTyped) > 0
 	method, rawPath, err := methodAndPath(cmd, args, hasBody)
 	if err != nil {
+		return err
+	}
+	if err := checkPath(rawPath); err != nil {
 		return err
 	}
 	if err := checkFlags(method, dataSet); err != nil {
