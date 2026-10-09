@@ -157,6 +157,33 @@ func TestDNSUpdate_PriorityMatchesType(t *testing.T) {
 	})
 }
 
+// TestDNSUpdate_TypeChangeDropsPriority pins #323: an MX record made A kept
+// its fetched priority in the PUT body, which the API drops. The dry run
+// previewed a body that did not match what was stored. Now the priority is
+// left out when the new type takes none.
+func TestDNSUpdate_TypeChangeDropsPriority(t *testing.T) {
+	prio := int64(20)
+	for _, dry := range []bool{false, true} {
+		t.Run(map[bool]string{false: "update", true: "dry run"}[dry], func(t *testing.T) {
+			z, srv := newFakeZone(t, fakeRecord{ID: 5, Host: "swmx", Type: "MX", Answer: "mail.example.com", TTL: 300, Priority: &prio})
+			cmd, captured := updateFor(t, srv, runOpts{yes: true, dryRun: dry}, "--type", "A", "--answer", "192.0.2.9")
+			if err := runUpdate(cmd, []string{"example.com", "5"}); err != nil {
+				t.Fatalf("runUpdate: %v", err)
+			}
+			if dry {
+				if stdout, _ := captured(); strings.Contains(stdout, "priority") {
+					t.Errorf("dry run previews a priority:\n%s", stdout)
+				}
+				return
+			}
+			want := []string{`PUT /core/v1/domains/example.com/records/5 {"answer":"192.0.2.9","host":"swmx","ttl":300,"type":"A"}`}
+			if got := z.sentLog(); !reflect.DeepEqual(got, want) {
+				t.Errorf("sent %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestDNSImportSync_PriorityFromFile: a file's MX record without a priority
 // is refused before anything is sent, naming the record; a priority on an A
 // record is not sent, as the API would drop it.

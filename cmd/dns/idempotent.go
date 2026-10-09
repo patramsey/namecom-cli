@@ -1,7 +1,9 @@
 package dns
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -32,7 +34,7 @@ func filterHost(h, domain string) (string, error) {
 // send a fully qualified host as typed, and the API made
 // www.example.com.example.com.
 func zoneHost(h, domain string) (string, error) {
-	if err := inZone(h, domain); err != nil {
+	if err := inZone("--host", h, domain); err != nil {
 		return "", err
 	}
 	return asciiHost(relHost(h, domain))
@@ -42,8 +44,9 @@ func zoneHost(h, domain string) (string, error) {
 // or a name under it. The trailing dot says the name is complete, so
 // "sweep.example.org." on example.com names a host outside the zone; relHost
 // dropped the dot and created sweep.example.org.example.com instead. A
-// dotless name is relative, as in a zone file, and is not checked.
-func inZone(h, domain string) error {
+// dotless name is relative, as in a zone file, and is not checked. what
+// names the host in the error, as cmdutil.OutOfZone takes it.
+func inZone(what, h, domain string) error {
 	t, abs := strings.CutSuffix(h, ".")
 	if !abs || t == "" {
 		return nil
@@ -55,8 +58,7 @@ func inZone(h, domain string) error {
 	if la := strings.ToLower(a); la == domain || strings.HasSuffix(la, "."+domain) {
 		return nil
 	}
-	return cmdutil.NewUsageError(fmt.Errorf("--host %q is not in %s: a trailing dot makes a name absolute — use %q for the host %s.%s",
-		h, domain, t, t, domain))
+	return cmdutil.OutOfZone(what, h, domain)
 }
 
 // relHost strips the zone from a fully qualified host, with or without its
@@ -154,19 +156,22 @@ func printCreated(out *output.Config, rec *coreapigo.Record, changed bool) error
 // deleteAbsent is `dns delete --if-exists` when the API says none of the
 // records is there. A record's 404 could also mean the domain is missing,
 // which --if-exists must not hide — a typo in the domain would otherwise
-// "succeed" — so the domain is checked with a one-record list first.
-func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
+// "succeed" — so the domain is checked with a one-record list first, unless
+// domainChecked says a records list has already answered.
+func deleteAbsent(cmd *cobra.Command, domain string, ids []int, domainChecked bool) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	one, page := 1, 1
-	if _, err := client.SDK().DNS.ListRecords(cmd.Context(), &coreapigo.ListRecordsRequest{
-		DomainName: domain, Page: &page, PerPage: &one,
-	}); err != nil {
-		err = api.FromSDKError(err)
-		if cmdutil.IsNotFound(err) {
-			return cmdutil.DomainNotFound(err, domain)
+	if !domainChecked {
+		one, page := 1, 1
+		if _, err := client.SDK().DNS.ListRecords(cmd.Context(), &coreapigo.ListRecordsRequest{
+			DomainName: domain, Page: &page, PerPage: &one,
+		}); err != nil {
+			err = api.FromSDKError(err)
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.DomainNotFound(err, domain)
+			}
+			return err
 		}
-		return err
 	}
 	// "changed": false in JSON and YAML, one document however many IDs.
 	res := out.Results()
@@ -175,4 +180,29 @@ func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
 	}
 	res.Print(fmt.Sprintf("None of the %d records is on %s: nothing to delete", len(ids), domain))
 	return nil
+}
+
+// existsError is the API refusing a create because the record is already
+// there, with the flag that makes that a success: the API said only "Record
+// already exists" (#323). It wraps the API error, so the exit code and the
+// envelope's "conflict" type are unchanged.
+type existsError struct {
+	err  error
+	hint string
+}
+
+func (e *existsError) Error() string    { return e.err.Error() }
+func (e *existsError) Unwrap() error    { return e.err }
+func (e *existsError) UserHint() string { return e.hint }
+
+// hintExisting gives err the hint when it is the API's duplicate-record
+// refusal — a 400 "Parameter Value Error - Record already exists" — and
+// returns any other error as it is.
+func hintExisting(err error, hint string) error {
+	apiErr, ok := errors.AsType[*api.APIError](err)
+	if !ok || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusUnprocessableEntity) ||
+		!strings.Contains(strings.ToLower(apiErr.Message+" "+apiErr.Details), "already exists") {
+		return err
+	}
+	return &existsError{err: err, hint: hint}
 }

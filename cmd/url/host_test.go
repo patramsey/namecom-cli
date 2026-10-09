@@ -72,7 +72,8 @@ func TestURLCreate_OutOfZoneAbsoluteHost(t *testing.T) {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	err := runCreate(cmd, []string{"example.com"})
-	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok || !strings.Contains(err.Error(), "not in example.com") {
+	// The value quoted, as `dns create` says it (#323).
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok || err.Error() != `--host "sweep.other.com." is not in example.com` {
 		t.Fatalf("runCreate = %v, want a usage error saying the host is not in example.com", err)
 	}
 }

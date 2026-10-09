@@ -113,6 +113,28 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `contact verify` and `transfer cancel-outbound` have no read to check
   against, so their help now says what their dry run leaves unchecked: the
   verification record, and whether a transfer out is pending (#326).
+### Fixed
+- `dns create --type a` and `dns update --type txt` send the type upper-cased.
+  The value was checked in any case but sent as typed, so the dry run
+  previewed `"type": "a"` with exit 0 and the real request failed with a 400.
+  `url create --type` and `url update --type` now also accept any case
+  (`MASKED` was refused), and send it lower-cased as the API names it.
+- `dns update --type A` on an MX or SRV record no longer sends the old
+  priority. The API dropped it, so the dry run previewed a `"priority"` the
+  stored record never had; the update line now says `priority 20 → —`.
+- A `dns create` or `dns import` the API refuses with "Record already
+  exists" now says what to do in `error.hint`: pass `--if-not-exists`, or
+  `--skip-existing` for an import. The error type (`conflict`) and exit code
+  are unchanged.
+- `dns delete` with several IDs checks them with one records list instead of
+  one GET per ID, so deleting nine records sends 10 requests, not 18. A
+  missing ID still fails before anything is deleted (exit 4), and one ID
+  still costs one GET.
+- An out-of-zone `--host` ending in a dot is reported the same way by `dns`
+  and `url`: `--host "www." is not in example.com`, with the advice in
+  `error.hint`. `dns` used to put the advice in the message, and `url` left
+  the value unquoted. A record in a `dns import` file says `host`, not
+  `--host`, since no flag was passed.
 
 ## [0.5.3] - 2026-10-07
 

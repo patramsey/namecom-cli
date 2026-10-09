@@ -60,10 +60,18 @@ func relZoneHost(h, domain string) (string, error) {
 		}
 		return rel, nil
 	case t != h:
-		return "", NewUsageErrorHint(fmt.Errorf("--host %s is not in %s", h, domain),
-			fmt.Sprintf("a trailing dot makes a name absolute; without it, %q is a host under %s", t, domain))
+		return "", OutOfZone("--host", h, domain)
 	}
 	return t, nil
+}
+
+// OutOfZone is the usage error for h, an absolute name — ending in "." —
+// that is not domain or under it. what names where h came from: "--host",
+// or "host" for a record read from a file, which has no flag. `dns` and
+// `url` used to word it two ways (#323).
+func OutOfZone(what, h, domain string) error {
+	return NewUsageErrorHint(fmt.Errorf("%s %q is not in %s", what, h, domain),
+		fmt.Sprintf("a trailing dot makes a name absolute; without it, %q is a host under %s", strings.TrimSuffix(h, "."), domain))
 }
 
 // SideEffectNote tells the user about DNS records name.com adds or leaves

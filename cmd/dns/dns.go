@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -396,6 +397,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidDNSCreateType(createType); err != nil {
 		return err
 	}
+	// Checked without regard to case, so sent in the case the API takes:
+	// "a" passed every check and the dry run, then the API refused it (#323).
+	createType = strings.ToUpper(createType)
 	host, err := zoneHost(createHost, domain)
 	if err != nil {
 		return err
@@ -463,6 +467,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 		return api.FromSDKError(err)
 	})
+	if err != nil && !createIfNotExists {
+		err = hintExisting(err, "pass --if-not-exists to treat an existing record as success")
+	}
 	if err != nil || !sent {
 		return err
 	}
@@ -566,7 +573,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if err := cmdutil.ValidDNSCreateType(updateType); err != nil {
 			return err
 		}
-		body.Type = coreapigo.DNSUpdateRecordBodyType(updateType)
+		body.Type = coreapigo.DNSUpdateRecordBodyType(strings.ToUpper(updateType))
 	}
 	// As create: --priority on a type without one, or an MX or SRV record
 	// left with none (a --type change), is refused rather than sent.
@@ -576,6 +583,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if err := checkPriority(string(body.Type), set, "--priority"); err != nil {
 		return err
+	}
+	// An MX or SRV record made a type without a priority: the fetched one
+	// is not sent, as the API would drop it and the preview would show a
+	// body that is not what gets stored (#323).
+	if cmd.Flags().Changed("type") && !typeHasPriority(string(body.Type)) {
+		body.Priority = nil
 	}
 	if cmd.Flags().Changed("host") {
 		body.Host = &newHost
@@ -689,20 +702,25 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	var writes []cmdutil.Write[cmdutil.NoBody]
 	var summaries []string
 	var present, absent []int
-	// Read together; the first failure stops the rest and is reported. A
-	// missing record under --if-exists is not a failure: it comes back nil.
+	// One ID is one GET; several are found in the records list, one request
+	// rather than one each (#323). A missing record under --if-exists is not
+	// a failure: it comes back nil.
 	stop := out.Spin("Fetching record…")
-	currents, err := cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
-		r, err := client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
-		if err = api.FromSDKError(err); cmdutil.IsNotFound(err) {
-			if deleteIfExists {
-				return nil, nil
+	var currents []*coreapigo.Record
+	if len(ids) == 1 {
+		currents, err = cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
+			r, err := client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+			if err = api.FromSDKError(err); cmdutil.IsNotFound(err) {
+				if deleteIfExists {
+					return nil, nil
+				}
+				return nil, recordNotFound(err, id, domain)
 			}
-			return nil, cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
-				fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
-		}
-		return r, err
-	})
+			return r, err
+		})
+	} else {
+		currents, err = recordsByID(cmd, domain, ids)
+	}
 	stop()
 	if err != nil {
 		return err
@@ -722,7 +740,9 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		})
 	}
 	if len(present) == 0 {
-		return deleteAbsent(cmd, domain, absent)
+		// Several IDs were looked up in the domain's records list, which
+		// has already shown that the domain exists.
+		return deleteAbsent(cmd, domain, absent, len(ids) > 1)
 	}
 	// A record was found, so the domain exists and the rest really are gone.
 	// A note, not a Success line: under --dry-run -o json stdout is the
@@ -770,6 +790,53 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("deleting record %d: %w — stopped after deleting %d of %d records", ids[done], err, done, len(ids))
 	}
 	return err
+}
+
+// recordsByID is the records of domain with these IDs, in their order, read
+// from the records list rather than one GET each: `dns delete` of nine IDs
+// sent nine GETs before its nine DELETEs (#323). Pages are read at the
+// largest size, and only until every ID is found. A missing ID is a
+// not-found error, or under --if-exists a nil record.
+func recordsByID(cmd *cobra.Command, domain string, ids []int) ([]*coreapigo.Record, error) {
+	client := cmdutil.APIClient(cmd)
+	found := make(map[int]*coreapigo.Record, len(ids))
+	perPage := cmdutil.MaxPerPage
+	for page := 1; ; {
+		result, err := client.SDK().DNS.ListRecords(cmd.Context(), &coreapigo.ListRecordsRequest{
+			DomainName: domain, Page: &page, PerPage: &perPage,
+		})
+		if err != nil {
+			err = api.FromSDKError(err)
+			if cmdutil.IsNotFound(err) {
+				return nil, cmdutil.DomainNotFound(err, domain)
+			}
+			return nil, err
+		}
+		for _, r := range cmdutil.NonNil(result.Records) {
+			if id := derefInt(r.ID); slices.Contains(ids, id) {
+				found[id] = r
+			}
+		}
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok || len(found) == len(ids) {
+			break
+		}
+		page = next
+	}
+	records := make([]*coreapigo.Record, len(ids))
+	for i, id := range ids {
+		if records[i] = found[id]; records[i] == nil && !deleteIfExists {
+			// The 404 its own GET would have had, so it exits 4 as one ID does.
+			return nil, recordNotFound(&api.APIError{StatusCode: http.StatusNotFound, Message: "Not Found"}, id, domain)
+		}
+	}
+	return records, nil
+}
+
+// recordNotFound is the not-found error for record id on domain.
+func recordNotFound(err error, id int, domain string) error {
+	return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
+		fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
@@ -944,6 +1011,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		_, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
 		if err != nil {
 			err = api.MarkWrite(err) // not sent through RunWrite, so marked here
+			if !importSkipExisting {
+				err = hintExisting(err, "pass --skip-existing to skip records already in the zone")
+			}
 			// Report what already landed. Import is not transactional, so bailing
 			// out with only the failure left the user unable to tell whether a
 			// retry would duplicate the records written so far.
