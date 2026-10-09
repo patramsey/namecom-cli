@@ -620,17 +620,15 @@ func TestDefaultConfig_NonTTYDefaultsToJSON(t *testing.T) {
 
 // ---- ColorEnabled -----------------------------------------------------------
 
-// NO_COLOR is presence-based by specification (https://no-color.org): an empty
-// value still disables colour. Treating it as a boolean would re-enable colour
-// for `NO_COLOR=` and `NO_COLOR=0`, which the spec explicitly forbids.
+// NO_COLOR disables colour when set to any non-empty value (https://no-color.org:
+// "present and not an empty string"). The value is not read as a boolean:
+// `NO_COLOR=0` and `NO_COLOR=false` still turn colour off. `NO_COLOR=` does not.
 //
-// Every presence case below ALSO sets CLICOLOR_FORCE=1. Without it these
-// assertions are vacuous: under `go test` stdout is not a TTY, so ColorEnabled
-// falls through to false no matter what NO_COLOR does, and a boolean reading of
-// NO_COLOR passes anyway. With CLICOLOR_FORCE=1 the two readings diverge —
-// correct code returns false because NO_COLOR is checked first, a boolean
-// reading returns true — so the test can fail, and it simultaneously pins that
-// NO_COLOR outranks CLICOLOR_FORCE.
+// Every case below ALSO sets CLICOLOR_FORCE=1. Without it these assertions are
+// vacuous: under `go test` stdout is not a TTY, so ColorEnabled falls through
+// to false no matter what NO_COLOR does. With CLICOLOR_FORCE=1 the readings
+// diverge, so the test can fail, and it simultaneously pins that NO_COLOR
+// outranks CLICOLOR_FORCE.
 func TestColorEnabled_ExplicitModesIgnoreEnv(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	if !(&Config{Color: ColorAlways}).ColorEnabled() {
@@ -643,16 +641,26 @@ func TestColorEnabled_ExplicitModesIgnoreEnv(t *testing.T) {
 	}
 }
 
-func TestColorEnabled_NoColorIsPresenceBasedAndOutranksForce(t *testing.T) {
-	for _, val := range []string{"1", "0", "", "false", "no"} {
+func TestColorEnabled_NonEmptyNoColorOutranksForce(t *testing.T) {
+	for _, val := range []string{"1", "0", "false", "no"} {
 		t.Run("NO_COLOR="+val, func(t *testing.T) {
 			t.Setenv("CLICOLOR_FORCE", "1")
 			t.Setenv("NO_COLOR", val)
 			if (&Config{Color: ColorAuto}).ColorEnabled() {
 				t.Errorf("NO_COLOR=%q must disable colour even with CLICOLOR_FORCE=1 — "+
-					"presence disables, regardless of value", val)
+					"any non-empty value disables", val)
 			}
 		})
+	}
+}
+
+// `NO_COLOR=` turned colour off, against the spec, and against lipgloss, which
+// reads an empty NO_COLOR as unset (#327).
+func TestColorEnabled_EmptyNoColorIsUnset(t *testing.T) {
+	t.Setenv("CLICOLOR_FORCE", "1")
+	t.Setenv("NO_COLOR", "")
+	if !(&Config{Color: ColorAuto}).ColorEnabled() {
+		t.Error("an empty NO_COLOR must not disable colour: CLICOLOR_FORCE=1 should win")
 	}
 }
 

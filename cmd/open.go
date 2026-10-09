@@ -20,7 +20,7 @@ var openCmd = &cobra.Command{
 	Long:  "Open the name.com account dashboard, or the management page for a domain. With no browser to open, print the URL.",
 	Example: `  namecom open
   namecom open example.com`,
-	Args:              cobra.MaximumNArgs(1),
+	Args:              cmdutil.MaximumNArgs(1),
 	RunE:              runOpen,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }

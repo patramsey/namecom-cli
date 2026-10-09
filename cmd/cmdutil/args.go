@@ -126,6 +126,27 @@ func MinimumNArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+// MaximumNArgs is a drop-in for cobra.MaximumNArgs, which said "accepts at
+// most 1 arg(s), received 2" where ExactArgs says "too many arguments" (#327).
+// The names come from the Use string's <required> and [optional] tokens.
+func MaximumNArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) <= n {
+			return nil
+		}
+		var names []string
+		for _, part := range strings.Fields(cmd.Use)[1:] {
+			if part == "[flags]" {
+				continue
+			}
+			if name := strings.Trim(part, "<>[]."); name != "" && name != part {
+				names = append(names, name)
+			}
+		}
+		return NewUsageErrorHint(fmt.Errorf("too many arguments — expected: %s", joinNames(names)), "usage: "+cmd.UseLine())
+	}
+}
+
 // argNames parses <placeholder> tokens from a cobra Use string.
 // e.g. "update <domain> <id>" → ["domain", "id"]
 func argNames(use string) []string {
@@ -293,6 +314,14 @@ func flagSuggestions(cmd *cobra.Command, name string, hasValue bool) []string {
 	})
 	sort.Strings(out)
 	return out
+}
+
+// NearWord reports whether typed is likely a misspelling of name, by cobra's
+// rule for command suggestions: within dist edits, ignoring case, or a prefix
+// of name. For commands cobra's SuggestionsFor leaves out, such as help topics.
+func NearWord(typed, name string, dist int) bool {
+	typed, name = strings.ToLower(typed), strings.ToLower(name)
+	return levenshtein(typed, name) <= dist || strings.HasPrefix(name, typed)
 }
 
 // levenshtein is the edit distance between a and b, as cobra computes it for

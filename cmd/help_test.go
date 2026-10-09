@@ -514,13 +514,112 @@ func TestHelpCommand_UnknownTopic(t *testing.T) {
 		})
 	}
 
-	for _, args := range [][]string{{"help"}, {"help", "dns"}, {"help", "dns", "list"}, {"help", "dns", "list", "example.com"}} {
+	for _, args := range [][]string{{"help"}, {"help", "dns"}, {"help", "dns", "list"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			stdout, stderr, code := runContract(t, args...)
 			if code != 0 || !strings.Contains(stdout, "Usage:") {
 				t.Errorf("exit %d, stdout:\n%s\nstderr:\n%s\nwant help and exit 0", code, stdout, stderr)
 			}
 		})
+	}
+}
+
+// usageEnvelope runs args with -o json, wants exit 2 and nothing on stdout,
+// and returns the error envelope from stderr.
+func usageEnvelope(t *testing.T, args ...string) (message, hint string, suggestions []string) {
+	t.Helper()
+	stdout, stderr, code := runContract(t, append(args, "-o", "json")...)
+	if code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing", stdout)
+	}
+	var env struct {
+		Error struct {
+			Type        string   `json:"type"`
+			Message     string   `json:"message"`
+			Hint        string   `json:"hint"`
+			Suggestions []string `json:"suggestions"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+		t.Fatalf("stderr is not the error envelope: %v\n%s", err, stderr)
+	}
+	if env.Error.Type != "usage" {
+		t.Errorf("error.type = %q, want usage", env.Error.Type)
+	}
+	return env.Error.Message, env.Error.Hint, env.Error.Suggestions
+}
+
+// TestHelpTopics_Suggested pins #327: cobra's suggestions skip a help topic,
+// which has no Run, so `help formating` and `namecom formating` named nothing
+// while `help statsu` suggested status.
+func TestHelpTopics_Suggested(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"help", "formating"}, "namecom help formatting"},
+		{[]string{"help", "envronment"}, "namecom help environment"},
+		{[]string{"formating"}, "namecom help formatting"},
+		{[]string{"envronment"}, "namecom help environment"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			_, hint, suggestions := usageEnvelope(t, tc.args...)
+			if !slices.Contains(suggestions, tc.want) {
+				t.Errorf("suggestions = %v, want %q", suggestions, tc.want)
+			}
+			if !strings.Contains(hint, tc.want) {
+				t.Errorf("hint = %q, want it to name %q", hint, tc.want)
+			}
+		})
+	}
+	// rootSuggestFor's own answer is not repeated by the topic match.
+	if _, _, s := usageEnvelope(t, "env"); len(s) == 0 || s[0] != "namecom help environment" ||
+		slices.Contains(s[1:], "namecom help environment") {
+		t.Errorf("namecom env: suggestions = %v, want help environment first and once", s)
+	}
+}
+
+// TestHelpCommand_ExtraWords pins #327: words after a command with no
+// subcommands were ignored, so `help dns list bogus extra` printed the dns
+// list help and exited 0.
+func TestHelpCommand_ExtraWords(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args       []string
+		message    string
+		hintPrefix string
+	}{
+		{[]string{"help", "dns", "list", "bogus", "extra"}, `too many arguments — namecom dns list has no subcommands, got "bogus"`, "run 'namecom help dns list'"},
+		{[]string{"help", "formatting", "tsv"}, `too many arguments — namecom formatting has no subcommands, got "tsv"`, "run 'namecom help formatting'"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			message, hint, _ := usageEnvelope(t, tc.args...)
+			if message != tc.message {
+				t.Errorf("message = %q, want %q", message, tc.message)
+			}
+			if !strings.HasPrefix(hint, tc.hintPrefix) {
+				t.Errorf("hint = %q, want it to start %q", hint, tc.hintPrefix)
+			}
+		})
+	}
+}
+
+// TestHelpCommand_OwnHelp pins #327: `namecom help help` printed cobra's
+// stock "Simply type namecom help [path to command]" text.
+func TestHelpCommand_OwnHelp(t *testing.T) {
+	stdout, stderr, code := runContract(t, "help", "help")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr:\n%s", code, stderr)
+	}
+	if strings.Contains(stdout, "Simply type") || strings.Contains(stdout, "in the application") {
+		t.Errorf("help help is cobra's stock text:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "namecom help formatting") {
+		t.Errorf("help help does not show a topic example:\n%s", stdout)
 	}
 }
 

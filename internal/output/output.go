@@ -4,7 +4,7 @@
 //   - Prompt suppression: based on stdin TTY (suppress prompts when no human is typing)
 //   - Output format: based on stdout TTY (default json when piped/redirected)
 //
-// Color is disabled when NO_COLOR is set (presence-based per spec), when
+// Color is disabled when NO_COLOR is set to a non-empty value, when
 // stdout is not a TTY, or when --color=never. CLICOLOR_FORCE=1 re-enables
 // color even when stdout is not a TTY.
 package output
@@ -164,9 +164,11 @@ func (c *Config) ColorEnabled() bool {
 	case ColorNever:
 		return false
 	}
-	// ColorAuto: respect NO_COLOR (presence-based) and CLICOLOR_FORCE, and
-	// stay plain on a Windows console that cannot interpret escape codes.
-	if _, set := os.LookupEnv("NO_COLOR"); set || !vtSupported {
+	// ColorAuto: respect NO_COLOR and CLICOLOR_FORCE, and stay plain on a
+	// Windows console that cannot interpret escape codes. NO_COLOR counts when
+	// it is not empty, as no-color.org and lipgloss read it: `NO_COLOR=` turned
+	// colour off here (#327).
+	if os.Getenv("NO_COLOR") != "" || !vtSupported {
 		return false
 	}
 	if os.Getenv("CLICOLOR_FORCE") == "1" {
