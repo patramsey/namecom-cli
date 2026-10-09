@@ -320,8 +320,7 @@ func TestJSONContract(t *testing.T) {
 			name: "dns delete with several IDs",
 			args: []string{"dns", "delete", "example.com", "1", "2", "--yes"},
 			routes: map[string]reply{
-				"GET /core/v1/domains/example.com/records/1": {200, `{"id":1,"type":"A","answer":"192.0.2.1"}`},
-				"GET /core/v1/domains/example.com/records/2": {200, `{"id":2,"type":"A","answer":"192.0.2.2"}`},
+				"GET /core/v1/domains/example.com/records": {200, `{"records":[{"id":1,"type":"A","answer":"192.0.2.1"},{"id":2,"type":"A","answer":"192.0.2.2"}]}`},
 			},
 			check: wantResults(true, []any{float64(1), true}, []any{float64(2), true}),
 		},
@@ -329,8 +328,7 @@ func TestJSONContract(t *testing.T) {
 			name: "dns delete --if-exists, one present and one gone",
 			args: []string{"dns", "delete", "example.com", "1", "2", "--if-exists", "--yes"},
 			routes: map[string]reply{
-				"GET /core/v1/domains/example.com/records/1": {200, `{"id":1,"type":"A","answer":"192.0.2.1"}`},
-				"GET /core/v1/domains/example.com/records/2": {404, `{"message":"Not Found"}`},
+				"GET /core/v1/domains/example.com/records": {200, `{"records":[{"id":1,"type":"A","answer":"192.0.2.1"}]}`},
 			},
 			check: wantResults(true, []any{float64(1), true}, []any{float64(2), false}),
 		},
@@ -338,9 +336,7 @@ func TestJSONContract(t *testing.T) {
 			name: "dns delete --if-exists, all gone",
 			args: []string{"dns", "delete", "example.com", "1", "2", "--if-exists", "--yes"},
 			routes: map[string]reply{
-				"GET /core/v1/domains/example.com/records/1": {404, `{"message":"Not Found"}`},
-				"GET /core/v1/domains/example.com/records/2": {404, `{"message":"Not Found"}`},
-				"GET /core/v1/domains/example.com/records":   {200, `{"records":[]}`},
+				"GET /core/v1/domains/example.com/records": {200, `{"records":[]}`},
 			},
 			check: wantResults(false, []any{float64(1), false}, []any{float64(2), false}),
 		},

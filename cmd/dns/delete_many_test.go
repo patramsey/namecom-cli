@@ -15,14 +15,22 @@ import (
 	"github.com/patramsey/namecom-cli/internal/api"
 )
 
-// deleteServer serves records 1, 2 and 3 of example.com and records the ID
-// of every DELETE. A DELETE of failID is refused with a 400.
+// deleteServer serves records 1, 2 and 3 of example.com, one at a time and
+// as a list, and records the ID of every DELETE. A DELETE of failID is
+// refused with a 400.
 func deleteServer(t *testing.T, failID string) (*httptest.Server, *[]string) {
 	t.Helper()
 	var mu sync.Mutex
 	var deleted []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/core/v1/domains/example.com/records" {
+			_, _ = w.Write([]byte(`{"records":[` +
+				`{"id":1,"host":"h1","type":"A","answer":"10.0.0.1","ttl":300},` +
+				`{"id":2,"host":"h2","type":"A","answer":"10.0.0.2","ttl":300},` +
+				`{"id":3,"host":"h3","type":"A","answer":"10.0.0.3","ttl":300}]}`))
+			return
+		}
 		id, ok := strings.CutPrefix(r.URL.Path, "/core/v1/domains/example.com/records/")
 		if !ok || !slices.Contains([]string{"1", "2", "3"}, id) {
 			w.WriteHeader(http.StatusNotFound)
@@ -117,5 +125,74 @@ func TestDNSDelete_SeveralIDsMissingOneDeletesNothing(t *testing.T) {
 	}
 	if len(*deleted) != 0 {
 		t.Errorf("deleted %q although record 99 does not exist", *deleted)
+	}
+}
+
+// TestDNSDelete_SeveralIDsReadTheList pins #323: `dns delete` of N IDs sent N
+// GETs before its N DELETEs. Several IDs are now looked up in the records
+// list, at the largest page size, reading a further page only while an ID is
+// still missing. One ID keeps its single GET.
+func TestDNSDelete_SeveralIDsReadTheList(t *testing.T) {
+	// Two pages: records 1 and 2, then 3.
+	pagedServer := func(t *testing.T) (*httptest.Server, *[]string) {
+		t.Helper()
+		var mu sync.Mutex
+		var reqs []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reqs = append(reqs, r.Method+" "+r.URL.RequestURI())
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodDelete:
+				_, _ = w.Write([]byte(`{}`))
+			case r.URL.Path == "/core/v1/domains/example.com/records" && r.URL.Query().Get("page") == "1":
+				_, _ = w.Write([]byte(`{"records":[{"id":1,"host":"h1","type":"A","answer":"10.0.0.1","ttl":300},` +
+					`{"id":2,"host":"h2","type":"A","answer":"10.0.0.2","ttl":300}],"nextPage":2,"lastPage":2}`))
+			case r.URL.Path == "/core/v1/domains/example.com/records" && r.URL.Query().Get("page") == "2":
+				_, _ = w.Write([]byte(`{"records":[{"id":3,"host":"h3","type":"A","answer":"10.0.0.3","ttl":300}],"lastPage":2}`))
+			case r.URL.Path == "/core/v1/domains/example.com/records/1":
+				_, _ = w.Write([]byte(`{"id":1,"host":"h1","type":"A","answer":"10.0.0.1","ttl":300}`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			}
+		}))
+		t.Cleanup(srv.Close)
+		return srv, &reqs
+	}
+	const (
+		page1 = "GET /core/v1/domains/example.com/records?page=1&perPage=1000"
+		page2 = "GET /core/v1/domains/example.com/records?page=2&perPage=1000"
+	)
+	for name, tc := range map[string]struct {
+		ids  []string
+		want []string
+		err  string
+	}{
+		"one ID, one GET":           {ids: []string{"1"}, want: []string{"GET /core/v1/domains/example.com/records/1", "DELETE /core/v1/domains/example.com/records/1"}},
+		"all on the first page":     {ids: []string{"2", "1"}, want: []string{page1, "DELETE /core/v1/domains/example.com/records/2", "DELETE /core/v1/domains/example.com/records/1"}},
+		"one on the second page":    {ids: []string{"1", "3"}, want: []string{page1, page2, "DELETE /core/v1/domains/example.com/records/1", "DELETE /core/v1/domains/example.com/records/3"}},
+		"one missing, nothing gone": {ids: []string{"1", "99"}, want: []string{page1, page2}, err: "record 99 not found on example.com"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, reqs := pagedServer(t)
+			var prompts []string
+			defer cmdutil.StubConfirm(func(p string) bool { prompts = append(prompts, p); return true })()
+			err := runDelete(cmdForDelete(t, srv), append([]string{"example.com"}, tc.ids...))
+			if tc.err != "" {
+				if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), tc.err) {
+					t.Errorf("runDelete = %v, want a not-found error containing %q", err, tc.err)
+				}
+				if len(prompts) != 0 {
+					t.Errorf("prompted %q before failing", prompts)
+				}
+			} else if err != nil {
+				t.Fatalf("runDelete: %v", err)
+			}
+			if !slices.Equal(*reqs, tc.want) {
+				t.Errorf("requests = %q\nwant %q", *reqs, tc.want)
+			}
+		})
 	}
 }

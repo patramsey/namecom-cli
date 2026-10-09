@@ -126,6 +126,10 @@ Releases before `0.2.0` predate this file. Their notes are on the
   exists" now says what to do in `error.hint`: pass `--if-not-exists`, or
   `--skip-existing` for an import. The error type (`conflict`) and exit code
   are unchanged.
+- `dns delete` with several IDs checks them with one records list instead of
+  one GET per ID, so deleting nine records sends 10 requests, not 18. A
+  missing ID still fails before anything is deleted (exit 4), and one ID
+  still costs one GET.
 
 ## [0.5.3] - 2026-10-07
 

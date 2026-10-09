@@ -655,10 +655,26 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"dns delete, two": {
 			args: []string{"dns", "delete", "example.com", "42", "43", "--yes"},
+			why:  "one records list checks every ID, rather than a GET each (#323)",
 			want: []string{
-				together("GET /core/v1/domains/example.com/records/42", "GET /core/v1/domains/example.com/records/43"),
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
 				"DELETE /core/v1/domains/example.com/records/42",
 				"DELETE /core/v1/domains/example.com/records/43",
+			},
+		},
+		"dns delete, two, one missing": {
+			args: []string{"dns", "delete", "example.com", "42", "99", "--yes"},
+			why:  "a missing ID fails before any DELETE",
+			code: 4,
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
+			},
+		},
+		"dns delete --if-exists, two gone": {
+			args: []string{"dns", "delete", "example.com", "98", "99", "--if-exists", "--yes"},
+			why:  "the records list has already shown the domain exists",
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
 			},
 		},
 		"dns delete --if-exists, gone": {

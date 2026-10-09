@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -701,20 +702,25 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	var writes []cmdutil.Write[cmdutil.NoBody]
 	var summaries []string
 	var present, absent []int
-	// Read together; the first failure stops the rest and is reported. A
-	// missing record under --if-exists is not a failure: it comes back nil.
+	// One ID is one GET; several are found in the records list, one request
+	// rather than one each (#323). A missing record under --if-exists is not
+	// a failure: it comes back nil.
 	stop := out.Spin("Fetching record…")
-	currents, err := cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
-		r, err := client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
-		if err = api.FromSDKError(err); cmdutil.IsNotFound(err) {
-			if deleteIfExists {
-				return nil, nil
+	var currents []*coreapigo.Record
+	if len(ids) == 1 {
+		currents, err = cmdutil.FetchEach(cmd.Context(), ids, func(ctx context.Context, id int) (*coreapigo.Record, error) {
+			r, err := client.SDK().DNS.GetRecord(ctx, &coreapigo.GetRecordRequest{DomainName: domain, ID: id})
+			if err = api.FromSDKError(err); cmdutil.IsNotFound(err) {
+				if deleteIfExists {
+					return nil, nil
+				}
+				return nil, recordNotFound(err, id, domain)
 			}
-			return nil, cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
-				fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
-		}
-		return r, err
-	})
+			return r, err
+		})
+	} else {
+		currents, err = recordsByID(cmd, domain, ids)
+	}
 	stop()
 	if err != nil {
 		return err
@@ -734,7 +740,9 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		})
 	}
 	if len(present) == 0 {
-		return deleteAbsent(cmd, domain, absent)
+		// Several IDs were looked up in the domain's records list, which
+		// has already shown that the domain exists.
+		return deleteAbsent(cmd, domain, absent, len(ids) > 1)
 	}
 	// A record was found, so the domain exists and the rest really are gone.
 	// A note, not a Success line: under --dry-run -o json stdout is the
@@ -782,6 +790,53 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("deleting record %d: %w — stopped after deleting %d of %d records", ids[done], err, done, len(ids))
 	}
 	return err
+}
+
+// recordsByID is the records of domain with these IDs, in their order, read
+// from the records list rather than one GET each: `dns delete` of nine IDs
+// sent nine GETs before its nine DELETEs (#323). Pages are read at the
+// largest size, and only until every ID is found. A missing ID is a
+// not-found error, or under --if-exists a nil record.
+func recordsByID(cmd *cobra.Command, domain string, ids []int) ([]*coreapigo.Record, error) {
+	client := cmdutil.APIClient(cmd)
+	found := make(map[int]*coreapigo.Record, len(ids))
+	perPage := cmdutil.MaxPerPage
+	for page := 1; ; {
+		result, err := client.SDK().DNS.ListRecords(cmd.Context(), &coreapigo.ListRecordsRequest{
+			DomainName: domain, Page: &page, PerPage: &perPage,
+		})
+		if err != nil {
+			err = api.FromSDKError(err)
+			if cmdutil.IsNotFound(err) {
+				return nil, cmdutil.DomainNotFound(err, domain)
+			}
+			return nil, err
+		}
+		for _, r := range cmdutil.NonNil(result.Records) {
+			if id := derefInt(r.ID); slices.Contains(ids, id) {
+				found[id] = r
+			}
+		}
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok || len(found) == len(ids) {
+			break
+		}
+		page = next
+	}
+	records := make([]*coreapigo.Record, len(ids))
+	for i, id := range ids {
+		if records[i] = found[id]; records[i] == nil && !deleteIfExists {
+			// The 404 its own GET would have had, so it exits 4 as one ID does.
+			return nil, recordNotFound(&api.APIError{StatusCode: http.StatusNotFound, Message: "Not Found"}, id, domain)
+		}
+	}
+	return records, nil
+}
+
+// recordNotFound is the not-found error for record id on domain.
+func recordNotFound(err error, id int, domain string) error {
+	return cmdutil.NotFound(err, fmt.Sprintf("record %d not found on %s", id, domain),
+		fmt.Sprintf("run 'namecom dns list %s' to see its record IDs", domain))
 }
 
 func runExport(cmd *cobra.Command, args []string) error {

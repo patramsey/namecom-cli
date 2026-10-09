@@ -156,19 +156,22 @@ func printCreated(out *output.Config, rec *coreapigo.Record, changed bool) error
 // deleteAbsent is `dns delete --if-exists` when the API says none of the
 // records is there. A record's 404 could also mean the domain is missing,
 // which --if-exists must not hide — a typo in the domain would otherwise
-// "succeed" — so the domain is checked with a one-record list first.
-func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
+// "succeed" — so the domain is checked with a one-record list first, unless
+// domainChecked says a records list has already answered.
+func deleteAbsent(cmd *cobra.Command, domain string, ids []int, domainChecked bool) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	one, page := 1, 1
-	if _, err := client.SDK().DNS.ListRecords(cmd.Context(), &coreapigo.ListRecordsRequest{
-		DomainName: domain, Page: &page, PerPage: &one,
-	}); err != nil {
-		err = api.FromSDKError(err)
-		if cmdutil.IsNotFound(err) {
-			return cmdutil.DomainNotFound(err, domain)
+	if !domainChecked {
+		one, page := 1, 1
+		if _, err := client.SDK().DNS.ListRecords(cmd.Context(), &coreapigo.ListRecordsRequest{
+			DomainName: domain, Page: &page, PerPage: &one,
+		}); err != nil {
+			err = api.FromSDKError(err)
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.DomainNotFound(err, domain)
+			}
+			return err
 		}
-		return err
 	}
 	// "changed": false in JSON and YAML, one document however many IDs.
 	res := out.Results()
