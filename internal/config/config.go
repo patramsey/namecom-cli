@@ -497,6 +497,18 @@ func runTokenCmd(cmdline string) (string, error) {
 	prog, args := shellArgv(runtime.GOOS, cmdline)
 	cmd := exec.CommandContext(ctx, prog, args...) //nolint:gosec
 	cmd.Stderr = os.Stderr
+	// The helper keeps the rest of namecom's environment: `op`, `pass` and
+	// `vault` need HOME, PATH and their own session variables, and a helper
+	// may pick its entry by NAMECOM_PROFILE. NAMECOM_TOKEN is the one thing it
+	// has no use for — it produces the token — and `auth login --token-cmd`
+	// runs it with the variable still set (#338). Non-nil, so an environment
+	// of only NAMECOM_TOKEN is not read as "inherit everything".
+	cmd.Env = []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "NAMECOM_TOKEN=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
 	setRawCmdLine(cmd, prog, args)
 	setProcessGroup(cmd)
 	// WaitDelay bounds how long Wait blocks AFTER the deadline kills the shell.

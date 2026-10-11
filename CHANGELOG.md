@@ -31,6 +31,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   an exported zone synced straight back plans no change. A CAA value read
   from a zone file is now kept in zone-file quoting, so one holding a tab no
   longer reads back as a different record.
+- `namecom open` (and the token page `auth login` offers to open) starts the
+  browser without any `NAMECOM_*` variable. It passed namecom's whole
+  environment, so `NAMECOM_TOKEN` reached the browser and everything it
+  spawns. A `token_cmd` helper still gets the environment, minus
+  `NAMECOM_TOKEN` (#338).
 
 ## [0.5.4] - 2026-10-08
 

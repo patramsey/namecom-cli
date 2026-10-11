@@ -117,10 +117,12 @@ func renderOpen(out *output.Config, target string, launchErr error) error {
 // this terminal and its exit status counts: a $BROWSER entry may be a terminal
 // browser such as w3m, which needs the terminal and must finish before we
 // exit. Without wait it is only started, as a desktop opener hands the URL off
-// and a GUI browser may outlive us. A variable so tests can stand in for it:
-// no test may launch a real browser.
-var startCommand = func(wait bool, name string, args ...string) error {
+// and a GUI browser may outlive us. env is the child's whole environment (see
+// browserEnv). A variable so tests can stand in for it: no test may launch a
+// real browser.
+var startCommand = func(wait bool, env []string, name string, args ...string) error {
 	c := exec.Command(name, args...) //nolint:gosec // argv from $BROWSER or a literal opener; target built by openTarget from a validated domain
+	c.Env = env
 	if !wait {
 		return c.Start()
 	}
@@ -168,11 +170,28 @@ func openBrowser(target string) error {
 	default:
 		cmds = append(cmds, launcher{[]string{"xdg-open", target}, false})
 	}
+	env := browserEnv(os.Environ())
 	var err error
 	for _, l := range cmds {
-		if err = startCommand(l.wait, l.argv[0], l.argv[1:]...); err == nil {
+		if err = startCommand(l.wait, env, l.argv[0], l.argv[1:]...); err == nil {
 			return nil
 		}
 	}
 	return err
+}
+
+// browserEnv returns environ without any NAMECOM_* variable. The browser and
+// everything it spawns (helpers, crash reporters, extensions' native hosts)
+// inherited namecom's environment, NAMECOM_TOKEN included (#338). None of them
+// has a use for any NAMECOM_* setting, so all of them go, rather than a list
+// of the credential ones that a new variable could slip past. The prefix is
+// matched case-insensitively because Windows variable names are.
+func browserEnv(environ []string) []string {
+	env := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if !strings.HasPrefix(strings.ToUpper(kv), "NAMECOM_") {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
