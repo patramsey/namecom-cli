@@ -49,15 +49,7 @@ func Confirm(out *output.Config, yes bool, msg, detail string) (bool, error) {
 		return false, needsYes(msg, detail)
 	}
 	var result bool
-	field := huh.NewConfirm().
-		Title(msg).
-		Affirmative("Yes").
-		Negative("No").
-		Value(&result)
-	if detail != "" {
-		field = field.Description(detail)
-	}
-	form := huh.NewForm(huh.NewGroup(field))
+	form := huh.NewForm(huh.NewGroup(confirmField(msg, detail, &result)))
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return false, nil
@@ -65,6 +57,22 @@ func Confirm(out *output.Config, yes bool, msg, detail string) (bool, error) {
 		return false, err
 	}
 	return result, nil
+}
+
+// confirmField is the yes/no question Confirm asks. The question and the
+// line under it are sanitized: they quote API values — dns delete's record
+// summary, a domain's price — and an escape sequence in one could rewrite
+// the prompt the user is answering (#337).
+func confirmField(msg, detail string, result *bool) *huh.Confirm {
+	field := huh.NewConfirm().
+		Title(output.Sanitize(msg)).
+		Affirmative("Yes").
+		Negative("No").
+		Value(result)
+	if detail != "" {
+		field = field.Description(output.Sanitize(detail))
+	}
+	return field
 }
 
 // needsYes is the refusal when a confirmation cannot be asked: no terminal

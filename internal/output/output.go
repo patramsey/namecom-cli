@@ -500,6 +500,7 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 		c.writeTSV(headers, tsvCells(rows))
 		return
 	}
+	headers, rows = sanitizeCells(headers), sanitizeRows(rows)
 	rows = dashEmpty(rows, 0)
 	if c.Plain {
 		if c.NoHeader {
@@ -934,7 +935,7 @@ func (c *Config) KVTable(rows [][]string) {
 		c.writeTSV(nil, tsvCells(rows))
 		return
 	}
-	rows = dashEmpty(rows, 1)
+	rows = dashEmpty(sanitizeRows(rows), 1)
 	if c.Plain {
 		c.plainTable(nil, rows)
 		return
@@ -983,7 +984,7 @@ func (c *Config) KVTable(rows [][]string) {
 // scripts can pipe IDs: `namecom dns list d.com -q | xargs ...`
 func (c *Config) PrintQuiet(vals []string) {
 	for _, v := range vals {
-		fmt.Fprintln(c.Writer, v)
+		fmt.Fprintln(c.Writer, Sanitize(v))
 	}
 }
 
@@ -1003,7 +1004,7 @@ func (c *Config) Quiet(vals ...string) bool {
 	}
 	for _, v := range vals {
 		if v != "" {
-			fmt.Fprintln(c.Writer, v)
+			fmt.Fprintln(c.Writer, Sanitize(v))
 		}
 	}
 	return true
@@ -1017,7 +1018,7 @@ func (c *Config) SandboxTag() string {
 		return ""
 	}
 	if c.ColorEnabled() {
-		return lipgloss.NewStyle().Bold(true).Foreground(acAmber).Render("[sandbox]") + " "
+		return render(lipgloss.NewStyle().Bold(true).Foreground(acAmber), "[sandbox]") + " "
 	}
 	return "[sandbox] "
 }
@@ -1216,8 +1217,9 @@ func (c *Config) result(msg string, changed bool) {
 		c.writeTSV(nil, [][]string{{"success", "true"}, {"changed", strconv.FormatBool(changed)}, {"message", msg}})
 		return
 	}
+	msg = Sanitize(msg)
 	if c.ColorEnabled() {
-		fmt.Fprintln(c.Writer, styleSuccess.Render("✓")+" "+c.SandboxTag()+msg)
+		fmt.Fprintln(c.Writer, render(styleSuccess, "✓")+" "+c.SandboxTag()+msg)
 	} else {
 		fmt.Fprintln(c.Writer, "✓ "+c.SandboxTag()+msg)
 	}
@@ -1248,7 +1250,8 @@ func (c *Config) Hint(msg string) {
 		return
 	}
 	// Wrapped to the terminal, continuation lines under the text rather than
-	// the arrow.
+	// the arrow. Sanitized first, so the width measured is the width printed.
+	msg = Sanitize(msg)
 	lines := []string{msg}
 	if c.MaxWidth > 2 && ansi.StringWidth(msg)+2 > c.MaxWidth {
 		lines = wrapWords(msg, c.MaxWidth-2)
@@ -1284,8 +1287,9 @@ func (c *Config) Warn(msg string) {
 
 // warnLine prints msg as a "! " line on stderr.
 func (c *Config) warnLine(msg string) {
+	msg = Sanitize(msg)
 	if c.ColorEnabled() {
-		fmt.Fprintln(c.EWriter, styleWarning.Render("!")+" "+msg)
+		fmt.Fprintln(c.EWriter, render(styleWarning, "!")+" "+msg)
 	} else {
 		fmt.Fprintln(c.EWriter, "! "+msg)
 	}
@@ -1446,11 +1450,11 @@ func (c *Config) ErrorWith(err error, info ErrorInfo) {
 	// The four status symbols (#238): ✗ for the error and → for the hint, the
 	// next step, as Hint prints it. Without colour the lines read
 	// "error: …" and "  hint: …", the only output that did not use them.
-	msg := err.Error()
+	msg, hint := Sanitize(err.Error()), Sanitize(hint)
 	if c.ColorEnabled() {
-		fmt.Fprintln(c.EWriter, styleError.Render("✗")+" "+msg)
+		fmt.Fprintln(c.EWriter, render(styleError, "✗")+" "+msg)
 		if hint != "" {
-			fmt.Fprintln(c.EWriter, styleDim.Render("→ "+hint))
+			fmt.Fprintln(c.EWriter, render(styleDim, "→ "+hint))
 		}
 	} else {
 		fmt.Fprintln(c.EWriter, "✗ "+msg)
@@ -1510,10 +1514,10 @@ func statusColor(status string) (lipgloss.AdaptiveColor, bool) {
 func (c *Config) StatusBadge(status string) string {
 	color, ok := statusColor(status)
 	if !c.ColorEnabled() || !ok {
-		return status
+		return c.unstyled(status)
 	}
-	dot := lipgloss.NewStyle().Foreground(color).Render("●")
-	text := lipgloss.NewStyle().Bold(true).Foreground(color).Render(status)
+	dot := render(lipgloss.NewStyle().Foreground(color), "●")
+	text := render(lipgloss.NewStyle().Bold(true).Foreground(color), status)
 	return dot + " " + text
 }
 
@@ -1523,9 +1527,9 @@ func (c *Config) StatusBadge(status string) string {
 func (c *Config) TypeBadge(typ string) string {
 	upper := strings.ToUpper(typ)
 	if !c.ColorEnabled() {
-		return upper
+		return c.unstyled(upper)
 	}
-	return styleTitle.Render(upper)
+	return render(styleTitle, upper)
 }
 
 // AvailabilityBadge returns "✓ available" or "taken". A taken name is not an
@@ -1541,7 +1545,7 @@ func (c *Config) AvailabilityBadge(purchasable bool) string {
 	if !c.ColorEnabled() {
 		return "✓ available"
 	}
-	return styleSuccess.Render("✓") + " " + lipgloss.NewStyle().Foreground(acGreen).Render("available")
+	return render(styleSuccess, "✓") + " " + render(lipgloss.NewStyle().Foreground(acGreen), "available")
 }
 
 // BoolBadge returns "yes" or "no", in plain text.
@@ -1586,7 +1590,7 @@ func (c *Config) ExpiryDate(t *time.Time) string {
 	if !c.ColorEnabled() {
 		return label
 	}
-	return expiryStyle(days).Render(label)
+	return render(expiryStyle(days), label)
 }
 
 // expiryStyle picks the urgency styling for a date this many days away.
@@ -1974,11 +1978,11 @@ func (c *Config) StartSpinner(msg string) *Spinner {
 			case <-ticker.C:
 				frame := spinFrames[i%len(spinFrames)]
 				if c.ColorEnabled() {
-					frame = styleDim.Render(frame)
+					frame = render(styleDim, frame)
 				}
 				// Clear to the end of the line: the text shrinks when a note
 				// is dropped or the message is updated to a shorter one.
-				fmt.Fprintf(c.EWriter, "\r%s %s\033[K", frame, s.line.text())
+				fmt.Fprintf(c.EWriter, "\r%s %s\033[K", frame, Sanitize(s.line.text()))
 				i++
 			}
 		}
@@ -2078,7 +2082,7 @@ func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context st
 		if context != "" {
 			line += " · " + context
 		}
-		fmt.Fprintln(c.EWriter, line)
+		fmt.Fprintln(c.EWriter, Sanitize(line))
 	}
 	return nil
 }
@@ -2157,15 +2161,16 @@ func (c *Config) dryRunText(reqs []DryRunRequest) error {
 	}
 	for i, r := range reqs {
 		if c.ColorEnabled() {
-			tag := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("dry-run")
-			m := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(r.Method)
-			p := styleDim.Render(r.Path)
+			tag := render(lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true), "dry-run")
+			m := render(lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true), r.Method)
+			p := render(styleDim, r.Path)
 			fmt.Fprintf(c.Writer, "  [%s]  %s %s\n", tag, m, p)
 		} else {
-			fmt.Fprintf(c.Writer, "%s %s\n", r.Method, r.Path)
+			fmt.Fprintf(c.Writer, "%s %s\n", Sanitize(r.Method), Sanitize(r.Path))
 		}
 		if bodies[i] != nil {
-			indented := "  " + strings.ReplaceAll(string(bodies[i]), "\n", "\n  ")
+			// JSON escapes C0 but not DEL or C1.
+			indented := "  " + strings.ReplaceAll(Sanitize(string(bodies[i])), "\n", "\n  ")
 			fmt.Fprintln(c.Writer, indented)
 		}
 	}
@@ -2196,7 +2201,7 @@ func (c *Config) Footer(parts ...string) {
 	var kept []string
 	for _, p := range parts {
 		if p != "" {
-			kept = append(kept, p)
+			kept = append(kept, Sanitize(p))
 		}
 	}
 	if len(kept) == 0 {
@@ -2333,9 +2338,9 @@ func (c *Config) ListFooter(p ListPage) {
 // Dim returns text rendered in a muted/gray style.
 func (c *Config) Dim(s string) string {
 	if !c.ColorEnabled() {
-		return s
+		return c.unstyled(s)
 	}
-	return styleDim.Render(s)
+	return render(styleDim, s)
 }
 
 // ParseFormat validates and returns the Format value from a flag string.
@@ -2373,9 +2378,9 @@ func (c *Config) Title(name string) {
 		return
 	}
 	if c.ColorEnabled() {
-		fmt.Fprintln(c.Writer, c.SandboxTag()+styleTitle.Render(name))
+		fmt.Fprintln(c.Writer, c.SandboxTag()+render(styleTitle, name))
 	} else {
-		fmt.Fprintln(c.Writer, c.SandboxTag()+name)
+		fmt.Fprintln(c.Writer, c.SandboxTag()+Sanitize(name))
 	}
 }
 
@@ -2418,7 +2423,7 @@ func (c *Config) WarnBox(lines ...string) {
 		}
 		return
 	}
-	body := strings.Join(lines, "\n")
+	body := Sanitize(strings.Join(lines, "\n"))
 	if c.ColorEnabled() {
 		style := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -2432,7 +2437,7 @@ func (c *Config) WarnBox(lines ...string) {
 		if c.MaxWidth > 4 && lipgloss.Width(body)+4 > c.MaxWidth {
 			style = style.Width(c.MaxWidth - 2)
 		}
-		fmt.Fprintln(c.EWriter, style.Render(body))
+		fmt.Fprintln(c.EWriter, render(style, body))
 	} else {
 		// The "! " every other warning has, not "WARNING: ", which a piped
 		// table printed where TSV printed "! " for the same box (#289).
@@ -2443,17 +2448,17 @@ func (c *Config) WarnBox(lines ...string) {
 // Red returns text styled in the error/red adaptive color.
 func (c *Config) Red(s string) string {
 	if !c.ColorEnabled() {
-		return s
+		return c.unstyled(s)
 	}
-	return lipgloss.NewStyle().Foreground(acRed).Render(s)
+	return render(lipgloss.NewStyle().Foreground(acRed), s)
 }
 
 // Amber returns text styled in the warning/amber adaptive color.
 func (c *Config) Amber(s string) string {
 	if !c.ColorEnabled() {
-		return s
+		return c.unstyled(s)
 	}
-	return lipgloss.NewStyle().Foreground(acAmber).Render(s)
+	return render(lipgloss.NewStyle().Foreground(acAmber), s)
 }
 
 // IsStderrTTY reports whether stderr is a terminal.

@@ -122,7 +122,7 @@ func stubStart(t *testing.T, fail func(name string) error) *[][]string {
 	t.Helper()
 	var calls [][]string
 	prev := startCommand
-	startCommand = func(wait bool, name string, args ...string) error {
+	startCommand = func(wait bool, _ []string, name string, args ...string) error {
 		call := append([]string{name}, args...)
 		if wait {
 			call = append([]string{"wait"}, call...)
@@ -203,6 +203,52 @@ func TestOpenBrowser_HonoursBROWSER(t *testing.T) {
 			t.Error("openBrowser succeeded with no opener available")
 		}
 	})
+}
+
+// TestOpenBrowser_EnvOmitsCredentials guards #338: the browser and the
+// platform opener were started with namecom's whole environment, so
+// NAMECOM_TOKEN reached the browser and everything it spawns.
+func TestOpenBrowser_EnvOmitsCredentials(t *testing.T) {
+	t.Setenv("NAMECOM_TOKEN", "secret-token")
+	t.Setenv("NAMECOM_USERNAME", "someone")
+	t.Setenv("NAMECOM_PROFILE", "work")
+	t.Setenv("BROWSER", "missing-browser")
+	t.Setenv("HOME_MARKER_338", "kept")
+
+	var envs [][]string
+	prev := startCommand
+	startCommand = func(_ bool, env []string, name string, _ ...string) error {
+		envs = append(envs, env)
+		if name == "missing-browser" {
+			return exec.ErrNotFound
+		}
+		return nil
+	}
+	t.Cleanup(func() { startCommand = prev })
+
+	if err := openBrowser("https://www.name.com/account/domain/"); err != nil {
+		t.Fatalf("openBrowser: %v", err)
+	}
+	if len(envs) != 2 {
+		t.Fatalf("started %d commands, want $BROWSER then the platform opener", len(envs))
+	}
+	for i, env := range envs {
+		if env == nil {
+			t.Fatalf("command %d: nil env inherits the whole environment", i)
+		}
+		kept := false
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "NAMECOM_") {
+				t.Errorf("command %d: env has %q", i, kv)
+			}
+			if kv == "HOME_MARKER_338=kept" {
+				kept = true
+			}
+		}
+		if !kept {
+			t.Errorf("command %d: env lost unrelated variables", i)
+		}
+	}
 }
 
 // TestRenderOpen guards issue #184: with no opener (headless Linux, SSH,

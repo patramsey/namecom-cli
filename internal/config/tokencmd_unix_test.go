@@ -152,3 +152,20 @@ func TestRunTokenCmd_RejectsMultiLineOutput(t *testing.T) {
 		t.Errorf("runTokenCmd(padded) = %q, %v; want s3cret", tok, err)
 	}
 }
+
+// TestRunTokenCmd_EnvOmitsToken pins the token_cmd half of #338. The helper
+// keeps namecom's environment — `op`, `pass` and `vault` need HOME, PATH and
+// their own session variables, and NAMECOM_PROFILE or NAMECOM_USERNAME may
+// pick the entry — but not NAMECOM_TOKEN: it produces the token, so it never
+// needs one, and `auth login --token-cmd` runs it with the variable still set.
+func TestRunTokenCmd_EnvOmitsToken(t *testing.T) {
+	t.Setenv("NAMECOM_TOKEN", "env-secret")
+	t.Setenv("NAMECOM_PROFILE", "work")
+	tok, err := runTokenCmd(`printf '%s-%s' "${NAMECOM_TOKEN:-unset}" "$NAMECOM_PROFILE"`)
+	if err != nil {
+		t.Fatalf("runTokenCmd: %v", err)
+	}
+	if tok != "unset-work" {
+		t.Errorf("helper saw NAMECOM_TOKEN-NAMECOM_PROFILE = %q, want unset-work", tok)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/internal/api"
 	"github.com/patramsey/namecom-cli/internal/config"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +123,7 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 			id := strconv.Itoa(*r.ID)
 			typ, host, answer := derefStr(r.Type), derefStr(r.Host), derefStr(r.Answer)
 			// "12345\tA @ → 1.2.3.4" — tab separates value from description in zsh/fish
-			completions = append(completions, fmt.Sprintf("%s\t%s %s → %s", id, typ, host, answer))
+			completions = append(completions, id+"\t"+completionDesc(fmt.Sprintf("%s %s → %s", typ, host, answer)))
 		}
 		next, ok := NextPage(page, result.NextPage, result.LastPage)
 		if !ok {
@@ -131,6 +132,20 @@ func CompleteRecordIDs(cmd *cobra.Command, domain string) ([]string, cobra.Shell
 		page = next
 	}
 	return completions, cobra.ShellCompDirectiveNoFileComp
+}
+
+// completionDesc makes s, which holds API values, safe as a completion's
+// description: a line break would end the completion and start another one
+// from the rest, a tab would start another field, and an escape sequence
+// would reach the terminal the shell draws the menu on (#337).
+func completionDesc(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, s)
+	return output.Sanitize(s)
 }
 
 // CompleteProfiles offers the profile names in the config file, for --profile

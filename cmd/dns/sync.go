@@ -303,7 +303,9 @@ func printPlan(out *output.Config, p *syncPlan) error {
 		out.Table([]string{"ACTION", "TYPE", "HOST", "ANSWER", "TTL", "PRIORITY"}, planRows(p))
 		return nil
 	}
-	w := out.Writer
+	// Sanitized: records come from the zone and the file, and a zone file's
+	// \DDD escapes can put any byte in a name (#337).
+	w := output.SanitizeWriter(out.Writer)
 	verb := "Plan"
 	if p.DryRun {
 		verb = "Plan (dry run, nothing sent)"

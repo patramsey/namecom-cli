@@ -2,9 +2,8 @@
 
 ## Supported Versions
 
-`namecom` is pre-1.0 (currently in the `0.2.x` series). Only the latest
-released version is supported — there's no parallel maintenance of older
-minor versions at this stage.
+`namecom` is pre-1.0. Only the latest released version is supported —
+there's no parallel maintenance of older minor versions at this stage.
 
 ## Reporting a Vulnerability
 

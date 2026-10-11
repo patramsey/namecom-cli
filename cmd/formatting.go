@@ -49,7 +49,21 @@ Formats (-o, --output):
   -q are usage errors there.
 
   In TSV a cell's backslash, tab, line feed and carriage return are written
-  \\, \t, \n and \r, so every row is one line.
+  \\, \t, \n and \r, so every row is one line, and any other control
+  character as below.
+
+Control characters:
+
+  A table, TSV, and every message, warning, error and prompt show a control
+  character in a value as an escape instead of sending it to the terminal:
+  ESC is \x1b, DEL \x7f, a C1 character such as U+009B \u009b. Tables and
+  messages also escape the bidi and zero-width characters that change how
+  text reads (U+200B-U+200F, U+202A-U+202E, U+2066-U+2069, U+FEFF). JSON and
+  YAML carry the value itself, escaped as those formats escape it.
+
+  --jq prints a string result raw, as jq -r does, and api prints the
+  response body as it came: either can send a value's escape sequences to
+  the terminal. Pipe them through cat -v to read untrusted values.
 
 Picking fields (--fields a,b,c):
 

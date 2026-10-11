@@ -31,6 +31,24 @@ Releases before `0.2.0` predate this file. Their notes are on the
   an exported zone synced straight back plans no change. A CAA value read
   from a zone file is now kept in zone-file quoting, so one holding a tab no
   longer reads back as a different record.
+- Control characters in values from the API — a DNS answer, a forwarding
+  target, an error message — no longer reach the terminal. An escape
+  sequence in one was obeyed: it could set the window title, clear the
+  screen, rewrite the lines above, or write the clipboard. Tables, detail
+  views, messages, warnings, hints, errors, confirmation prompts, the
+  `dns sync` plan, `status`, `api`'s error bodies and record-ID completion
+  descriptions now show them as escapes (`\x1b`, `\x7f`, `\u009b`), along
+  with the bidi and zero-width characters that change how text reads. The
+  CLI's own colours are unaffected. JSON and YAML are unchanged; `--jq`
+  strings and `api` response bodies still print raw, as `namecom help
+  formatting` now says. Output a script might notice: `-o tsv` escapes
+  control characters other than tab and line breaks the same way, where it
+  wrote some of them raw and silently dropped escape sequences (#337).
+- `namecom open` (and the token page `auth login` offers to open) starts the
+  browser without any `NAMECOM_*` variable. It passed namecom's whole
+  environment, so `NAMECOM_TOKEN` reached the browser and everything it
+  spawns. A `token_cmd` helper still gets the environment, minus
+  `NAMECOM_TOKEN` (#338).
 
 ## [0.5.4] - 2026-10-08
 
