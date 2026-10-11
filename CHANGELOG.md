@@ -9,6 +9,30 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-11
+
+Security fixes from a review of how namecom handles credentials, untrusted
+data and its own releases (#337–#343). Nothing here was reported as
+exploited; most need someone who can already put data in your account or
+change your environment.
+
+Output a script might notice:
+
+- A config file that other users can write, or that someone else owns, is
+  refused (type `auth`, exit 3), even when credentials come from the
+  environment. `chmod 600` it, as the error's hint says.
+- `auth login`, `auth logout` and `config use` refuse to write through a
+  symlinked config; point `NAMECOM_CONFIG` at the real file.
+- New warnings on stderr (`{"warnings": [...]}` in JSON): `--token` on the
+  command line, a plain `http://` endpoint that is not loopback, a
+  config others can read (now whatever stderr is), and `auth login` with a
+  `--base-url` or `NAMECOM_BASE_URL` override.
+- Control characters from API data print escaped (`\x1b`) in tables,
+  messages, prompts and TSV; TSV no longer silently strips escape
+  sequences. JSON and YAML are unchanged.
+- A secret an API reply echoes into an error's `message` or `details`
+  reads `[redacted]`.
+
 ### Security
 
 - Release archives carry signed build provenance. `gh attestation verify
@@ -2689,7 +2713,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/patramsey/namecom-cli/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/patramsey/namecom-cli/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/patramsey/namecom-cli/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/patramsey/namecom-cli/compare/v0.5.1...v0.5.2
