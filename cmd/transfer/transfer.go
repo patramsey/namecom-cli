@@ -333,6 +333,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidAuthCode(createAuthCode); err != nil {
 		return err
 	}
+	// An error that quotes the code is scrubbed of it, as the debug log's
+	// body already was by field name (#341).
+	api.AddSecret(createAuthCode)
 
 	// A dry run reads the domain first: one already in this account cannot be
 	// transferred in, and the dry run quoted the transfer fee for it anyway
@@ -577,6 +580,9 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.ValidAuthCode(internalAuthCode); err != nil {
 		return err
 	}
+	// An error that quotes the code is scrubbed of it, as the debug log's
+	// body already was by field name (#341).
+	api.AddSecret(internalAuthCode)
 
 	body := coreapigo.CreateInternalTransferInRequest{
 		DomainName: domain,

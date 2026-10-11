@@ -857,7 +857,9 @@ func reportError(cfg *output.Config, err error) int {
 	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
 		netErr.Timeout = gf.timeout
 	}
-	cfg.ErrorWith(err, errorInfo(err))
+	// The credential and any auth code this invocation used are replaced in
+	// the message and details, wherever the reply put them (#341).
+	cfg.ErrorWith(api.RedactError(err), errorInfo(err))
 	return exitCode(err)
 }
 

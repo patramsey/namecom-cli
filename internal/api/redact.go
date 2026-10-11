@@ -33,6 +33,10 @@ var secretFields = map[string]bool{
 	"clientsecret": true,
 }
 
+// IsSecretField reports whether a JSON key, or a field `namecom api -f`
+// sets, names a secret, by the rules RedactBody uses.
+func IsSecretField(key string) bool { return isSecretField(key) }
+
 func isSecretField(key string) bool {
 	k := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(key))
 	return secretFields[k]
