@@ -126,6 +126,11 @@ func TestBaseURLOverride(t *testing.T) {
 		{"arbitrary host warns", "https://example.invalid", true},
 		{"official production is silent", "https://api.name.com", false},
 		{"official sandbox is silent", "https://api.dev.name.com", false},
+		{"official host with a port is silent", "https://api.name.com:443", false},
+		// #341: plain http sends the Basic credential in the clear, to
+		// name.com's own hosts as much as anyone's.
+		{"plain http to production warns", "http://api.name.com", true},
+		{"plain http to the sandbox warns", "http://api.dev.name.com/", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,6 +138,30 @@ func TestBaseURLOverride(t *testing.T) {
 				t.Errorf("baseURLWarning(%q) = %q; warning expected = %v", tc.baseURL, got, tc.wantWarn)
 			}
 		})
+	}
+}
+
+// TestBaseURLOverride_PlainHTTP: http that leaves the machine says the
+// credential goes unencrypted; http to loopback, a local stub, does not (#341).
+func TestBaseURLOverride_PlainHTTP(t *testing.T) {
+	tests := []struct {
+		baseURL   string
+		wantPlain bool
+	}{
+		{"http://api.name.com", true},
+		{"http://10.0.0.5:8080", true},
+		{"http://stub:8080", true},
+		{"https://example.invalid", false},
+		{"http://127.0.0.1:8080", false},
+		{"http://localhost:8080", false},
+		{"http://[::1]:8080", false},
+	}
+	for _, tc := range tests {
+		got := baseURLWarningFor("NAMECOM_BASE_URL", tc.baseURL)
+		if strings.Contains(got, "unencrypted") != tc.wantPlain {
+			t.Errorf("baseURLWarningFor(%q) = %q; mentions unencrypted http = %v, want %v",
+				tc.baseURL, got, !tc.wantPlain, tc.wantPlain)
+		}
 	}
 }
 

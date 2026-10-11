@@ -74,6 +74,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
   success message said "production". With an override set, the message now
   names the endpoint (`Logged in to <url> as … (profile …, a production
   profile)`), and the `--dry-run` preview adds `checkedAgainst` (#341).
+- A plain `http://` `--base-url` or `NAMECOM_BASE_URL` warns that the
+  credential travels unencrypted, `http://api.name.com` included; only
+  loopback addresses are exempt. Such a value is still accepted: an http
+  stub on a LAN or container network is a legitimate setup. In JSON mode the
+  warning is a `{"warnings":[…]}` document on stderr where there was none
+  for `http://api.name.com` (#341).
 
 ## [0.5.4] - 2026-10-08
 
