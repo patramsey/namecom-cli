@@ -20,6 +20,17 @@ Releases before `0.2.0` predate this file. Their notes are on the
   with the same Go toolchain produces the same binary.
 - The release fails, rather than editing `go.mod`, if the module files are not
   tidy or a dependency does not match `go.sum`.
+- `dns export --zone` escapes every field it writes, not only TXT values
+  (#340). An owner name or answer holding a newline was written raw, so the
+  text after it read as a zone line of its own — a record the zone never had,
+  which `dns import` or `dns sync` would then create. Control characters
+  (newline, tab, carriage return, ESC, ...) and spaces are now written as
+  RFC 1035 `\DDD` escapes, and `;`, `(`, `)`, `"` and `\` as `\X`, in owner
+  names, every answer type, the ANAME comment line and CAA values. Ordinary
+  records come out unchanged, and the escapes read back to the same bytes, so
+  an exported zone synced straight back plans no change. A CAA value read
+  from a zone file is now kept in zone-file quoting, so one holding a tab no
+  longer reads back as a different record.
 
 ## [0.5.4] - 2026-10-08
 
