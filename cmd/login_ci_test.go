@@ -125,6 +125,46 @@ func TestAuthLogin_WithToken(t *testing.T) {
 			t.Errorf("the check sent %d requests to NAMECOM_BASE_URL, want 1", hello.hits.Load())
 		}
 	})
+
+	// #341: login skipped the warning every other command prints, so a
+	// stale NAMECOM_BASE_URL took the token silently, and the message said
+	// "production" though production was never asked.
+	t.Run("NAMECOM_BASE_URL is warned about and named", func(t *testing.T) {
+		withConfig(t, "")
+		ciLogin(t, "alice", true, "")
+		stubHello(t, http.StatusOK, `{"username":"alice"}`)
+		stub := gf.baseURL
+		t.Setenv("NAMECOM_BASE_URL", stub)
+		gf.baseURL = ""
+
+		cmd, buf := stdinCmd(t, "tok")
+		if err := runAuthLogin(cmd, nil); err != nil {
+			t.Fatalf("runAuthLogin: %v", err)
+		}
+		warnings := strings.Join(cmdutil.Out(cmd).TakeWarnings(), "\n")
+		if !strings.Contains(warnings, "NAMECOM_BASE_URL") || !strings.Contains(warnings, "not name.com") {
+			t.Errorf("warnings = %q, want the NAMECOM_BASE_URL caution", warnings)
+		}
+		if !strings.Contains(buf.String(), "Logged in to "+stub+" as alice") {
+			t.Errorf("message = %s, want it to name %s, not production", buf.String(), stub)
+		}
+	})
+
+	t.Run("--dry-run names the endpoint the check used", func(t *testing.T) {
+		withConfig(t, "")
+		ciLogin(t, "alice", true, "")
+		stubHello(t, http.StatusOK, `{"username":"alice"}`)
+		stub := gf.baseURL
+
+		cmd, buf := stdinCmd(t, "tok")
+		cmd.PersistentFlags().Bool("dry-run", true, "")
+		if err := runAuthLogin(cmd, nil); err != nil {
+			t.Fatalf("runAuthLogin --dry-run: %v", err)
+		}
+		if !strings.Contains(buf.String(), `"checkedAgainst": "`+stub+`"`) {
+			t.Errorf("preview = %s, want it to name %s", buf.String(), stub)
+		}
+	})
 }
 
 func TestAuthLogin_TokenCmd(t *testing.T) {

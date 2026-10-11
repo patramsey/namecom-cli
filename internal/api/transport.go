@@ -367,8 +367,9 @@ const debugTimeFormat = "2006-01-02T15:04:05.000Z07:00"
 // logRequest writes the request line, headers and body. Headers are logged as
 // sent — this transport sits inside headerTransport, so auth, User-Agent and
 // the idempotency key are already on req — with every credential header's
-// value redacted (see redactHeaders) and secrets in the body redacted (see
-// RedactBody).
+// value redacted (see redactHeaders), secrets in the body redacted (see
+// RedactBody), and userinfo and secret-looking query values redacted from the
+// URL (see redactURL).
 func (t *retryTransport) logRequest(req *http.Request, attempt int, start time.Time) {
 	if t.logw == nil {
 		return
@@ -377,7 +378,7 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int, start time.T
 	if attempt > 0 {
 		prefix = fmt.Sprintf("→ (retry %d)", attempt)
 	}
-	fmt.Fprintf(t.logw, "%s %s %s %s\n", start.Format(debugTimeFormat), prefix, req.Method, req.URL.String())
+	fmt.Fprintf(t.logw, "%s %s %s %s\n", start.Format(debugTimeFormat), prefix, req.Method, redactURL(req.URL))
 	for _, line := range redactHeaders(req.Header, nil) {
 		fmt.Fprintf(t.logw, "  %s\n", line)
 	}

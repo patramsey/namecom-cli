@@ -103,6 +103,16 @@ func fieldsBody(fields []field) ([]byte, error) {
 	return json.Marshal(root)
 }
 
+// lastKeySegment is the innermost name in a field key: authCode for
+// transfer[authCode], and the key itself when it has no brackets.
+func lastKeySegment(key string) string {
+	parts := strings.FieldsFunc(key, func(r rune) bool { return r == '[' || r == ']' })
+	if len(parts) == 0 {
+		return key
+	}
+	return parts[len(parts)-1]
+}
+
 // fieldsQuery is fields as query parameters, for a GET or HEAD. Keys are
 // sent as written, a[b] included.
 func fieldsQuery(fields []field) url.Values {

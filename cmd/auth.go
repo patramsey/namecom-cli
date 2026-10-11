@@ -114,9 +114,19 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	}
 	// The credential check below honours --base-url and NAMECOM_BASE_URL, so
 	// reject a bad one before the form rather than after it.
+	//
+	// It is warned about as every other command warns about it, and before the
+	// form, so the warning is on screen before the token is typed. Login used
+	// to skip the warning: a NAMECOM_BASE_URL left exported from testing
+	// against a stub sent the token to that host, and the success message
+	// said "production" (#341).
 	if raw, src := loginBaseURL(); raw != "" {
-		if err := checkBaseURL(config.SourceName(src), raw); err != nil {
+		name := config.SourceName(src)
+		if err := checkBaseURL(name, raw); err != nil {
 			return cmdutil.NewUsageError(err)
+		}
+		if warn := baseURLWarningFor(name, raw); warn != "" {
+			out.Warn(warn)
 		}
 	}
 
@@ -209,8 +219,12 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			Username:     a.Username,
 			Sandbox:      &a.Sandbox,
 			UsesTokenCmd: saved.TokenCmd != "",
-			Default:      cfgFile.Default,
-			Summary:      fmt.Sprintf("save profile %q (username %s, %s)", loginProfile, a.Username, api.DefaultBaseURL(a.Sandbox)),
+			CheckedAgainst: func() string {
+				raw, _ := loginBaseURL()
+				return raw
+			}(),
+			Default: cfgFile.Default,
+			Summary: fmt.Sprintf("save profile %q (username %s, %s)", loginProfile, a.Username, loginEndpointNote(a.Sandbox)),
 		})
 		return nil
 	}
@@ -220,7 +234,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 
 	path, _ := config.ActivePath()
 	if verifiedAs != "" {
-		out.Success(fmt.Sprintf("Logged in to %s as %s (profile %s)", loginEnv(a.Sandbox), verifiedAs, loginProfile))
+		out.Success(loginSuccess(a.Sandbox, verifiedAs))
 		out.Hint("Credentials saved to " + path)
 	} else {
 		out.Success(fmt.Sprintf("Credentials saved to %s (profile: %s), unverified", path, loginProfile))
@@ -513,6 +527,28 @@ func rejectedLoginError(err error, a loginAnswers) error {
 		msg += ". Sandbox credentials are separate from production ones, and the username usually ends in -test"
 	}
 	return &loginRejectedError{msg: msg, err: err}
+}
+
+// loginSuccess is the message for credentials the check accepted. It names
+// the endpoint that accepted them: the environment, or the --base-url /
+// NAMECOM_BASE_URL endpoint when one is set, since then name.com was never
+// asked, followed by the environment the saved profile uses (#341).
+func loginSuccess(sandbox bool, verifiedAs string) string {
+	if raw, _ := loginBaseURL(); raw != "" {
+		return fmt.Sprintf("Logged in to %s as %s (profile %s, a %s profile)", raw, verifiedAs, loginProfile, loginEnv(sandbox))
+	}
+	return fmt.Sprintf("Logged in to %s as %s (profile %s)", loginEnv(sandbox), verifiedAs, loginProfile)
+}
+
+// loginEndpointNote is the endpoint the --dry-run summary names: the one the
+// saved profile uses, and the override the check went to when one is set.
+// The override is not saved; it applies only while it is passed or exported.
+func loginEndpointNote(sandbox bool) string {
+	def := api.DefaultBaseURL(sandbox)
+	if raw, src := loginBaseURL(); raw != "" {
+		return fmt.Sprintf("%s; checked against %s from %s", def, raw, config.SourceName(src))
+	}
+	return def
 }
 
 func loginEnv(sandbox bool) string {

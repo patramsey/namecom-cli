@@ -67,6 +67,39 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a dangling link made `auth login` create a token file wherever it
   pointed; the error names `NAMECOM_CONFIG=<target>` as the fix — and over
   a file someone else owns. (#342)
+- `auth login` warns when `--base-url` or `NAMECOM_BASE_URL` sends the
+  credential check somewhere other than name.com, as every other command
+  does, and before the form asks for the token. A `NAMECOM_BASE_URL` left
+  exported from testing against a stub took the token silently, and the
+  success message said "production". With an override set, the message now
+  names the endpoint (`Logged in to <url> as … (profile …, a production
+  profile)`), and the `--dry-run` preview adds `checkedAgainst` (#341).
+- A plain `http://` `--base-url` or `NAMECOM_BASE_URL` warns that the
+  credential travels unencrypted, `http://api.name.com` included; only
+  loopback addresses are exempt. Such a value is still accepted: an http
+  stub on a LAN or container network is a legitimate setup. In JSON mode the
+  warning is a `{"warnings":[…]}` document on stderr where there was none
+  for `http://api.name.com` (#341).
+- Secrets are redacted by value as well as by field name. The API token,
+  its `Authorization` encoding, and any auth code this invocation was given
+  (`transfer create` / `internal-in --auth-code`, `api -f authCode=…`) are
+  replaced by `[redacted]` in error messages, the JSON envelope's `details`
+  and the `--debug` log, wherever the reply put them: a proxy that echoed
+  the request headers, or an error quoting the code, printed them in full.
+  The `--debug` request line redacts URL userinfo and the values of query
+  parameters named like secrets (`token`, `access_token`, `api_key`), and
+  `api --dry-run` redacts secret fields in the body it previews, as
+  `transfer create --dry-run` already did. Standard output is unchanged:
+  `api` still prints a successful reply as it came, and `domain auth-code`
+  still prints the code. A script that read a secret back out of an error's
+  `details` now gets `[redacted]` (#341).
+- The global `--token` flag warns that it puts the token in shell history
+  and the process list; it still works. In JSON mode that is a
+  `{"warnings":[…]}` document on stderr, which a script passing `--token`
+  did not get before (#341).
+- `transfer create` and `transfer internal-in` read the auth code from
+  standard input with `--auth-code -`, so a job without a terminal no longer
+  has to put it in argv (#341).
 
 ## [0.5.4] - 2026-10-08
 

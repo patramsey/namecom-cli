@@ -295,6 +295,13 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A secret passed as a field (-f authCode=…) is scrubbed from errors and
+	// the debug log by value, as transfer create's --auth-code is (#341).
+	for _, f := range fields {
+		if api.IsSecretField(lastKeySegment(f.key)) {
+			api.AddSecret(f.text)
+		}
+	}
 	isRead := method == http.MethodGet || method == http.MethodHead
 
 	// Read the body once, up front: stdin cannot be read twice, and --dry-run
@@ -464,6 +471,14 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 	_, err = cmdutil.RunWrite(cmd, cmdutil.Write[any]{
 		Method: method, Path: parsed.RequestURI(), Body: payload,
+		// The preview redacts secret fields as transfer create's does; it
+		// printed an -f authCode=… in full (#341).
+		Preview: func(b any) any {
+			if rb, ok := b.(rawBody); ok {
+				return rawBody(api.RedactBody(rb))
+			}
+			return b
+		},
 		Prompt: fmt.Sprintf("Send %s %s?", label, parsed.RequestURI()),
 	}, func(ctx context.Context, b any) error {
 		rb, _ := b.(rawBody) // nil for NoBody

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -155,6 +156,16 @@ func New(opts Options) (*Client, error) {
 	// headerTransport wraps retryTransport, not the reverse. See its doc
 	// comment: the idempotency key must be stamped once, before the retry loop
 	// replays the request.
+	// The credential, in both the forms a reply could echo, is scrubbed by
+	// value from errors and the debug log (#341).
+	if opts.Creds.Token != "" {
+		AddSecret(opts.Creds.Token)
+		AddSecret(strings.TrimPrefix(authHeader, "Basic "))
+	}
+	var logw io.Writer
+	if opts.DebugLog != nil {
+		logw = scrubWriter{opts.DebugLog}
+	}
 	writes := &writeLog{}
 	httpClient := &http.Client{
 		Timeout:       timeout,
@@ -167,7 +178,7 @@ func New(opts Options) (*Client, error) {
 				base:       http.DefaultTransport,
 				limiter:    rate.NewLimiter(rate.Limit(rps), burst),
 				maxRetries: maxRetries,
-				logw:       opts.DebugLog,
+				logw:       logw,
 				onRetry:    opts.OnRetry,
 				writes:     writes,
 			},

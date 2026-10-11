@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"slices"
@@ -688,6 +689,11 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	}
 
 	out.Sandbox = creds.Sandbox
+	// auth login refuses --token; elsewhere it works, but say what it costs
+	// (#341). Not during completion: anything printed there lands mid-prompt.
+	if gf.token != "" && !forCompletion {
+		out.Warn("--token puts the API token in shell history and the process list; set NAMECOM_TOKEN, or save it with 'namecom auth login'")
+	}
 	if !forCompletion && creds.BaseURL == "" && envNoticeTTY() {
 		if note := envEndpointNotice(cfgFile, creds, ov); note != "" {
 			out.Warn(note)
@@ -856,7 +862,9 @@ func reportError(cfg *output.Config, err error) int {
 	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
 		netErr.Timeout = gf.timeout
 	}
-	cfg.ErrorWith(err, errorInfo(err))
+	// The credential and any auth code this invocation used are replaced in
+	// the message and details, wherever the reply put them (#341).
+	cfg.ErrorWith(api.RedactError(err), errorInfo(err))
 	return exitCode(err)
 }
 
@@ -1040,16 +1048,41 @@ func baseURLWarning(raw string) string { return baseURLWarningFor("--base-url", 
 
 // baseURLWarningFor is baseURLWarning for a value from name, the flag or the
 // NAMECOM_BASE_URL variable.
+//
+// Plain http is warned about wherever it leaves the machine, name.com's own
+// hosts included: the Authorization header is the token, base64-encoded, and
+// http carries it in the clear (#341). Loopback is exempt from that half,
+// since a local stub is what the flag is for. http to another host is not
+// refused: an http stub on a LAN or a container network (`http://stub:8080`)
+// is a legitimate setup, and refusing it would break those users for a case
+// the warning already names.
 func baseURLWarningFor(name, raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
-	switch u.Host {
-	case "api.name.com", "api.dev.name.com":
+	host := strings.ToLower(u.Hostname())
+	nameCom := host == "api.name.com" || host == "api.dev.name.com"
+	plain := strings.EqualFold(u.Scheme, "http") && !isLoopbackHost(host)
+	switch {
+	case nameCom && plain:
+		return fmt.Sprintf("%s uses plain http: your API credentials are being sent to %s unencrypted — use https://", name, u.Host)
+	case nameCom:
 		return ""
+	case plain:
+		return fmt.Sprintf("%s is set: requests and your API credentials are being sent to %s, not name.com, unencrypted over plain http", name, u.Host)
 	}
 	return fmt.Sprintf("%s is set: requests and your API credentials are being sent to %s, not name.com", name, u.Host)
+}
+
+// isLoopbackHost reports whether host, a URL's host name without its port,
+// names this machine: localhost, or a loopback IP address.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // normalizeError converts a Core SDK error into the CLI's *api.APIError before
