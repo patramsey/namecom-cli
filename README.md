@@ -99,20 +99,29 @@ brew install namecom
 
 **Download a release binary:**
 ```bash
-# macOS (Apple Silicon)
-curl -L https://github.com/patramsey/namecom-cli/releases/latest/download/namecom_darwin_arm64.tar.gz | tar xz
-sudo mv namecom /usr/local/bin/
+# namecom_darwin_arm64.tar.gz (Apple Silicon), namecom_darwin_amd64.tar.gz (Intel Mac),
+# namecom_linux_amd64.tar.gz or namecom_linux_arm64.tar.gz
+ARCHIVE=namecom_darwin_arm64.tar.gz
+BASE=https://github.com/patramsey/namecom-cli/releases/latest/download
 
-# macOS (Intel)
-curl -L https://github.com/patramsey/namecom-cli/releases/latest/download/namecom_darwin_amd64.tar.gz | tar xz
-sudo mv namecom /usr/local/bin/
+curl -fLO "$BASE/$ARCHIVE"
+curl -fLO "$BASE/checksums.txt"
+grep " $ARCHIVE\$" checksums.txt | shasum -a 256 -c   # must print "OK"
 
-# Linux (amd64)
-curl -L https://github.com/patramsey/namecom-cli/releases/latest/download/namecom_linux_amd64.tar.gz | tar xz
+tar xzf "$ARCHIVE"
 sudo mv namecom /usr/local/bin/
 ```
 
 All platforms and checksums on the [releases page](https://github.com/patramsey/namecom-cli/releases).
+
+The checksum catches a corrupted download. To check that an archive was built
+by this repository's release workflow from a tagged commit, verify its build
+provenance with the [GitHub CLI](https://cli.github.com/) (releases after
+v0.5.4):
+
+```bash
+gh attestation verify "$ARCHIVE" --repo patramsey/namecom-cli
+```
 
 > **macOS:** these binaries are not signed with an Apple Developer ID. The
 > commands above are unaffected — `curl` does not set the quarantine attribute —

@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Stated rather than inherited from the repository default, so CI stays
+# read-only if that default ever changes.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
