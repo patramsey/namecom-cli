@@ -93,6 +93,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   `api` still prints a successful reply as it came, and `domain auth-code`
   still prints the code. A script that read a secret back out of an error's
   `details` now gets `[redacted]` (#341).
+- The global `--token` flag warns that it puts the token in shell history
+  and the process list; it still works. In JSON mode that is a
+  `{"warnings":[…]}` document on stderr, which a script passing `--token`
+  did not get before (#341).
+- `transfer create` and `transfer internal-in` read the auth code from
+  standard input with `--auth-code -`, so a job without a terminal no longer
+  has to put it in argv (#341).
 
 ## [0.5.4] - 2026-10-08
 

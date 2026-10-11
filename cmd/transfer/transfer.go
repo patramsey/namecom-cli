@@ -67,7 +67,11 @@ var createCmd = &cobra.Command{
 
   # Apply WHOIS contacts on arrival instead of the account defaults. Changing
   # contacts may start a registrar transfer lock, per account settings.
-  namecom transfer create example.com --auth-code XXXXXX --contacts-file contacts.json`,
+  namecom transfer create example.com --auth-code XXXXXX --contacts-file contacts.json
+
+  # Without a terminal, as in CI, read the code from standard input so it is
+  # kept out of the process list and shell history.
+  printf '%s' "$AUTH_CODE" | namecom transfer create example.com --auth-code - --yes`,
 	Args: cmdutil.ExactArgs(1),
 	// A domain to transfer in is held elsewhere, not in this account (#187).
 	ValidArgsFunction: cobra.NoFileCompletions,
@@ -87,7 +91,11 @@ name.com support to request access.
 The losing account must unlock the domain and supply the authorization code from
 the name.com dashboard first — this command cannot do either.`,
 	Example: `  namecom transfer internal-in example.com --auth-code XXXXXX
-  namecom transfer internal-in example.com --auth-code XXXXXX --contacts-file contacts.json`,
+  namecom transfer internal-in example.com --auth-code XXXXXX --contacts-file contacts.json
+
+  # Without a terminal, as in CI, read the code from standard input so it is
+  # kept out of the process list and shell history.
+  printf '%s' "$AUTH_CODE" | namecom transfer internal-in example.com --auth-code - --yes`,
 	Args: cmdutil.ExactArgs(1),
 	RunE: runInternalIn,
 }
@@ -129,7 +137,7 @@ var eligibilityCmd = &cobra.Command{
 }
 
 func init() {
-	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
+	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", authCodeUsage)
 	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "include WHOIS privacy (free) with the transfer")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
 		"which a premium domain's transfer requires; not a cap, see --max-price")
@@ -138,7 +146,7 @@ func init() {
 	createCmd.Flags().BoolVar(&createWatch, "watch", false, "poll transfer status every 5 minutes until complete or failed")
 	createCmd.Flags().StringVar(&createContactsFile, "contacts-file", "", contactsFileUsage)
 
-	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", "transfer authorization code "+cmdutil.PromptedRequired)
+	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", authCodeUsage)
 	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
 
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfers")
@@ -305,6 +313,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if createAuthCode, err = readAuthCode(cmd, createAuthCode); err != nil {
+		return err
+	}
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
 	if createAuthCode == "" {
 		if !output.IsInteractive() {
@@ -553,6 +564,9 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if internalAuthCode, err = readAuthCode(cmd, internalAuthCode); err != nil {
+		return err
+	}
 	if internalAuthCode == "" {
 		if !output.IsInteractive() {
 			return cmdutil.RequiredFlags(true, "auth-code")
@@ -908,6 +922,40 @@ func contactsPromptNote(c *coreapigo.ContactsRequest) string {
 		return ""
 	}
 	return " and apply the contacts file (may start a transfer lock)"
+}
+
+// authCodeUsage is --auth-code's help on both commands.
+const authCodeUsage = "transfer authorization code, or - to read it from standard input " + cmdutil.PromptedRequired
+
+// maxAuthCodeInput bounds what --auth-code - reads: a code is a few dozen
+// bytes, and a mistakenly piped file should not be read whole.
+const maxAuthCodeInput = 4096
+
+// readAuthCode resolves an --auth-code value: "-" reads the code from
+// standard input, anything else is the code itself. Without a terminal to
+// prompt in, argv was the only way to pass it, and argv is visible in the
+// process list and kept in shell history (#341).
+func readAuthCode(cmd *cobra.Command, code string) (string, error) {
+	if code != "-" {
+		return code, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), maxAuthCodeInput+1))
+	if err != nil {
+		return "", fmt.Errorf("reading the auth code from standard input: %w", err)
+	}
+	if len(data) > maxAuthCodeInput {
+		return "", cmdutil.NewUsageError(fmt.Errorf("standard input holds more than %d bytes; --auth-code - reads only the code", maxAuthCodeInput))
+	}
+	got := strings.TrimSpace(string(data))
+	if got == "" {
+		return "", cmdutil.NewUsageErrorHint(errors.New("--auth-code - read no code from standard input"),
+			`pipe it in: printf '%s' "$AUTH_CODE" | namecom transfer ... --auth-code -`)
+	}
+	// Never echo it: the input may be a whole file with the code in it.
+	if strings.ContainsAny(got, "\r\n") {
+		return "", cmdutil.NewUsageError(errors.New("standard input holds more than one line; --auth-code - reads only the code"))
+	}
+	return got, nil
 }
 
 // redactedAuthCode replaces the auth code in a --dry-run preview. It is the

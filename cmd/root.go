@@ -689,6 +689,11 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	}
 
 	out.Sandbox = creds.Sandbox
+	// auth login refuses --token; elsewhere it works, but say what it costs
+	// (#341). Not during completion: anything printed there lands mid-prompt.
+	if gf.token != "" && !forCompletion {
+		out.Warn("--token puts the API token in shell history and the process list; set NAMECOM_TOKEN, or save it with 'namecom auth login'")
+	}
 	if !forCompletion && creds.BaseURL == "" && envNoticeTTY() {
 		if note := envEndpointNotice(cfgFile, creds, ov); note != "" {
 			out.Warn(note)
