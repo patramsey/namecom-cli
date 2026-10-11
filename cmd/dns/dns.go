@@ -847,32 +847,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	if exportZone {
 		for _, r := range records {
-			rtype := derefStr(r.Type)
-			rdata := derefStr(r.Answer)
-			switch rtype {
-			case "CNAME", "NS":
-				rdata = qualify(rdata)
-			case "MX", "SRV":
-				rdata = qualifyTarget(rdata)
-				// MX and SRV require priority prepended to rdata. Emit 0 when the
-				// record has none — omitting it yields a line with the wrong field
-				// count, which zone parsers reject.
-				rdata = fmt.Sprintf("%d %s", derefInt64(r.Priority), rdata)
-			case "TXT":
-				// TXT rdata is a character-string: unquoted, a value containing
-				// spaces (SPF, DKIM) parses as several separate strings and no
-				// longer describes the same record.
-				rdata = quoteTXT(rdata)
-			case "ANAME":
-				// ANAME is name.com's own type, not a standard RR, so a zone
-				// parser rejects the line — and with it the whole file. Keep
-				// the record visible as a comment instead.
-				fmt.Fprintf(out.Writer, "; ANAME not representable in a zone file: %s\t%d\tIN\tANAME\t%s\n",
-					derefStr(r.Fqdn), r.TTL, qualify(rdata))
-				continue
-			}
-			fmt.Fprintf(out.Writer, "%s\t%d\tIN\t%s\t%s\n",
-				derefStr(r.Fqdn), r.TTL, rtype, rdata)
+			fmt.Fprintln(out.Writer, zoneLine(r, domain))
 		}
 		return nil
 	}
@@ -1517,6 +1492,107 @@ func asciiAnswer(rtype, host, answer string) (string, error) {
 		}
 	}
 	return a, nil
+}
+
+// zoneLine is r as one `dns export --zone` line. Every field the API supplies
+// is escaped for the zone syntax it lands in (#340): an owner name or answer
+// holding a newline used to be written raw, and the text after it read as a
+// line of its own — a record the zone never had. Escaping rather than refusing
+// keeps a zone with one odd record exportable, and parseZone decodes the same
+// escapes, so the value reads back byte for byte and `dns sync` sees no change.
+func zoneLine(r *coreapigo.Record, domain string) string {
+	owner := zoneField(zoneOwner(r, domain))
+	rtype := derefStr(r.Type)
+	rdata := derefStr(r.Answer)
+	switch rtype {
+	case "A", "AAAA":
+		rdata = zoneField(rdata)
+	case "CNAME", "NS":
+		rdata = zoneField(qualify(rdata))
+	case "MX":
+		// MX and SRV require priority prepended to rdata. Emit 0 when the
+		// record has none — omitting it yields a line with the wrong field
+		// count, which zone parsers reject.
+		rdata = fmt.Sprintf("%d %s", derefInt64(r.Priority), zoneField(qualify(rdata)))
+	case "SRV":
+		rdata = fmt.Sprintf("%d %s", derefInt64(r.Priority), zoneFields(qualifyTarget(rdata)))
+	case "TXT":
+		// TXT rdata is a character-string: unquoted, a value containing
+		// spaces (SPF, DKIM) parses as several separate strings and no
+		// longer describes the same record.
+		rdata = quoteTXT(rdata)
+	case "CAA":
+		rdata = zoneCAA(rdata)
+	case "ANAME":
+		// ANAME is name.com's own type, not a standard RR, so a zone
+		// parser rejects the line — and with it the whole file. Keep
+		// the record visible as a comment instead, escaped like a record
+		// line: parseZone reads it back out of the comment.
+		return fmt.Sprintf("%s%s\t%d\tIN\tANAME\t%s", anameCommentPrefix, owner, r.TTL, zoneField(qualify(rdata)))
+	default:
+		rdata = zoneFields(rdata)
+	}
+	return fmt.Sprintf("%s\t%d\tIN\t%s\t%s", owner, r.TTL, zoneField(rtype), rdata)
+}
+
+// zoneOwner is r's owner name: its fqdn, or, when the API left that out, the
+// name its host makes in domain. An empty owner would start the line with a
+// tab, which a zone parser reads as "same owner as the line before".
+func zoneOwner(r *coreapigo.Record, domain string) string {
+	if fqdn := derefStr(r.Fqdn); fqdn != "" {
+		return fqdn
+	}
+	zone := qualify(strings.TrimSuffix(domain, "."))
+	if h := derefStr(r.Host); h != "" && h != "@" {
+		return h + "." + zone
+	}
+	return zone
+}
+
+// zoneField escapes s as one unquoted zone-file field: control characters
+// and spaces as RFC 1035 \DDD decimal escapes, and the characters that end a
+// field or start a comment, quote or group — ; ( ) " \ — as \X. An ordinary
+// name or address has none of them and is written unchanged.
+func zoneField(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case isControl(c) || c == ' ':
+			fmt.Fprintf(&b, `\%03d`, c)
+		case c == ';' || c == '(' || c == ')' || c == '"' || c == '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// zoneFields escapes rdata of several space-separated fields, keeping each
+// single space as the separator: SRV's "weight port target", or a type this
+// command does not know.
+func zoneFields(rdata string) string {
+	f := strings.Split(rdata, " ")
+	for i := range f {
+		f[i] = zoneField(f[i])
+	}
+	return strings.Join(f, " ")
+}
+
+// zoneCAA writes CAA rdata, which the API holds as `flags tag "value"`, with
+// the value as a quoted character-string escaped like TXT. An answer not in
+// that shape is escaped field by field.
+func zoneCAA(a string) string {
+	f := strings.SplitN(strings.TrimSpace(a), " ", 3)
+	if len(f) != 3 {
+		return zoneFields(a)
+	}
+	v := strings.TrimSpace(f[2])
+	if parts, ok := parseQuotedTXT(v); ok {
+		v = strings.Join(parts, "")
+	}
+	return zoneField(f[0]) + " " + zoneField(f[1]) + ` "` + escapeTXT(v) + `"`
 }
 
 // qualify appends the trailing dot that makes a hostname absolute in a zone

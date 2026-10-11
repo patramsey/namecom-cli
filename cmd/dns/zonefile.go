@@ -359,7 +359,9 @@ func zoneRdata(rec *inputRecord, rdata []zoneToken, origin string) error {
 		if len(rdata) != 3 {
 			return fmt.Errorf("expected flags, tag and value, got %d field(s)", len(rdata))
 		}
-		rec.Answer = rdata[0].text + " " + rdata[1].text + " " + strconv.Quote(rdata[2].text)
+		// The value in zone-file quoting, which normAnswer reads; Go's
+		// strconv.Quote wrote a tab as \t, which reads back as "t".
+		rec.Answer = rdata[0].text + " " + rdata[1].text + ` "` + escapeTXT(rdata[2].text) + `"`
 	default:
 		return fmt.Errorf("record type %s is not one name.com hosts (A, AAAA, ANAME, CAA, CNAME, MX, NS, SRV, TXT)", rec.Type)
 	}

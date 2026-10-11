@@ -691,6 +691,13 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
 			},
 		},
+		"dns export --zone": {
+			args: []string{"dns", "export", "example.com", "--zone"},
+			why:  "escaping the zone lines is local work",
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
+			},
+		},
 		"dns import": {
 			args: []string{"dns", "import", "example.com", "--file", recordsFile, "--yes"},
 			want: []string{
