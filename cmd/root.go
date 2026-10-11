@@ -141,6 +141,10 @@ func run() int {
 	if ferr := endFilter(); err == nil {
 		err = ferr
 	}
+	if resolvedOut != nil && checksForUpdates(os.Args[1:]) {
+		// Not for a TAB: anything printed there lands mid-prompt.
+		flushConfigWarnings(resolvedOut)
+	}
 	if err != nil {
 		return reportError(errorOutput(), err)
 	}
@@ -148,6 +152,16 @@ func run() int {
 		resolvedOut.FlushWarnings()
 	}
 	return 0
+}
+
+// flushConfigWarnings hands out the warnings config.Load raised — a config
+// file other users can read — so they print as every other warning does: a
+// "! …" line, or the JSON/YAML warnings array. Load printed them itself, and
+// only to a terminal, so a script never saw them (#342).
+func flushConfigWarnings(out *output.Config) {
+	for _, w := range config.TakeWarnings() {
+		out.Warn(w)
+	}
 }
 
 // rootSuggestFor maps words typed in place of a top-level command to the
@@ -650,6 +664,10 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	if !forCompletion {
+		// Now, ahead of the command's output, rather than when run() ends.
+		flushConfigWarnings(out)
+	}
 
 	if err := cmdutil.RequireProfile(cfgFile, ov); err != nil {
 		return err
@@ -863,6 +881,10 @@ func errorInfo(err error) output.ErrorInfo {
 		info.Type = output.ErrorTypeAuth
 		return info
 	}
+	if _, ok := errors.AsType[*config.UnsafeFileError](err); ok {
+		info.Type = output.ErrorTypeAuth
+		return info
+	}
 	if errors.Is(err, cmdutil.ErrAborted) {
 		info.Type = output.ErrorTypeAborted
 		return info
@@ -941,6 +963,11 @@ func exitCode(err error) int {
 		return 2
 	}
 	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
+		return 3
+	}
+	// A config file refused as unsafe is where the credentials live, and
+	// none can be used until it is fixed (#342).
+	if _, ok := errors.AsType[*config.UnsafeFileError](err); ok {
 		return 3
 	}
 	// Ahead of the status: a 5xx write is 6, not 1. reportError wraps it.
