@@ -369,3 +369,24 @@ func TestStatus_NullListElementsAreSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestStatus_EscapesControlCharacters: the overview prints domain names from
+// the API with Fprintf, so they are sanitized there too (#337).
+func TestStatus_EscapesControlCharacters(t *testing.T) {
+	var buf bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+	renderStatus(out, statusSummary{
+		DomainsTotal: 2, ExpiringCritical: 1,
+		ExpiringDomains: []expiryItem{{Domain: "a\x1b]0;t\a.com", Expires: "2026-09-27", Days: 3}},
+		PendingDomains:  []string{"b\x1b[2J.com"},
+	})
+	got := buf.String()
+	if strings.ContainsAny(got, "\x1b\a") {
+		t.Errorf("status output holds a raw control character:\n%q", got)
+	}
+	for _, want := range []string{`a\x1b]0;t\x07.com`, `b\x1b[2J.com`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status output missing %s:\n%q", want, got)
+		}
+	}
+}

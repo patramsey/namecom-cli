@@ -288,8 +288,11 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 }
 
 func renderStatus(out *output.Config, s statusSummary) {
+	// Domain names come from the API: their control characters print
+	// escaped (#337).
+	w := output.SanitizeWriter(out.Writer)
 	// Header line: profile + endpoint.
-	fmt.Fprintf(out.Writer, "%s%s  %s  %s\n",
+	fmt.Fprintf(w, "%s%s  %s  %s\n",
 		out.SandboxTag(),
 		out.Dim("Profile"),
 		s.Profile,
@@ -323,12 +326,12 @@ func renderStatus(out *output.Config, s statusSummary) {
 	if s.Unlocked > 0 {
 		unlockedPart = "  " + out.Dim(output.Thousands(s.Unlocked)+" unlocked")
 	}
-	fmt.Fprintf(out.Writer, "%s%s%s%s\n", total, expPart, transferPart, unlockedPart)
+	fmt.Fprintf(w, "%s%s%s%s\n", total, expPart, transferPart, unlockedPart)
 
 	// Balance, only when we actually have it. A failed lookup leaves this nil
 	// and prints nothing — showing "$0.00" would read as an empty account.
 	if s.Balance != nil {
-		fmt.Fprintf(out.Writer, "%s  %s\n", out.Dim("Balance"), output.Money(*s.Balance))
+		fmt.Fprintf(w, "%s  %s\n", out.Dim("Balance"), output.Money(*s.Balance))
 	}
 
 	// Expired and expiring domains, each under its own heading.
@@ -341,15 +344,15 @@ func renderStatus(out *output.Config, s statusSummary) {
 		}
 	}
 	if len(expired) > 0 {
-		fmt.Fprintln(out.Writer)
-		fmt.Fprintln(out.Writer, "Expired")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Expired")
 		for _, e := range expired {
-			fmt.Fprintf(out.Writer, "  %-30s %s  %s\n", e.Domain, e.Expires, out.Red(expiredAgo(-e.Days)))
+			fmt.Fprintf(w, "  %-30s %s  %s\n", e.Domain, e.Expires, out.Red(expiredAgo(-e.Days)))
 		}
 	}
 	if len(expiring) > 0 {
-		fmt.Fprintln(out.Writer)
-		fmt.Fprintln(out.Writer, "Expiring soon")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Expiring soon")
 		for _, e := range expiring {
 			days := "(" + output.RelativeDays(float64(e.Days)) + ")"
 			if e.Days < 7 {
@@ -357,21 +360,21 @@ func renderStatus(out *output.Config, s statusSummary) {
 			} else {
 				days = out.Amber(days)
 			}
-			fmt.Fprintf(out.Writer, "  %-30s %s  %s\n", e.Domain, e.Expires, days)
+			fmt.Fprintf(w, "  %-30s %s  %s\n", e.Domain, e.Expires, days)
 		}
 	}
 
 	// Pending transfers section.
 	if len(s.PendingDomains) > 0 {
-		fmt.Fprintln(out.Writer)
-		fmt.Fprintln(out.Writer, "Transfers in progress")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Transfers in progress")
 		for _, d := range s.PendingDomains {
-			fmt.Fprintf(out.Writer, "  %s\n", d)
+			fmt.Fprintf(w, "  %s\n", d)
 		}
 	}
 
 	// Footer hints.
-	fmt.Fprintln(out.Writer)
+	fmt.Fprintln(w)
 	// The hint names what is listed: it said "expiring" under a list of
 	// domains that had already expired (#293).
 	expiringN := s.ExpiringCritical + s.ExpiringSoon

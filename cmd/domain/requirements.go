@@ -107,7 +107,7 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		// the SDK says they must be shown before registration — .ca's warns
 		// that an order not meeting the rules will fail (#172).
 		for _, notice := range requirementNotices(result.Requirements) {
-			fmt.Fprintln(out.Writer, "Note: "+notice)
+			fmt.Fprintln(out.Writer, "Note: "+output.Sanitize(notice))
 		}
 		// The requirements themselves are nested and conditional; a table would
 		// misrepresent them, so point at the structured view rather than

@@ -393,7 +393,9 @@ are — on an empty list too.
 with an embedded jq ([gojq](https://github.com/itchyny/gojq)), so `jq` need
 not be installed. Each result prints on its own line: a string as itself,
 without quotes (as `jq -r` and `gh --jq` print it), anything else as compact
-JSON. gojq prints an object's keys sorted.
+JSON. gojq prints an object's keys sorted. A string prints raw, escape
+sequences and all, where a table shows them as `\x1b`: pipe through
+`cat -v` to read values you don't trust.
 
 ```bash
 namecom domain list --all --jq '.data[] | select(.locked | not) | .domainName'
@@ -414,7 +416,8 @@ still go to stderr as the usual envelope.
 unless `--no-header`. There is no colour, a date has no "(in 3 months)", and
 a missing value is an empty cell, not "—". A backslash, tab, line feed or
 carriage return in a value is written `\\`, `\t`, `\n` or `\r`, so every row
-is one line. The shape never depends on the data:
+is one line, and any other control character as an escape such as `\x1b`.
+The shape never depends on the data:
 
 - A list prints a header row and a row per item, with the same columns
   whatever the items hold, and the header alone when it is empty. Several

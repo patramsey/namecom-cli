@@ -64,6 +64,34 @@ func TestCompleteRecordIDs(t *testing.T) {
 		}
 	})
 
+	// #337: the description quotes the record's answer. A line break in it
+	// ended the completion and offered the rest as another one, and an
+	// escape sequence reached the terminal the shell draws the menu on.
+	t.Run("description holds no control characters", func(t *testing.T) {
+		var requests int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"records":[{"id":42,"host":"www","type":"TXT","answer":"a\n99\tfake\u001b[2J","ttl":300}]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		got, _ := CompleteRecordIDs(cmdWithClient(t, srv), "example.com")
+		if requests != 1 {
+			t.Errorf("made %d requests, want 1", requests)
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %d completions, want 1: %q", len(got), got)
+		}
+		_, desc, _ := strings.Cut(got[0], "\t")
+		if strings.ContainsAny(desc, "\n\t\x1b") {
+			t.Errorf("description %q holds a control character", desc)
+		}
+		if !strings.Contains(desc, `a 99 fake\x1b[2J`) {
+			t.Errorf("description = %q, want the answer on one line, escaped", desc)
+		}
+	})
+
 	t.Run("walks every page", func(t *testing.T) {
 		var requests int
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

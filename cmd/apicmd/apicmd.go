@@ -400,7 +400,7 @@ func runAPI(cmd *cobra.Command, args []string) error {
 				return nil, apiErr
 			}
 			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
-			_, _ = out.EWriter.Write(respBody)
+			_, _ = output.SanitizeWriter(out.EWriter).Write(respBody) // an error page may be any text (#337)
 			fmt.Fprintln(out.EWriter)
 			return nil, apiErr
 		}

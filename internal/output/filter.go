@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/itchyny/gojq"
 )
 
@@ -776,19 +775,13 @@ func plain(v any) any {
 	return v
 }
 
-// tsvEscaper escapes a TSV cell so that every row is one line and every tab
-// separates two cells: a backslash, tab, line feed or carriage return becomes
-// \\, \t, \n or \r. It is the "linear TSV" convention `mlr` and PostgreSQL's
-// text COPY format read.
-var tsvEscaper = strings.NewReplacer(`\`, `\\`, "\t", `\t`, "\n", `\n`, "\r", `\r`)
-
 // writeTSV prints headers (unless nil or --no-header) and rows as
-// tab-separated lines, each cell escaped by tsvEscaper.
+// tab-separated lines, each cell escaped by tsvEscape.
 func (c *Config) writeTSV(headers []string, rows [][]string) {
 	line := func(cells []string) {
 		esc := make([]string, len(cells))
 		for i, v := range cells {
-			esc[i] = tsvEscaper.Replace(v)
+			esc[i] = tsvEscape(v)
 		}
 		fmt.Fprintln(c.Writer, strings.Join(esc, "\t"))
 	}
@@ -807,7 +800,7 @@ func tsvCells(rows [][]string) [][]string {
 	for i, r := range rows {
 		out[i] = make([]string, len(r))
 		for j, v := range r {
-			if v = ansi.Strip(v); v != None {
+			if v = unstyle(v); v != None {
 				out[i][j] = v
 			}
 		}

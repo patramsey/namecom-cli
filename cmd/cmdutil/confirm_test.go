@@ -102,3 +102,17 @@ func hintOf(err error) string {
 	}
 	return ""
 }
+
+// TestConfirmField_SanitizesPrompt pins the prompt half of #337: the
+// question quotes API values, and an escape sequence in one reached the
+// terminal inside the prompt the user was answering.
+func TestConfirmField_SanitizesPrompt(t *testing.T) {
+	var result bool
+	view := confirmField("Delete TXT x → \x1b[2Jfake?", "account \x1b]0;t\a", &result).View()
+	if strings.ContainsAny(view, "\a") || strings.Contains(view, "\x1b[2J") || strings.Contains(view, "\x1b]0;") {
+		t.Errorf("prompt passes raw escape sequences:\n%q", view)
+	}
+	if !strings.Contains(view, `\x1b[2Jfake?`) || !strings.Contains(view, `\x1b]0;t\x07`) {
+		t.Errorf("prompt does not show the escapes:\n%q", view)
+	}
+}
