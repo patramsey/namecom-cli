@@ -9,6 +9,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Security
+
+- Release archives carry signed build provenance. `gh attestation verify
+  <archive> --repo patramsey/namecom-cli` confirms an archive was built by
+  this repository's release workflow from the tagged commit; the README's
+  install steps now also check the download against `checksums.txt`.
+- Release binaries are built with `-trimpath` and the commit's timestamp, so
+  they no longer embed the build machine's paths and a rebuild of the same tag
+  with the same Go toolchain produces the same binary.
+- The release fails, rather than editing `go.mod`, if the module files are not
+  tidy or a dependency does not match `go.sum`.
+
 ## [0.5.4] - 2026-10-08
 
 Fixes from a third live sandbox sweep (#322–#327), and a Go toolchain update

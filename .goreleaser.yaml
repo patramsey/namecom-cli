@@ -2,9 +2,14 @@ version: 2
 
 project_name: namecom
 
+# Checks, not fixes. `go mod tidy` here could rewrite go.mod in the middle of
+# a release, shipping a binary built from a tree that matches no commit.
+# `tidy -diff` (Go 1.23+) fails instead and prints what is out of date;
+# `verify` fails if a downloaded module does not match go.sum.
 before:
   hooks:
-    - go mod tidy
+    - go mod tidy -diff
+    - go mod verify
 
 builds:
   - binary: namecom
@@ -20,6 +25,13 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    # Reproducible builds: -trimpath drops the builder's filesystem paths
+    # (/home/runner/go/pkg/mod/...) from the binary, and mod_timestamp sets
+    # the binary's file time to the commit's, so a rebuild of the same tag
+    # with the same Go toolchain produces the same binary.
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X main.version={{.Version}}
 
