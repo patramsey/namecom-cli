@@ -67,6 +67,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
   a dangling link made `auth login` create a token file wherever it
   pointed; the error names `NAMECOM_CONFIG=<target>` as the fix — and over
   a file someone else owns. (#342)
+- `auth login` warns when `--base-url` or `NAMECOM_BASE_URL` sends the
+  credential check somewhere other than name.com, as every other command
+  does, and before the form asks for the token. A `NAMECOM_BASE_URL` left
+  exported from testing against a stub took the token silently, and the
+  success message said "production". With an override set, the message now
+  names the endpoint (`Logged in to <url> as … (profile …, a production
+  profile)`), and the `--dry-run` preview adds `checkedAgainst` (#341).
 
 ## [0.5.4] - 2026-10-08
 

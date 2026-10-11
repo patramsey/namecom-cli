@@ -208,7 +208,8 @@ func TestAuthLogin_VerifiesBeforeSaving(t *testing.T) {
 		if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 			t.Fatalf("output is not one JSON document: %v\n%s", err, buf.String())
 		}
-		if want := "Logged in to production as alice (profile work)"; got["message"] != want {
+		// The stub is a --base-url, so the message names it (#341).
+		if want := "Logged in to " + gf.baseURL + " as alice (profile work, a production profile)"; got["message"] != want {
 			t.Errorf("message = %q, want %q", got["message"], want)
 		}
 		f, _ := config.Load()
@@ -227,7 +228,7 @@ func TestAuthLogin_VerifiesBeforeSaving(t *testing.T) {
 		if err := runAuthLogin(cmd, nil); err != nil {
 			t.Fatalf("runAuthLogin: %v", err)
 		}
-		if !strings.Contains(buf.String(), "Logged in to sandbox as alice-test (profile sbx)") {
+		if !strings.Contains(buf.String(), "as alice-test (profile sbx, a sandbox profile)") {
 			t.Errorf("output does not say sandbox:\n%s", buf.String())
 		}
 	})

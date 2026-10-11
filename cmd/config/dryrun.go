@@ -28,6 +28,10 @@ type Change struct {
 	// UsesTokenCmd says the profile would get its token from a token_cmd
 	// (`auth login --token-cmd`) rather than store one.
 	UsesTokenCmd bool `json:"usesTokenCmd,omitempty"`
+	// CheckedAgainst is the --base-url or NAMECOM_BASE_URL endpoint that
+	// `auth login` checked the credentials with, when one is set. It is not
+	// saved in the profile.
+	CheckedAgainst string `json:"checkedAgainst,omitempty"`
 	// Default is the file's `default:` key after the change; "" for none.
 	// remove_profile reports the profile that is the default afterwards
 	// instead, which may be implied by the profiles that remain, and says
