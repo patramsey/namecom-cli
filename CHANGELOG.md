@@ -49,6 +49,24 @@ Releases before `0.2.0` predate this file. Their notes are on the
   environment, so `NAMECOM_TOKEN` reached the browser and everything it
   spawns. A `token_cmd` helper still gets the environment, minus
   `NAMECOM_TOKEN` (#338).
+- A config file other users can write, or that someone else owns, is now
+  refused on Unix: every command that reads it fails with exit 3 (type
+  `auth`) and a hint giving the `chmod 600` to run. Anyone who could write
+  the file could make `namecom` run commands as you through a profile's
+  `token_cmd`, which ran silently when stderr was not a terminal. **Scripts
+  will notice:** a group- or world-writable config used to work and is now
+  an error, even when the credentials come from the environment. (#342)
+- A config file others can read still works, but the warning now prints
+  whatever stderr is — in JSON and YAML modes as part of the `warnings`
+  array — rather than only on a terminal. (#342)
+- Saving the config (`auth login`, `auth logout`, `config use`) writes a new
+  0600 file beside it and renames it into place. It used to truncate and
+  rewrite the file, so a crash or a full disk lost every profile, and it
+  wrote the token into an existing readable file before tightening its
+  mode. It now refuses to save through a symbolic link at the config path —
+  a dangling link made `auth login` create a token file wherever it
+  pointed; the error names `NAMECOM_CONFIG=<target>` as the fix — and over
+  a file someone else owns. (#342)
 
 ## [0.5.4] - 2026-10-08
 

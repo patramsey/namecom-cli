@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -29,7 +30,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -218,28 +218,39 @@ func ActivePath() (string, error) {
 
 // Load reads and parses the config file. A missing file is not an error: it
 // returns an empty File so credentials can still come from flags or env.
+//
+// A file another user could have written is refused (*UnsafeFileError), since
+// its token_cmd would run as this user; see checkReadable. One others can only
+// read raises a warning, collected for TakeWarnings.
 func Load() (*File, error) {
 	path, err := resolveReadPath()
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(path)
+	fh, err := os.Open(path) //nolint:gosec // G304: path is this tool's own config location (XDG, legacy, or NAMECOM_CONFIG), never an API response
 	if errors.Is(err, os.ErrNotExist) {
 		return &File{Profiles: map[string]Profile{}}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
-	// Warn (but do not fail) if the file is group/world accessible — it may hold
-	// a plaintext token. Only when stderr is a terminal: this is raw text
-	// written ahead of the structured error envelope, so emitting it into a
-	// pipe corrupts stderr for anything parsing it. A human sees it; a script
-	// gets clean output. (Save() now repairs the mode on the next write.)
-	if exposedMode(runtime.GOOS, info.Mode()) && term.IsTerminal(int(os.Stderr.Fd())) {
-		fmt.Fprintf(os.Stderr, "! %s is accessible by other users (mode %#o); consider `chmod 600 %s`\n",
-			path, info.Mode().Perm(), path)
+	defer func() { _ = fh.Close() }()
+	info, err := fh.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is this tool's own config location (XDG, legacy, or NAMECOM_CONFIG), never an API response
+	if err := checkReadable(path, info); err != nil {
+		return nil, err
+	}
+	// Readable by others: it may hold a plaintext token. Warn, whatever
+	// stderr is — the CLI prints it through its output config, so JSON mode
+	// gets it in the warnings array rather than as a stray line. Save
+	// repairs the mode on the next write.
+	if info.Mode().IsRegular() && exposedMode(runtime.GOOS, info.Mode()) {
+		addWarning(fmt.Sprintf("%s is readable by other users (mode %#o); run 'chmod 600 %s'",
+			path, info.Mode().Perm(), shellQuote(path)))
+	}
+	data, err := io.ReadAll(fh)
 	if err != nil {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
@@ -261,27 +272,60 @@ func Load() (*File, error) {
 // `auth logout` removed a profile, wrote an empty file to the XDG path, and
 // reported success while the credential stayed readable in the legacy file —
 // now invisible, because the new empty file shadowed it.
+//
+// The new contents go to a temporary file in the same directory, created
+// 0600, synced, and renamed over the config. Writing the file in place
+// truncated it first, so a crash or a full disk lost every profile; it wrote
+// the token into an existing file before tightening its mode; and it followed
+// a symbolic link at the path. A symlink, or a file owned by someone else, is
+// refused (see checkWritable). os.Rename replaces an existing file on Windows
+// too: it uses MoveFileEx with MOVEFILE_REPLACE_EXISTING.
 func Save(f *File) error {
 	path, err := resolveReadPath()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
+	}
+	if err := checkWritable(path); err != nil {
+		return err
 	}
 	data, err := encodeConfig(path, f)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// CreateTemp opens with O_EXCL and mode 0600: nobody else can have the
+	// file open, and the token is never in a file others can read.
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return fmt.Errorf("writing config %s: %w", path, err)
 	}
-	// WriteFile only applies its mode when creating the file, so an existing
-	// world-readable config stayed that way — and we'd just written a token into
-	// it. Load warns about loose permissions; this is what actually fixes them.
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("securing config %s: %w", path, err)
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("writing config %s: %w", path, err)
 	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("writing config %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing config %s: %w", path, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("writing config %s: %w", path, err)
+	}
+	committed = true
+	// The rename is done; a failure to flush the directory entry leaves the
+	// new file in place and is not worth failing a login over.
+	_ = syncDir(dir)
 	return nil
 }
 
