@@ -9,11 +9,21 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-22
+
+Rebuilds v0.5.5 with Go 1.26.10 for a standard-library advisory, with
+updated dependencies. No command changes what it sends to the API.
+
 ### Security
 - The Go toolchain moves to 1.26.10, which distrusts compromised
   intermediate certificates in `crypto/x509` (`GO-2026-6809`). `govulncheck`
   reports it as reachable from this binary. It was published after the
   v0.5.5 build; no code here changed. Building now needs Go 1.26.10.
+
+### Changed
+- Dependency updates: `github.com/namedotcom/core-api-go` v1.36.0, which
+  changes only documentation and its version header, and minor and patch
+  releases of `charmbracelet/x/ansi`, `go-runewidth` and `golang.org/x/*`.
 
 ## [0.5.5] - 2026-10-11
 
@@ -2719,7 +2729,8 @@ and no command changes what it sends to the API.
   [#9](https://github.com/patramsey/namecom-cli/pull/9) and
   [#10](https://github.com/patramsey/namecom-cli/pull/10) for the commits.
 
-[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/patramsey/namecom-cli/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/patramsey/namecom-cli/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/patramsey/namecom-cli/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/patramsey/namecom-cli/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/patramsey/namecom-cli/compare/v0.5.2...v0.5.3
