@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Security
+- The Go toolchain moves to 1.26.10, which distrusts compromised
+  intermediate certificates in `crypto/x509` (`GO-2026-6809`). `govulncheck`
+  reports it as reachable from this binary. It was published after the
+  v0.5.5 build; no code here changed. Building now needs Go 1.26.10.
+
 ## [0.5.5] - 2026-10-11
 
 Security fixes from a review of how namecom handles credentials, untrusted
