@@ -116,3 +116,16 @@ func TestConfirmField_SanitizesPrompt(t *testing.T) {
 		t.Errorf("prompt does not show the escapes:\n%q", view)
 	}
 }
+
+// TestConfirmField_OneLineSummary pins #359: a line feed in the record a
+// prompt quotes printed as a line break, so the question could carry lines
+// that read as part of the form.
+func TestConfirmField_OneLineSummary(t *testing.T) {
+	var result bool
+	view := confirmField("Delete TXT x → a\nFAKE\tb?", "account\nFAKE2", &result).View()
+	for _, want := range []string{`a\nFAKE\tb?`, `account\nFAKE2`} {
+		if !strings.Contains(view, want) {
+			t.Errorf("prompt does not show %q:\n%s", want, view)
+		}
+	}
+}

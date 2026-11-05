@@ -407,8 +407,10 @@ func runAPI(cmd *cobra.Command, args []string) error {
 				return nil, apiErr
 			}
 			fmt.Fprintf(out.EWriter, "HTTP %d\n", resp.StatusCode)
-			_, _ = output.SanitizeWriter(out.EWriter).Write(respBody) // an error page may be any text (#337)
-			fmt.Fprintln(out.EWriter)
+			// Redacted as the error envelope is, since a reply can echo the
+			// request's credentials (#359), and escaped, since an error page
+			// may be any text (#337). Only a successful body prints raw.
+			fmt.Fprintln(out.EWriter, output.Sanitize(api.ScrubSecrets(string(api.RedactBody(respBody)))))
 			return nil, apiErr
 		}
 		return respBody, nil

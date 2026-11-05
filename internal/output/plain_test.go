@@ -23,7 +23,7 @@ func TestPlainTable(t *testing.T) {
 	want := "DOMAIN                  LOCKED\n" +
 		"example.com             yes\n" +
 		"a-much-longer-name.com  no\n" +
-		"multi line cell         —\n"
+		`multi\nline\tcell` + "       —\n"
 	if got := buf.String(); got != want {
 		t.Errorf("plain table:\n%s\nwant:\n%s", got, want)
 	}

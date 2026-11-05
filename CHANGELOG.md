@@ -9,6 +9,32 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+Output a script might notice:
+
+- A line feed or tab in a table cell prints as `\n` or `\t`. A piped
+  `-o table` (the plain, borderless one) turned them into spaces. TSV, JSON,
+  YAML and `-q` are unchanged.
+
+### Security
+
+- Follow-ups to #337 and #341, where API data still reached the terminal
+  unescaped or unredacted (#359):
+  - `namecom api`'s error body on stderr (table mode) is redacted as the
+    error envelope is, so a reply that echoes the request's credentials no
+    longer prints them. A successful body on stdout still prints as it came.
+  - The `--debug` log (and `--debug-file`) escapes control characters in
+    the request and response bodies, URLs and headers it quotes; a body
+    holding an escape sequence could clear the screen or set the title.
+  - Domain-name shell completion drops names holding a control, bidi or
+    zero-width character, which no real domain name has. One reached the
+    terminal the shell draws on, and a line feed split it in two.
+  - A line feed in a record printed a real line break in the `dns sync`
+    plan, so a hostile record could add lines that read as changes to the
+    `--prune` summary; the plan, confirmation prompts and table cells now
+    show it as `\n`. A tab in a table cell hid the text after it, since the
+    table measured it as nothing; it shows as `\t`. Messages keep their line
+    breaks.
+
 ## [0.5.6] - 2026-10-22
 
 Rebuilds v0.5.5 with Go 1.26.10 for a standard-library advisory, with

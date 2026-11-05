@@ -71,6 +71,49 @@ func TestDebugLogRedactsSecretAtTheLogLimit(t *testing.T) {
 	}
 }
 
+// TestDebugLogEscapesControlCharacters pins #359: --debug printed request
+// and response bodies with their escape sequences raw, so a 502 page holding
+// ESC[2J cleared the terminal and a domain name could set its title. Secrets
+// were redacted there; control characters are now escaped as well, after the
+// secrets are replaced, so an escaped form cannot hide one.
+func TestDebugLogEscapesControlCharacters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("<html>\x1b[2Jbad gateway \x1b]0;PWNED\a s3cretdebugtoken</html>"))
+	}))
+	defer srv.Close()
+
+	var log bytes.Buffer
+	c, err := New(Options{
+		BaseURL:    srv.URL,
+		DebugLog:   &log,
+		Creds:      config.Credentials{Username: "u", Token: "s3cretdebugtoken"},
+		MaxRetries: -1,
+	})
+	if err != nil {
+		t.Fatalf("api.New: %v", err)
+	}
+	resp, err := c.HTTPClient().Post(srv.URL+"/core/v1/domains", "text/plain",
+		strings.NewReader("raw\x1b]0;REQ\a\x9b2J"))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	got := log.String()
+	if strings.ContainsAny(got, "\x1b\a") || strings.Contains(got, "\u009b") {
+		t.Errorf("debug log holds a raw control character:\n%q", got)
+	}
+	for _, want := range []string{`raw\x1b]0;REQ\x07\x9b2J`, `\x1b[2Jbad gateway \x1b]0;PWNED\x07 [redacted]`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("debug log does not show %q:\n%q", want, got)
+		}
+	}
+	if strings.Contains(got, "s3cretdebugtoken") {
+		t.Errorf("debug log holds the token:\n%q", got)
+	}
+}
+
 // TestDebugLogTimestampsAndHeaders pins #187: the --debug log had no
 // timestamps and no headers, though headers are most of what a failed request
 // needs to be diagnosed. Each entry now starts with an RFC 3339 timestamp, the

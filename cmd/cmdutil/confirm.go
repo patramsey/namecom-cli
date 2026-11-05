@@ -62,15 +62,16 @@ func Confirm(out *output.Config, yes bool, msg, detail string) (bool, error) {
 // confirmField is the yes/no question Confirm asks. The question and the
 // line under it are sanitized: they quote API values — dns delete's record
 // summary, a domain's price — and an escape sequence in one could rewrite
-// the prompt the user is answering (#337).
+// the prompt the user is answering (#337). Each is one line, so a line feed
+// or tab in a value shows as \n or \t rather than adding lines (#359).
 func confirmField(msg, detail string, result *bool) *huh.Confirm {
 	field := huh.NewConfirm().
-		Title(output.Sanitize(msg)).
+		Title(output.SanitizeLine(msg)).
 		Affirmative("Yes").
 		Negative("No").
 		Value(result)
 	if detail != "" {
-		field = field.Description(output.Sanitize(detail))
+		field = field.Description(output.SanitizeLine(detail))
 	}
 	return field
 }

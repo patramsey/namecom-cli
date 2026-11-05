@@ -673,6 +673,43 @@ func TestAPI_TableErrorKeepsRawBody(t *testing.T) {
 	}
 }
 
+// TestAPI_TableErrorBodyRedacted pins #359: in table mode the error body on
+// stderr was only escaped, so a reply that echoed the request's credentials
+// printed them, while the ✗ line and the JSON envelope were redacted. It is
+// now scrubbed by value and by field name, as the envelope is, and escaped.
+func TestAPI_TableErrorBodyRedacted(t *testing.T) {
+	for name, body := range map[string]string{
+		"json": `{"message":"Bad Request","echo":"Authorization: Basic YWxpY2U6czNjcmV0 token=s3cret","password":"hunter2pw","x":"\u001b[2J"}`,
+		"text": "Authorization: Basic YWxpY2U6czNjcmV0\ntoken=s3cret\n\x1b[2J",
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(srv.Close)
+			cmd, _ := apiCmd(t, srv)
+			out := cmdutil.Out(cmd)
+			out.Format = output.FormatTable
+			var stderr bytes.Buffer
+			out.EWriter = &stderr
+
+			if err := runAPI(cmd, []string{"GET", "/core/v1/domains/x"}); err == nil {
+				t.Fatal("expected an error for HTTP 400")
+			}
+			got := stderr.String()
+			for _, secret := range []string{"YWxpY2U6czNjcmV0", "s3cret", "hunter2pw", "\x1b"} {
+				if strings.Contains(got, secret) {
+					t.Errorf("stderr holds %q:\n%q", secret, got)
+				}
+			}
+			if !strings.Contains(got, api.Redacted) {
+				t.Errorf("stderr does not say %s:\n%q", api.Redacted, got)
+			}
+		})
+	}
+}
+
 // TestMain points os.Stdin at the null device for the whole package. runAPI
 // reads a piped stdin as the body (#231), so a test that inherited the
 // runner's stdin — a pipe in many CI systems — would send whatever was on it,

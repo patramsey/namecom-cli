@@ -598,8 +598,9 @@ func sameBacking(a, b []string) bool {
 // spaces, two between each, with no borders and no trailing whitespace —
 // the shape `gh` prints into a pipe (#233). The bordered table kept its box
 // drawing when piped, so `namecom domain list -o table | awk '{print $1}'`
-// printed "╭───" and "│". Line breaks and tabs in a cell become spaces, so
-// every row stays one line.
+// printed "╭───" and "│". The cells arrive sanitized as one line each
+// (SanitizeLine), a line feed or tab in one shown as \n or \t, so every
+// row stays one line and awk splits it where the columns are.
 func (c *Config) plainTable(headers []string, rows [][]string) {
 	all := rows
 	if headers != nil {
@@ -614,12 +615,6 @@ func (c *Config) plainTable(headers []string, rows [][]string) {
 	for i, r := range all {
 		clean[i] = make([]string, len(r))
 		for j, v := range r {
-			v = strings.Map(func(r rune) rune {
-				if r == '\n' || r == '\r' || r == '\t' {
-					return ' '
-				}
-				return r
-			}, v)
 			clean[i][j] = v
 			widths[j] = max(widths[j], lipgloss.Width(v))
 		}

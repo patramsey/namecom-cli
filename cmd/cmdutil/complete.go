@@ -87,6 +87,12 @@ func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]st
 	}
 	names := make([]string, 0, len(result.Domains))
 	for _, d := range NonNil(result.Domains) {
+		// A real domain name has no control, bidi or zero-width character.
+		// One that does would reach the terminal the shell draws on, or,
+		// with a line feed, split into two candidates (#359).
+		if output.Unprintable(d.DomainName) {
+			continue
+		}
 		names = append(names, d.DomainName)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
