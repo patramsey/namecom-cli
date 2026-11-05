@@ -68,6 +68,15 @@ func RequireProfile(f *config.File, ov config.Overrides) error {
 	if _, ok := f.Profiles[name]; ok {
 		return nil
 	}
+	return ProfileNotFound(f, name)
+}
+
+// ProfileNotFound is the error for a profile the config file does not have,
+// whether --profile, NAMECOM_PROFILE, `config use` or `auth logout` named it.
+// One error everywhere: `config use` exited 2 and `auth status --profile` 3
+// for the same missing profile (#363). Exit 3, as the README's exit-code
+// table has it: without the profile there are no credentials to use.
+func ProfileNotFound(f *config.File, name string) error {
 	cfgPath, _ := config.ActivePath()
 	names := make([]string, 0, len(f.Profiles))
 	for k := range f.Profiles {

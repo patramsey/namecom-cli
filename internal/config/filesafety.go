@@ -77,35 +77,37 @@ func writableByOthers(goos string, mode fs.FileMode) bool {
 // itself — but replacing a link someone made on purpose (a dotfiles checkout)
 // is a surprise, and following one is how a dangling link at NAMECOM_CONFIG
 // made `auth login` create a token file wherever it pointed.
-func checkWritable(path string) error {
+//
+// It returns the file it accepted, or nil when there is none yet.
+func checkWritable(path string) (fs.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("checking config %s: %w", path, err)
+		return nil, writeError(path, err)
 	}
 	if info.Mode()&fs.ModeSymlink != 0 {
 		fix := "remove the link, or point NAMECOM_CONFIG at a regular file"
 		if target, err := filepath.EvalSymlinks(path); err == nil {
 			fix = fmt.Sprintf("set NAMECOM_CONFIG=%s to write the file it points to", shellQuote(target))
 		}
-		return &UnsafeFileError{Op: "write", Path: path, Reason: "is a symbolic link", Fix: fix}
+		return nil, &UnsafeFileError{Op: "write", Path: path, Reason: "is a symbolic link", Fix: fix}
 	}
 	if !info.Mode().IsRegular() {
-		return &UnsafeFileError{
-			Op: "write", Path: path, Reason: "is not a regular file",
-			Fix: "point NAMECOM_CONFIG at a regular file",
+		return nil, &UnsafeFileError{
+			Op: "write", Path: path, Reason: "is " + kindOf(info.Mode()),
+			Fix: pathFix(path),
 		}
 	}
 	if uid, ok := fileOwner(info); ok && uid != currentUID() {
-		return &UnsafeFileError{
+		return nil, &UnsafeFileError{
 			Op: "write", Path: path,
 			Reason: fmt.Sprintf("is owned by another user (uid %d)", uid),
 			Fix:    "point NAMECOM_CONFIG at a config you own",
 		}
 	}
-	return nil
+	return info, nil
 }
 
 // shellQuote quotes s for a POSIX shell when it needs it, so a suggested
@@ -139,6 +141,29 @@ func addWarning(msg string) {
 		}
 	}
 	loadWarning = append(loadWarning, msg)
+}
+
+// exposedWarning is the warning Load raises for a config at path that others
+// can read.
+func exposedWarning(path string, mode fs.FileMode) string {
+	return fmt.Sprintf("%s (mode %#o); run 'chmod 600 %s'", exposedWarningPrefix(path), mode.Perm(), shellQuote(path))
+}
+
+func exposedWarningPrefix(path string) string { return path + " is readable by other users" }
+
+// forgetExposedWarning drops the readable-by-others warning for path, which
+// Save has just made 0600: it printed after the save, telling the user to
+// chmod a file that no longer needed it (#363).
+func forgetExposedWarning(path string) {
+	warnMu.Lock()
+	defer warnMu.Unlock()
+	kept := loadWarning[:0]
+	for _, w := range loadWarning {
+		if !strings.HasPrefix(w, exposedWarningPrefix(path)+" (") {
+			kept = append(kept, w)
+		}
+	}
+	loadWarning = kept
 }
 
 // TakeWarnings returns the warnings raised by Load since the last call, and

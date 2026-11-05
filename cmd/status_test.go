@@ -235,6 +235,30 @@ func TestClassifyExpiry_SeparatesExpiredFromExpiring(t *testing.T) {
 	}
 }
 
+// TestStatus_DaysMatchDomainList guards #363: status truncated to whole days
+// and said "in 56 days" where domain list and get, which round, said "in 57
+// days" for the same expiry.
+func TestStatus_DaysMatchDomainList(t *testing.T) {
+	now := time.Now()
+	for _, span := range []time.Duration{
+		56*24*time.Hour + 15*time.Hour, // 56.6 days ahead
+		2*24*time.Hour + 20*time.Hour,  // 2.8 days ahead
+		-(3*24*time.Hour + 20*time.Hour),
+	} {
+		exp := now.Add(span)
+		c := classifyExpiry([]*coreapigo.DomainResponsePayload{{DomainName: "a.com", ExpireDate: &exp}}, now)
+		var buf bytes.Buffer
+		out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
+		renderStatus(out, statusSummary{DomainsTotal: 1, ExpiringDomains: c.items})
+
+		list := out.ExpiryDate(&exp) // what domain list and get print
+		rel := list[strings.Index(list, "(")+1 : len(list)-1]
+		if !strings.Contains(buf.String(), rel) {
+			t.Errorf("expiry %v away: domain list says %q, status says:\n%s", span, rel, buf.String())
+		}
+	}
+}
+
 // TestStatus_RendersExpiredAsExpired pins the text: an expired domain reads
 // "expired 2 years ago" — the units `domain list` uses for the same date
 // (#238) — not "(-793 days)" under an "Expiring soon" heading.
@@ -244,8 +268,8 @@ func TestStatus_RendersExpiredAsExpired(t *testing.T) {
 	renderStatus(out, statusSummary{
 		DomainsTotal: 2, Expired: 1, ExpiringCritical: 1,
 		ExpiringDomains: []expiryItem{
-			{Domain: "long-dead.com", Expires: "2024-07-22", Days: -793, Expired: true},
-			{Domain: "this-week.com", Expires: "2026-09-27", Days: 3},
+			{Domain: "long-dead.com", Expires: "2024-07-22", Days: -793, Expired: true, until: -793},
+			{Domain: "this-week.com", Expires: "2026-09-27", Days: 3, until: 3},
 		},
 	})
 	got := buf.String()
@@ -377,7 +401,7 @@ func TestStatus_EscapesControlCharacters(t *testing.T) {
 	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}}
 	renderStatus(out, statusSummary{
 		DomainsTotal: 2, ExpiringCritical: 1,
-		ExpiringDomains: []expiryItem{{Domain: "a\x1b]0;t\a.com", Expires: "2026-09-27", Days: 3}},
+		ExpiringDomains: []expiryItem{{Domain: "a\x1b]0;t\a.com", Expires: "2026-09-27", Days: 3, until: 3}},
 		PendingDomains:  []string{"b\x1b[2J.com"},
 	})
 	got := buf.String()

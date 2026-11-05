@@ -572,10 +572,11 @@ func TestJSONContract_Errors(t *testing.T) {
 			wantCode: 2,
 		},
 		{
-			name:     "config use for a profile that does not exist",
-			args:     []string{"config", "use", "nosuch", "--dry-run"},
-			wantType: output.ErrorTypeUsage,
-			wantCode: 2,
+			name: "config use for a profile that does not exist",
+			args: []string{"config", "use", "nosuch", "--dry-run"},
+			// auth, exit 3, as --profile nosuch is (#363).
+			wantType: output.ErrorTypeAuth,
+			wantCode: 3,
 		},
 		{
 			name:     "confirmation required",
@@ -622,8 +623,9 @@ func TestJSONContract_Errors(t *testing.T) {
 			if hint, _ := e["hint"].(string); hint != "" && doc["hint"] != hint {
 				t.Errorf("the deprecated top-level hint should repeat error.hint %q, got %v", hint, doc["hint"])
 			}
-			// Usage errors fail before the client is built, so no warning.
-			if tc.wantType != output.ErrorTypeUsage {
+			// Usage errors fail before the client is built, so no warning;
+			// config commands never build one.
+			if tc.wantType != output.ErrorTypeUsage && tc.args[0] != "config" {
 				if list, _ := doc["warnings"].([]any); len(list) == 0 {
 					t.Errorf("the --base-url warning should be in the envelope's warnings, got:\n%s", stderr)
 				}

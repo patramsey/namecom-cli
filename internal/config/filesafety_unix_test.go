@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // writeConfigMode writes contents to a config file with mode perm — chmod'd
@@ -158,15 +160,22 @@ func TestSave_FailureKeepsOldConfig(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the directory permission this test relies on")
 	}
-	path := writeConfigMode(t, "default: a\nprofiles:\n  a:\n    username: u\n    token: OLD\n", 0o600)
-	dir := filepath.Dir(path)
-	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // a read-only directory, so the save fails
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // restores t.TempDir's mode for its cleanup
+	// The file is read-only as well, so the in-place fallback cannot write
+	// it either.
+	path := writeConfigMode(t, "default: a\nprofiles:\n  a:\n    username: u\n    token: OLD\n", 0o400)
+	readOnlyDir(t, filepath.Dir(path))
 
-	if err := Save(&File{Default: "a", Profiles: map[string]Profile{"a": {Username: "u", Token: "NEW"}}}); err == nil {
-		t.Fatal("Save into a read-only directory succeeded")
+	err := Save(&File{Default: "a", Profiles: map[string]Profile{"a": {Username: "u", Token: "NEW"}}})
+	var fe *FileError
+	if !errors.As(err, &fe) {
+		t.Fatalf("Save = %v, want *FileError", err)
+	}
+	// It names the directory, not the temporary file the user never made.
+	if !strings.Contains(err.Error(), "is not writable") || strings.Contains(err.Error(), ".tmp-") {
+		t.Errorf("error = %q, want it to say the directory is not writable", err)
+	}
+	if !strings.Contains(fe.UserHint(), "chmod u+w") {
+		t.Errorf("hint = %q, want the chmod that fixes it", fe.UserHint())
 	}
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "OLD") {
@@ -183,4 +192,105 @@ func TestSave_TightensExposedConfig(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	wantPrivateMode(t, path)
+}
+
+// readOnlyDir makes dir read-only for the rest of the test, skipping as root,
+// which the permission does not stop.
+func readOnlyDir(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory permission this test relies on")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // a read-only directory, so no new file can be made in it
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // restores t.TempDir's mode for its cleanup
+}
+
+// TestSave_ReadOnlyDirWritesInPlace guards #363: with the directory
+// read-only and the file writable, saving worked before the atomic save
+// (#342) and then failed naming a temporary file. It writes the file in
+// place, still ending 0600.
+func TestSave_ReadOnlyDirWritesInPlace(t *testing.T) {
+	path := writeConfigMode(t, "default: a\nprofiles:\n  a:\n    username: u\n    token: OLD\n", 0o644)
+	dir := filepath.Dir(path)
+	readOnlyDir(t, dir)
+	TakeWarnings()
+	if _, err := Load(); err != nil { // raises the readable-by-others warning
+		t.Fatal(err)
+	}
+
+	if err := Save(&File{Default: "a", Profiles: map[string]Profile{"a": {Username: "u", Token: "NEW"}}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "NEW") {
+		t.Errorf("config = %q, want the new token", data)
+	}
+	wantPrivateMode(t, path)
+	if w := TakeWarnings(); len(w) != 0 {
+		t.Errorf("warnings = %q; the save made the file 0600, so none is due", w)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("directory holds %d entries, want only the config", len(entries))
+	}
+}
+
+// TestSave_ReadOnlyDirNoFile: with nothing to write in place, the error says
+// the directory must be writable.
+func TestSave_ReadOnlyDirNoFile(t *testing.T) {
+	isolateHome(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	t.Setenv("NAMECOM_CONFIG", path)
+	readOnlyDir(t, dir)
+
+	err := Save(&File{Profiles: map[string]Profile{"a": {Username: "u", Token: "T"}}})
+	var fe *FileError
+	if !errors.As(err, &fe) || !strings.Contains(err.Error(), dir+" is not writable") {
+		t.Fatalf("Save = %v, want *FileError saying %s is not writable", err, dir)
+	}
+}
+
+// TestSave_ClearsExposedWarning guards #363: "readable by other users (0644)"
+// printed after the save had already made the file 0600.
+func TestSave_ClearsExposedWarning(t *testing.T) {
+	writeConfigMode(t, "profiles: {}\n", 0o644)
+	TakeWarnings()
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(&File{Profiles: map[string]Profile{"a": {Username: "u", Token: "T"}}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if w := TakeWarnings(); len(w) != 0 {
+		t.Errorf("warnings = %q, want none after the save tightened the mode", w)
+	}
+}
+
+// TestLoad_FIFODoesNotBlock guards #363: a named pipe at NAMECOM_CONFIG hung
+// in os.Open, before the regular-file check could refuse it.
+func TestLoad_FIFODoesNotBlock(t *testing.T) {
+	isolateHome(t)
+	path := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("cannot make a FIFO here: %v", err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+
+	done := make(chan error, 1)
+	go func() { _, err := Load(); done <- err }()
+	select {
+	case err := <-done:
+		var fe *FileError
+		if !errors.As(err, &fe) || !strings.Contains(err.Error(), "named pipe") {
+			t.Errorf("Load = %v, want *FileError saying it is a named pipe", err)
+		}
+	case <-time.After(5 * time.Second):
+		// Unblock the open so the goroutine can finish.
+		if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			_ = w.Close()
+		}
+		t.Fatal("Load blocked on a FIFO")
+	}
 }

@@ -313,7 +313,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if createAuthCode, err = readAuthCode(cmd, createAuthCode); err != nil {
+	if createAuthCode, err = readAuthCode(cmd, domain, createAuthCode); err != nil {
 		return err
 	}
 	// If --auth-code not supplied and we're interactive, prompt for it via form.
@@ -567,7 +567,7 @@ func runInternalIn(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if internalAuthCode, err = readAuthCode(cmd, internalAuthCode); err != nil {
+	if internalAuthCode, err = readAuthCode(cmd, domain, internalAuthCode); err != nil {
 		return err
 	}
 	if internalAuthCode == "" {
@@ -965,8 +965,9 @@ const maxAuthCodeInput = 4096
 // readAuthCode resolves an --auth-code value: "-" reads the code from
 // standard input, anything else is the code itself. Without a terminal to
 // prompt in, argv was the only way to pass it, and argv is visible in the
-// process list and kept in shell history (#341).
-func readAuthCode(cmd *cobra.Command, code string) (string, error) {
+// process list and kept in shell history (#341). domain is for the hint only,
+// which spells out the command that was run.
+func readAuthCode(cmd *cobra.Command, domain, code string) (string, error) {
 	if code != "-" {
 		return code, nil
 	}
@@ -980,7 +981,7 @@ func readAuthCode(cmd *cobra.Command, code string) (string, error) {
 	got := strings.TrimSpace(string(data))
 	if got == "" {
 		return "", cmdutil.NewUsageErrorHint(errors.New("--auth-code - read no code from standard input"),
-			`pipe it in: printf '%s' "$AUTH_CODE" | namecom transfer ... --auth-code -`)
+			fmt.Sprintf(`pipe it in: printf '%%s' "$AUTH_CODE" | %s %s --auth-code -`, cmd.CommandPath(), domain))
 	}
 	// Never echo it: the input may be a whole file with the code in it.
 	if strings.ContainsAny(got, "\r\n") {

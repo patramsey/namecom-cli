@@ -435,3 +435,41 @@ func unmarshalData(b []byte, v any) error {
 	}
 	return json.Unmarshal(doc.Data, v)
 }
+
+// TestUse_AlreadyDefaultDoesNotWrite guards #363: `config use prod` with prod
+// already the default rewrote the file, which failed on a read-only config.
+func TestUse_AlreadyDefaultDoesNotWrite(t *testing.T) {
+	cmd, buf := configCmd(t, output.FormatJSON)
+	path := os.Getenv("NAMECOM_CONFIG")
+	// Extra spaces a rewrite would normalize, so any write shows.
+	contents := "default:    prod\nprofiles:\n  prod:\n    username:   alice\n    token: T\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil { //nolint:gosec // the test's own NAMECOM_CONFIG
+		t.Fatal(err)
+	}
+	if err := runUse(cmd, []string{"prod"}); err != nil {
+		t.Fatalf("config use: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != contents { //nolint:gosec // the test's own NAMECOM_CONFIG
+		t.Errorf("config rewritten:\n%s", data)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output: %v\n%s", err, buf.String())
+	}
+	if got["changed"] != false {
+		t.Errorf("changed = %v, want false:\n%s", got["changed"], buf.String())
+	}
+}
+
+// TestUse_UnknownProfileIsAuthError: exit 3, as --profile with the same name
+// is; it was a usage error, exit 2 (#363).
+func TestUse_UnknownProfileIsAuthError(t *testing.T) {
+	cmd, _ := configCmd(t, output.FormatJSON)
+	err := runUse(cmd, []string{"nosuch"})
+	if _, ok := errors.AsType[*cmdutil.AuthError](err); !ok {
+		t.Fatalf("error = %T %v, want an AuthError", err, err)
+	}
+	if !strings.Contains(err.Error(), `profile "nosuch" not found`) {
+		t.Errorf("error = %q", err)
+	}
+}

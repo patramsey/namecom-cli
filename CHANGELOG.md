@@ -77,6 +77,19 @@ Output a script might notice:
 - url table lines name the domain with the host: `Created URL forwarding
   (id 7): www.example.com → …` where they said `www`. JSON is unchanged:
   the host is still the API's own, `"@"` for the apex.
+- A config file that cannot be read or written — a directory or named pipe
+  at the path, YAML that does not parse, a directory namecom may not write,
+  a rename another program blocked — is type `auth`, exit 3, with a fix in
+  the hint, as an unsafe config already was. These were type `api`, exit 1.
+- `config use <name>` for a profile that does not exist exits 3 (type
+  `auth`), as `--profile <name>` does; it exited 2. So does `auth logout`
+  for a missing profile, or with none configured; it exited 1.
+- `config use <name>` when `<name>` is already the default writes nothing
+  and reports `"changed": false`.
+- The `auth login` success message with `--base-url` or `NAMECOM_BASE_URL`
+  ends "the base URL is not saved in the profile".
+- `status` phrases days to expiry as `domain list` and `domain get` do
+  ("in 57 days", not "in 56 days"). Its JSON `days` is unchanged.
 
 ### Added
 - `url create --if-not-exists` succeeds, with `"changed": false` and the
@@ -166,6 +179,26 @@ Output a script might notice:
   required; it now fails first, as `dns update` does (#361).
 - `url create --dry-run` of the apex previewed a create for a domain not
   in the account (#361).
+- Saving the config into a read-only directory failed naming a temporary
+  file the user never made, though the config itself was writable; it worked
+  before saves became atomic. The file is now written in place in that case,
+  with the same symlink, owner and 0600 checks; otherwise the error says the
+  directory must be writable (#363).
+- A named pipe at `NAMECOM_CONFIG` hung every command; it is refused before
+  it is opened (#363).
+- The "readable by other users" warning no longer prints after a save that
+  has just made the file 0600 (#363).
+- `auth login --base-url <url>` suggested `namecom status --profile <p>`,
+  which goes to the profile's own endpoint, where the token was never
+  checked; the suggestion now passes `--base-url` too (#363).
+- A 5xx from a `--base-url` or `NAMECOM_BASE_URL` endpoint names that host
+  in the hint instead of name.com (#363).
+- `NAMECOM_SANDBOX=maybe` says which values it takes — true/false, yes/no,
+  on/off or 1/0 — not only "true or false" (#363).
+- The hint for `--auth-code -` with nothing on standard input names the
+  command that was run, not `namecom transfer ...` (#363).
+- `namecom help environment` says Windows does no permission check on the
+  config file, which can hold a `token_cmd` (#363).
 
 ## [0.5.6] - 2026-10-22
 

@@ -227,17 +227,33 @@ func Load() (*File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Stat before opening: a named pipe at the path blocks os.Open (#363).
+	pre, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return &File{Profiles: map[string]Profile{}}, nil
+	}
+	if err != nil {
+		return nil, readError(path, err)
+	}
+	if err := checkReadType(path, pre); err != nil {
+		return nil, err
+	}
 	fh, err := os.Open(path) //nolint:gosec // G304: path is this tool's own config location (XDG, legacy, or NAMECOM_CONFIG), never an API response
 	if errors.Is(err, os.ErrNotExist) {
 		return &File{Profiles: map[string]Profile{}}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading config %s: %w", path, err)
+		return nil, readError(path, err)
 	}
 	defer func() { _ = fh.Close() }()
 	info, err := fh.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("reading config %s: %w", path, err)
+		return nil, readError(path, err)
+	}
+	// The file opened may not be the one stat'd, if the path was swapped in
+	// between; what is read is checked again.
+	if err := checkReadType(path, info); err != nil {
+		return nil, err
 	}
 	if err := checkReadable(path, info); err != nil {
 		return nil, err
@@ -247,16 +263,16 @@ func Load() (*File, error) {
 	// gets it in the warnings array rather than as a stray line. Save
 	// repairs the mode on the next write.
 	if info.Mode().IsRegular() && exposedMode(runtime.GOOS, info.Mode()) {
-		addWarning(fmt.Sprintf("%s is readable by other users (mode %#o); run 'chmod 600 %s'",
-			path, info.Mode().Perm(), shellQuote(path)))
+		addWarning(exposedWarning(path, info.Mode()))
 	}
 	data, err := io.ReadAll(fh)
 	if err != nil {
-		return nil, fmt.Errorf("reading config %s: %w", path, err)
+		return nil, readError(path, err)
 	}
 	var f File
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("parsing config %s: %w", path, err)
+		return nil, &FileError{Op: "read", Path: path, Problem: "it is not valid YAML: " + err.Error(), Err: err,
+			Fix: "fix the file by hand, or move it aside and run 'namecom auth login'"}
 	}
 	warnUnknownKeys(path, data)
 	if f.Profiles == nil {
@@ -288,9 +304,11 @@ func Save(f *File) error {
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
+		return &FileError{Op: "write", Path: path, Problem: "cannot create its directory: " + rootCause(err), Err: err,
+			Fix: "create " + dir + " yourself, or point NAMECOM_CONFIG at a file in a directory you can write"}
 	}
-	if err := checkWritable(path); err != nil {
+	existing, err := checkWritable(path)
+	if err != nil {
 		return err
 	}
 	data, err := encodeConfig(path, f)
@@ -300,8 +318,26 @@ func Save(f *File) error {
 	// CreateTemp opens with O_EXCL and mode 0600: nobody else can have the
 	// file open, and the token is never in a file others can read.
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if errors.Is(err, fs.ErrPermission) {
+		// The directory is read-only, which worked before saves became
+		// atomic (#342): a config kept in a locked-down directory, the file
+		// itself left writable. Fall back to writing that file in place —
+		// only when it exists and checkWritable accepted it (a regular file
+		// this user owns, not a symbolic link), and through writeInPlace,
+		// which checks the opened file is that file and makes it 0600 before
+		// the token goes in. The cost is the atomicity: a crash mid-write
+		// can leave the file truncated, which is why this is not the
+		// default (#363).
+		if existing != nil {
+			if ierr := writeInPlace(path, data, existing); ierr == nil {
+				forgetExposedWarning(path)
+				return nil
+			}
+		}
+		return dirNotWritable(path, err)
+	}
 	if err != nil {
-		return fmt.Errorf("writing config %s: %w", path, err)
+		return writeError(path, err)
 	}
 	tmpName := tmp.Name()
 	committed := false
@@ -312,22 +348,61 @@ func Save(f *File) error {
 		}
 	}()
 	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("writing config %s: %w", path, err)
+		return writeError(path, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("writing config %s: %w", path, err)
+		return writeError(path, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing config %s: %w", path, err)
+		return writeError(path, err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("writing config %s: %w", path, err)
+	if err := renameFile(tmpName, path); err != nil {
+		return renameError(runtime.GOOS, path, err)
 	}
 	committed = true
 	// The rename is done; a failure to flush the directory entry leaves the
 	// new file in place and is not worth failing a login over.
 	_ = syncDir(dir)
+	forgetExposedWarning(path)
 	return nil
+}
+
+// renameFile is os.Rename, replaceable in tests to make the replace fail as
+// it does on Windows when another program holds the file.
+var renameFile = os.Rename
+
+// writeInPlace overwrites the existing config at path with data, for a
+// directory Save cannot create a file in. want is the file checkWritable
+// accepted. Every check the atomic save relies on is kept: the file is
+// opened without following a symbolic link, must still be that same regular
+// file and this user's, and is made 0600 before it is truncated and the
+// token written.
+func writeInPlace(path string, data []byte, want fs.FileInfo) error {
+	fh, err := openNoFollow(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = fh.Close() }()
+	info, err := fh.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(info, want) {
+		return fmt.Errorf("%s changed while it was being saved", path)
+	}
+	if uid, ok := fileOwner(info); ok && uid != currentUID() {
+		return fmt.Errorf("%s is owned by another user", path)
+	}
+	if err := fh.Chmod(0o600); err != nil {
+		return err
+	}
+	if err := fh.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := fh.Write(data); err != nil {
+		return err
+	}
+	return fh.Sync()
 }
 
 // Resolve merges the config file, environment, and flag overrides into a final
@@ -648,7 +723,7 @@ type EnvError struct {
 }
 
 func (e *EnvError) Error() string {
-	return fmt.Sprintf("%s=%q is not a boolean; use true or false", e.Name, e.Value)
+	return fmt.Sprintf("%s=%q is not a boolean; use true/false, yes/no, on/off or 1/0", e.Name, e.Value)
 }
 
 // EnvBool reads a boolean NAMECOM_* variable through ParseBool; set is false

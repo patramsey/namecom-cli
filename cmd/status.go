@@ -58,6 +58,10 @@ type expiryItem struct {
 	Expires string `json:"expires"`
 	Days    int    `json:"days"`
 	Expired bool   `json:"expired,omitempty"`
+	// until is the exact span in days, which the table phrases the way
+	// `domain list` and `domain get` phrase the same date. Phrasing the
+	// truncated Days said "in 56 days" where they said "in 57 days" (#363).
+	until float64
 }
 
 type expiryCounts struct {
@@ -85,10 +89,12 @@ func classifyExpiry(domains []*coreapigo.DomainResponsePayload, now time.Time) e
 		if d.ExpireDate == nil {
 			continue
 		}
+		until := d.ExpireDate.Sub(now).Hours() / 24
 		item := expiryItem{
 			Domain:  d.DomainName,
 			Expires: d.ExpireDate.Format("2006-01-02"),
-			Days:    int(d.ExpireDate.Sub(now).Hours() / 24),
+			Days:    int(until),
+			until:   until,
 		}
 		switch {
 		case !d.ExpireDate.After(now):
@@ -347,14 +353,14 @@ func renderStatus(out *output.Config, s statusSummary) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Expired")
 		for _, e := range expired {
-			fmt.Fprintf(w, "  %-30s %s  %s\n", e.Domain, e.Expires, out.Red(expiredAgo(-e.Days)))
+			fmt.Fprintf(w, "  %-30s %s  %s\n", e.Domain, e.Expires, out.Red(expiredAgo(e.until)))
 		}
 	}
 	if len(expiring) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Expiring soon")
 		for _, e := range expiring {
-			days := "(" + output.RelativeDays(float64(e.Days)) + ")"
+			days := "(" + output.RelativeDays(e.until) + ")"
 			if e.Days < 7 {
 				days = out.Red(days)
 			} else {
@@ -393,10 +399,10 @@ func ptrInt(n int) *int { return &n }
 
 // expiredAgo phrases an elapsed day count for an expired domain, in the units
 // `domain list` uses for the same date: "(expired 2 years ago)", not "(expired
-// 804 days ago)".
-func expiredAgo(days int) string {
-	if days == 0 {
+// 804 days ago)". until is the exact span, negative, as expiryItem.until.
+func expiredAgo(until float64) string {
+	if until > -1 {
 		return "(expired today)"
 	}
-	return "(expired " + output.RelativeDays(-float64(days)) + ")"
+	return "(expired " + output.RelativeDays(until) + ")"
 }
