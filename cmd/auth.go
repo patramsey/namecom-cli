@@ -137,7 +137,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 
 	cfgFile, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err // names the file and the problem
 	}
 	// Ask before replacing a profile's credentials, as gh asks before
 	// re-authenticating; login used to overwrite them silently (#239). Asked
@@ -229,7 +229,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+		return err // names the file and the problem
 	}
 
 	path, _ := config.ActivePath()
@@ -242,11 +242,21 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	// Name the profile unless it is the one commands will use: after `auth
 	// login --profile work` with another default, a bare 'namecom status'
 	// showed the default profile's account (#239).
+	// With a base URL the check went there, and the profile does not keep it:
+	// the suggested command passes it again, or it would go to the profile's
+	// endpoint, which never saw the token (#363).
+	status := "namecom status"
+	if config.ActiveProfile(cfgFile, "") != loginProfile {
+		status += " --profile " + loginProfile
+	}
+	if raw, _ := loginBaseURL(); raw != "" {
+		status += " --base-url " + raw
+	}
 	if config.ActiveProfile(cfgFile, "") == loginProfile {
-		out.Hint("Run 'namecom status' to see your account overview")
+		out.Hint(fmt.Sprintf("Run '%s' to see your account overview", status))
 	} else {
-		out.Hint(fmt.Sprintf("Run 'namecom status --profile %s' to see this account, or 'namecom config use %s' to make it the default",
-			loginProfile, loginProfile))
+		out.Hint(fmt.Sprintf("Run '%s' to see this account, or 'namecom config use %s' to make it the default",
+			status, loginProfile))
 	}
 	if !nonInteractive {
 		out.Hint("Enable tab completion: run 'namecom completion --help' for shell setup instructions")
@@ -534,8 +544,11 @@ func rejectedLoginError(err error, a loginAnswers) error {
 // NAMECOM_BASE_URL endpoint when one is set, since then name.com was never
 // asked, followed by the environment the saved profile uses (#341).
 func loginSuccess(sandbox bool, verifiedAs string) string {
+	// The profile does not store the override: commands run without it go to
+	// the profile's own endpoint, where the token was never checked (#363).
 	if raw, _ := loginBaseURL(); raw != "" {
-		return fmt.Sprintf("Logged in to %s as %s (profile %s, a %s profile)", raw, verifiedAs, loginProfile, loginEnv(sandbox))
+		return fmt.Sprintf("Logged in to %s as %s (profile %s, a %s profile; the base URL is not saved in the profile)",
+			raw, verifiedAs, loginProfile, loginEnv(sandbox))
 	}
 	return fmt.Sprintf("Logged in to %s as %s (profile %s)", loginEnv(sandbox), verifiedAs, loginProfile)
 }
@@ -760,21 +773,27 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 
 	cfgFile, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err // names the file and the problem
 	}
 
 	// The profile API commands would use, so logout removes the credential in
 	// use and not, say, prod when NAMECOM_PROFILE names staging.
 	profile := config.ActiveProfile(cfgFile, logoutProfile)
+	// Each of these is a config problem, typed auth with a hint, as a
+	// missing --profile is elsewhere; they were type api, exit 1 (#363).
 	if profile == "" {
+		path, _ := config.ActivePath()
 		if len(cfgFile.Profiles) == 0 {
-			return errors.New("no profiles configured")
+			return cmdutil.NewAuthErrorHint(fmt.Errorf("no profiles configured in %s, so there is nothing to log out of", path),
+				"credentials from NAMECOM_USERNAME and NAMECOM_TOKEN or flags are not saved; unset them instead")
 		}
-		return fmt.Errorf("%d profiles exist but none is the default — pass --profile to choose one", len(cfgFile.Profiles))
+		return cmdutil.NewAuthErrorHint(
+			fmt.Errorf("%d profiles exist but none is the default", len(cfgFile.Profiles)),
+			"pass --profile to choose the one to remove; 'namecom config list-profiles' lists them")
 	}
 
 	if _, ok := cfgFile.Profiles[profile]; !ok {
-		return fmt.Errorf("profile %q not found in config", profile)
+		return cmdutil.ProfileNotFound(cfgFile, profile)
 	}
 	delete(cfgFile.Profiles, profile)
 	if cfgFile.Default == profile {
@@ -804,7 +823,7 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	if err := config.Save(cfgFile); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+		return err // names the file and the problem
 	}
 
 	out.Success(fmt.Sprintf("Removed profile %q", profile))

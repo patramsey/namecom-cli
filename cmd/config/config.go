@@ -114,7 +114,7 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 
 	cfgFile, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err // names the file and the problem
 	}
 
 	if len(cfgFile.Profiles) == 0 {
@@ -178,22 +178,12 @@ func runUse(cmd *cobra.Command, args []string) error {
 
 	cfgFile, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err // names the file and the problem
 	}
 	if _, ok := cfgFile.Profiles[profile]; !ok {
-		// A usage error: the argument names nothing in the config, and no
-		// request is involved. It was typed "api", exit 1 (#291).
-		names := make([]string, 0, len(cfgFile.Profiles))
-		for k := range cfgFile.Profiles {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		available := "no profiles configured"
-		if len(names) > 0 {
-			available = "available: " + strings.Join(names, ", ")
-		}
-		return cmdutil.NewUsageErrorHint(fmt.Errorf("profile %q not found (%s)", profile, available),
-			fmt.Sprintf("run 'namecom auth login --profile %s' to create it", profile))
+		// It was typed "api", exit 1 (#291), then a usage error, exit 2,
+		// where --profile with the same name exits 3 (#363).
+		return cmdutil.ProfileNotFound(cfgFile, profile)
 	}
 	if cmdutil.IsDryRun(cmd) {
 		PreviewChange(out, Change{
@@ -204,9 +194,15 @@ func runUse(cmd *cobra.Command, args []string) error {
 		})
 		return nil
 	}
+	// Already the default: nothing to write. It rewrote the file anyway
+	// (#363), which a read-only or locked config turned into a failure.
+	if cfgFile.Default == profile {
+		out.Unchanged(fmt.Sprintf("Default profile is already %q", profile))
+		return nil
+	}
 	cfgFile.Default = profile
 	if err := config.Save(cfgFile); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+		return err // names the file and the problem
 	}
 	out.Success(fmt.Sprintf("Default profile set to %q", profile))
 	return nil
@@ -217,7 +213,7 @@ func runShow(cmd *cobra.Command, _ []string) error {
 
 	cfgFile, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err // names the file and the problem
 	}
 
 	// Describe exactly what API commands would use, and fail exactly when they

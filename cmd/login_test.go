@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 )
@@ -209,12 +214,33 @@ func TestAuthLogin_VerifiesBeforeSaving(t *testing.T) {
 			t.Fatalf("output is not one JSON document: %v\n%s", err, buf.String())
 		}
 		// The stub is a --base-url, so the message names it (#341).
-		if want := "Logged in to " + gf.baseURL + " as alice (profile work, a production profile)"; got["message"] != want {
+		// ...and says the profile does not keep it (#363).
+		if want := "Logged in to " + gf.baseURL + " as alice (profile work, a production profile; the base URL is not saved in the profile)"; got["message"] != want {
 			t.Errorf("message = %q, want %q", got["message"], want)
 		}
 		f, _ := config.Load()
 		if p := f.Profiles["work"]; p.Username != "alice" || p.Token != "tok" {
 			t.Errorf("saved %+v, want alice/tok", p)
+		}
+	})
+
+	// #363: the next step suggested was 'namecom status --profile work',
+	// which goes to production, where the token was never checked.
+	t.Run("the suggested next command keeps --base-url", func(t *testing.T) {
+		withConfig(t, "default: other\nprofiles:\n  other:\n    username: o\n    token: t\n")
+		stubLoginForm(t, false)
+		setLoginProfile(t, "work")
+		stubHello(t, http.StatusOK, `{"username":"alice"}`)
+
+		var buf bytes.Buffer
+		out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &buf, EWriter: &buf}
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.WithValue(context.Background(), cmdutil.KeyOutput, out))
+		if err := runAuthLogin(cmd, nil); err != nil {
+			t.Fatalf("runAuthLogin: %v", err)
+		}
+		if want := "namecom status --profile work --base-url " + gf.baseURL; !strings.Contains(buf.String(), want) {
+			t.Errorf("output does not suggest %q:\n%s", want, buf.String())
 		}
 	})
 
@@ -228,7 +254,7 @@ func TestAuthLogin_VerifiesBeforeSaving(t *testing.T) {
 		if err := runAuthLogin(cmd, nil); err != nil {
 			t.Fatalf("runAuthLogin: %v", err)
 		}
-		if !strings.Contains(buf.String(), "as alice-test (profile sbx, a sandbox profile)") {
+		if !strings.Contains(buf.String(), "as alice-test (profile sbx, a sandbox profile;") {
 			t.Errorf("output does not say sandbox:\n%s", buf.String())
 		}
 	})

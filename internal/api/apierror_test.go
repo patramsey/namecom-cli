@@ -385,6 +385,18 @@ func TestServerErrorHint(t *testing.T) {
 		})
 	}
 
+	// #363: a 5xx from a --base-url stub was blamed on name.com.
+	t.Run("an overridden endpoint is named instead of name.com", func(t *testing.T) {
+		for _, write := range []bool{false, true} {
+			e := ErrorFromResponse(503, nil)
+			e.Write, e.Endpoint = write, "127.0.0.1:8080"
+			hint := e.UserHint()
+			if !strings.Contains(hint, "127.0.0.1:8080") || strings.Contains(hint, "name.com") {
+				t.Errorf("write=%v: hint = %q, want it to name the endpoint, not name.com", write, hint)
+			}
+		}
+	})
+
 	t.Run("an explained 5xx on a write still says to check", func(t *testing.T) {
 		e := ErrorFromResponse(500, []byte(reservedIP))
 		e.Write = true

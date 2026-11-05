@@ -98,6 +98,11 @@ func TestAuthCodeFromStdin(t *testing.T) {
 		if code != 2 || !strings.Contains(stderr, "read no code") {
 			t.Errorf("exit %d, stderr %s; want exit 2 saying no code was read", code, stderr)
 		}
+		// The hint spells out the command that was run (#363); it said
+		// "namecom transfer ...".
+		if want := "| namecom transfer create example.com --auth-code -"; !strings.Contains(stderr, want) {
+			t.Errorf("stderr %s; want the hint to contain %q", stderr, want)
+		}
 		if n != 0 {
 			t.Errorf("sent %d requests, want 0", n)
 		}

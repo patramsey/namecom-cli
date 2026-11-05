@@ -126,6 +126,75 @@ func TestSave_RefusesNonRegularFile(t *testing.T) {
 	}
 }
 
+// TestLoad_DirectoryIsFileError guards #363: a directory at NAMECOM_CONFIG
+// read as "read …/adir: is a directory", the path twice, typed api, exit 1.
+func TestLoad_DirectoryIsFileError(t *testing.T) {
+	isolateHome(t)
+	path := filepath.Join(t.TempDir(), "adir")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+	_, err := Load()
+	var fe *FileError
+	if !errors.As(err, &fe) {
+		t.Fatalf("Load = %v, want *FileError", err)
+	}
+	if want := "cannot read config " + path + ": it is a directory"; err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
+	}
+	if !strings.Contains(fe.UserHint(), "NAMECOM_CONFIG") {
+		t.Errorf("hint = %q, want it to say where to point NAMECOM_CONFIG", fe.UserHint())
+	}
+}
+
+// TestLoad_InvalidYAMLIsFileError: a config that does not parse is a config
+// problem with a fix, like the others.
+func TestLoad_InvalidYAMLIsFileError(t *testing.T) {
+	isolateHome(t)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("profiles: [unclosed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NAMECOM_CONFIG", path)
+	var fe *FileError
+	if _, err := Load(); !errors.As(err, &fe) || fe.UserHint() == "" {
+		t.Fatalf("Load = %v, want *FileError with a hint", err)
+	}
+}
+
+// TestSave_RenameFailureIsFileError guards #363: on Windows the rename fails
+// with "Access is denied" while another program holds the file, and that
+// surfaced as a raw error, typed api.
+func TestSave_RenameFailureIsFileError(t *testing.T) {
+	isolateHome(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	t.Setenv("NAMECOM_CONFIG", path)
+	prev := renameFile
+	renameFile = func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errors.New("Access is denied.")} //nolint:revive // Windows's own wording
+	}
+	t.Cleanup(func() { renameFile = prev })
+
+	err := Save(&File{Profiles: map[string]Profile{"a": {Username: "u", Token: "T"}}})
+	var fe *FileError
+	if !errors.As(err, &fe) {
+		t.Fatalf("Save = %v, want *FileError", err)
+	}
+	if want := "cannot write config " + path + ": Access is denied."; err.Error() != want {
+		t.Errorf("error = %q, want %q (no temporary file named)", err, want)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("the temporary file was left behind: %v", entries)
+	}
+
+	win := renameError("windows", path, errors.New("Access is denied.")) //nolint:revive // Windows's own wording
+	if hint := win.(*FileError).UserHint(); !strings.Contains(hint, "another program") {
+		t.Errorf("Windows hint = %q, want it to say another program may hold the file", hint)
+	}
+}
+
 func TestWritableByOthers(t *testing.T) {
 	tests := []struct {
 		goos string

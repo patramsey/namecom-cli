@@ -39,6 +39,11 @@ type APIError struct {
 	// when they came from a profile. A 401 then says what to fix rather than
 	// suggesting `auth login`, which a CI job cannot run.
 	CredentialSource string
+	// Endpoint is the host the request went to when --base-url or
+	// NAMECOM_BASE_URL overrode name.com's, and "" otherwise. A 5xx hint then
+	// names that host: blaming name.com for a stub's failure sent people to
+	// the wrong place (#363).
+	Endpoint string
 	// Body is the raw response body, set only by callers that show it — the
 	// `namecom api` passthrough. It becomes the error envelope's details.
 	Body []byte
@@ -148,15 +153,19 @@ func (e *APIError) UserHint() string {
 		// same request will fail the same way. A write the server failed
 		// partway may still have happened, which is why a POST is not
 		// retried on a 5xx.
+		server := "name.com"
+		if e.Endpoint != "" {
+			server = e.Endpoint
+		}
 		switch {
 		case e.Write && e.explained:
-			return "name.com gave the reason above; check whether the change was made before sending it again"
+			return server + " gave the reason above; check whether the change was made before sending it again"
 		case e.Write:
-			return "name.com failed while handling this change, so it may or may not have been made — check before retrying"
+			return server + " failed while handling this change, so it may or may not have been made — check before retrying"
 		case e.explained:
-			return "name.com gave the reason above; repeating the same request will likely fail the same way"
+			return server + " gave the reason above; repeating the same request will likely fail the same way"
 		}
-		return "the failure is on name.com's side; nothing was changed, so it is safe to retry later"
+		return "the failure is on " + server + "'s side; nothing was changed, so it is safe to retry later"
 	}
 	return ""
 }

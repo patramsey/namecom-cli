@@ -112,7 +112,9 @@ func checkEnvErr(t *testing.T, err error, value string) {
 	if !errors.As(err, &envErr) {
 		t.Fatalf("error is %T, want *EnvError so the CLI exits 2: %v", err, err)
 	}
-	for _, want := range []string{"NAMECOM_SANDBOX", value, "not a boolean"} {
+	// It names every spelling ParseBool takes: "use true or false" left out
+	// the yes/no, on/off and 1/0 that help environment documents (#363).
+	for _, want := range []string{"NAMECOM_SANDBOX", value, "not a boolean", "true/false", "yes/no", "on/off", "1/0"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}

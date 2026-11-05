@@ -25,7 +25,11 @@ beats the config file.
                               --sandbox overrides it. Accepts true/false, yes/no,
                               on/off and 1/0; anything else is an error.
   NAMECOM_CONFIG              Config file to use instead of the default location.
-                              When it is set, no other location is read.
+                              When it is set, no other location is read. On
+                              macOS and Linux a config other users can write is
+                              refused, as its token_cmd runs as you; Windows
+                              does no such check (ACLs are not inspected), so
+                              keep it where only you can write it.
   NAMECOM_BASE_URL            API base URL, for a local stub or a proxy.
                               --base-url overrides it. Your credentials are sent
                               to whatever it names, and a warning says so when

@@ -663,7 +663,7 @@ func initClient(cmd *cobra.Command, forCompletion bool) error {
 
 	cfgFile, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err // names the file and the problem
 	}
 	if !forCompletion {
 		// Now, ahead of the command's output, rather than when run() ends.
@@ -857,6 +857,7 @@ func reportError(cfg *output.Config, err error) int {
 	if apiErr, ok := errors.AsType[*api.APIError](err); ok {
 		apiErr.Sandbox = cfg.Sandbox
 		apiErr.CredentialSource = credentialSource()
+		apiErr.Endpoint = overriddenEndpoint()
 	}
 	// A timeout says how long it waited, which is the --timeout budget.
 	if netErr, ok := errors.AsType[*api.NetworkError](err); ok && gf.timeout > 0 {
@@ -889,7 +890,7 @@ func errorInfo(err error) output.ErrorInfo {
 		info.Type = output.ErrorTypeAuth
 		return info
 	}
-	if _, ok := errors.AsType[*config.UnsafeFileError](err); ok {
+	if isConfigFileError(err) {
 		info.Type = output.ErrorTypeAuth
 		return info
 	}
@@ -973,9 +974,7 @@ func exitCode(err error) int {
 	if _, ok := errors.AsType[*cmdutil.AuthError](err); ok {
 		return 3
 	}
-	// A config file refused as unsafe is where the credentials live, and
-	// none can be used until it is fixed (#342).
-	if _, ok := errors.AsType[*config.UnsafeFileError](err); ok {
+	if isConfigFileError(err) {
 		return 3
 	}
 	// Ahead of the status: a 5xx write is 6, not 1. reportError wraps it.
@@ -1015,6 +1014,37 @@ func credentialSource() string {
 		}
 	}
 	return strings.Join(names, " and ")
+}
+
+// isConfigFileError reports whether err is a config file the CLI refused as
+// unsafe (#342) or could not read or write (#363). The file is where the
+// credentials live and none can be used until it is fixed, so it is an auth
+// problem, exit 3, like every other way of having no usable credentials.
+func isConfigFileError(err error) bool {
+	if _, ok := errors.AsType[*config.UnsafeFileError](err); ok {
+		return true
+	}
+	_, ok := errors.AsType[*config.FileError](err)
+	return ok
+}
+
+// overriddenEndpoint is the host --base-url or NAMECOM_BASE_URL sends requests
+// to, or "" when neither is set or it is one of name.com's own, so a 5xx hint
+// names the server that failed (#363).
+func overriddenEndpoint() string {
+	raw, _ := config.BaseURLOverride(config.Overrides{BaseURL: gf.baseURL})
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "api.name.com", "api.dev.name.com":
+		return ""
+	}
+	return u.Host
 }
 
 // validateBaseURL checks a --base-url value before it is used, so a typo fails

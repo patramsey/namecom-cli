@@ -174,12 +174,14 @@ func TestAuthLogin_HintNamesTheProfile(t *testing.T) {
 		name, contents, profile string
 		want, dontWant          []string
 	}{
+		// stubLoginForm checks the credentials against a --base-url stub,
+		// which the suggested command repeats (#363).
 		{"first login becomes the default", "", "work",
-			[]string{"Run 'namecom status' to"}, []string{"--profile"}},
+			[]string{"Run 'namecom status --base-url "}, []string{"--profile"}},
 		{"another profile is the default", twoProfiles, "work",
-			[]string{"namecom status --profile work", "namecom config use work"}, nil},
+			[]string{"namecom status --profile work --base-url ", "namecom config use work"}, nil},
 		{"logging in to the default again", twoProfiles, "prod",
-			[]string{"Run 'namecom status' to"}, []string{"--profile"}},
+			[]string{"Run 'namecom status --base-url "}, []string{"--profile"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			withConfig(t, tt.contents)

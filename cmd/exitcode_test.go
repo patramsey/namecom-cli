@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +18,7 @@ import (
 
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
 	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -376,6 +380,72 @@ func TestExitCode_APIMethodFlag(t *testing.T) {
 	stdout, stderr, code := runContract(t, append([]string{"--base-url", srv.URL}, args...)...)
 	if code != 0 || !strings.Contains(stdout, `"method": "DELETE"`) {
 		t.Errorf("exit %d, stdout %q, stderr:\n%s", code, stdout, stderr)
+	}
+}
+
+// TestConfigFileProblems_AreAuthErrors guards #363: config file problems
+// other than #342's unsafe ones were type api, exit 1, with no hint.
+func TestConfigFileProblems_AreAuthErrors(t *testing.T) {
+	for _, args := range [][]string{
+		{"config", "show"},
+		{"auth", "logout", "--dry-run"},
+	} {
+		dir := filepath.Join(t.TempDir(), "adir")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		withConfig(t, "")
+		t.Setenv("NAMECOM_CONFIG", dir)
+		resetFlags(t, args)
+		_, stderr, code := runContract(t, append(args, "-o", "json")...)
+		e := envelopeError(t, stderr)
+		if code != 3 || e["type"] != output.ErrorTypeAuth || e["hint"] == "" {
+			t.Errorf("namecom %s with a directory config: exit %d, envelope %s; want exit 3, type auth, a hint",
+				strings.Join(args, " "), code, stderr)
+		}
+	}
+
+	// No profiles to log out of: also auth, with a hint.
+	withConfig(t, "")
+	args := []string{"auth", "logout", "--dry-run"}
+	resetFlags(t, args)
+	_, stderr, code := runContract(t, append(args, "-o", "json")...)
+	if e := envelopeError(t, stderr); code != 3 || e["type"] != output.ErrorTypeAuth || e["hint"] == "" {
+		t.Errorf("auth logout with no profiles: exit %d, envelope %s; want exit 3, type auth, a hint", code, stderr)
+	}
+}
+
+// envelopeError decodes the "error" object of a JSON error envelope.
+func envelopeError(t *testing.T, stderr string) map[string]any {
+	t.Helper()
+	var doc struct {
+		Error map[string]any `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stderr), &doc); err != nil || doc.Error == nil {
+		t.Fatalf("stderr is not an error envelope: %v\n%s", err, stderr)
+	}
+	return doc.Error
+}
+
+// TestServerErrorHint_NamesOverriddenEndpoint guards #363: a 5xx from a
+// --base-url endpoint said "the failure is on name.com's side".
+func TestServerErrorHint_NamesOverriddenEndpoint(t *testing.T) {
+	withConfig(t, loneProfile)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Retry-After: 0, so the read's retries do not back off for seconds.
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	args := []string{"domain", "get", "example.com", "-o", "json"}
+	resetFlags(t, args)
+	_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL}, args...)...)
+	if code != 1 {
+		t.Fatalf("exit %d, want 1; stderr:\n%s", code, stderr)
+	}
+	host := strings.TrimPrefix(srv.URL, "http://")
+	if !strings.Contains(stderr, "the failure is on "+host+"'s side") || strings.Contains(stderr, "name.com's side") {
+		t.Errorf("stderr does not blame %s:\n%s", host, stderr)
 	}
 }
 
