@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Daily, for the Vulnerabilities job alone: a new standard-library advisory
+  # fails govulncheck without any change here, and Dependabot never bumps the
+  # `go` directive, so without this the first sign is a red PR days later.
+  # GitHub emails a scheduled run's failure to whoever last edited this cron,
+  # and disables the schedule after 60 days with no repository activity.
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
 
 # Stated rather than inherited from the repository default, so CI stays
 # read-only if that default ever changes.
@@ -14,6 +22,7 @@ permissions:
 jobs:
   test:
     name: Test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,6 +72,7 @@ jobs:
 
   test-windows:
     name: Test (Windows)
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     # Windows has its own token_cmd runner (cmd.exe) and permission handling,
     # whose tests only run here. No -race or coverage: the Linux job covers
@@ -80,6 +90,7 @@ jobs:
 
   lint:
     name: Lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
