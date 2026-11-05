@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
+Fixes from a fourth live sweep (#358–#364). Several change what a script
+sees, listed first; `email create` and `url create --host` now ask before
+name.com replaces records.
+
 Output a script might notice:
 
 - A line feed or tab in a table cell prints as `\n` or `\t`. A piped
