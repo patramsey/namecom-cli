@@ -166,7 +166,7 @@ func runListProfiles(cmd *cobra.Command, _ []string) error {
 			}
 			rows = append(rows, []string{name, p.Username, endpoint, def})
 		}
-		out.Table([]string{"PROFILE", "USERNAME", "ENDPOINT", "DEFAULT"}, rows)
+		out.Table([]string{"PROFILE", "USERNAME", "ENDPOINT", "DEFAULT"}, rows, output.Identifier("PROFILE"))
 		out.Count(len(names), "profile")
 	}
 	return nil

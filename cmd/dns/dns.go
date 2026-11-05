@@ -217,6 +217,7 @@ func init() {
 	importCmd.Flags().StringVar(&importFile, "file", "", "'dns export' JSON or zone file to import, - for stdin (required)")
 	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", false, "skip records already in the zone instead of failing on them")
 	_ = importCmd.MarkFlagRequired("file")
+	cmdutil.MarkFileFlags(importCmd.Flags(), "file")
 
 	deleteCmd.Flags().BoolVar(&deleteIfExists, "if-exists", false, "skip IDs whose record does not exist instead of failing")
 
@@ -378,7 +379,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		// Filtered, or TSV, where a section heading would be read as a row:
 		// a single flat table.
 		if filtered || out.Format == output.FormatTSV {
-			out.Table(headers, recordRows(out, records), output.Essential("ANSWER"))
+			out.Table(headers, recordRows(out, records), output.Identifier("ID"), output.Essential("ANSWER"))
 		} else {
 			// Unfiltered: group by type with section headers.
 			renderGroupedRecords(out, records)
@@ -1303,7 +1304,7 @@ func renderGroupedRecords(out *output.Config, records []*coreapigo.Record) {
 		if hasPriority(groups[t]) {
 			headers = append(headers, "PRIORITY")
 		}
-		out.Table(headers, recordRowsNoType(out, groups[t]), output.Essential("ANSWER"))
+		out.Table(headers, recordRowsNoType(out, groups[t]), output.Identifier("ID"), output.Essential("ANSWER"))
 	}
 	for _, t := range dnsTypeOrder {
 		emit(t)

@@ -197,6 +197,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		out.Table(
 			headers,
 			vanityRows(all),
+			output.Identifier("HOSTNAME"),
 		)
 		out.ListFooter(foot)
 	}
@@ -241,6 +242,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		out.Table(
 			[]string{"HOSTNAME", "IPS"},
 			vanityRows([]*coreapigo.VanityNameserverResponse{ns}),
+			output.Identifier("HOSTNAME"),
 		)
 	}
 	return nil

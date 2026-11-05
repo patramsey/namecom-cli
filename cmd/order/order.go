@@ -352,8 +352,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 		// them without dropping to `-o json | jq`.
 		if len(o.OrderItems) > 0 {
 			out.Table(
-				[]string{"ITEM ID", "NAME", "TYPE", "PRICE", "REFUNDABLE"},
+				[]string{"ITEM ID", "NAME", "REFUNDABLE", "PRICE", "TYPE"},
 				orderItemRows(out, o.OrderItems, o.Currency),
+				output.Identifier("ITEM ID"),
 				output.Essential("NAME"),
 			)
 			// Suggested only when there is something to refund: it was shown
@@ -606,6 +607,17 @@ func formatAmount(amount float64, currency *string) string {
 	return output.Decimal(amount) + " " + strings.ToUpper(*currency)
 }
 
+// tsvAmount is formatAmount for TSV: the plain number ("47.97", no "$" and
+// no thousands separator), as -o json has it (#364). A currency other than
+// USD keeps its code after the number, since there is no column for it.
+func tsvAmount(amount float64, currency *string) string {
+	s := strconv.FormatFloat(amount, 'f', 2, 64)
+	if currency == nil || *currency == "" || strings.EqualFold(*currency, "USD") {
+		return s
+	}
+	return s + " " + strings.ToUpper(*currency)
+}
+
 // refundableIDs lists the IDs of the items a refund can be requested for.
 func refundableIDs(items []*coreapigo.OrderItem) []string {
 	var ids []string
@@ -637,22 +649,25 @@ func orderItemRows(out *output.Config, items []*coreapigo.OrderItem, currency *s
 		rows = append(rows, []string{
 			strconv.Itoa(it.ID),
 			name,
-			it.Type,
-			formatAmount(it.Price, currency),
 			out.BoolBadge(it.IsRefundable),
+			formatAmount(it.Price, currency),
+			it.Type,
 		})
 	}
 	return rows
 }
 
-// orderHeaders are the columns orderRows fills, most important first so a
-// narrow terminal drops the ID before what was bought.
-var orderHeaders = []string{"DATE", "DOMAIN(S)", "TYPE", "TOTAL", "STATUS", "ID"}
+// orderHeaders are the columns orderRows fills, most important first, since
+// a narrow terminal drops columns from the right. ID leads: it is what
+// `order get` and `order refund` take, and last it was the first column a
+// 70-column terminal hid, while TYPE stayed (#364).
+var orderHeaders = []string{"ID", "DATE", "DOMAIN(S)", "TOTAL", "STATUS", "TYPE"}
 
-// orderTable renders orders with orderHeaders. DOMAIN(S) is never dropped:
-// it is the column that says what each order was for.
+// orderTable renders orders with orderHeaders. ID is never shortened, and
+// DOMAIN(S) is never dropped: it is the column that says what each order was
+// for.
 func orderTable(out *output.Config, orders []*coreapigo.Order) {
-	out.Table(orderHeaders, orderRows(out, orders), output.Essential("DOMAIN(S)"))
+	out.Table(orderHeaders, orderRows(out, orders), output.Identifier("ID"), output.Essential("DOMAIN(S)"))
 }
 
 // orderRows lays out orders under orderHeaders. The table showed only ID,
@@ -677,9 +692,12 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 		total := ""
 		if o.FinalAmount != nil {
 			total = formatAmount(*o.FinalAmount, o.Currency)
+			if out.Format == output.FormatTSV {
+				total = tsvAmount(*o.FinalAmount, o.Currency)
+			}
 		}
-		names, types := orderSummary(o.OrderItems)
-		rows = append(rows, []string{date, names, types, total, status, id})
+		names, types := orderSummary(o.OrderItems, out.Format == output.FormatTSV)
+		rows = append(rows, []string{id, date, names, total, status, types})
 	}
 	return rows
 }
@@ -687,8 +705,10 @@ func orderRows(out *output.Config, orders []*coreapigo.Order) [][]string {
 // orderSummary describes an order's items in two cells: the first item's
 // name with a count of the other names ("acme.io +2"), and the distinct item
 // types ("registration, whois_privacy"). A name or type repeated across items
-// — a registration and its privacy for one domain — is counted once.
-func orderSummary(items []*coreapigo.OrderItem) (names, types string) {
+// — a registration and its privacy for one domain — is counted once. With
+// all, every name is listed instead ("acme.io, acme.dev"): TSV carries the
+// values, not a summary for reading (#364).
+func orderSummary(items []*coreapigo.OrderItem, all bool) (names, types string) {
 	var ns, ts []string
 	for _, it := range items {
 		if it == nil {
@@ -700,6 +720,9 @@ func orderSummary(items []*coreapigo.OrderItem) (names, types string) {
 		if it.Type != "" && !slices.Contains(ts, it.Type) {
 			ts = append(ts, it.Type)
 		}
+	}
+	if all {
+		return strings.Join(ns, ", "), strings.Join(ts, ", ")
 	}
 	if len(ns) > 0 {
 		names = ns[0]

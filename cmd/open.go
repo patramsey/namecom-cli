@@ -17,7 +17,10 @@ import (
 var openCmd = &cobra.Command{
 	Use:   "open [domain]",
 	Short: "Open name.com in your browser",
-	Long:  "Open the name.com account dashboard, or the management page for a domain. With no browser to open, print the URL.",
+	Long: `Open the name.com account dashboard, or the management page for a domain. With no browser to open, print the URL.
+
+It opens the production site, www.name.com, even with --sandbox, and does not
+check that the domain is in your account: it makes no API request.`,
 	Example: `  namecom open
   namecom open example.com`,
 	Args:              cmdutil.MaximumNArgs(1),

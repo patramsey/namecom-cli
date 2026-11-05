@@ -227,6 +227,26 @@ func TestRequestShape_Transfer(t *testing.T) {
 		}, build, runCreate, []string{"example.com"}, transferStub)
 	})
 
+	// --privacy=false is sent, as `domain register` sends it: left out,
+	// the account default applied (#364).
+	for flag, want := range map[string]string{"--privacy": "true", "--privacy=false": "false"} {
+		t.Run("create "+flag, func(t *testing.T) {
+			build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForTransferCreate(t, srv)
+				if err := cmd.ParseFlags([]string{"--auth-code", "AUTH123", flag}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				t.Cleanup(func() { createAuthCode, createPrivacy = "", false })
+				return cmd
+			}
+			drifttest.AssertRequest(t, drifttest.Request{
+				Method: "POST",
+				Path:   "/core/v1/transfers",
+				Body:   `{"domainName":"example.com","authCode":"AUTH123","privacyEnabled":` + want + `}`,
+			}, build, runCreate, []string{"example.com"}, transferStub)
+		})
+	}
+
 	t.Run("internal-in", func(t *testing.T) {
 		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
 			cmd := cmdForInternalIn(t, srv)

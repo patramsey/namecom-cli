@@ -61,6 +61,7 @@ func init() {
 	// Passing either, even =false, answers the guided form's question.
 	cmdutil.MarkBoolValue(registerCmd.Flags(), "privacy", "autorenew")
 	registerCmd.Flags().StringVar(&registerContactsFile, "contacts-file", "", "JSON file with contact data")
+	cmdutil.MarkFileFlags(registerCmd.Flags(), "contacts-file")
 	registerCmd.Flags().Float64Var(&registerPrice, "price", 0, "purchase price in USD to send as purchasePrice instead of the quoted one "+
 		"(premium and aftermarket prices are filled in automatically); not a cap, see --max-price")
 	registerCmd.Flags().Float64Var(&registerMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)

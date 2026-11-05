@@ -32,11 +32,11 @@ func TestOrderRows_SayWhatWasBought(t *testing.T) {
 		}}
 	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &bytes.Buffer{}}
 	got := orderRows(out, []*coreapigo.Order{o})[0]
-	want := []string{"2026-04-06", "acme.io +2", "registration, whois_privacy", "$47.97", "success", "2142141"}
+	want := []string{"2142141", "2026-04-06", "acme.io +2", "$47.97", "success", "registration, whois_privacy"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("row = %q\nwant  %q", got, want)
 	}
-	if strings.Join(orderHeaders, "|") != "DATE|DOMAIN(S)|TYPE|TOTAL|STATUS|ID" {
+	if strings.Join(orderHeaders, "|") != "ID|DATE|DOMAIN(S)|TOTAL|STATUS|TYPE" {
 		t.Errorf("headers = %q", orderHeaders)
 	}
 }

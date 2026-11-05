@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/patramsey/namecom-cli/cmd/apicmd"
@@ -393,6 +394,12 @@ func init() {
 	_ = rootCmd.RegisterFlagCompletionFunc("color",
 		cobra.FixedCompletions([]string{"auto", "always", "never"}, cobra.ShellCompDirectiveNoFileComp))
 	_ = rootCmd.RegisterFlagCompletionFunc("profile", cmdutil.CompleteProfiles)
+	cmdutil.MarkFileFlags(pf, "debug-file")
+	// Whatever has no completion of its own offers nothing rather than file
+	// names (#364). Run when a command starts, not here: auth, status and
+	// open add themselves in init functions that may run after this one.
+	var noFiles sync.Once
+	cobra.OnInitialize(func() { noFiles.Do(func() { cmdutil.NoFileFallback(rootCmd) }) })
 
 	// Cobra adds -h/--help and --version only after it has picked the command
 	// to run, but picking it skips flag values by asking whether each flag

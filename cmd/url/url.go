@@ -262,6 +262,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		out.Table(
 			headers,
 			urlRows(all),
+			output.Identifier("ID"),
 		)
 		out.ListFooter(foot)
 	}
@@ -314,6 +315,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		out.Table(
 			[]string{"ID", "HOST", "FORWARDS TO", "TYPE"},
 			urlRows([]*coreapigo.URLForwardingResponse{entry}),
+			output.Identifier("ID"),
 		)
 	}
 	return nil

@@ -90,6 +90,23 @@ Output a script might notice:
   ends "the base URL is not saved in the profile".
 - `status` phrases days to expiry as `domain list` and `domain get` do
   ("in 57 days", not "in 56 days"). Its JSON `days` is unchanged.
+- `order list` columns are now ID, DATE, DOMAIN(S), TOTAL, STATUS, TYPE
+  (ID was last, TYPE third), in tables and TSV; `order get`'s item columns
+  are ITEM ID, NAME, REFUNDABLE, PRICE, TYPE (#364).
+- TSV carries plain values where it carried the table's wording (#364):
+  `domain check` and `domain search` prices are `17.99` (was `$17.99/yr`),
+  `order list` TOTAL is `47.97` (was `$47.97`), `domain get`'s Renews at is
+  `1234.50` (was `$1,234.50`), and the DOMAIN(S) of `order list` and DOMAINS
+  of `contact unverified` list every name (`a.com, b.com`, was `a.com +1` or
+  `a.com (+1 more)`). `domain get`'s Registrant row holds the name alone,
+  with new Registrant company and Registrant verified rows after it.
+- `domain get -o json` and `-o yaml` put `contacts` after the other keys,
+  so the dates come before the contacts block. The keys are unchanged (#364).
+- `transfer create --privacy=false` sends `privacyEnabled: false`, as
+  `domain register --privacy=false` does; it sent nothing, so the account
+  default applied (#364).
+- `domain update` says "Transfer lock is already on for example.com", as
+  `domain lock` does, not "example.com already has lock on" (#364).
 
 ### Added
 - `url create --if-not-exists` succeeds, with `"changed": false` and the
@@ -199,6 +216,21 @@ Output a script might notice:
   command that was run, not `namecom transfer ...` (#363).
 - `namecom help environment` says Windows does no permission check on the
   config file, which can hold a `token_cmd` (#363).
+- In a narrow terminal, tables cut a domain name or an ID before hiding a
+  flag column: two `domain list` names became the indistinguishable
+  `namecom-smoke-37de95…` and `namecom-smoke2-37de9…`, `order list` hid the
+  ID, `order get` REFUNDABLE, and `contact unverified` the DEADLINE its help
+  says to read. Identifier columns now keep their full width while another
+  column can give way, and those columns stay (#364).
+- TAB after a flag value or argument with nothing to offer, such as
+  `domain list --tld` or `order get`, completed file names. Only the flags
+  that take a file still do (#364).
+- Domain-name completion asks the API for names starting with what was
+  typed, not containing it, which on a slow API ran out of time and offered
+  nothing (#364).
+- `open --help` says it opens www.name.com even with `--sandbox`, and does
+  not check the domain; the README says `--dry-run` with `-q` still prints
+  the whole preview (#364).
 
 ## [0.5.6] - 2026-10-22
 

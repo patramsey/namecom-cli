@@ -129,6 +129,7 @@ func init() {
 	f.StringVar(&apiInput, "input", "", "read the request body from a file; use '-' for stdin")
 	f.StringArrayVarP(&apiFields, "raw-field", "f", nil, "add a string parameter, key=value: the JSON body, or the query of a GET")
 	f.StringArrayVarP(&apiTyped, "field", "F", nil, "add a typed parameter, key=value: true, false, null and numbers keep their type; @file reads a file")
+	cmdutil.MarkFileFlags(f, "input", "field")
 	f.StringArrayVar(&apiHeaders, "header", nil, "additional headers: 'Name: Value'")
 	f.BoolVarP(&apiInclude, "include", "i", false, "print the response status line and headers before the body")
 	f.BoolVar(&apiPaginate, "paginate", false, "follow nextPage and print every page as one document (GET only)")

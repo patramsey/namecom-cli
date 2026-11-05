@@ -192,7 +192,7 @@ func FuzzTableFits(f *testing.F) {
 		headers := []string{h1, h2, h3}
 		rows := [][]string{{c1, c2, c3}}
 		// Table fits the cells as printed, control characters escaped.
-		kept, _, dropped, _ := c.fitColumns(sanitizeCells(headers), sanitizeRows(rows), nil)
+		kept, _, dropped, _ := c.fitColumns(sanitizeCells(headers), sanitizeRows(rows), tableOpts{})
 		if len(kept)+len(dropped) != len(headers) {
 			t.Fatalf("kept %d + dropped %d != %d", len(kept), len(dropped), len(headers))
 		}
