@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -234,10 +235,11 @@ func applyOp(cmd *cobra.Command, client *api.Client, domain string, o syncOp) (p
 }
 
 // syncFailed reports a sync that stopped at res.Failed: the result document
-// in JSON and YAML, so a script sees exactly what landed, and warnings naming
-// each applied write in table mode. The returned error keeps the API error's
-// exit code.
+// in JSON and YAML, so a script sees exactly what landed, and in table mode
+// warnings naming each applied write, printed after the error line (#360).
+// The returned error keeps the API error's exit code.
 func syncFailed(out *output.Config, res *syncResult, err error) error {
+	var after []string
 	switch out.Format {
 	case output.FormatJSON, output.FormatYAML:
 		if perr := printResult(out, res); perr != nil {
@@ -245,21 +247,37 @@ func syncFailed(out *output.Config, res *syncResult, err error) error {
 		}
 	default:
 		if len(res.Applied) == 0 {
-			out.Warn("nothing was changed before the failure")
+			after = append(after, "nothing was changed before the failure")
 		} else {
-			out.Warn(fmt.Sprintf("applied before the failure (%s):", appliedCounts(res.Applied)))
+			after = append(after, fmt.Sprintf("applied before the failure (%s):", appliedCounts(res.Applied)))
 			for _, c := range res.Applied {
-				out.Warn("  " + changeLine(c.Action, c.planRecord))
+				after = append(after, "  "+changeLine(c.Action, c.planRecord))
 			}
 		}
 		if n := len(res.NotAttempted); n > 0 {
-			out.Warn(fmt.Sprintf("%s not attempted — run sync again after fixing the problem; it plans from the live zone", output.Plural(n, "change")))
+			after = append(after, fmt.Sprintf("%s not attempted — run sync again after fixing the problem; it plans from the live zone", output.Plural(n, "change")))
 		}
 	}
 	total := len(res.Applied) + 1 + len(res.NotAttempted)
-	return fmt.Errorf("%s (change %d of %d; %d applied before it): %w",
+	err = fmt.Errorf("%s (change %d of %d; %d applied before it): %w",
 		changeLine(res.Failed.Action, res.Failed.planRecord), len(res.Applied)+1, total, len(res.Applied), err)
+	if after == nil {
+		return err
+	}
+	return &syncAftermathError{error: err, lines: after}
 }
+
+// syncAftermathError is a failed sync's error with what it left behind, which
+// the error renderer prints after the error line in table mode. Printed before
+// it, "nothing was changed before the failure" read as the outcome of a
+// failure not yet named.
+type syncAftermathError struct {
+	error
+	lines []string
+}
+
+func (e *syncAftermathError) Unwrap() error       { return e.error }
+func (e *syncAftermathError) Aftermath() []string { return e.lines }
 
 // syncOutcomeUnknownError is a sync stopped by a write whose outcome is
 // unknown. It keeps the *api.OutcomeUnknownError, so the exit code is 6 and
@@ -416,27 +434,30 @@ func appliedCounts(applied []syncChange) string {
 func prepareRecords(recs []inputRecord, allowCAA bool) error {
 	for i := range recs {
 		r := &recs[i]
+		// The errors name the record's fields, not the flags of `dns
+		// create`, which this command does not have (#360); the record is
+		// named by its line or index.
 		fail := func(err error) error {
-			return fmt.Errorf("%s (%s %s): %w", r.Source, r.Type, r.Host, err)
+			return fmt.Errorf("%s (%s %s): %w", r.Source, r.Type, fileHost(r.Host), err)
 		}
 		if !allowCAA || r.Type != "CAA" {
-			if err := cmdutil.ValidDNSCreateType(r.Type); err != nil {
+			if err := cmdutil.ValidDNSCreateTypeAs(r.Type, "type"); err != nil {
 				return fail(err)
 			}
 		}
-		host, err := asciiHost(r.Host)
+		host, err := asciiHostAs(r.Host, "host")
 		if err != nil {
 			return fail(err)
 		}
-		answer, err := asciiAnswer(r.Type, host, r.Answer)
+		answer, err := asciiAnswerAs(r.Type, host, r.Answer, "answer")
 		if err != nil {
 			return fail(err)
 		}
-		if err := cmdutil.ValidTTL(r.TTL); err != nil {
+		if err := cmdutil.ValidTTLAs(r.TTL, "ttl"); err != nil {
 			return fail(err)
 		}
 		if r.Priority != nil {
-			if err := cmdutil.ValidPriority(*r.Priority); err != nil {
+			if err := cmdutil.ValidPriorityAs(*r.Priority, "priority"); err != nil {
 				return fail(err)
 			}
 		}
@@ -449,4 +470,15 @@ func prepareRecords(recs []inputRecord, allowCAA bool) error {
 		r.Host, r.Answer = host, answer
 	}
 	return nil
+}
+
+// fileHost is a host from a file as an error names it: as it is, or quoted
+// in Go syntax when it holds a character that is not printable, the way the
+// message after it quotes it. A BEL read as \x07 in one and \a in the other,
+// the terminal's escaping and Go's (#360).
+func fileHost(h string) string {
+	if strings.IndexFunc(h, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return strconv.Quote(h)
+	}
+	return h
 }

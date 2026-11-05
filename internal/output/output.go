@@ -1457,6 +1457,23 @@ func (c *Config) ErrorWith(err error, info ErrorInfo) {
 			fmt.Fprintln(c.EWriter, "→ "+hint)
 		}
 	}
+	// What the failure left behind, after the line saying what failed: a
+	// sync's "nothing was changed before the failure" came first and read
+	// as the outcome of something not yet named.
+	if a, ok := errors.AsType[aftermather](err); ok {
+		for _, w := range a.Aftermath() {
+			c.warnLine(w)
+		}
+	}
+}
+
+// aftermather is implemented by an error that says, in table mode, what the
+// failure left behind — the writes made before it, those not attempted —
+// in warnings printed after the error line. JSON and YAML report that in the
+// command's own result document instead.
+type aftermather interface {
+	error
+	Aftermath() []string
 }
 
 // errorHint returns the "what to do" line for err, or "" when there is none.

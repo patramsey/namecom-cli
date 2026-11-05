@@ -354,7 +354,14 @@ func zoneRdata(rec *inputRecord, rdata []zoneToken, origin string) error {
 		for _, f := range rdata {
 			b.WriteString(f.text)
 		}
+		// The parsed value, quotes read: `"say \"x\""` is say "x". The
+		// API refuses that unquoted (#360), so it is sent quoted again —
+		// and must be even when it looks like quoted strings, as
+		// `"\"a\" \"b\""` (the value "a" "b") does.
 		rec.Answer = b.String()
+		if txtNeedsQuotes(rec.Answer) {
+			rec.Answer = quoteTXTForAPI(rec.Answer)
+		}
 	case "CAA":
 		if len(rdata) != 3 {
 			return fmt.Errorf("expected flags, tag and value, got %d field(s)", len(rdata))

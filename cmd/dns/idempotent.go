@@ -114,16 +114,20 @@ func findRecord(cmd *cobra.Command, domain, rtype, host, answer string) (*coreap
 func reportExisting(cmd *cobra.Command, existing *coreapigo.Record, body coreapigo.DNSCreateRecordBody) error {
 	out := cmdutil.Out(cmd)
 	id := derefInt(existing.ID)
-	var differs []string
+	// The suggested update names the flags that make the change: without
+	// them it failed "nothing to update" (#360).
+	var differs, flags []string
 	if body.TTL != nil && *body.TTL != existing.TTL {
 		differs = append(differs, fmt.Sprintf("TTL %d, not %d", existing.TTL, *body.TTL))
+		flags = append(flags, fmt.Sprintf("--ttl %d", *body.TTL))
 	}
 	if typeHasPriority(strings.ToUpper(string(body.Type))) && body.Priority != nil && derefInt64(existing.Priority) != *body.Priority {
 		differs = append(differs, fmt.Sprintf("priority %d, not %d", derefInt64(existing.Priority), *body.Priority))
+		flags = append(flags, fmt.Sprintf("--priority %d", *body.Priority))
 	}
 	if len(differs) > 0 {
-		out.Warn(fmt.Sprintf("the existing record has %s — run 'namecom dns update %s %d' to change it",
-			strings.Join(differs, " and "), body.DomainName, id))
+		out.Warn(fmt.Sprintf("the existing record has %s — run 'namecom dns update %s %d %s' to change it",
+			strings.Join(differs, " and "), body.DomainName, id, strings.Join(flags, " ")))
 	}
 
 	if out.QuietMode {

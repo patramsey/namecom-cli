@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -210,10 +211,22 @@ func TestDNSSync_PartialFailure(t *testing.T) {
 				t.Errorf("error lacks %q: %v", s, err)
 			}
 		}
+		// What was applied is said after the error line, as the root
+		// command renders it; before it, the report read as the outcome
+		// of a failure not yet named (#360).
+		var rendered bytes.Buffer
+		(&output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &bytes.Buffer{}, EWriter: &rendered}).Error(err)
+		stderr += rendered.String()
+		last := strings.Index(stderr, "✗ ")
 		for _, s := range []string{"applied before the failure (created 1, updated 0, deleted 0)", "create A one", "2 changes not attempted"} {
-			if !strings.Contains(stderr, s) {
+			i := strings.Index(stderr, s)
+			if i < 0 {
 				t.Errorf("stderr lacks %q:\n%s", s, stderr)
 			}
+			if i < last {
+				t.Errorf("%q comes before the error line:\n%s", s, stderr)
+			}
+			last = i
 		}
 		if got, want := z.writeLog(), []string{"POST", "POST"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("writes = %q, want it to stop at the failure: %q", got, want)
