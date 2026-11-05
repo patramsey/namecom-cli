@@ -65,18 +65,15 @@ func normAnswer(rtype, a string) string {
 			return f[0] + " " + f[1] + " " + normName(f[2])
 		}
 	case "TXT":
-		// The strings may be run together: the API stores `"a" "b"` (a
-		// DKIM key split in two, say) as `"a""b"`, and the two never
-		// matched.
 		if parts, ok := parseQuotedStrings(a, true); ok {
-			return strings.Join(parts, "")
+			// A value sent quoted is stored as it was sent (#360), so
+			// `"a\\\"b"` is the value a\"b. Unquoted, that value reads as
+			// a"b, since the API stores a `"` as `\"`; read it the same
+			// way here, so the two spellings of one record still match.
+			return unescapeStoredTXT(strings.Join(parts, ""))
 		}
-		// The API stores a `"` as `\"` (#284), so the stored form of a
-		// value with quotes never matched the value as sent.
-		a = unescapeStoredTXT(a)
-		if parts, ok := parseQuotedStrings(a, true); ok {
-			return strings.Join(parts, "")
-		}
+		parts, _ := txtStrings(a)
+		return strings.Join(parts, "")
 	case "CAA":
 		f := strings.SplitN(strings.TrimSpace(a), " ", 3)
 		if len(f) == 3 {
@@ -88,6 +85,28 @@ func normAnswer(rtype, a string) string {
 		}
 	}
 	return a
+}
+
+// txtStrings reads a TXT answer — as the API holds it, or as given to
+// --answer or in a JSON file — as the character-strings of the value it
+// means. quoted is false when the answer is not written as character-strings,
+// and the value is then the one element of parts.
+//
+//   - Quoted character-strings, with or without a space between them, are
+//     read as zone syntax: the API keeps a value sent quoted as it was sent,
+//     and stores `"a" "b"` (a DKIM key split in two, say) as `"a""b"`.
+//   - Otherwise the API's storage escaping is undone (#284): it stores a `"`
+//     as `\"`, so the stored form of a value with quotes never matched the
+//     value as sent. What that leaves may itself be quoted strings.
+func txtStrings(a string) (parts []string, quoted bool) {
+	if parts, ok := parseQuotedStrings(a, true); ok {
+		return parts, true
+	}
+	a = unescapeStoredTXT(a)
+	if parts, ok := parseQuotedStrings(a, true); ok {
+		return parts, true
+	}
+	return []string{a}, false
 }
 
 // unescapeStoredTXT undoes the escaping the API applies to a TXT value it

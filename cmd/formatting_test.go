@@ -576,3 +576,16 @@ func TestTSV(t *testing.T) {
 		}
 	})
 }
+
+// TestFields_EmptyListTable: an empty list shown as a table by --fields says
+// so as the list's own table does, where it printed "0 records" (#360).
+func TestFields_EmptyListTable(t *testing.T) {
+	routes := map[string]reply{"GET /core/v1/domains/example.com/records": {200, `{"records":[]}`}}
+	stdout, stderr, code := runFormatting(t, routes, "dns", "list", "example.com", "-o", "table", "--fields", "id,answer")
+	if code != 0 || stdout != "" {
+		t.Errorf("exit %d, stdout %q", code, stdout)
+	}
+	if !strings.Contains(stderr, "No records found.") || strings.Contains(stderr, "0 records") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}

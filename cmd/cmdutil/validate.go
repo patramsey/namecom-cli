@@ -61,9 +61,14 @@ func ValidDNSType(t string) error {
 // rejects CAA on create — it is not in the server's list of allowed types — so
 // refuse it here with a clear message rather than send a request that can only
 // fail. CAA stays in validDNSTypes for the rest of the CLI.
-func ValidDNSCreateType(t string) error {
+func ValidDNSCreateType(t string) error { return ValidDNSCreateTypeAs(t, "--type") }
+
+// ValidDNSCreateTypeAs is ValidDNSCreateType with the value named name in
+// the error: "--type" for the flag, "type" for a record read from a file,
+// which has no such flag.
+func ValidDNSCreateTypeAs(t, name string) error {
 	if strings.EqualFold(t, "CAA") {
-		return usagef("name.com's API does not accept CAA records — --type must be one of: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT")
+		return usagef("name.com's API does not accept CAA records — %s must be one of: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT", name)
 	}
 	if !validDNSTypes[strings.ToUpper(t)] {
 		return usagef("unknown record type %q — must be one of: A, AAAA, ANAME, CNAME, MX, NS, SRV, TXT", t)
@@ -76,16 +81,20 @@ func ValidDNSCreateType(t string) error {
 // An empty or whitespace-only host is refused rather than taken as the apex.
 // The API treats "" and "@" as different hosts; for a URL forwarding, "" also
 // replaces every apex A record.
-func ValidDNSHost(host string) error {
+func ValidDNSHost(host string) error { return ValidDNSHostAs(host, "--host") }
+
+// ValidDNSHostAs is ValidDNSHost with the host named name in the error:
+// "--host" for the flag, "host" for a record read from a file.
+func ValidDNSHostAs(host, name string) error {
 	if strings.TrimSpace(host) == "" {
-		return usagef("--host cannot be empty (use @ for the zone apex)")
+		return usagef("%s cannot be empty (use @ for the zone apex)", name)
 	}
 	if host == "@" || host == "*" {
 		return nil
 	}
 	check := strings.TrimPrefix(host, "*.")
 	if strings.ContainsAny(check, " \t") {
-		return usagef("--host %q must not contain spaces", host)
+		return usagef("%s %q must not contain spaces", name, host)
 	}
 	// Only hostname characters (#187). `dns export --zone` writes the host as
 	// the owner name unescaped, so a `"`, `;` or `(` the API stored broke the
@@ -93,21 +102,21 @@ func ValidDNSHost(host string) error {
 	// which is trimmed above. Non-ASCII is left to the server.
 	for i := 0; i < len(check); i++ {
 		if c := check[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
-			return usagef("--host %q must not contain %q", host, check[i:i+1])
+			return usagef("%s %q must not contain %q", name, host, check[i:i+1])
 		}
 	}
 	if len(check) > 253 {
-		return usagef("--host %q exceeds maximum DNS name length (253 chars)", host)
+		return usagef("%s %q exceeds maximum DNS name length (253 chars)", name, host)
 	}
 	for label := range strings.SplitSeq(check, ".") {
 		if label == "" {
-			return usagef("--host %q has an empty label (double dot or leading/trailing dot)", host)
+			return usagef("%s %q has an empty label (double dot or leading/trailing dot)", name, host)
 		}
 		if len(label) > 63 {
-			return usagef("--host %q label %q exceeds 63 characters", host, label)
+			return usagef("%s %q label %q exceeds 63 characters", name, host, label)
 		}
 		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return usagef("--host %q label %q must not start or end with a hyphen", host, label)
+			return usagef("%s %q label %q must not start or end with a hyphen", name, host, label)
 		}
 	}
 	return nil
@@ -115,45 +124,51 @@ func ValidDNSHost(host string) error {
 
 // ValidDNSAnswer validates the answer field for a given record type and host.
 func ValidDNSAnswer(recordType, host, answer string) error {
+	return ValidDNSAnswerAs(recordType, host, answer, "--answer")
+}
+
+// ValidDNSAnswerAs is ValidDNSAnswer with the answer named name in the
+// error: "--answer" for the flag, "answer" for a record read from a file.
+func ValidDNSAnswerAs(recordType, host, answer, name string) error {
 	if answer == "" {
-		return usagef("--answer is required")
+		return usagef("%s is required", name)
 	}
 	switch strings.ToUpper(recordType) {
 	case "A":
 		ip := net.ParseIP(answer)
 		if ip == nil || ip.To4() == nil {
-			return usagef("--answer must be a valid IPv4 address for A records, got %q", answer)
+			return usagef("%s must be a valid IPv4 address for A records, got %q", name, answer)
 		}
 	case "AAAA":
 		ip := net.ParseIP(answer)
 		if ip == nil || ip.To4() != nil {
-			return usagef("--answer must be a valid IPv6 address for AAAA records, got %q", answer)
+			return usagef("%s must be a valid IPv6 address for AAAA records, got %q", name, answer)
 		}
 	case "CNAME":
 		if host == "@" || host == "" {
 			return usagef("CNAME record cannot be set at the zone apex (@) — use ANAME for apex aliasing")
 		}
-		return validTarget("CNAME", answer)
+		return validTarget("CNAME", answer, name)
 	case "ANAME", "NS":
-		return validTarget(strings.ToUpper(recordType), answer)
+		return validTarget(strings.ToUpper(recordType), answer, name)
 	case "MX":
 		if strings.IndexFunc(answer, unicode.IsSpace) >= 0 {
-			return usagef("MX record --answer must be a hostname (got %q) — set priority with --priority", answer)
+			return usagef("MX record %s must be a hostname (got %q) — set priority with %s", name, answer, strings.Replace(name, "answer", "priority", 1))
 		}
 		if answer == "." {
 			return nil // a null MX (RFC 7505): the domain accepts no mail
 		}
-		return validTarget("MX", answer)
+		return validTarget("MX", answer, name)
 	case "SRV":
 		// strings.Fields also splits on CR, LF and tab, so "0\r0 0 x" passed
 		// as three fields and broke the exported zone (#187). Only spaces may
 		// separate them.
 		if strings.IndexFunc(answer, func(r rune) bool { return r != ' ' && unicode.IsSpace(r) }) >= 0 {
-			return usagef("SRV record --answer fields must be separated by spaces, got %q", answer)
+			return usagef("SRV record %s fields must be separated by spaces, got %q", name, answer)
 		}
 		parts := strings.Fields(answer)
 		if len(parts) != 3 {
-			return usagef("SRV record --answer must be \"weight port target\" (e.g. \"0 443 target.example.com.\"), got %q", answer)
+			return usagef("SRV record %s must be \"weight port target\" (e.g. \"0 443 target.example.com.\"), got %q", name, answer)
 		}
 		if !isUint16(parts[0]) {
 			return usagef("SRV record weight (first field) must be an integer 0-65535, got %q", parts[0])
@@ -161,11 +176,21 @@ func ValidDNSAnswer(recordType, host, answer string) error {
 		if !isUint16(parts[1]) {
 			return usagef("SRV record port (second field) must be an integer 0-65535, got %q", parts[1])
 		}
-		return validTarget("SRV", parts[2])
+		return validTarget("SRV", parts[2], name)
+	case "TXT":
+		// The API refuses any byte outside ASCII ("only printable ASCII"),
+		// so a value with an accented letter or an emoji was sent, and a
+		// `dns sync --dry-run` planned a create that could only fail.
+		for i := 0; i < len(answer); i++ {
+			if answer[i] >= utf8.RuneSelf {
+				_, size := utf8.DecodeRuneInString(answer[i:])
+				return usagef("TXT record %s must be ASCII: %q (byte %d) is not; name.com accepts only printable ASCII in TXT values", name, answer[i:i+size], i+1)
+			}
+		}
 	case "CAA":
 		parts := strings.Fields(answer)
 		if len(parts) < 3 {
-			return usagef("CAA record --answer must be \"flags tag value\" (e.g. `0 issue \"letsencrypt.org\"`), got %q", answer)
+			return usagef("CAA record %s must be \"flags tag value\" (e.g. `0 issue \"letsencrypt.org\"`), got %q", name, answer)
 		}
 		flags, err := strconv.Atoi(parts[0])
 		if err != nil || flags < 0 || flags > 255 {
@@ -183,10 +208,10 @@ func ValidDNSAnswer(recordType, host, answer string) error {
 // at. A target was only checked for spaces, so `.00` or a name with a `"` in it
 // was sent, and `dns export --zone` then wrote a line that does not load. One
 // trailing dot (an absolute name) is allowed; non-ASCII is left to the server.
-func validTarget(rtype, name string) error {
+func validTarget(rtype, name, field string) error {
 	check := strings.TrimSuffix(name, ".")
 	if check == "" {
-		return usagef("%s record --answer must be a hostname, got %q", rtype, name)
+		return usagef("%s record %s must be a hostname, got %q", rtype, field, name)
 	}
 	for i := 0; i < len(check); i++ {
 		if c := check[i]; c < utf8.RuneSelf && !isHostnameByte(c) {
@@ -216,9 +241,13 @@ func isUint16(s string) bool {
 // ValidPriority checks an MX or SRV priority. Both are 16-bit fields, but the
 // flag is an int64 and any value was sent; a negative one was stored, and the
 // exported zone then failed to load (#187).
-func ValidPriority(p int64) error {
+func ValidPriority(p int64) error { return ValidPriorityAs(p, "--priority") }
+
+// ValidPriorityAs is ValidPriority with the priority named name in the
+// error: "--priority" for the flag, "priority" for a record read from a file.
+func ValidPriorityAs(p int64, name string) error {
 	if p < 0 || p > 65535 {
-		return usagef("--priority must be between 0 and 65535 (got %d)", p)
+		return usagef("%s must be between 0 and 65535 (got %d)", name, p)
 	}
 	return nil
 }
@@ -262,9 +291,13 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 // ValidTTL checks that ttl meets the API minimum.
-func ValidTTL(ttl int64) error {
+func ValidTTL(ttl int64) error { return ValidTTLAs(ttl, "--ttl") }
+
+// ValidTTLAs is ValidTTL with the TTL named name in the error: "--ttl" for
+// the flag, "ttl" for a record read from a file.
+func ValidTTLAs(ttl int64, name string) error {
 	if ttl < 300 {
-		return usagef("--ttl must be at least 300 seconds (got %d)", ttl)
+		return usagef("%s must be at least 300 seconds (got %d)", name, ttl)
 	}
 	return nil
 }

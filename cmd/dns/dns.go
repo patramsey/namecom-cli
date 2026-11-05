@@ -90,7 +90,13 @@ var createCmd = &cobra.Command{
 	Long: `Create a DNS record on a domain whose DNS name.com hosts. In a terminal, a
 form asks for --type and --answer when they are not passed.
 
-CAA records show in 'dns list' but cannot be created through the API.`,
+CAA records show in 'dns list' but cannot be created through the API.
+
+A TXT value is sent as typed, except one the API refuses that way — starting
+or ending with ", or ending with \ — which is sent as a quoted string, the
+form it accepts: --answer 'say "hi"' sends "say \"hi\"". Quoted strings typed
+as --answer ('"part one" "part two"') are sent as they are. TXT values must
+be ASCII.`,
 	Example: `  namecom dns create example.com --type A --answer 1.2.3.4
   namecom dns create example.com --type CNAME --host www --answer example.com.
   namecom dns create example.com --type MX --answer mail.example.com --priority 10
@@ -147,6 +153,9 @@ var exportCmd = &cobra.Command{
 	Long: `Write a domain's records as a file 'dns import' and 'dns sync' read: JSON
 (the default), or a zone file with --zone. -o yaml writes YAML, which they do
 not read.
+
+The JSON holds each answer as the API stores it: a TXT value's " as \".
+The zone file holds the value the record means, as a zone file spells it.
 
 The output is a file format, so -o table, -o tsv and -q are usage errors;
 'dns list' prints records as a table, as TSV, or one ID per line.`,
@@ -217,6 +226,7 @@ func init() {
 	cmdutil.SetResult(createCmd, recordResult...)
 	cmdutil.SetResult(updateCmd, recordResult...)
 	cmdutil.SetResult(syncCmd, output.KeysOf(syncResult{})...)
+	cmdutil.SetResult(importCmd, output.KeysOf(importResult{})...)
 	Cmd.AddCommand(listCmd, createCmd, updateCmd, deleteCmd, exportCmd, importCmd, syncCmd)
 }
 
@@ -743,6 +753,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	for _, id := range absent {
 		out.Note(fmt.Sprintf("Record %d is not on %s: skipped", id, domain))
 	}
+	asked := ids
 	ids = present
 
 	prompt := fmt.Sprintf("Delete %s from %s?", summaries[0], domain)
@@ -764,13 +775,16 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// One document in JSON and YAML (#240), with each record's outcome; an
-	// absent one skipped under --if-exists is "changed": false there.
+	// absent one skipped under --if-exists is "changed": false there. The
+	// items are in the order the IDs were given; the skipped ones came last
+	// (#360).
 	res := out.Results()
-	for _, id := range ids[:done] {
-		res.Add(output.ResultItem{Domain: domain, ID: id, Changed: true, Message: fmt.Sprintf("Deleted record %d from %s", id, domain)})
-	}
-	if out.Format == output.FormatJSON || out.Format == output.FormatYAML {
-		for _, id := range absent {
+	deleted := ids[:done]
+	for _, id := range asked {
+		switch {
+		case slices.Contains(deleted, id):
+			res.Add(output.ResultItem{Domain: domain, ID: id, Changed: true, Message: fmt.Sprintf("Deleted record %d from %s", id, domain)})
+		case slices.Contains(absent, id) && (out.Format == output.FormatJSON || out.Format == output.FormatYAML):
 			res.Add(output.ResultItem{Domain: domain, ID: id, Message: fmt.Sprintf("Record %d is not on %s: nothing to delete", id, domain)})
 		}
 	}
@@ -851,6 +865,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	if exportZone {
+		if len(records) == 0 {
+			// An empty zone file is still the export, but in a terminal
+			// it printed nothing at all, which read as a failure (#360).
+			out.Empty("DNS record", "")
+			return nil
+		}
 		for _, r := range records {
 			fmt.Fprintln(out.Writer, zoneLine(r, domain))
 		}
@@ -957,6 +977,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	created := 0
+	res := importResult{Success: true, Created: []planRecord{}}
 	var previews []output.DryRunRequest
 	for _, r := range records {
 		ttl := r.TTL
@@ -976,7 +997,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		_, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
+		rec, err := client.SDK().DNS.CreateRecord(cmd.Context(), &body)
 		if err != nil {
 			err = api.MarkWrite(err) // not sent through RunWrite, so marked here
 			if !importSkipExisting {
@@ -999,6 +1020,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 				body.Type, body.Host, created, len(records), err)
 		}
 		created++
+		// The record as created, with the ID the API gave it and the
+		// answer it stored, as `dns sync` reports what it applied (#360).
+		pr := inputPlanRecord(r)
+		if rec != nil {
+			pr.ID = derefInt(rec.ID)
+			if a := derefStr(rec.Answer); a != "" {
+				pr.Answer = a
+			}
+		}
+		res.Created = append(res.Created, pr)
 	}
 
 	if skipped > 0 {
@@ -1009,17 +1040,49 @@ func runImport(cmd *cobra.Command, args []string) error {
 		// parses every request at once rather than a stream of them.
 		return out.DryRunAll(previews)
 	}
-	msg := fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain)
-	if skipped > 0 {
-		msg += fmt.Sprintf(" (%d already present, skipped)", skipped)
+	// -q prints the new records' IDs, as `dns create -q` prints its one; it
+	// printed nothing.
+	var ids []string
+	for _, c := range res.Created {
+		if c.ID > 0 {
+			ids = append(ids, strconv.Itoa(c.ID))
+		}
 	}
-	// "changed": false when every record was already there (#240).
-	if created == 0 {
-		out.Unchanged(msg)
+	if out.Quiet(ids...) {
 		return nil
 	}
-	out.Success(msg)
+	res.Message = fmt.Sprintf("Imported %s to %s", output.Plural(created, "record"), domain)
+	if skipped > 0 {
+		res.Message += fmt.Sprintf(" (%d already present, skipped)", skipped)
+	}
+	// "changed": false when every record was already there (#240).
+	res.Changed = created > 0
+	res.Skipped = skipped
+	switch out.Format {
+	case output.FormatJSON:
+		return out.JSON(res)
+	case output.FormatYAML:
+		return out.YAML(res)
+	case output.FormatTSV:
+		return out.TSVObject(res)
+	}
+	if created == 0 {
+		out.Unchanged(res.Message)
+		return nil
+	}
+	out.Success(res.Message)
 	return nil
+}
+
+// importResult is what `dns import` did: the keys every write's result has,
+// and the records it created, each with its new ID (#360). It was the three
+// keys alone, so a script could not tell which records were new.
+type importResult struct {
+	Success bool         `json:"success"`
+	Changed bool         `json:"changed"`
+	Message string       `json:"message"`
+	Created []planRecord `json:"created"`
+	Skipped int          `json:"skipped"`
 }
 
 // fetchRecords fetches a domain's DNS records from page start, perPage at a
@@ -1451,16 +1514,20 @@ func derefInt64(n *int64) int64 {
 // previewed them that way. The typed value is checked first, so its errors read
 // as they always have; the converted one again, since DNS length limits apply
 // to what is sent.
-func asciiHost(host string) (string, error) {
-	if err := cmdutil.ValidDNSHost(host); err != nil {
+func asciiHost(host string) (string, error) { return asciiHostAs(host, "--host") }
+
+// asciiHostAs is asciiHost with the host named field in errors: "--host",
+// or "host" for a record read from a file, which has no such flag (#360).
+func asciiHostAs(host, field string) (string, error) {
+	if err := cmdutil.ValidDNSHostAs(host, field); err != nil {
 		return "", err
 	}
-	a, err := cmdutil.ASCIIHostname(host, "--host")
+	a, err := cmdutil.ASCIIHostname(host, field)
 	if err != nil {
 		return "", err
 	}
 	if a != host {
-		if err := cmdutil.ValidDNSHost(a); err != nil {
+		if err := cmdutil.ValidDNSHostAs(a, field); err != nil {
 			return "", err
 		}
 	}
@@ -1468,10 +1535,16 @@ func asciiHost(host string) (string, error) {
 }
 
 // asciiAnswer is asciiHost for a record answer. Only the hostname a CNAME,
-// ANAME, MX, NS or SRV record points at is converted; other answers (TXT, A,
-// AAAA) are not names and are returned as typed.
+// ANAME, MX, NS or SRV record points at is converted. A TXT value the API
+// would refuse as it is is quoted (see apiTXT); other answers (A, AAAA) are
+// not names and are returned as typed.
 func asciiAnswer(rtype, host, answer string) (string, error) {
-	if err := cmdutil.ValidDNSAnswer(rtype, host, answer); err != nil {
+	return asciiAnswerAs(rtype, host, answer, "--answer")
+}
+
+// asciiAnswerAs is asciiAnswer with the answer named field in errors.
+func asciiAnswerAs(rtype, host, answer, field string) (string, error) {
+	if err := cmdutil.ValidDNSAnswerAs(rtype, host, answer, field); err != nil {
 		return "", err
 	}
 	var a string
@@ -1479,6 +1552,8 @@ func asciiAnswer(rtype, host, answer string) (string, error) {
 	switch rtype = strings.ToUpper(rtype); rtype {
 	case "CNAME", "ANAME", "MX", "NS":
 		a, err = cmdutil.ASCIIHostname(answer, rtype+" record target")
+	case "TXT":
+		return apiTXT(answer), nil
 	case "SRV":
 		// "weight port target": only the last field is a name.
 		i := strings.LastIndexByte(answer, ' ')
@@ -1492,7 +1567,7 @@ func asciiAnswer(rtype, host, answer string) (string, error) {
 		return "", err
 	}
 	if a != answer {
-		if err := cmdutil.ValidDNSAnswer(rtype, host, a); err != nil {
+		if err := cmdutil.ValidDNSAnswerAs(rtype, host, a, field); err != nil {
 			return "", err
 		}
 	}
@@ -1525,7 +1600,7 @@ func zoneLine(r *coreapigo.Record, domain string) string {
 		// TXT rdata is a character-string: unquoted, a value containing
 		// spaces (SPF, DKIM) parses as several separate strings and no
 		// longer describes the same record.
-		rdata = quoteTXT(rdata)
+		rdata = zoneTXT(rdata)
 	case "CAA":
 		rdata = zoneCAA(rdata)
 	case "ANAME":
@@ -1645,6 +1720,17 @@ func quoteTXT(s string) string {
 		}
 		return strings.Join(parts, " ")
 	}
+	parts := splitCharStrings(s)
+	for i, p := range parts {
+		parts[i] = `"` + escapeTXT(p) + `"`
+	}
+	return strings.Join(parts, " ")
+}
+
+// splitCharStrings cuts s into pieces of at most 255 bytes, the RFC 1035
+// limit on one character-string, backing off to a UTF-8 boundary so a
+// character is not cut in two. An empty s is one empty piece.
+func splitCharStrings(s string) []string {
 	var parts []string
 	for {
 		n := len(s)
@@ -1657,12 +1743,66 @@ func quoteTXT(s string) string {
 				n = maxCharString
 			}
 		}
-		parts = append(parts, `"`+escapeTXT(s[:n])+`"`)
+		parts = append(parts, s[:n])
 		s = s[n:]
 		if s == "" {
-			return strings.Join(parts, " ")
+			return parts
 		}
 	}
+}
+
+// zoneTXT is a TXT answer as the API holds it, written as the zone-file
+// character-strings of the value it means (#360). The API stores a `"` sent
+// in an unquoted value as `\"`, and keeps a value sent quoted as it was
+// sent, quotes and escapes included. Writing the stored form gave BIND a
+// value with literal backslashes or quotes, which is not the record.
+// txtStrings reads it as normAnswer does, so an export synced back still
+// plans no change.
+func zoneTXT(stored string) string {
+	parts, quoted := txtStrings(stored)
+	if !quoted {
+		return quoteTXT(parts[0])
+	}
+	for i, p := range parts {
+		parts[i] = `"` + escapeTXT(p) + `"`
+	}
+	return strings.Join(parts, " ")
+}
+
+// txtNeedsQuotes reports whether the API refuses v, a TXT value, sent as it
+// is: one that starts or ends with `"`, or ends with `\`, is answered with
+// "Malformed Txt Record" or "Txt Missing Quote At End" (#360).
+func txtNeedsQuotes(v string) bool {
+	return strings.HasPrefix(v, `"`) || strings.HasSuffix(v, `"`) || strings.HasSuffix(v, `\`)
+}
+
+// txtAPIEscaper escapes a TXT value for the inside of a quoted string the
+// API is sent.
+var txtAPIEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+// quoteTXTForAPI writes v, a TXT value, in the form the API accepts for one
+// it refuses unquoted: quoted character-strings with `\` and `"` escaped,
+// split at 255 bytes. The API stores that form as it is sent, and
+// normAnswer reads it back as v.
+func quoteTXTForAPI(v string) string {
+	parts := splitCharStrings(v)
+	for i, p := range parts {
+		parts[i] = `"` + txtAPIEscaper.Replace(p) + `"`
+	}
+	return strings.Join(parts, " ")
+}
+
+// apiTXT is a TXT answer given as text — --answer, or a JSON file — in the
+// form it is sent. One already written as quoted character-strings is zone
+// syntax, and is sent as it is; so is any value the API takes unquoted. Only
+// a value the API would refuse (see txtNeedsQuotes) is quoted. A zone file's
+// value is not text of this kind: the parser has read its quotes already,
+// and zoneRdata quotes the value itself whenever the API needs it quoted.
+func apiTXT(a string) string {
+	if _, ok := parseQuotedStrings(a, true); ok || !txtNeedsQuotes(a) {
+		return a
+	}
+	return quoteTXTForAPI(a)
 }
 
 // escapeTXT escapes one character-string's bytes for use between quotes.

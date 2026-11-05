@@ -367,6 +367,12 @@ func (c *Config) listFooter(doc any, n int, page *ListPage) {
 	if page != nil {
 		p := *page
 		p.Count = n
+		// An empty list says so as the command's own table does, "No
+		// records found.", where --fields printed "0 records" (#360).
+		if n == 0 && p.Page <= 1 && p.Next == 0 {
+			c.Empty(p.Noun, "")
+			return
+		}
 		c.Footer(p.parts()...)
 		return
 	}

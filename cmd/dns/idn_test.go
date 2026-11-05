@@ -42,8 +42,9 @@ func sentRecordBody(t *testing.T, build drifttest.Build, run drifttest.Run, args
 // TestDNSWrites_IDNNamesArePunycode guards #187: a Unicode --host, or a
 // Unicode hostname in a CNAME, ANAME, MX, NS or SRV answer, was sent to the
 // server as typed. Like a domain argument (#160), it must be sent — and
-// previewed by --dry-run — in its ASCII form. TXT answers are free text and
-// are left alone.
+// previewed by --dry-run — in its ASCII form. TXT answers are free text, not
+// names; the API takes only ASCII in them, so a Unicode one is refused
+// (TestValidDNSAnswer_TXTNonASCII).
 func TestDNSWrites_IDNNamesArePunycode(t *testing.T) {
 	const createResp = `{"id":1,"type":"A","host":"www","answer":"1.2.3.4","ttl":300}`
 	const getResp = `{"id":42,"type":"CNAME","host":"www","answer":"example.net","ttl":3600}`
@@ -83,8 +84,8 @@ func TestDNSWrites_IDNNamesArePunycode(t *testing.T) {
 			runCreate, []string{"example.com"}, createResp, "@", "mail.xn--bcher-kva.de"},
 		{"create SRV target", create("--type", "SRV", "--host", "_sip._tcp", "--answer", "0 5060 sip.bücher.de", "--priority", "1"),
 			runCreate, []string{"example.com"}, createResp, "_sip._tcp", "0 5060 sip.xn--bcher-kva.de"},
-		{"create TXT left alone", create("--type", "TXT", "--host", "@", "--answer", "grüße"),
-			runCreate, []string{"example.com"}, createResp, "@", "grüße"},
+		{"create TXT host", create("--type", "TXT", "--host", "bücher", "--answer", "gruesse"),
+			runCreate, []string{"example.com"}, createResp, "xn--bcher-kva", "gruesse"},
 		{"update host", update("--host", "bücher"),
 			runUpdate, []string{"example.com", "42"}, getResp, "xn--bcher-kva", "example.net"},
 		{"update CNAME target", update("--answer", "bücher.de"),
@@ -105,7 +106,7 @@ func TestDNSWrites_IDNNamesArePunycode(t *testing.T) {
 func TestDNSImport_IDNNamesArePunycode(t *testing.T) {
 	bodies, err := runImportCapturing(t, `[
 	  {"host":"bücher","type":"CNAME","answer":"www.bücher.de","ttl":300},
-	  {"host":"txt","type":"TXT","answer":"grüße","ttl":300}
+	  {"host":"txt","type":"TXT","answer":"gruesse","ttl":300}
 	]`)
 	if err != nil {
 		t.Fatalf("import: %v", err)
@@ -116,7 +117,7 @@ func TestDNSImport_IDNNamesArePunycode(t *testing.T) {
 	if bodies[0]["host"] != "xn--bcher-kva" || bodies[0]["answer"] != "www.xn--bcher-kva.de" {
 		t.Errorf("CNAME sent as host %v answer %v, want punycode", bodies[0]["host"], bodies[0]["answer"])
 	}
-	if bodies[1]["answer"] != "grüße" {
+	if bodies[1]["answer"] != "gruesse" {
 		t.Errorf("TXT answer sent as %v, want it unchanged", bodies[1]["answer"])
 	}
 }

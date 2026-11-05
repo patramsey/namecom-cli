@@ -39,6 +39,22 @@ Output a script might notice:
   `domain register` or `domain renew` that differs from the quoted price,
   and, in a `domain renew` dry run, a domain already expired or a renewal
   that would take it past ten years from today.
+- `dns create`, `dns update`, `dns import` and `dns sync` send a TXT value
+  that starts or ends with `"`, or ends with `\`, as a quoted string
+  (`say "x"` is sent as `"say \"x\""`). The API refused it as typed.
+- `dns export --zone` writes TXT values as the value the record means,
+  without the API's `\"` storage escape or a stored layer of quotes. The
+  JSON export is unchanged.
+- A TXT value that is not ASCII is a usage error (exit 2) before anything
+  is sent; the API refused it with exit 1.
+- The `dns import` result adds `created` (each record created, with its
+  `id`) and `skipped`; `success`, `changed` and `message` are unchanged.
+  `-q` prints the new IDs, one per line, where it printed nothing. `-o tsv`
+  prints the result's keys as `dns sync` does.
+- Errors about a record read by `dns import` or `dns sync` name its field
+  (`answer must be a valid IPv4 address`), not a flag (`--answer`).
+- `dns delete --if-exists -o json` lists its items in the order the IDs
+  were given; a skipped ID came last.
 
 ### Security
 - Follow-ups to #337 and #341, where API data still reached the terminal
@@ -90,6 +106,25 @@ Output a script might notice:
   unrequested; they are read several at a time and those in flight are
   cancelled. `order get --help` no longer mentions `--since`/`--until`,
   which only `order list` has.
+- A TXT value starting or ending with a quote, or ending with a backslash,
+  could not be created or imported, including from a valid zone line such
+  as `t IN TXT "say \"x\""` (#360).
+- `dns export --zone` wrote `v=spf1 "quoted" ~all` as
+  `"v=spf1 \\\"quoted\\\" ~all"`, which BIND reads with literal backslashes,
+  and a value stored quoted with its quotes as content (#360).
+- `dns sync --dry-run` planned the create of a non-ASCII TXT value the API
+  would refuse (#360).
+- The `--if-not-exists` warning about a different TTL or priority suggests
+  `dns update` with the `--ttl` or `--priority` that changes it; without
+  them the suggestion failed "nothing to update" (#360).
+- A failed `dns sync` says what was applied after the error line, not
+  before it (#360).
+- `dns export --zone` on an empty zone says so in a terminal, and
+  `--fields … -o table` on an empty list (`dns list`, `domain list`, ...)
+  prints "No records found." as the list's table does, rather than
+  "0 records" (#360).
+- An error about a file record's host with a control character showed it
+  in two escape styles (#360).
 
 ## [0.5.6] - 2026-10-22
 

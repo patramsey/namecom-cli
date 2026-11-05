@@ -1252,7 +1252,7 @@ func utf16Bytes(s string, bigEndian bool) []byte {
 // so `dns export X > records.json` then `dns import` failed there with
 // "invalid character". The BOM decides the encoding.
 func TestDNSImport_DecodesBOMAndUTF16(t *testing.T) {
-	const payload = `[{"type":"TXT","host":"@","answer":"héllo","ttl":300}]` + "\r\n"
+	const payload = `[{"type":"A","host":"bücher","answer":"192.0.2.1","ttl":300}]` + "\r\n"
 	cases := map[string][]byte{
 		"utf-8":     []byte(payload),
 		"utf-8 bom": append([]byte{0xEF, 0xBB, 0xBF}, payload...),
@@ -1262,8 +1262,8 @@ func TestDNSImport_DecodesBOMAndUTF16(t *testing.T) {
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
 			got := runImportDryRun(t, output.FormatJSON, string(data))
-			if !strings.Contains(got, `"héllo"`) {
-				t.Errorf("expected the decoded answer in the preview, got: %q", got)
+			if !strings.Contains(got, `"xn--bcher-kva"`) {
+				t.Errorf("expected the decoded host in the preview, got: %q", got)
 			}
 		})
 	}

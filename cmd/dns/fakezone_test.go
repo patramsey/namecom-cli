@@ -50,6 +50,51 @@ type fakeZone struct {
 	requests []string
 	// fail, when set, decides whether a write is refused with a 422.
 	fail func(method string, r fakeRecord) bool
+	// txtAsAPI makes TXT writes behave as the sandbox API's were measured
+	// to (#284, #360): a value that starts or ends with `"`, or ends with
+	// `\`, is refused unless it is well-formed quoted strings, which are
+	// stored as sent; any other value is stored with each `"` as `\"`.
+	txtAsAPI bool
+}
+
+// apiTXTRefuses reports whether the API refuses a TXT answer: written apart
+// from production code, from what the sandbox did, so a test of the quoting
+// does not grade it against itself.
+func apiTXTRefuses(a string) bool {
+	if !strings.HasPrefix(a, `"`) && !strings.HasSuffix(a, `"`) && !strings.HasSuffix(a, `\`) {
+		return false
+	}
+	return !wellFormedQuoted(a)
+}
+
+// wellFormedQuoted reports whether a is one or more quoted strings, with
+// backslash escapes, separated by spaces or nothing.
+func wellFormedQuoted(a string) bool {
+	i := 0
+	for {
+		if i >= len(a) || a[i] != '"' {
+			return false
+		}
+		for i++; ; i++ {
+			if i >= len(a) {
+				return false
+			}
+			if a[i] == '\\' {
+				i++
+				continue
+			}
+			if a[i] == '"' {
+				break
+			}
+		}
+		i++
+		for i < len(a) && a[i] == ' ' {
+			i++
+		}
+		if i == len(a) {
+			return true
+		}
+	}
 }
 
 func newFakeZone(t *testing.T, records ...fakeRecord) (*fakeZone, *httptest.Server) {
@@ -129,6 +174,16 @@ func (z *fakeZone) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"message":"Invalid Argument","details":"stub refused it"}`))
 			return
+		}
+		if z.txtAsAPI && body.Type == "TXT" {
+			if apiTXTRefuses(body.Answer) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"message":"Parameter Value Error","details":"Malformed Txt Record"}`))
+				return
+			}
+			if !wellFormedQuoted(body.Answer) {
+				body.Answer = strings.ReplaceAll(body.Answer, `"`, `\"`)
+			}
 		}
 	}
 
