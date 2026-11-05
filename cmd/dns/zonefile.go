@@ -359,6 +359,9 @@ func zoneRdata(rec *inputRecord, rdata []zoneToken, origin string) error {
 		// and must be even when it looks like quoted strings, as
 		// `"\"a\" \"b\""` (the value "a" "b") does.
 		rec.Answer = b.String()
+		if strings.HasSuffix(rec.Answer, `\`) {
+			return errors.New("the value ends with a backslash, which name.com cannot store: it refuses such a value however it is quoted or escaped")
+		}
 		if txtNeedsQuotes(rec.Answer) {
 			rec.Answer = quoteTXTForAPI(rec.Answer)
 		}

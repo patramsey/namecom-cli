@@ -61,6 +61,12 @@ type fakeZone struct {
 // from production code, from what the sandbox did, so a test of the quoting
 // does not grade it against itself.
 func apiTXTRefuses(a string) bool {
+	// A value whose last byte is a backslash is refused however it is
+	// spelled: `trailing\`, and quoted with it escaped, `"trailing\\"` —
+	// an even run of backslashes before the closing quote (measured).
+	if n := len(a) - len(strings.TrimRight(strings.TrimSuffix(a, `"`), `\`)) - 1; strings.HasSuffix(a, `"`) && n > 0 && n%2 == 0 {
+		return true
+	}
 	if !strings.HasPrefix(a, `"`) && !strings.HasSuffix(a, `"`) && !strings.HasSuffix(a, `\`) {
 		return false
 	}

@@ -19,13 +19,13 @@ import (
 )
 
 // txtSendCases are TXT values as typed, and the answer sent for each (#360).
-// The API refuses a value that starts or ends with `"`, or ends with `\`,
-// and accepts the same value quoted and escaped; every other value is sent
-// as it is.
+// The API refuses a value that starts or ends with `"`, and accepts the
+// same value quoted and escaped; every other value is sent as it is. One
+// that ends with `\` it refuses in every spelling: see
+// TestDNS_TXTEndsInBackslash.
 var txtSendCases = []struct{ name, in, sent string }{
 	{"ends with a quote", `say "x"`, `"say \"x\""`},
 	{"starts with a quote", `"x" said`, `"\"x\" said"`},
-	{"ends with a backslash", `trailing\`, `"trailing\\"`},
 	{"unbalanced quotes", `"a"b"`, `"\"a\"b\""`},
 	{"inner quotes are sent as typed", `v=spf1 "quoted" ~all`, `v=spf1 "quoted" ~all`},
 	{"inner backslash is sent as typed", `a\b`, `a\b`},
@@ -96,7 +96,6 @@ func TestRequestShape_DNSTXTQuoting(t *testing.T) {
 var txtFileCases = []struct{ name, zone, json, sent string }{
 	{"ends with a quote", `t 300 IN TXT "say \"x\""`, `"say \"x\""`, `"say \"x\""`},
 	{"starts with a quote", `t 300 IN TXT "\"x\" said"`, `"\"x\" said"`, `"\"x\" said"`},
-	{"ends with a backslash", `t 300 IN TXT "trailing\\"`, `"trailing\\"`, `"trailing\\"`},
 	{"inner quotes", `t 300 IN TXT "v=spf1 \"quoted\" ~all"`, `"v=spf1 \"quoted\" ~all"`, `v=spf1 "quoted" ~all`},
 	{"a value that looks quoted", `t 300 IN TXT "\"a\" \"b\""`, `"\"\\\"a\\\" \\\"b\\\"\""`, `"\"a\" \"b\""`},
 }
@@ -227,7 +226,6 @@ var txtExportCases = []struct{ name, stored, rdata, value string }{
 	{"stored escape", `v=spf1 \"quoted\" ~all`, `"v=spf1 \"quoted\" ~all"`, `v=spf1 "quoted" ~all`},
 	{"stored quoted", `"say \"x\""`, `"say \"x\""`, `say "x"`},
 	{"stored quoted, leading quote", `"\"x\" said"`, `"\"x\" said"`, `"x" said`},
-	{"stored quoted backslash", `"trailing\\"`, `"trailing\\"`, `trailing\`},
 	{"run-together strings", `"a""b"`, `"a" "b"`, `ab`},
 	{"plain", `v=spf1 -all`, `"v=spf1 -all"`, `v=spf1 -all`},
 	{"plain backslash", `a\b`, `"a\\b"`, `a\b`},
@@ -367,6 +365,35 @@ func TestValidDNSAnswer_TXTNonASCII(t *testing.T) {
 	var ue *cmdutil.UsageError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), `line 2 (TXT t): TXT record answer must be ASCII: "é" (byte 4)`) {
 		t.Errorf("sync: err = %v", err)
+	}
+}
+
+// TestDNS_TXTEndsInBackslash: name.com refuses a TXT value whose last byte
+// is a backslash however it is quoted or escaped (measured against the
+// sandbox), so it is a usage error before any request — from --answer, as
+// typed or quoted, and from a zone file or JSON. A backslash anywhere else is
+// sent.
+func TestDNS_TXTEndsInBackslash(t *testing.T) {
+	for _, v := range []string{`trailing\`, `"trailing\\"`, `"a" "b\\"`} {
+		cmd, _ := createFor(t, neverCalledServer(t), runOpts{yes: true}, "--type", "TXT", "--answer", v)
+		err := runCreate(cmd, []string{"example.com"})
+		var ue *cmdutil.UsageError
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "TXT record --answer ends with a backslash") {
+			t.Errorf("create %q: err = %v", v, err)
+		}
+	}
+	for name, content := range map[string]string{
+		"q.zone": "$ORIGIN example.com.\nt 300 IN TXT \"trailing\\\\\"\n",
+		"q.json": `[{"type":"TXT","host":"t","answer":"trailing\\\\","ttl":300}]`,
+	} {
+		_, _, err := runSyncFile(t, neverCalledServer(t), runOpts{dryRun: true}, writeFile(t, name, content), false, false)
+		var ue *cmdutil.UsageError
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "ends with a backslash") {
+			t.Errorf("sync %s: err = %v", name, err)
+		}
+	}
+	if apiTXT(`"a\\" "b"`) != `"a\\" "b"` || txtValueEndsInBackslash(`"a\\" "b"`) {
+		t.Error(`a backslash before an inner closing quote is stored, so it is sent`)
 	}
 }
 
