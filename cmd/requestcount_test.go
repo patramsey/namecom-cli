@@ -888,7 +888,35 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"url create --dry-run": {
 			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--dry-run"},
-			want: nil,
+			why:  "the GET fails a dry run for a domain not in the account, as the create would (#361)",
+			want: []string{
+				"GET /core/v1/domains/example.com",
+			},
+		},
+		"url create --if-not-exists": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--if-not-exists", "--yes"},
+			why:  "one list of the domain's forwardings finds one already on the host (#361)",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+				"POST /core/v1/domains/example.com/url/forwarding",
+			},
+		},
+		"url create --if-not-exists, already there": {
+			args: []string{"url", "create", "example.com", "--host", "www", "--to", "https://example.org", "--if-not-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/urlforwarding/example.com": {200, `{"urlForwarding":[` + stubURLEntry + `],"lastPage":1}`},
+			},
+			why: "the list finds the forwarding, so nothing is read or sent after it",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
+		},
+		"url create --if-not-exists --dry-run": {
+			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--if-not-exists", "--dry-run"},
+			why:  "the forwardings list already shows the domain is in the account",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
 		},
 		"url create --host": {
 			args: []string{"url", "create", "example.com", "--host", "www", "--to", "https://example.org", "--yes"},
@@ -959,6 +987,45 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/urlforwarding/example.com/7",
 				"DELETE /core/v1/urlforwarding/example.com/7",
 			},
+		},
+		"url delete, two": {
+			args: []string{"url", "delete", "example.com", "7", "8", "--if-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/urlforwarding/example.com": {200, `{"urlForwarding":[` + stubURLEntry + `],"lastPage":1}`},
+			},
+			why: "one forwardings list checks every ID, rather than a GET each (#361)",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+				"DELETE /core/v1/urlforwarding/example.com/7",
+			},
+		},
+		"url delete, two, one missing": {
+			args: []string{"url", "delete", "example.com", "7", "8", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/urlforwarding/example.com": {200, `{"urlForwarding":[` + stubURLEntry + `],"lastPage":1}`},
+			},
+			why:  "a missing ID fails before any DELETE",
+			code: 4,
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
+			},
+		},
+		"url delete --if-exists, gone": {
+			args: []string{"url", "delete", "example.com", "99", "--if-exists", "--yes"},
+			routes: map[string]reply{
+				"GET /core/v1/urlforwarding/example.com/99": {404, `{"message":"Not Found"}`},
+			},
+			why: "a one-entry list tells a missing forwarding from a missing domain",
+			want: []string{
+				"GET /core/v1/urlforwarding/example.com/99",
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1",
+			},
+		},
+		"url update, no flags": {
+			args: []string{"url", "update", "example.com", "7"},
+			why:  "nothing to update is a usage error before the GET (#361)",
+			code: 2,
+			want: nil,
 		},
 
 		// vanity-ns

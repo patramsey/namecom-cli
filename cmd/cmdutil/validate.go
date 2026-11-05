@@ -486,15 +486,28 @@ func ValidOneOf(flagName, v string, values []string) error {
 }
 
 // ValidURLForwardingType checks that t is a supported URL forwarding type.
+// "301" is read as "redirect" by the url commands before this check.
 func ValidURLForwardingType(t, flagName string) error {
 	switch t {
 	case "redirect", "302", "masked":
 		return nil
 	}
-	return usagef("--%s %q is not valid — must be one of: redirect, 302, masked", flagName, t)
+	return usagef("--%s %q is not valid — must be one of: redirect (or 301), 302, masked", flagName, t)
 }
 
-// ValidEmailLocalPart checks that s is a valid email mailbox local-part.
+// mailboxSpecials are the characters other than letters and digits that a
+// mailbox may hold: RFC 5322's atext, less "*", "?" and "/". Those three
+// reach the URL path of the email forwarding endpoints in a form name.com
+// does not route: `email create D '*'` came back a 302 to an HTML 403 page,
+// reported as an auth failure (exit 3), and "*" is what people type for a
+// catch-all (#361).
+const mailboxSpecials = "!#$%&'+-=^_`{|}~"
+
+// ValidEmailLocalPart checks that s can be a mailbox — the local part of an
+// address — in the email forwarding endpoints' URL path: a dot-atom of
+// letters, digits and mailboxSpecials, with no leading, trailing or doubled
+// dot, so "." and ".." are refused too. Every email command that takes a
+// mailbox checks it here, before any request (#361).
 func ValidEmailLocalPart(s, argName string) error {
 	if s == "" {
 		return usagef("%s must not be empty", argName)
@@ -502,8 +515,17 @@ func ValidEmailLocalPart(s, argName string) error {
 	if strings.Contains(s, "@") {
 		return usagef("%s %q must not contain '@' — provide only the local part (e.g. 'info', not 'info@example.com')", argName, s)
 	}
-	if strings.ContainsAny(s, " \t\n") {
+	if strings.ContainsFunc(s, unicode.IsSpace) {
 		return usagef("%s %q must not contain spaces", argName, s)
+	}
+	if strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".") || strings.Contains(s, "..") {
+		return usagef("%s %q must not start or end with '.', or have two in a row", argName, s)
+	}
+	for _, r := range s {
+		if r == '.' || unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune(mailboxSpecials, r) {
+			continue
+		}
+		return usagef("%s %q must not contain %q: a mailbox is letters, digits, '.' and %s", argName, s, r, mailboxSpecials)
 	}
 	return nil
 }

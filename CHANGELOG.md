@@ -58,6 +58,36 @@ Output a script might notice:
   (`answer must be a valid IPv4 address`), not a flag (`--answer`).
 - `dns delete --if-exists -o json` lists its items in the order the IDs
   were given; a skipped ID came last.
+- A mailbox with a character other than letters, digits, `.` and
+  ``!#$%&'+-=^_`{|}~``, or a leading, trailing or doubled `.`, is a usage
+  error (exit 2) in `email get`, `create`, `update` and `delete`, before
+  any request. `*`, `?`, `/`, `.` and `..` exited 3 (`auth`): name.com
+  answered them with an HTML 403 page.
+- `url update <domain> <id>` with no flags and no terminal fails "nothing
+  to update" (exit 2, as before) without its GET.
+- `url create --dry-run` of the apex for a domain not in the account exits
+  4 (`not_found`) instead of previewing and exiting 0. It sends one GET of
+  the domain under `--dry-run` only.
+- A duplicate `url create` (409, exit 1, type `conflict`) now has a hint
+  naming `url update` and `--if-not-exists`.
+- `url delete` takes several IDs, and with more than one reads the
+  domain's forwardings once instead of each by ID. Its JSON is the
+  several-target document `dns delete` prints; one ID prints the same
+  document as before.
+- url table lines name the domain with the host: `Created URL forwarding
+  (id 7): www.example.com → …` where they said `www`. JSON is unchanged:
+  the host is still the API's own, `"@"` for the apex.
+
+### Added
+- `url create --if-not-exists` succeeds, with `"changed": false` and the
+  existing forwarding, when the host already forwards to `--to` with that
+  type; one that forwards elsewhere fails naming its ID and the `url
+  update` that changes it. One more request, a list of the domain's
+  forwardings (#361).
+- `url delete --if-exists` skips IDs that are not there, as `dns delete
+  --if-exists` does (#361).
+- `url create --type 301` and `url update --type 301` mean `redirect`, the
+  301 the help describes (#361).
 
 ### Security
 - Follow-ups to #337 and #341, where API data still reached the terminal
@@ -128,6 +158,14 @@ Output a script might notice:
   "0 records" (#360).
 - An error about a file record's host with a control character showed it
   in two escape styles (#360).
+- `email create D '*'` failed as an auth error (exit 3) — name.com
+  redirects such a path to an HTML 403 page — so a script concluded its
+  credentials were broken. A mailbox that cannot be one is now refused
+  locally in every email command, and `email get` checks it at all (#361).
+- `url update D <id>` with no flags sent a GET before saying `--to` was
+  required; it now fails first, as `dns update` does (#361).
+- `url create --dry-run` of the apex previewed a create for a domain not
+  in the account (#361).
 
 ## [0.5.6] - 2026-10-22
 

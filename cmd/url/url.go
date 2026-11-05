@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	neturl "net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,11 +31,16 @@ var (
 	createType       string
 	createTitle      string
 	createMeta       string
+	// createIfNotExists is --if-not-exists.
+	createIfNotExists bool
 
 	updateForwardsTo string
 	updateType       string
 	updateTitle      string
 	updateMeta       string
+
+	// deleteIfExists is --if-exists.
+	deleteIfExists bool
 
 	listAll bool
 )
@@ -42,12 +49,16 @@ var (
 // values, so the help says that "redirect" is the 301 (#237). Elsewhere the
 // feature is "URL forwarding", name.com's own name for it; "redirect" only
 // describes what a 301 or 302 forwarding does.
-const urlTypes = "redirect (301, permanent), 302 (temporary), masked (destination shown in a frame)"
+const urlTypes = "redirect or 301 (permanent), 302 (temporary), masked (destination shown in a frame)"
 
 var listCmd = &cobra.Command{
 	Use:     "list <domain>",
 	Aliases: []string{"ls"},
 	Short:   "List URL forwarding entries for a domain",
+	Long: `List a domain's URL forwarding entries. The table shows the apex as "@".
+JSON and YAML show each host as the API stores it: "@" for an apex
+forwarding made with this CLI, where 'dns list' shows the apex as "". Older
+versions could create one on "", which the API keeps apart from "@".`,
 	Example: `  namecom url list example.com
   namecom url list example.com --all`,
 	Args:              cmdutil.ExactArgs(1),
@@ -70,8 +81,8 @@ var createCmd = &cobra.Command{
 	Short:   "Create a URL forwarding entry",
 	Long: `Send visitors to a domain, or to one host on it, to another URL.
 
-The default type, redirect, is a 301 (permanent) redirect; 302 is a temporary
-one. masked keeps the domain in the address bar and shows the destination in
+The default type, redirect, is a 301 (permanent) redirect, and --type 301
+means it too; 302 is a temporary one. masked keeps the domain in the address bar and shows the destination in
 a frame, with --title and --meta for the page around it.
 
 Forwarding a subdomain replaces that host's address records with name.com's,
@@ -82,10 +93,17 @@ Forwarding the apex adds an A record for it, which deleting the forwarding
 leaves in place: remove it with 'namecom dns delete'.
 
 --title and --meta apply only to masked forwarding; with another type they
-are a usage error.`,
+are a usage error.
+
+A host has one forwarding: a second create for it fails (exit 1), and
+'namecom url update' changes the first. --if-not-exists reads the domain's
+forwardings first, one more request: a forwarding on the host that already
+does what was asked is reported, with "changed": false, and one that
+forwards elsewhere fails naming its ID.`,
 	Example: `  namecom url create example.com --to https://new-site.com
   namecom url create example.com --host www --to https://new-site.com --type 302
-  namecom url create example.com --to https://new-site.com --type masked --title "My Site"`,
+  namecom url create example.com --to https://new-site.com --type masked --title "My Site"
+  namecom url create example.com --to https://new-site.com --if-not-exists   # safe to re-run`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runCreate,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -105,11 +123,17 @@ forwarding entry to another host, delete it and create a new one.`,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:               "delete <domain> <id>",
-	Aliases:           []string{"rm"},
-	Short:             "Delete a URL forwarding entry",
-	Example:           `  namecom url delete example.com 12345`,
-	Args:              cmdutil.ExactArgs(2),
+	Use:     "delete <domain> <id> [<id>...]",
+	Aliases: []string{"rm"},
+	Short:   "Delete URL forwarding entries",
+	Long: `Delete URL forwarding entries by ID, which 'url list' shows. Several IDs are
+confirmed once and deleted in order; the first failure stops the rest.`,
+	Example: `  namecom url delete example.com 12345
+  namecom url delete example.com 12345 12346
+
+  # Skip forwardings already gone, so a retry does not fail:
+  namecom url delete example.com 12345 --yes --if-exists`,
+	Args:              cmdutil.MinimumNArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
@@ -122,6 +146,8 @@ func init() {
 	createCmd.Flags().StringVar(&createType, "type", "redirect", "forwarding type: "+urlTypes)
 	createCmd.Flags().StringVar(&createTitle, "title", "", "page title (masked only)")
 	createCmd.Flags().StringVar(&createMeta, "meta", "", "meta tags (masked only)")
+	createCmd.Flags().BoolVar(&createIfNotExists, "if-not-exists", false, "succeed without creating when the host already forwards to --to with this type, printing its ID")
+	deleteCmd.Flags().BoolVar(&deleteIfExists, "if-exists", false, "skip IDs whose forwarding does not exist instead of failing")
 
 	updateCmd.Flags().StringVar(&updateForwardsTo, "to", "", "new destination URL")
 	// No default: an unset --type keeps the forwarding's current type, and a
@@ -345,7 +371,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// Any case, as `dns create --type` reads it; "MASKED" was refused (#323).
-	createType = strings.ToLower(createType)
+	createType = forwardingType(createType)
 	if err := cmdutil.ValidURLForwardingType(createType, "type"); err != nil {
 		return err
 	}
@@ -368,6 +394,39 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 	if createMeta != "" {
 		body.Meta = &createMeta
+	}
+
+	// --if-not-exists reads the domain's forwardings, as `dns create
+	// --if-not-exists` reads its records (#361). A host has one forwarding,
+	// so one that already does what was asked is the success, and one that
+	// forwards elsewhere is the conflict the create would meet, named here
+	// with its ID. That read, like the records read for a subdomain below,
+	// shows the domain is in the account; without either, a dry run reads
+	// the domain, so a preview for one not in the account fails as the
+	// create would (#362).
+	domainChecked := host != "@"
+	if createIfNotExists {
+		existing, err := existingOnHost(cmd, domain, host)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			if !sameForwarding(existing, body) {
+				return hostTaken(domain, host, existing, body)
+			}
+			if out.QuietMode {
+				out.Quiet(strconv.Itoa(*existing.ID))
+				return nil
+			}
+			return out.WrittenChanged(existing, false, fmt.Sprintf("%s already forwards to %s (id %d): nothing created",
+				forwardingName(domain, host), existing.ForwardsTo, *existing.ID))
+		}
+		domainChecked = true
+	}
+	if !domainChecked {
+		if _, err := cmdutil.DryRunDomain(cmd, domain); err != nil {
+			return err
+		}
 	}
 
 	// Forwarding a subdomain replaces its address records with name.com's,
@@ -412,7 +471,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		recovered = err == nil
 	}
 	if err != nil {
-		return err
+		return hintDuplicate(err, domain, host)
 	}
 	if !sent {
 		return nil
@@ -435,7 +494,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// Every create says "changed": true, as `url update` says whether it
 	// changed anything (#326) — a recovered one especially, since the error
 	// it recovered from could read as nothing having been made.
-	msg := fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, host, createForwardsTo)
+	msg := fmt.Sprintf("Created URL forwarding (id %d): %s → %s", *entry.ID, forwardingName(domain, host), createForwardsTo)
 	return out.WrittenChanged(entry, true, msg)
 }
 
@@ -456,10 +515,22 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// GET; without --type, the current type decides, below. Any case, as
 	// create reads it (#323).
 	if cmd.Flags().Changed("type") {
-		updateType = strings.ToLower(updateType)
+		updateType = forwardingType(updateType)
 		if err := maskedOnly(updateType, updateTitle, updateMeta); err != nil {
 			return err
 		}
+	}
+
+	// Nothing to change is a usage error, as it is for `dns update`, and is
+	// caught before the forwarding is fetched (#361): it was a GET and then
+	// "--to is required". A terminal still prompts for --to.
+	passed := false
+	for _, f := range []string{"to", "type", "title", "meta"} {
+		passed = passed || cmd.Flags().Changed(f)
+	}
+	if !passed && !output.IsInteractive() {
+		return cmdutil.NewUsageErrorHint(errors.New("nothing to update — pass at least one of --to, --type, --title, --meta"),
+			"a terminal prompts for --to")
 	}
 
 	// Fetch current entry so unset flags preserve existing values (type, title, meta).
@@ -588,7 +659,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	changes := urlChanges(current, body)
 	if len(changes) == 0 {
 		return printUpdated(out, current, false,
-			fmt.Sprintf("URL forwarding %d (%s) already has these values: nothing to change", id, displayHost(current.Host)))
+			fmt.Sprintf("URL forwarding %d (%s) already has these values: nothing to change", id, entryName(domain, current.Host)))
 	}
 
 	var entry *coreapigo.URLForwardingResponse
@@ -607,7 +678,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return printUpdated(out, entry, true,
-		fmt.Sprintf("Updated URL forwarding %d (%s): %s", id, displayHost(current.Host), strings.Join(changes, ", ")))
+		fmt.Sprintf("Updated URL forwarding %d (%s): %s", id, entryName(domain, current.Host), strings.Join(changes, ", ")))
 }
 
 // printUpdated prints the forwarding `url update` changed, or found already
@@ -628,50 +699,169 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	id, err := parseID(args[1])
-	if err != nil {
-		return err
+	// Several IDs are deleted in the order given, after one confirmation, as
+	// `dns delete` deletes them (#361). A repeated ID is deleted once: the
+	// second DELETE would 404.
+	var ids []int
+	for _, a := range args[1:] {
+		id, err := parseID(a)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
 	}
 
-	// Fetch the forwarding so the prompt can show it. "Delete URL forwarding
+	// Fetch each forwarding so the prompt can show it. "Delete URL forwarding
 	// 7 from D?" named only an ID, and was asked even for one that did not
-	// exist (#235). A missing one now fails here, before any prompt.
+	// exist (#235). A missing one fails here, before any prompt — unless
+	// --if-exists, which skips it and deletes the rest. One ID is one GET;
+	// several are found in one list of the domain's forwardings.
 	stop := out.Spin("Fetching URL forwarding…")
-	current, err := client.SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
-		&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: id})
+	currents, err := forwardingsByID(cmd, domain, ids)
 	stop()
-	if cmdutil.IsNotFound(err) {
-		return forwardingNotFound(err, id, domain)
-	}
 	if err != nil {
 		return err
 	}
-	prompt := fmt.Sprintf("Delete URL forwarding %d from %s?", id, domain)
-	if current != nil {
-		prompt = fmt.Sprintf("Delete URL forwarding %s → %s (%s) from %s?",
-			displayHost(current.Host), current.ForwardsTo, current.Type, domain)
+	var present, absent []int
+	var summaries []string
+	var writes []cmdutil.Write[cmdutil.NoBody]
+	byID := map[int]*coreapigo.URLForwardingResponse{}
+	for i, id := range ids {
+		current := currents[i]
+		if current == nil {
+			absent = append(absent, id)
+			continue
+		}
+		present = append(present, id)
+		byID[id] = current
+		summaries = append(summaries, fmt.Sprintf("%s → %s (%s)", displayHost(current.Host), current.ForwardsTo, current.Type))
+		writes = append(writes, cmdutil.Write[cmdutil.NoBody]{
+			Method: "DELETE",
+			Path:   fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id),
+			Spin:   "Deleting URL forwarding…",
+		})
+	}
+	if len(present) == 0 {
+		// Several IDs were looked up in the domain's forwardings list, which
+		// has already shown that the domain exists.
+		return deleteAbsent(cmd, domain, absent, len(ids) > 1)
+	}
+	// A note, not a Success line: under --dry-run -o json stdout is the
+	// preview alone.
+	for _, id := range absent {
+		out.Note(fmt.Sprintf("URL forwarding %d is not on %s: skipped", id, domain))
 	}
 
-	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[cmdutil.NoBody]{
-		Method: "DELETE",
-		Path:   fmt.Sprintf("/core/v1/urlforwarding/%s/%d", domain, id),
-		Prompt: prompt,
-		Spin:   "Deleting URL forwarding…",
-	}, func(ctx context.Context, _ cmdutil.NoBody) error {
+	prompt := fmt.Sprintf("Delete URL forwarding %s from %s?", summaries[0], domain)
+	if len(present) > 1 {
+		prompt = fmt.Sprintf("Delete these %d URL forwardings from %s?\n  %s", len(present), domain, strings.Join(summaries, "\n  "))
+	}
+	// A DELETE has no body to carry its ID, so send counts through present:
+	// RunWrites sends the writes one at a time, in order.
+	next := 0
+	done, err := cmdutil.RunWrites(cmd, prompt, writes, func(ctx context.Context, _ cmdutil.NoBody) error {
+		id := present[next]
+		next++
 		return client.SDK().URLForwardings.DeleteURLForwardingByID(ctx,
 			&coreapigo.DeleteURLForwardingByIDRequest{DomainName: domain, ID: id})
 	})
-	if err != nil || !sent {
+	if cmdutil.IsDryRun(cmd) {
 		return err
 	}
-	out.Success(fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain))
+
+	// One document in JSON and YAML, with each forwarding's outcome; one
+	// skipped under --if-exists is "changed": false there. The items are in
+	// the order the IDs were given.
+	res := out.Results()
+	deleted := present[:done]
+	apex := false
+	for _, id := range ids {
+		switch {
+		case slices.Contains(deleted, id):
+			res.Add(output.ResultItem{Domain: domain, ID: id, Changed: true, Message: fmt.Sprintf("Deleted URL forwarding %d from %s", id, domain)})
+			apex = apex || hostKey(derefStr(byID[id].Host), domain) == "@"
+		case slices.Contains(absent, id) && (out.Format == output.FormatJSON || out.Format == output.FormatYAML):
+			res.Add(output.ResultItem{Domain: domain, ID: id, Message: fmt.Sprintf("URL forwarding %d is not on %s: nothing to delete", id, domain)})
+		}
+	}
+	summary := fmt.Sprintf("Deleted %s from %s", output.Plural(done, "URL forwarding"), domain)
+	if len(absent) > 0 {
+		summary += fmt.Sprintf("; %d not there", len(absent))
+	}
+	res.Print(summary)
 	// The API removes a subdomain forwarding's A records with it, but not the
 	// one it added at the apex (#286). Left behind, such records are what makes
 	// a later apex create answer 400 Duplicate Record, so JSON says so too.
-	if current != nil && displayHost(current.Host) == "@" {
+	if apex {
 		cmdutil.SideEffectNote(out, fmt.Sprintf("the A record name.com added at the apex of %s for this forwarding stays — remove it with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
 			domain, domain, domain))
 	}
+	if err != nil && done > 0 {
+		return fmt.Errorf("deleting URL forwarding %d: %w — stopped after deleting %d of %d", present[done], err, done, len(present))
+	}
+	return err
+}
+
+// forwardingsByID is the forwardings of domain with these IDs, in their
+// order. One ID is one GET; several are read from one list of the domain's
+// forwardings rather than a GET each, as `dns delete` reads records (#323).
+// A missing ID is a not-found error, or under --if-exists a nil entry.
+func forwardingsByID(cmd *cobra.Command, domain string, ids []int) ([]*coreapigo.URLForwardingResponse, error) {
+	if len(ids) == 1 {
+		f, err := cmdutil.APIClient(cmd).SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
+			&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: ids[0]})
+		switch {
+		case cmdutil.IsNotFound(err) && deleteIfExists:
+			return []*coreapigo.URLForwardingResponse{nil}, nil
+		case cmdutil.IsNotFound(err):
+			return nil, forwardingNotFound(err, ids[0], domain)
+		case err != nil:
+			return nil, api.FromSDKError(err)
+		}
+		return []*coreapigo.URLForwardingResponse{f}, nil
+	}
+	all, err := listForwardings(cmd, domain)
+	if err != nil {
+		return nil, err
+	}
+	found := make([]*coreapigo.URLForwardingResponse, len(ids))
+	for i, id := range ids {
+		for _, f := range all {
+			if f.ID != nil && *f.ID == id {
+				found[i] = f
+				break
+			}
+		}
+		if found[i] == nil && !deleteIfExists {
+			return nil, forwardingNotFound(&api.APIError{StatusCode: http.StatusNotFound, Message: "URL forwarding entry not found."}, id, domain)
+		}
+	}
+	return found, nil
+}
+
+// deleteAbsent is `url delete --if-exists` when none of the forwardings is
+// there. A forwarding's 404 could also mean the domain is missing, which
+// --if-exists must not hide, so the domain is checked with a one-entry list
+// first, unless domainChecked says a list has already answered.
+func deleteAbsent(cmd *cobra.Command, domain string, ids []int, domainChecked bool) error {
+	out := cmdutil.Out(cmd)
+	if !domainChecked {
+		page, one := 1, 1
+		if _, err := cmdutil.APIClient(cmd).SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
+			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: &one}); err != nil {
+			if cmdutil.IsNotFound(err) {
+				return cmdutil.DomainNotFound(err, domain)
+			}
+			return api.FromSDKError(err)
+		}
+	}
+	res := out.Results()
+	for _, id := range ids {
+		res.Add(output.ResultItem{Domain: domain, ID: id, Message: fmt.Sprintf("URL forwarding %d is not on %s: nothing to delete", id, domain)})
+	}
+	res.Print(fmt.Sprintf("None of the %d URL forwardings is on %s: nothing to delete", len(ids), domain))
 	return nil
 }
 
@@ -842,10 +1032,17 @@ func hostEffects(records []*coreapigo.Record, host string) []string {
 }
 
 func forwardingName(domain, host string) string {
+	host = hostKey(host, domain)
 	if host == "" || host == "@" {
 		return domain
 	}
 	return host + "." + domain
+}
+
+// entryName is the name a forwarding the API returned answers on, for a
+// line that names it with its domain, as dns and email lines do (#361).
+func entryName(domain string, host *string) string {
+	return forwardingName(domain, derefStr(host))
 }
 
 // displayHost renders a record's host for a table. The API returns the apex as

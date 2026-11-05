@@ -66,7 +66,7 @@ func TestURLUpdate_NothingToChange(t *testing.T) {
 				}
 				want := "already has these values: nothing to change"
 				if tc.changed {
-					want = "Updated URL forwarding 7 (swfwd): forwards to https://example.org/b → https://example.org/c"
+					want = "Updated URL forwarding 7 (swfwd.example.com): forwards to https://example.org/b → https://example.org/c"
 				}
 				if !strings.Contains(stdout, want) {
 					t.Errorf("stdout = %q, want %q", stdout, want)
