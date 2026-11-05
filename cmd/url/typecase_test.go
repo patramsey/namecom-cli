@@ -40,7 +40,7 @@ func TestURLWrite_TypeAnyCase(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
 		var sent []byte
 		n := 0
-		cmd := cmdForURLCreate(t, serve(t, "", &sent, &n))
+		cmd := cmdForURLCreate(t, serve(t, `{"records":[]}`, &sent, &n))
 		if err := cmd.ParseFlags([]string{"--to", "https://example.org", "--host", "www", "--type", "MASKED", "--title", "T"}); err != nil {
 			t.Fatalf("ParseFlags: %v", err)
 		}
@@ -50,8 +50,8 @@ func TestURLWrite_TypeAnyCase(t *testing.T) {
 		if got := sentType(t, sent); got != "masked" {
 			t.Errorf("sent type %q, want masked", got)
 		}
-		if n != 1 {
-			t.Errorf("sent %d requests, want 1", n)
+		if n != 2 { // the records read (#358), the POST
+			t.Errorf("sent %d requests, want 2", n)
 		}
 	})
 	t.Run("update", func(t *testing.T) {

@@ -14,9 +14,18 @@ Output a script might notice:
 - A line feed or tab in a table cell prints as `\n` or `\t`. A piped
   `-o table` (the plain, borderless one) turned them into spaces. TSV, JSON,
   YAML and `-q` are unchanged.
+- `email create` on a domain whose apex has MX records other than
+  name.com's, or an SPF record of its own, now asks first: without a
+  terminal it needs `--yes` (type `confirmation_required`, exit 2). So does
+  `url create --host <h>` when `<h>` has A, AAAA or CNAME records.
+- Their `--dry-run` JSON gains a `sideEffects` array naming those records
+  (a `Would also:` line each on stderr in table mode).
+- `email create` and `url create --host <h>` read the domain's DNS records
+  first: one more request each. `url create` of the apex does not.
+- An unknown key in the config file or a profile is a warning on stderr
+  (`{"warnings": [...]}` in JSON).
 
 ### Security
-
 - Follow-ups to #337 and #341, where API data still reached the terminal
   unescaped or unredacted (#359):
   - `namecom api`'s error body on stderr (table mode) is redacted as the
@@ -34,6 +43,23 @@ Output a script might notice:
     show it as `\n`. A tab in a table cell hid the text after it, since the
     table measured it as nothing; it shows as `\t`. Messages keep their line
     breaks.
+
+### Fixed
+- `email create` replaced the apex MX records a domain already had and
+  added name.com's SPF record beside its own, leaving two, which fails SPF
+  checks (RFC 7208 §4.5) — without a prompt, while the dry run showed only
+  the POST and the warning said the records were added "if they are
+  missing". It now reads the zone first, names what will be replaced or
+  added, in `--dry-run` too, and confirms. The warning after a create says
+  what name.com does in every case (#358).
+- `url create --host www` replaced www's A record without a prompt, and
+  `url delete` then left www with none. The records it replaces are named,
+  in `--dry-run` too, and confirmed (#358).
+- An unknown config key was ignored without a word: a profile's
+  `base_url` sent its token to production, and a typo such as
+  `sandox: true` would too. Each unknown key now warns, naming the key and
+  the file, with a "did you mean" for near misses; for an endpoint-like key
+  it says the endpoint is set with `--base-url` or `NAMECOM_BASE_URL` (#358).
 
 ## [0.5.6] - 2026-10-22
 

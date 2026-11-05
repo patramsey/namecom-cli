@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -68,11 +69,15 @@ A mailbox that already forwards elsewhere is left as it is, and create fails
 that already forwards to --to is reported as created: the API's reply is the
 same either way. --dry-run checks first, and says so.
 
-To deliver forwarded mail, name.com adds DNS records to <domain> when they
-are missing: MX records for ` + forwardingMX + ` and the SPF record "` + forwardingSPF + `".
-On a domain that already receives mail elsewhere, such as Google Workspace or
-Microsoft 365, these compete with its own MX records. Deleting the mailbox
-leaves them; 'namecom dns delete' removes them.`,
+To deliver forwarded mail, name.com points the apex MX records of <domain>
+at ` + forwardingMX + `, replacing any others, and adds the SPF record
+"` + forwardingSPF + `" beside any SPF record already there. On a domain that
+receives mail elsewhere, such as Google Workspace or Microsoft 365, that
+mail stops arriving there, and two SPF records make SPF checks fail. create
+reads the zone first: when it holds other apex MX records or an SPF record,
+it names them, in --dry-run too, and asks before creating (--yes in a
+script). Deleting the mailbox restores neither; it leaves name.com's records,
+which 'namecom dns delete' removes.`,
 	Example: `  namecom email create example.com info --to you@gmail.com
   namecom email create example.com support --to team@example.com`,
 	Args:              cmdutil.ExactArgs(2),
@@ -339,12 +344,30 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// name.com replaces the apex MX records that are not its own and adds its
+	// SPF record beside any other (#358): a domain receiving mail elsewhere
+	// stops receiving it there, and two SPF records fail SPF checks. One
+	// records read says whether this create would do either, so the dry run
+	// can name the records and the real run can ask first. A domain where
+	// neither applies is not asked, as before.
+	records, err := cmdutil.ZoneRecords(cmd, domain)
+	if err != nil {
+		return err
+	}
+	effects := forwardingEffects(records)
+	prompt := ""
+	if len(effects) > 0 {
+		prompt = fmt.Sprintf("Create forwarding %s@%s → %s? %s", mailbox, domain, createEmailTo, strings.Join(effects, "; "))
+	}
+
 	var entry *coreapigo.EmailForwarding
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.CreateEmailForwardingRequest]{
-		Method: "POST",
-		Path:   fmt.Sprintf("/core/v1/domains/%s/email/forwarding", domain),
-		Body:   body,
-		Spin:   "Creating email forwarding…",
+		Method:      "POST",
+		Path:        fmt.Sprintf("/core/v1/domains/%s/email/forwarding", domain),
+		Body:        body,
+		Prompt:      prompt,
+		SideEffects: effects,
+		Spin:        "Creating email forwarding…",
 	}, func(ctx context.Context, body coreapigo.CreateEmailForwardingRequest) error {
 		var err error
 		entry, err = client.SDK().EmailForwardings.CreateEmailForwarding(ctx, &body)
@@ -380,12 +403,63 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	// From the response, so the line shows what the API stored.
 	err = out.WrittenChanged(entry, true, fmt.Sprintf("Created forwarding %s@%s → %s", box, domain, to))
-	// Said rather than checked: a DNS list would be a second request on
-	// every create, to report records the help already describes. A warning
-	// in JSON and YAML, where a note printed nothing.
-	cmdutil.SideEffectNote(out, fmt.Sprintf("name.com adds MX records (%s) and the SPF record %q to %s if they are missing — run 'namecom dns list %s --host @' to see them",
-		forwardingMX, forwardingSPF, domain, domain))
+	// Worded so it is true whatever the zone held: it said the records were
+	// added "if they are missing", while other MX records were replaced
+	// (#358). A warning in JSON and YAML, where a note printed nothing.
+	cmdutil.SideEffectNote(out, forwardingNote(domain))
 	return err
+}
+
+// forwardingNote is what create says, after the fact, about the records
+// name.com keeps for forwarding.
+func forwardingNote(domain string) string {
+	return fmt.Sprintf("name.com points the apex MX records of %s at %s, replacing any others, and adds the SPF record %q unless it is there — run 'namecom dns list %s --host @' to see them",
+		domain, forwardingMX, forwardingSPF, domain)
+}
+
+// forwardingEffects is what creating a forwarding would change on a zone
+// holding records, beyond the forwarding itself, one sentence each: every
+// apex MX record that is not name.com's, which is replaced, and the SPF
+// record added beside an apex SPF record of the zone's own. Seen in the
+// sandbox (#358): a subdomain's MX is left alone, and an SPF record already
+// reading forwardingSPF is not added twice.
+func forwardingEffects(records []*coreapigo.Record) []string {
+	var effects, spf []string
+	haveOurs := false
+	for _, r := range records {
+		if cmdutil.RecordHost(r) != "@" {
+			continue
+		}
+		answer := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(derefStr(r.Answer))), ".")
+		switch strings.ToUpper(derefStr(r.Type)) {
+		case "MX":
+			if !nameComMX.MatchString(answer) {
+				effects = append(effects, fmt.Sprintf("name.com replaces %s with its own MX records (%s)", cmdutil.RecordLine(r), forwardingMX))
+			}
+		case "TXT":
+			txt := strings.Trim(answer, `"`)
+			if txt == forwardingSPF {
+				haveOurs = true
+			} else if txt == "v=spf1" || strings.HasPrefix(txt, "v=spf1 ") {
+				spf = append(spf, cmdutil.RecordLine(r))
+			}
+		}
+	}
+	if len(spf) > 0 && !haveOurs {
+		effects = append(effects, fmt.Sprintf("name.com adds the SPF record %q beside %s, and two SPF records make SPF checks fail (RFC 7208 §4.5)",
+			forwardingSPF, strings.Join(spf, ", ")))
+	}
+	return effects
+}
+
+// nameComMX matches the MX hosts name.com uses for forwarding.
+var nameComMX = regexp.MustCompile(`^mx[0-9]*\.name\.com$`)
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {

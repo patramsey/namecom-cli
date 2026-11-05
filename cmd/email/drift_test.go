@@ -131,6 +131,22 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 			run:  runCreate,
 			resp: `{"domainName":"example.com","emailBox":"hello"}`,
 		},
+		// A zone whose MX and SPF records the create would replace or add
+		// beside (#358): the dry run names them and the real run confirms,
+		// and the POST is the same.
+		{
+			name: "create replacing records",
+			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForEmailCreate(t, srv)
+				if err := cmd.ParseFlags([]string{"--to", "me@elsewhere.com"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
+			},
+			args: []string{"example.com", "hello"},
+			run:  runCreate,
+			resp: zoneElsewhere,
+		},
 		{
 			name: "update",
 			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {

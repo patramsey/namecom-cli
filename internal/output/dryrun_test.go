@@ -216,6 +216,46 @@ func TestDryRunQuote(t *testing.T) {
 	})
 }
 
+// TestDryRunEffects pins #358's side effects: JSON gains a "sideEffects"
+// array beside the unchanged request, and table mode one sanitized "Would
+// also" line on stderr per effect. No effects adds no key.
+func TestDryRunEffects(t *testing.T) {
+	effects := []string{"name.com replaces MX @ mail.example.net", "x\x1b[2Jy"}
+
+	t.Run("json", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w}
+		must(t, c.DryRunEffects("POST", "/p", map[string]any{"a": 1}, nil, "", effects[:1]))
+		var got map[string]any
+		if err := json.Unmarshal(w.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		assertEqualJSON(t, got, map[string]any{
+			"dryRun": true, "method": "POST", "path": "/p",
+			"body":        map[string]any{"a": float64(1)},
+			"sideEffects": []any{"name.com replaces MX @ mail.example.net"},
+		})
+	})
+
+	t.Run("table", func(t *testing.T) {
+		var w, e bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &w, EWriter: &e}
+		must(t, c.DryRunEffects("POST", "/p", nil, nil, "", effects))
+		if got := e.String(); !strings.Contains(got, "Would also: name.com replaces MX @ mail.example.net\n") || strings.Contains(got, "\x1b") {
+			t.Errorf("stderr = %q, want a sanitized Would also line per effect", got)
+		}
+	})
+
+	t.Run("none", func(t *testing.T) {
+		var w bytes.Buffer
+		c := &Config{Format: FormatJSON, Color: ColorNever, Writer: &w}
+		must(t, c.DryRunEffects("POST", "/p", nil, nil, "", nil))
+		if strings.Contains(w.String(), "sideEffects") {
+			t.Errorf("stdout = %q, want no sideEffects key", w.String())
+		}
+	})
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

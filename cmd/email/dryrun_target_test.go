@@ -16,12 +16,16 @@ import (
 )
 
 // mailboxServer answers a GET of the mailbox with mailbox, or a 404 when it
-// is "", and any other request with `{}`, recording each as "METHOD /path".
+// is "", a GET of the records with none, and any other request with `{}`, recording each as "METHOD /path".
 func mailboxServer(t *testing.T, mailbox string, seen *[]string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*seen = append(*seen, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/records") {
+			_, _ = w.Write([]byte(`{"records":[]}`))
+			return
+		}
 		if r.Method == http.MethodGet && mailbox == "" {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
@@ -37,7 +41,10 @@ func mailboxServer(t *testing.T, mailbox string, seen *[]string) *httptest.Serve
 	return srv
 }
 
-const getInfo = "GET /core/v1/domains/example.com/email/forwarding/info"
+const (
+	getInfo    = "GET /core/v1/domains/example.com/email/forwarding/info"
+	getRecords = "GET /core/v1/domains/example.com/records"
+)
 
 // TestEmailDryRun_ChecksTheMailbox pins #313: email update and delete
 // previewed a request for a mailbox that did not exist, and exited 0, where
@@ -104,8 +111,13 @@ func TestEmailCreateDryRun_ChecksForAnExistingMailbox(t *testing.T) {
 			if isConflict != tc.conflict || (!tc.conflict && err != nil) {
 				t.Errorf("dry run = %v, want a conflict: %v", err, tc.conflict)
 			}
-			if strings.Join(seen, ",") != getInfo {
-				t.Errorf("sent %v, want only %s", seen, getInfo)
+			// A create to preview reads the zone too, for what it would replace (#358).
+			want := getInfo
+			if !tc.conflict && !tc.noop {
+				want += "," + getRecords
+			}
+			if strings.Join(seen, ",") != want {
+				t.Errorf("sent %v, want only %s", seen, want)
 			}
 			stdout := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String()
 			wantPOST := !tc.conflict && !tc.noop
@@ -172,14 +184,15 @@ func TestEmailDryRun_NothingToChange(t *testing.T) {
 
 // TestEmailWrites_SayChanged pins #326: a real create or update printed the
 // entry in JSON with no "changed" key, where the dry run's no-op says
-// "changed": false. Each still sends its one request.
+// "changed": false. Each sends its one write; create reads the zone first
+// (#358).
 func TestEmailWrites_SayChanged(t *testing.T) {
 	for name, tc := range map[string]struct {
 		build func(*testing.T, *httptest.Server) *cobra.Command
 		run   func(*cobra.Command, []string) error
 		want  string
 	}{
-		"create": {cmdForEmailCreate, runCreate, "POST /core/v1/domains/example.com/email/forwarding"},
+		"create": {cmdForEmailCreate, runCreate, getRecords + ",POST /core/v1/domains/example.com/email/forwarding"},
 		"update": {cmdForEmailUpdate, runUpdate, "PUT /core/v1/domains/example.com/email/forwarding/info"},
 	} {
 		t.Run(name, func(t *testing.T) {

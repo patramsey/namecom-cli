@@ -53,6 +53,13 @@ type Write[B any] struct {
 	// Spin is the spinner text shown while send runs. Empty shows none, which
 	// is required when send itself may prompt.
 	Spin string
+
+	// SideEffects are what the API changes beyond the request, one
+	// self-contained sentence each: the records an email or URL forwarding
+	// replaces (#358). --dry-run reports them — a "sideEffects" array in
+	// JSON and YAML, a "Would also" line each in table mode. A write with
+	// any should set a Prompt naming them, so they are confirmed.
+	SideEffects []string
 }
 
 // confirmFunc is Confirm, replaceable in tests so the decline path can be
@@ -83,7 +90,7 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 			quote = &q
 			ctx = withBalance(cmd, AccountContext(cmd), &q.Total, q.Balance)
 		}
-		return false, out.DryRunQuote(w.Method, w.Path, previewOf(w), quote, ctx)
+		return false, out.DryRunEffects(w.Method, w.Path, previewOf(w), quote, ctx, w.SideEffects)
 	}
 
 	if w.Prompt != "" {

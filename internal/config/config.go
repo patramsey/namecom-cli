@@ -258,6 +258,7 @@ func Load() (*File, error) {
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	warnUnknownKeys(path, data)
 	if f.Profiles == nil {
 		f.Profiles = map[string]Profile{}
 	}
