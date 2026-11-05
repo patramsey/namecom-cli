@@ -175,13 +175,13 @@ func TestDryRunMatchesRealRequest_Email(t *testing.T) {
 				}
 				return cmd
 			},
-			args: []string{"example.com", "a/b?c"},
+			args: []string{"example.com", "a#b{c}"},
 			run:  runUpdate,
 		},
 		{
 			name:  "delete escaped",
 			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command { return cmdForEmailDelete(t, srv) },
-			args:  []string{"example.com", "a/b?c"},
+			args:  []string{"example.com", "a#b{c}"},
 			run:   runDelete,
 		},
 	}

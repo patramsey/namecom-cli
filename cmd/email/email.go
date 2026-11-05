@@ -228,16 +228,16 @@ func runGet(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
 
-	domain, err := cmdutil.DomainArg(args, 0)
+	domain, mailbox, err := mailboxArgs(args)
 	if err != nil {
 		return err
 	}
 	stop := out.Spin("Fetching email forwarding…")
 	entry, err := client.SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
-		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: args[1]})
+		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: mailbox})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return mailboxNotFound(err, args[1], domain)
+		return mailboxNotFound(err, mailbox, domain)
 	}
 	if err != nil {
 		return api.FromSDKError(err)
@@ -273,13 +273,8 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runCreate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain, err := cmdutil.DomainArg(args, 0)
+	domain, mailbox, err := mailboxArgs(args)
 	if err != nil {
-		return err
-	}
-	mailbox := args[1]
-
-	if err := cmdutil.ValidEmailLocalPart(mailbox, "mailbox"); err != nil {
 		return err
 	}
 
@@ -465,11 +460,10 @@ func derefStr(s *string) string {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain, err := cmdutil.DomainArg(args, 0)
+	domain, mailbox, err := mailboxArgs(args)
 	if err != nil {
 		return err
 	}
-	mailbox := args[1]
 
 	if updateEmailTo == "" {
 		if !output.IsInteractive() {
@@ -558,11 +552,10 @@ func unchangedMsg(box, domain, to string) string {
 func runDelete(cmd *cobra.Command, args []string) error {
 	out := cmdutil.Out(cmd)
 	client := cmdutil.APIClient(cmd)
-	domain, err := cmdutil.DomainArg(args, 0)
+	domain, mailbox, err := mailboxArgs(args)
 	if err != nil {
 		return err
 	}
-	mailbox := args[1]
 
 	// The prompt says where the mailbox forwards, as url and dns delete say
 	// what they remove (#286), and a dry run checks that the mailbox exists,
@@ -603,6 +596,19 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	cmdutil.SideEffectNote(out, fmt.Sprintf("the MX and SPF records name.com added for forwarding stay on %s — once no mailbox forwards, remove them with 'namecom dns delete %s <id>' (see 'namecom dns list %s --host @')",
 		domain, domain, domain))
 	return nil
+}
+
+// mailboxArgs is the <domain> <mailbox> every command but list takes, both
+// checked before any request. A mailbox of "*", "/" or ".." reached the
+// path, and came back an HTML 403 reported as an auth failure (#361).
+func mailboxArgs(args []string) (domain, mailbox string, err error) {
+	if domain, err = cmdutil.DomainArg(args, 0); err != nil {
+		return "", "", err
+	}
+	if err = cmdutil.ValidEmailLocalPart(args[1], "mailbox"); err != nil {
+		return "", "", err
+	}
+	return domain, args[1], nil
 }
 
 // fetchMailbox gets one mailbox's forwarding, for a delete's prompt or a dry

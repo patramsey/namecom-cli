@@ -232,7 +232,8 @@ namecom dns sync acme.io --file acme.io.zone --prune       #    ...also deleting
 
 For scripts that add or remove single records, `dns create --if-not-exists`,
 `dns delete --if-exists` and `dns import --skip-existing` succeed when the
-work is already done, so a retry does not fail.
+work is already done, so a retry does not fail. `url create --if-not-exists`
+and `url delete --if-exists` do the same for URL forwarding.
 
 **Transfer a domain in:**
 ```bash
@@ -248,7 +249,7 @@ namecom transfer create acme.io --auth-code XXXXXX --contacts-file contacts.json
 ```bash
 namecom email create acme.io hello --to you@gmail.com     # hello@acme.io → you@gmail.com
 namecom email list acme.io
-namecom url create acme.io --to https://new-site.com      # redirect apex to another URL
+namecom url create acme.io --to https://new-site.com --if-not-exists   # redirect apex; safe to re-run
 ```
 
 **Publish DNSSEC DS records** (values from your DNS host, which signs the zone):

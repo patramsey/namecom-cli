@@ -61,9 +61,14 @@ func TestURLCreate_FQDNHost(t *testing.T) {
 			if n != wantN {
 				t.Errorf("sent %d requests, want %d", n, wantN)
 			}
+			// The host with its domain, as dns and email lines name theirs (#361).
+			name := want + ".example.com"
+			if want == "@" {
+				name = "example.com"
+			}
 			stdout := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String()
-			if !strings.Contains(stdout, ": "+want+" → ") {
-				t.Errorf("success line %q should name the host sent, %q", stdout, want)
+			if !strings.Contains(stdout, ": "+name+" → ") {
+				t.Errorf("success line %q should name the host sent, %q", stdout, name)
 			}
 		})
 	}

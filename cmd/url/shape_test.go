@@ -23,6 +23,19 @@ func TestRequestShape_URL(t *testing.T) {
 			Method: "POST", Path: "/core/v1/domains/example.com/url/forwarding", Body: `{"forwardsTo":"https://example.org","host":"@","type":"redirect"}`,
 		}, build, runCreate, []string{"example.com"}, stub)
 	})
+	// --type 301 is the default type, sent as the API names it (#361).
+	t.Run("create --type 301", func(t *testing.T) {
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForURLCreate(t, srv)
+			if err := cmd.ParseFlags([]string{"--to", "https://example.org", "--type", "301"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}
+		drifttest.AssertRequest(t, drifttest.Request{
+			Method: "POST", Path: "/core/v1/domains/example.com/url/forwarding", Body: `{"forwardsTo":"https://example.org","host":"@","type":"redirect"}`,
+		}, build, runCreate, []string{"example.com"}, stub)
+	})
 	t.Run("update", func(t *testing.T) {
 		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
 			cmd := cmdForURLUpdate(t, srv)

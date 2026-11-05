@@ -437,13 +437,16 @@ func TestValidURLForwardingType(t *testing.T) {
 }
 
 func TestValidEmailLocalPart(t *testing.T) {
-	ok := []string{"info", "support", "hello-world", "user123"}
+	ok := []string{"info", "support", "hello-world", "user123", "first.last", "a+tag", "o'brien", "a#b{c}", "josé"}
 	for _, s := range ok {
 		if err := ValidEmailLocalPart(s, "mailbox"); err != nil {
 			t.Errorf("ValidEmailLocalPart(%q) unexpected error: %v", s, err)
 		}
 	}
-	bad := []string{"", "info@example.com", "has space", "tab\there"}
+	// "*", "?", "/", "." and ".." reached the path and came back an HTML 403
+	// reported as an auth failure (#361).
+	bad := []string{"", "info@example.com", "has space", "tab\there", "*", "?", "/", ".", "..",
+		"a/b", "a?b", "*info", ".info", "info.", "a..b", `a\b`, `a"b`, "a<b>", "a,b", "a\x00b", "a\xffb"}
 	for _, s := range bad {
 		if err := ValidEmailLocalPart(s, "mailbox"); err == nil {
 			t.Errorf("ValidEmailLocalPart(%q) expected error, got nil", s)
