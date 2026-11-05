@@ -218,6 +218,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		out.Table(
 			headers,
 			emailRows(all),
+			output.Identifier("MAILBOX"),
 		)
 		out.ListFooter(foot)
 	}
@@ -265,6 +266,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		out.Table(
 			[]string{"MAILBOX", "FORWARDS TO"},
 			emailRows([]*coreapigo.EmailForwarding{entry}),
+			output.Identifier("MAILBOX"),
 		)
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -198,7 +199,10 @@ func runUnverified(cmd *cobra.Command, _ []string) error {
 		out.Table(
 			headers,
 			unverifiedRows(out, contacts),
-			output.Essential("DOMAINS"),
+			output.Identifier("ID"),
+			// DEADLINE is never dropped: the help says to read it, and a
+			// narrow terminal hid it while EMAIL stayed (#364).
+			output.Essential("DEADLINE", "DOMAINS"),
 		)
 		out.ListFooter(foot)
 		warn()
@@ -238,11 +242,17 @@ func unverifiedRows(out *output.Config, contacts []*coreapigo.UnverifiedContact)
 		if c.Email != nil {
 			email = *c.Email
 		}
+		domains := joinDomains(c.Domains)
+		if out.Format == output.FormatTSV {
+			// Every domain, not "a.com (+1 more)": TSV carries the
+			// values (#364).
+			domains = strings.Join(c.Domains, ", ")
+		}
 		rows = append(rows, []string{
 			strconv.FormatInt(c.VerificationID, 10),
 			email,
 			out.ExpiryDate(c.VerifyBy), // colors by urgency, same as domain expiry
-			joinDomains(c.Domains),
+			domains,
 		})
 	}
 	return rows

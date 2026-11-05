@@ -142,6 +142,9 @@ func searchRenewLabel(out *output.Config, r *coreapigo.SearchResult) string {
 	if !r.Purchasable || r.RenewalPrice == nil {
 		return out.Dim("—")
 	}
+	if out.Format == output.FormatTSV {
+		return out.Price(*r.RenewalPrice)
+	}
 	return output.Money(*r.RenewalPrice) + "/yr"
 }
 
@@ -578,6 +581,11 @@ func renderResults(out *output.Config, results []*coreapigo.SearchResult, unansw
 			price := out.Dim("—")
 			if r.Purchasable && r.PurchasePrice != nil {
 				price = searchPriceLabel(r)
+				if out.Format == output.FormatTSV {
+					// The number alone, as -o json has it: "$17.99/yr" is
+					// for reading (#364).
+					price = out.Price(*r.PurchasePrice)
+				}
 			}
 			// SearchResult.Premium is a *bool, and the SDK documents it as
 			// "only returned for purchasable domains" with omitempty on the
@@ -603,7 +611,7 @@ func renderResults(out *output.Config, results []*coreapigo.SearchResult, unansw
 				premium,
 			})
 		}
-		out.Table(headers, rows)
+		out.Table(headers, rows, output.Identifier("DOMAIN"))
 		out.Count(len(results), "domain") // the noun, as every list names it (#322)
 		var available []string
 		for _, r := range results {

@@ -1175,6 +1175,47 @@ func TestTableEssentialColumns(t *testing.T) {
 	}
 }
 
+// TestTableIdentifierColumns pins #364: an identifier column keeps its full
+// width while another column can still be shortened or dropped, and is cut
+// only as a last resort, so the table still fits.
+func TestTableIdentifierColumns(t *testing.T) {
+	headers := []string{"DOMAIN", "EXPIRES", "AUTO-RENEW", "LOCKED", "PRIVACY"}
+	rows := [][]string{
+		{"namecom-smoke-37de95c1a2b4.com", "2027-01-01", "yes", "yes", "no"},
+		{"namecom-smoke2-37de95c1a2b4.com", "2027-01-01", "no", "no", "no"},
+	}
+	for _, width := range []int{60, 70} {
+		var buf bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &buf, MaxWidth: width}
+		c.Table(headers, rows, Identifier("DOMAIN"))
+		got := buf.String()
+		for _, r := range rows {
+			if !strings.Contains(got, r[0]) {
+				t.Errorf("width %d: identifier %q was cut:\n%s", width, r[0], got)
+			}
+		}
+		if !strings.Contains(got, "hidden") {
+			t.Errorf("width %d: want other columns hidden instead:\n%s", width, got)
+		}
+
+		buf.Reset()
+		c.Table(headers, rows)
+		if strings.Contains(buf.String(), rows[1][0]) {
+			t.Errorf("width %d: unmarked DOMAIN kept whole; the test no longer shows the difference:\n%s", width, buf.String())
+		}
+	}
+
+	// Narrower than the identifier itself: it is cut rather than overflowing.
+	var buf bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &buf, EWriter: &bytes.Buffer{}, MaxWidth: 28}
+	c.Table(headers, rows, Identifier("DOMAIN"))
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if w := lipgloss.Width(line); w > 28 {
+			t.Errorf("line is %d wide at MaxWidth 28:\n%s", w, buf.String())
+		}
+	}
+}
+
 // TestKVTableFitsTerminalWidth: KVTable (`domain get`, `auth status`) was
 // rendered at its natural width, so a long value — a nameserver list, a
 // forwarding URL — ran past the terminal and the borders came apart on wrap

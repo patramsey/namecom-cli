@@ -65,6 +65,7 @@ func init() {
 	syncCmd.Flags().BoolVar(&syncPrune, "prune", false, "delete live records the file does not list (never apex NS or CAA)")
 	syncCmd.Flags().BoolVar(&syncPruneAll, "prune-all", false, "like --prune, and also change or delete apex NS and CAA records")
 	_ = syncCmd.MarkFlagRequired("file")
+	cmdutil.MarkFileFlags(syncCmd.Flags(), "file")
 }
 
 // syncChange is one write of a sync, as the result reports it.

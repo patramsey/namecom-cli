@@ -453,7 +453,8 @@ func (c *Config) YAMLList(data any, nextPage *int32, total *int32) error {
 type TableOption func(*tableOpts)
 
 type tableOpts struct {
-	essential map[string]bool
+	essential  map[string]bool
+	identifier map[string]bool
 }
 
 // Essential marks columns, named by header, that are never dropped to fit
@@ -468,6 +469,24 @@ func Essential(headers ...string) TableOption {
 		}
 		for _, h := range headers {
 			o.essential[h] = true
+		}
+	}
+}
+
+// Identifier marks columns, named by header, that hold what a row is called
+// — a domain name, an ID — and so are neither dropped nor shortened while any
+// other column can still give way. At 60 columns `domain list` cut two
+// domains to "namecom-smoke-37de95…" and "namecom-smoke2-37de9…", which could
+// no longer be told apart, while AUTO-RENEW and LOCKED stayed (#364). An
+// identifier is shortened only when every other column is already at its
+// narrowest or gone, so a table still fits rather than overflowing.
+func Identifier(headers ...string) TableOption {
+	return func(o *tableOpts) {
+		if o.identifier == nil {
+			o.identifier = map[string]bool{}
+		}
+		for _, h := range headers {
+			o.identifier[h] = true
 		}
 	}
 }
@@ -488,7 +507,8 @@ const minColWidth = 20
 //
 // So the widest cells are shortened with "…" first, down to minColWidth, and
 // only then are columns dropped: from the right, never the first column, and
-// never one marked Essential. A footer says what was hidden or shortened.
+// never one marked Essential or Identifier. An Identifier column is shortened
+// only as a last resort. A footer says what was hidden or shortened.
 // --wide opts out; so does any non-terminal writer, since a pipe has no width
 // to fit and its consumer wants the whole row.
 func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
@@ -510,7 +530,7 @@ func (c *Config) Table(headers []string, rows [][]string, opts ...TableOption) {
 		return
 	}
 	color := c.ColorEnabled()
-	headers, rows, dropped, truncated := c.fitColumns(headers, rows, o.essential)
+	headers, rows, dropped, truncated := c.fitColumns(headers, rows, o)
 
 	cell := lipgloss.NewStyle().Padding(0, 1)
 	header := cell.Bold(color)
@@ -641,7 +661,9 @@ func (c *Config) plainTable(headers []string, rows [][]string) {
 //
 // The first column is never dropped: a table of nothing but a row count is
 // worse than one that overflows, and callers put the identifying column first.
-func (c *Config) fitColumns(headers []string, rows [][]string, essential map[string]bool) ([]string, [][]string, []string, bool) {
+// Identifier columns keep their natural width until nothing else can be
+// shortened or dropped; only then are they shortened like any other.
+func (c *Config) fitColumns(headers []string, rows [][]string, o tableOpts) ([]string, [][]string, []string, bool) {
 	if c.Wide || c.MaxWidth <= 0 || len(headers) == 0 {
 		return headers, rows, nil, false
 	}
@@ -660,21 +682,32 @@ func (c *Config) fitColumns(headers []string, rows [][]string, essential map[str
 	for {
 		natural = colWidths(measured, rows, keep)
 		dated := datedWidths(measured, rows, keep)
+		fixed := make([]bool, len(keep))
+		for k, i := range keep {
+			fixed[k] = o.identifier[headers[i]]
+		}
 		var fits bool
-		widths, fits = shrinkToFit(measured, keep, natural, dated, c.MaxWidth)
+		widths, fits = shrinkToFit(measured, keep, natural, dated, fixed, c.MaxWidth)
 		if fits {
 			widths = giveBack(widths, natural, dated, c.MaxWidth)
 			break
 		}
 		drop := -1
 		for k := len(keep) - 1; k > 0; k-- {
-			if !essential[headers[keep[k]]] {
+			if h := headers[keep[k]]; !o.essential[h] && !o.identifier[h] {
 				drop = k
 				break
 			}
 		}
 		if drop < 0 {
-			break // nothing left to drop: overflow at the narrowest widths
+			// Nothing left to drop. Shorten the identifiers too, as a last
+			// resort; if even that does not fit, overflow at the narrowest
+			// widths.
+			widths, fits = shrinkToFit(measured, keep, natural, dated, nil, c.MaxWidth)
+			if fits {
+				widths = giveBack(widths, natural, dated, c.MaxWidth)
+			}
+			break
 		}
 		keep = append(keep[:drop:drop], keep[drop+1:]...)
 	}
@@ -735,7 +768,7 @@ func shortenCell(v string, width int) string {
 // shrinkToFit narrows the widest column a character at a time until the table
 // fits maxWidth, taking no column below minColWidth or its header's width. It
 // returns the widths and whether they fit. headers is nil when none is
-// printed.
+// printed. A column whose fixed entry is true is not narrowed at all.
 //
 // A column of dates (dated, see datedWidths) first loses the relative
 // phrases, all at once, since shortenCell cuts a date to the date alone
@@ -743,7 +776,7 @@ func shortenCell(v string, width int) string {
 // 20 columns and drew 10, and the spare 10 went unused while a domain or an
 // email address beside it was cut. giveBack returns them, if they are not
 // needed after all.
-func shrinkToFit(headers []string, keep, natural, dated []int, maxWidth int) ([]int, bool) {
+func shrinkToFit(headers []string, keep, natural, dated []int, fixed []bool, maxWidth int) ([]int, bool) {
 	widths := append([]int(nil), natural...)
 	if tableWidth(widths) > maxWidth {
 		for k, d := range dated {
@@ -759,6 +792,9 @@ func shrinkToFit(headers []string, keep, natural, dated []int, maxWidth int) ([]
 			h = lipgloss.Width(headers[i])
 		}
 		floor[k] = min(widths[k], max(minColWidth, h))
+		if k < len(fixed) && fixed[k] {
+			floor[k] = widths[k]
+		}
 	}
 	for tableWidth(widths) > maxWidth {
 		widest := -1
@@ -1725,6 +1761,16 @@ func Money(v float64) string {
 		return "-$" + s[1:]
 	}
 	return "$" + s
+}
+
+// Price formats an amount for a table cell: Money in a table, and in TSV the
+// plain number ("17.99") a program can read, as TSV prints a date without its
+// "(in 3 months)" (#364).
+func (c *Config) Price(v float64) string {
+	if c.Format == FormatTSV {
+		return strconv.FormatFloat(v, 'f', 2, 64)
+	}
+	return Money(v)
 }
 
 // groupDigits inserts commas into the integer part of a formatted number,

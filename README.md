@@ -443,7 +443,8 @@ choose what to print as well, it is a usage error.
 or name per line, create commands print the new resource's ID, other writes
 print nothing, and other reads print the one value a script most likely wants
 (`version` the version, `auth status` the username, `domain pricing` the
-price). Errors still go to stderr.
+price). Errors still go to stderr. `--dry-run` is the exception: with `-q`
+it still prints the whole preview.
 
 Tables drop their rightmost columns to fit a narrow terminal and say which
 they hid; `--wide` keeps them all.

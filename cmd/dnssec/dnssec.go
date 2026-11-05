@@ -141,6 +141,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		out.Table(
 			headers,
 			dnssecRows(result.Dnssec),
+			output.Identifier("KEY TAG"),
 		)
 		out.Count(len(result.Dnssec), "DS record")
 	}
@@ -181,6 +182,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		out.Table(
 			[]string{"KEY TAG", "ALGORITHM", "DIGEST TYPE", "DIGEST"},
 			dnssecRows([]*coreapigo.Dnssec{key}),
+			output.Identifier("KEY TAG"),
 		)
 	}
 	return nil

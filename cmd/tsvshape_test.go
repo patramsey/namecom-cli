@@ -110,6 +110,32 @@ func TestTSVShape(t *testing.T) {
 			},
 			want:     "premium\tfalse\npurchasePrice\t46.99\nrenewalPrice\t50.99\ntransferPrice\t\npurchaseType\taftermarket_b\npurchaseTypePrice\t2500\n",
 			requests: 2},
+		// TSV carries plain values, not the table's display formatting: a
+		// price as the number, every name rather than "+2", and the
+		// registrant as its fields (#364).
+		{name: "domain check prices", args: []string{"domain", "check", "example.com", "--authoritative"},
+			routes: map[string]reply{"POST /core/v1/domains:checkAvailability": {200,
+				`{"results":[{"domainName":"example.com","purchasable":true,"purchasePrice":1017.99,"renewalPrice":19.99}]}`}},
+			has:    []string{"example.com\tavailable\t1017.99\t19.99\t"},
+			hasNot: []string{"$", "/yr", "1,017"}, requests: 1},
+		{name: "domain get plain fields", args: []string{"domain", "get", "example.com"},
+			routes: map[string]reply{"GET /core/v1/domains/example.com": {200,
+				`{"domainName":"example.com","renewalPrice":1234.5,"contacts":{"registrant":` +
+					`{"firstName":"Jane","lastName":"Doe","companyName":"Acme Inc","isVerified":true}}}`}},
+			has: []string{"Renews at\t1234.50\n", "Registrant\tJane Doe\n",
+				"Registrant company\tAcme Inc\n", "Registrant verified\tyes\n"},
+			hasNot: []string{"$", "·", "(Acme"}, requests: 1},
+		{name: "order list plain values", args: []string{"order", "list"},
+			routes: map[string]reply{"GET /core/v1/orders": {200,
+				`{"orders":[{"id":7,"status":"success","createDate":"2026-04-06T11:39:11Z","finalAmount":1047.97,` +
+					`"orderItems":[{"id":1,"name":"acme.io","type":"registration"},{"id":2,"name":"acme.dev","type":"registration"}]}]}`}},
+			has:    []string{"ID\tDATE\tDOMAIN(S)\tTOTAL\tSTATUS\tTYPE\n", "7\t2026-04-06\tacme.io, acme.dev\t1047.97\tsuccess\tregistration\n"},
+			hasNot: []string{"$", "+1", "1,047"}, requests: 1},
+		{name: "contact unverified every domain", args: []string{"contact", "unverified"},
+			routes: map[string]reply{"GET /core/v1/contacts/unverified": {200,
+				`{"unverifiedContacts":[{"verificationId":9,"email":"a@example.com","verifyBy":"2026-08-20T00:00:00Z","domains":["a.com","b.com"]}]}`}},
+			has:    []string{"9\ta@example.com\t2026-08-20\ta.com, b.com\n"},
+			hasNot: []string{"more)"}, requests: 1},
 		{name: "transfer eligibility", args: []string{"transfer", "eligibility", "example.com"},
 			routes: map[string]reply{"GET /core/v1/transfers/eligibility/example.com": {200,
 				`{"domainName":"example.com","atName":true,"supportsInternalTransfer":true}`}},

@@ -530,6 +530,7 @@ func init() {
 	// would then demand one name specifically; runContactsSet checks instead.
 	contactsSetCmd.Flags().StringVar(&contactsFile, "from-file", "", "JSON file with contact data")
 	_ = contactsSetCmd.Flags().MarkDeprecated("from-file", "use --contacts-file")
+	cmdutil.MarkFileFlags(contactsSetCmd.Flags(), "contacts-file", "from-file")
 	cmdutil.GroupCmd(contactsCmd)
 	contactsCmd.AddCommand(contactsGetCmd, contactsSetCmd)
 }
@@ -854,7 +855,7 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 	case output.FormatYAML:
 		return out.YAML(result)
 	default:
-		out.Table([]string{"DOMAIN", "AUTH CODE"}, [][]string{{domain, result.AuthCode}})
+		out.Table([]string{"DOMAIN", "AUTH CODE"}, [][]string{{domain, result.AuthCode}}, output.Identifier("DOMAIN", "AUTH CODE"))
 	}
 	return nil
 }
@@ -1091,16 +1092,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		want  **bool
 		was   func(*coreapigo.DomainResponsePayload) bool
 	}{
-		{"lock", "lock", &req.Locked, func(d *coreapigo.DomainResponsePayload) bool { return d.Locked }},
-		{"privacy", "privacy", &req.PrivacyEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled }},
-		{"autorenew", "auto-renew", &req.AutorenewEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled }},
+		// The toggles' labels, so both say "Transfer lock is already on"
+		// (#364): this said "already has lock on".
+		{"lock", "Transfer lock", &req.Locked, func(d *coreapigo.DomainResponsePayload) bool { return d.Locked }},
+		{"privacy", "WHOIS privacy", &req.PrivacyEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.PrivacyEnabled }},
+		{"autorenew", "Auto-renewal", &req.AutorenewEnabled, func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled }},
 	} {
 		want := *f.want
 		if want == nil {
 			continue
 		}
 		if current != nil && f.was(current) == *want {
-			unchanged = append(unchanged, f.label+" "+onOff(*want))
+			unchanged = append(unchanged, f.label+" is already "+onOff(*want))
 			*f.want = nil
 			continue
 		}
@@ -1109,11 +1112,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if req.AutorenewEnabled == nil && req.PrivacyEnabled == nil && req.Locked == nil {
-		out.Unchanged(fmt.Sprintf("%s already has %s; nothing to change", domain, strings.Join(unchanged, ", ")))
+		out.Unchanged(fmt.Sprintf("%s for %s; nothing to change", alreadyList(unchanged), domain))
 		return nil
 	}
 	if len(unchanged) > 0 {
-		out.Note(fmt.Sprintf("%s already has %s; not sending it", domain, strings.Join(unchanged, ", ")))
+		out.Note(fmt.Sprintf("%s for %s; not sending it", alreadyList(unchanged), domain))
 	}
 	unlocking := req.Locked != nil && !*req.Locked
 	if unlocking && current != nil {
@@ -1210,4 +1213,25 @@ func init() {
 	updateCmd.Flags().Bool("privacy", false, "enable/disable WHOIS privacy")
 	updateCmd.Flags().Bool("lock", false, "enable/disable transfer lock")
 	cmdutil.MarkBoolValue(updateCmd.Flags(), "autorenew", "privacy", "lock")
+}
+
+// alreadyList joins "Transfer lock is already on" phrases into one clause:
+// the first as given, the rest with a leading capital lowered unless it starts
+// an acronym ("Transfer lock is already on and auto-renewal is already off",
+// "... and WHOIS privacy is already on").
+func alreadyList(phrases []string) string {
+	out := make([]string, len(phrases))
+	for i, p := range phrases {
+		if i > 0 && len(p) > 1 && p[1] >= 'a' && p[1] <= 'z' {
+			p = strings.ToLower(p[:1]) + p[1:]
+		}
+		out[i] = p
+	}
+	switch len(out) {
+	case 0:
+		return ""
+	case 1:
+		return out[0]
+	}
+	return strings.Join(out[:len(out)-1], ", ") + " and " + out[len(out)-1]
 }

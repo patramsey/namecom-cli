@@ -317,7 +317,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 				out.BoolBadge(d.PrivacyEnabled),
 			})
 		}
-		out.Table(headers, rows)
+		out.Table(headers, rows, output.Identifier("DOMAIN"))
 		// One footer. --filter and --tld are in the help; the footer only
 		// says how to see the rest.
 		out.ListFooter(foot)
@@ -373,14 +373,14 @@ func runGet(cmd *cobra.Command, args []string) error {
 	switch out.Format {
 	case output.FormatJSON:
 		if list {
-			return out.JSONList(fetched, nil, nil)
+			return out.JSONList(domainDocs(fetched), nil, nil)
 		}
-		return out.JSON(fetched[0])
+		return out.JSON(domainDoc{fetched[0]})
 	case output.FormatYAML:
 		if list {
-			return out.YAMLList(fetched, nil, nil)
+			return out.YAMLList(domainDocs(fetched), nil, nil)
 		}
-		return out.YAML(fetched[0])
+		return out.YAML(domainDoc{fetched[0]})
 	default:
 		titles := make([]string, len(fetched))
 		objs := make([][][]string, len(fetched))
@@ -419,7 +419,7 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 		{"Expires", out.ExpiryDate(d.ExpireDate)},
 	}
 	if d.RenewalPrice != nil {
-		rows = append(rows, []string{"Renews at", output.Money(*d.RenewalPrice)})
+		rows = append(rows, []string{"Renews at", out.Price(*d.RenewalPrice)})
 	} else if always {
 		rows = append(rows, []string{"Renews at", ""})
 	}
@@ -438,14 +438,47 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 		rows = append(rows, []string{"Transfer lock", ""})
 	}
 	rows = append(rows, []string{"Privacy", out.BoolBadge(d.PrivacyEnabled)})
-	registrant := ""
+	var reg *coreapigo.RegistrantContact
 	if d.Contacts != nil {
-		registrant = registrantLabel(d.Contacts.Registrant)
+		reg = d.Contacts.Registrant
 	}
-	if registrant != "" || always {
+	if always {
+		// Plain fields, one a row, not the table's "Jane Doe (Acme Inc) ·
+		// email verified" (#364).
+		name, company, verified := registrantFields(reg)
+		rows = append(rows,
+			[]string{"Registrant", name},
+			[]string{"Registrant company", company},
+			[]string{"Registrant verified", verified})
+	} else if registrant := registrantLabel(reg); registrant != "" {
 		rows = append(rows, []string{"Registrant", registrant})
 	}
 	return append(rows, []string{"Nameservers", out.Dim(formatNS(d.Nameservers))})
+}
+
+// registrantFields returns a registrant's name ("Jane Doe"), company, and
+// whether its email is verified ("yes", "no", or "" when the API does not
+// say). All are "" for a nil registrant.
+func registrantFields(r *coreapigo.RegistrantContact) (name, company, verified string) {
+	if r == nil {
+		return "", "", ""
+	}
+	var parts []string
+	for _, p := range []*string{r.FirstName, r.LastName} {
+		if p != nil && strings.TrimSpace(*p) != "" {
+			parts = append(parts, strings.TrimSpace(*p))
+		}
+	}
+	if r.CompanyName != nil {
+		company = strings.TrimSpace(*r.CompanyName)
+	}
+	if r.IsVerified != nil {
+		verified = "no"
+		if *r.IsVerified {
+			verified = "yes"
+		}
+	}
+	return strings.Join(parts, " "), company, verified
 }
 
 // registrantLabel names a registrant — "Jane Doe (Acme Inc)" — and says
@@ -455,15 +488,8 @@ func registrantLabel(r *coreapigo.RegistrantContact) string {
 	if r == nil {
 		return ""
 	}
-	var name []string
-	for _, p := range []*string{r.FirstName, r.LastName} {
-		if p != nil && strings.TrimSpace(*p) != "" {
-			name = append(name, strings.TrimSpace(*p))
-		}
-	}
-	label := strings.Join(name, " ")
-	if r.CompanyName != nil && strings.TrimSpace(*r.CompanyName) != "" {
-		company := strings.TrimSpace(*r.CompanyName)
+	label, company, _ := registrantFields(r)
+	if company != "" {
 		if label == "" {
 			label = company
 		} else {

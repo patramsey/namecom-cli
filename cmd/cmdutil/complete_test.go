@@ -184,9 +184,9 @@ func TestCompleteDomains(t *testing.T) {
 	// The typed text now goes to the API as a domainName filter.
 	t.Run("filters server-side on what was typed", func(t *testing.T) {
 		tests := []struct{ typed, want string }{
-			{"", ""}, // nothing typed: no filter, the first page
-			{"acme", "*acme*"},
-			{"*.io", "*.io"}, // an explicit wildcard passes through
+			{"", ""},          // nothing typed: no filter, the first page
+			{"acme", "acme*"}, // a prefix, as the shell narrows by one (#364)
+			{"*.io", "*.io"},  // an explicit wildcard passes through
 		}
 		for _, tc := range tests {
 			var gotFilter string

@@ -1265,7 +1265,7 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"__complete", "domain", "get", "exa"},
 			why:  "one filtered page while the shell waits; 250 rather than 1000 keeps it small",
 			want: []string{
-				"GET /core/v1/domains?domainName=%2Aexa%2A&page=1&perPage=250",
+				"GET /core/v1/domains?domainName=exa%2A&page=1&perPage=250",
 			},
 		},
 		"complete a record ID": {

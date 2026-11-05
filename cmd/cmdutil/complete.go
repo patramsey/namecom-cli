@@ -13,6 +13,7 @@ import (
 	"github.com/patramsey/namecom-cli/internal/config"
 	"github.com/patramsey/namecom-cli/internal/output"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // CompletionTimeout bounds the API work behind one TAB. The shell is frozen
@@ -72,12 +73,14 @@ func CompleteDomains(cmd *cobra.Command, args []string, toComplete string) ([]st
 	perPage := completeDomainsPage
 	req := &coreapigo.ListDomainsRequest{Page: &p, PerPage: &perPage}
 	if toComplete != "" {
-		// The same wrapping as `domain list --filter`: the API takes a
-		// wildcard only when it starts with '*', and one the user typed
-		// passes through.
+		// A prefix: the shell keeps only the candidates that start with
+		// what was typed, so "*a*" fetched names it then threw away, and
+		// on a slow API a leading wildcard ran past CompletionTimeout and
+		// offered nothing (#364). The API reads the filter as a SQL LIKE
+		// pattern (#322). A wildcard the user typed passes through.
 		f := toComplete
 		if !strings.Contains(f, "*") {
-			f = "*" + f + "*"
+			f += "*"
 		}
 		req.DomainName = &f
 	}
@@ -195,4 +198,45 @@ var (
 // CompleteFlagValues registers values as the completions of cmd's flag.
 func CompleteFlagValues(cmd *cobra.Command, flag string, values []string) {
 	_ = cmd.RegisterFlagCompletionFunc(flag, cobra.FixedCompletions(values, cobra.ShellCompDirectiveNoFileComp))
+}
+
+// fileFlag is the flag annotation MarkFileFlags sets.
+const fileFlag = "namecom_file_flag"
+
+// MarkFileFlags marks cmd's flags that take a file path, so NoFileFallback
+// leaves the shell's filename completion on for them.
+func MarkFileFlags(flags *pflag.FlagSet, names ...string) {
+	for _, n := range names {
+		if err := flags.SetAnnotation(n, fileFlag, []string{"true"}); err != nil {
+			panic("MarkFileFlags: " + err.Error())
+		}
+	}
+}
+
+// NoFileFallback turns the shell's filename fallback off for every argument
+// and flag value under root that has no completion of its own, except the
+// flags MarkFileFlags names. Without a completion function cobra answers
+// TAB with the shell's default, file names: `domain list --tld <TAB>` and
+// `order get <TAB>` offered the files in the current directory (#364).
+// Doing it for the whole tree means a new command or flag cannot forget.
+func NoFileFallback(root *cobra.Command) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if !c.HasSubCommands() && c.ValidArgsFunction == nil && len(c.ValidArgs) == 0 {
+			c.ValidArgsFunction = cobra.NoFileCompletions
+		}
+		c.LocalFlags().VisitAll(func(f *pflag.Flag) {
+			if f.NoOptDefVal != "" || f.Annotations[fileFlag] != nil {
+				return // a bool takes no value; a file flag keeps file names
+			}
+			if _, ok := c.GetFlagCompletionFunc(f.Name); ok {
+				return
+			}
+			_ = c.RegisterFlagCompletionFunc(f.Name, cobra.NoFileCompletions)
+		})
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
 }

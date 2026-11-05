@@ -138,7 +138,11 @@ var eligibilityCmd = &cobra.Command{
 
 func init() {
 	createCmd.Flags().StringVar(&createAuthCode, "auth-code", "", authCodeUsage)
-	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false, "include WHOIS privacy (free) with the transfer")
+	createCmd.Flags().BoolVar(&createPrivacy, "privacy", false,
+		"include WHOIS privacy (free) with the transfer; without the flag the account default applies")
+	// --privacy=false declines privacy, as `domain register --privacy=false`
+	// does; help shows both values (#364).
+	cmdutil.MarkBoolValue(createCmd.Flags(), "privacy")
 	createCmd.Flags().Float64Var(&createPrice, "price", 0, "purchase price in USD to send as purchasePrice, "+
 		"which a premium domain's transfer requires; not a cap, see --max-price")
 	createCmd.Flags().Float64Var(&createMaxPrice, "max-price", 0, cmdutil.MaxPriceUsage)
@@ -148,6 +152,8 @@ func init() {
 
 	internalCmd.Flags().StringVar(&internalAuthCode, "auth-code", "", authCodeUsage)
 	internalCmd.Flags().StringVar(&internalContactsFile, "contacts-file", "", contactsFileUsage)
+	cmdutil.MarkFileFlags(createCmd.Flags(), "contacts-file")
+	cmdutil.MarkFileFlags(internalCmd.Flags(), "contacts-file")
 
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "transfers")
 
@@ -243,6 +249,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 		out.Table(
 			headers,
 			transferRows(out, transfers),
+			output.Identifier("DOMAIN"),
 		)
 		out.ListFooter(foot)
 	}
@@ -286,6 +293,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 		out.Table(
 			[]string{"DOMAIN", "STATUS"},
 			transferRows(out, []*coreapigo.Transfer{t}),
+			output.Identifier("DOMAIN"),
 		)
 	}
 	return nil
@@ -383,7 +391,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		DomainName: domain,
 		AuthCode:   createAuthCode,
 	}
-	if createPrivacy {
+	// Sent when given, false included: --privacy=false was left out of the
+	// body, so the account default applied, which may be privacy on (#364).
+	if cmd.Flags().Changed("privacy") {
 		body.PrivacyEnabled = &createPrivacy
 	}
 	if createPrice > 0 {
@@ -807,7 +817,8 @@ func runEligibility(cmd *cobra.Command, args []string) error {
 			_, gerr := client.SDK().Domains.GetDomain(cmd.Context(), &coreapigo.GetDomainRequest{DomainName: domain})
 			mine = gerr == nil
 		}
-		out.Table(eligibilityTable(result, mine))
+		headers, rows := eligibilityTable(result, mine)
+		out.Table(headers, rows, output.Identifier("DOMAIN"))
 		if mine {
 			out.Note(fmt.Sprintf("%s is already in this account — there is nothing to transfer in", domain))
 			return nil
