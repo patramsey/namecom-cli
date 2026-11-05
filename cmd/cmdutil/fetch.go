@@ -3,7 +3,32 @@ package cmdutil
 import (
 	"context"
 	"sync"
+
+	coreapigo "github.com/namedotcom/core-api-go"
+	"github.com/patramsey/namecom-cli/internal/api"
+	"github.com/spf13/cobra"
 )
+
+// DryRunDomain reads domain under --dry-run, so a preview of a write to a
+// domain not in the account fails not_found (exit 4, with the usual hint), as
+// the write itself would, rather than printing a preview and exiting 0
+// (#292, #362). It returns the domain, for previews that can use it.
+//
+// Outside --dry-run it sends nothing and returns nil, nil: the write itself
+// refuses, and the read would be a second request for the same answer.
+func DryRunDomain(cmd *cobra.Command, domain string) (*coreapigo.DomainResponsePayload, error) {
+	if !IsDryRun(cmd) {
+		return nil, nil
+	}
+	d, err := APIClient(cmd).SDK().Domains.GetDomain(cmd.Context(), &coreapigo.GetDomainRequest{DomainName: domain})
+	if err != nil {
+		if IsNotFound(err) {
+			return nil, DomainNotFound(err, domain)
+		}
+		return nil, api.FromSDKError(err)
+	}
+	return d, nil
+}
 
 // fetchConcurrency is how many reads FetchEach has in flight at once: the
 // rate limiter's burst, so none of them waits on it to start.

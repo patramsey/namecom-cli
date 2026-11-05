@@ -85,6 +85,12 @@ func (z *fakeZone) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer z.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	const base = "/core/v1/domains/example.com/records"
+	// The domain itself, which `dns create --dry-run` reads (#362).
+	if req.Method == http.MethodGet && req.URL.Path == "/core/v1/domains/example.com" {
+		z.requests = append(z.requests, req.Method+" "+req.URL.Path)
+		_, _ = w.Write([]byte(`{"domainName":"example.com"}`))
+		return
+	}
 	rest, ok := strings.CutPrefix(req.URL.Path, base)
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)

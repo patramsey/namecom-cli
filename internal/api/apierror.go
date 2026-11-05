@@ -105,7 +105,12 @@ func (e *APIError) UserHint() string {
 		return "the path exists but does not accept this method — check which method the API documents for it"
 	}
 	if e.DomainStateDenied() {
-		// The API's message says what is wrong with the domain.
+		// The API's message says what is wrong with the domain. An expired
+		// one also needs the way out (#362); the error does not know which
+		// domain, so the hint names the command.
+		if strings.Contains(strings.ToLower(e.Message+" "+e.Details), "expired") {
+			return "renew it with 'namecom domain renew <domain>' while it is in its renewal grace period"
+		}
 		return ""
 	}
 	switch e.StatusCode {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -355,7 +356,10 @@ var setNSCmd = &cobra.Command{
 	Use:   "set-ns <domain> --ns ns1.example.com,ns2.example.com",
 	Short: "Set nameservers for a domain",
 	Long: `Replace a domain's nameservers. DNS records hosted at name.com stop
-answering for the domain once it points at other nameservers.`,
+answering for the domain once it points at other nameservers.
+
+--dry-run reads the domain: it names the nameservers being replaced, and
+says when the domain already has the ones given.`,
 	Example: `  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com
   namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers
 
@@ -407,6 +411,25 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 		}
 		seen[ns[i]] = true
 	}
+	// A dry run reads the domain: one not in the account fails not_found, as
+	// the change would, rather than previewing it; and the preview can name
+	// the nameservers being replaced, or say there is nothing to change
+	// (#362). A real run sends the change alone.
+	current, err := cmdutil.DryRunDomain(cmd, domain)
+	if err != nil {
+		return err
+	}
+	if current != nil {
+		now := normalNameservers(current.Nameservers)
+		if sameNameservers(now, ns) {
+			out.Unchanged(fmt.Sprintf("%s already uses %s; nothing to change", domain, strings.Join(now, ", ")))
+			return nil
+		}
+		if len(now) > 0 {
+			out.Note(fmt.Sprintf("%s uses %s now", domain, strings.Join(now, ", ")))
+		}
+	}
+
 	// DomainName is the path parameter and is not marshaled, so previewing
 	// this value previews exactly the body sent.
 	body := coreapigo.DomainsSetNameserversBody{DomainName: domain, Nameservers: ns}
@@ -426,6 +449,30 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	out.Success(fmt.Sprintf("Set nameservers for %s: %s", domain, strings.Join(ns, ", ")))
 	out.Hint("DNS propagation typically takes a few minutes to a few hours")
 	return nil
+}
+
+// normalNameservers is nameservers as set-ns sends them: lower-cased, with
+// no trailing dot.
+func normalNameservers(nameservers []string) []string {
+	out := make([]string, 0, len(nameservers))
+	for _, n := range nameservers {
+		if n = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(n), ".")); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// sameNameservers reports whether a and b, both normalised, name the same
+// nameservers. Order is ignored: the registry does not query them in order.
+func sameNameservers(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa, sb := slices.Clone(a), slices.Clone(b)
+	slices.Sort(sa)
+	slices.Sort(sb)
+	return slices.Equal(sa, sb)
 }
 
 // setNSPrompt asks before replacing a domain's nameservers, naming the ones

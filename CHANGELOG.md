@@ -24,6 +24,21 @@ Output a script might notice:
   first: one more request each. `url create` of the apex does not.
 - An unknown key in the config file or a profile is a warning on stderr
   (`{"warnings": [...]}` in JSON).
+- `--dry-run` of `domain set-ns`, `dns create` and `vanity-ns create` for a
+  domain not in the account exits 4 (`not_found`), as the other dry runs
+  do, instead of previewing and exiting 0. Each sends one GET of the domain
+  under `--dry-run` only; `dns create --if-not-exists` already read the zone.
+- `domain set-ns --dry-run` with the nameservers the domain already has
+  prints "nothing to change" (`"changed": false`) instead of a preview.
+- `transfer create --dry-run` of a name nobody has registered exits 1
+  (type `unavailable`) pointing at `domain register`. It asks the
+  availability check, one request, under `--dry-run` only.
+- An unknown TLD is a usage error (exit 2) in `domain requirements` and
+  `domain register`, as in `domain list --tld`; both exited 1.
+- New warnings on stderr (`{"warnings": [...]}` in JSON): a `--price` on
+  `domain register` or `domain renew` that differs from the quoted price,
+  and, in a `domain renew` dry run, a domain already expired or a renewal
+  that would take it past ten years from today.
 
 ### Security
 - Follow-ups to #337 and #341, where API data still reached the terminal
@@ -60,6 +75,21 @@ Output a script might notice:
   `sandox: true` would too. Each unknown key now warns, naming the key and
   the file, with a "did you mean" for near misses; for an endpoint-like key
   it says the endpoint is set with `--base-url` or `NAMECOM_BASE_URL` (#358).
+- `domain register --price 1 --dry-run` said "Would charge: $1.00" for a
+  $17.99 name without saying the API would refuse it. The preview now shows
+  the quote beside the override and warns that they differ; so does
+  `domain renew --price`.
+- `domain renew --dry-run` says where the renewal takes the expiry date,
+  and warns when it would pass ten years from today or the domain has
+  already expired.
+- `domain set-ns --dry-run` names the nameservers being replaced.
+- `domain requirements example.com` titles its output with the TLD the API
+  answered for (`com`), not the name typed, and says so.
+- A 403 for an expired domain hints at `namecom domain renew <domain>`.
+- `domain get --help` said a failure leaves the remaining domains
+  unrequested; they are read several at a time and those in flight are
+  cancelled. `order get --help` no longer mentions `--since`/`--until`,
+  which only `order list` has.
 
 ## [0.5.6] - 2026-10-22
 

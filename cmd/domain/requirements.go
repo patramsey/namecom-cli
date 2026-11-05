@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -59,7 +61,13 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		if cmdutil.IsNotFound(err) {
 			return cmdutil.NotFound(err, fmt.Sprintf("no requirements found for TLD %q", tld), "check the TLD for typos (e.g. 'fr', 'co.uk')")
 		}
-		return err
+		return unknownTLD(err, tld)
+	}
+	// The API resolves a domain to its TLD: `requirements example.com`
+	// answers for com, and the header said "example.com" (#362).
+	shown := tld
+	if t := result.GetTldInfo(); t != nil && t.Tld != "" {
+		shown = strings.TrimPrefix(t.Tld, ".")
 	}
 
 	if out.QuietMode {
@@ -95,7 +103,10 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 			info = &coreapigo.ResellerTldInfo{}
 			badge = func(bool) string { return "—" }
 		}
-		out.Title(tld)
+		out.Title(shown)
+		if !strings.EqualFold(shown, tld) {
+			out.Note(fmt.Sprintf("%s is not a TLD; these are the requirements for its TLD, %s", tld, shown))
+		}
 		out.KVTable([][]string{
 			{"Registration years", joinYears(info.AllowedRegistrationYears)},
 			{"DNSSEC", badge(info.SupportsDnssec)},
@@ -112,10 +123,28 @@ func runRequirements(cmd *cobra.Command, args []string) error {
 		// The requirements themselves are nested and conditional; a table would
 		// misrepresent them, so point at the structured view rather than
 		// flattening it into something misleading.
-		out.Hint(fmt.Sprintf("Run 'namecom domain requirements %s -o json' to see the full field requirements", tld))
+		out.Hint(fmt.Sprintf("Run 'namecom domain requirements %s -o json' to see the full field requirements", shown))
 		out.Hint("Pass them at registration with 'domain register --tld-requirement key=value' (repeatable)")
 	}
 	return nil
+}
+
+// unknownTLD is err as a usage error (exit 2) when it is the API refusing a
+// TLD it does not know: 400 "Invalid Tld" from the requirements endpoint, or
+// 422 "None of the submitted domains are valid" from the availability check.
+// `domain list --tld zzzz` already exits 2 for one; these exited 1, as an API
+// failure (#362). Any other error is returned unchanged.
+func unknownTLD(err error, name string) error {
+	apiErr, ok := errors.AsType[*api.APIError](api.NormalizeError(err))
+	if !ok || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusUnprocessableEntity) {
+		return err
+	}
+	msg := strings.ToLower(apiErr.Message)
+	if !strings.Contains(msg, "invalid tld") && !strings.Contains(msg, "none of the submitted domains are valid") {
+		return err
+	}
+	return cmdutil.NewUsageErrorHint(fmt.Errorf("%s: not a name the API accepts — its TLD is not one name.com knows (%w)", name, apiErr),
+		"check the TLD for typos (e.g. com, fr, co.uk)")
 }
 
 // requirementNotices returns the text of req's top-level notice fields, in

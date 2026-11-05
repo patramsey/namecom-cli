@@ -361,6 +361,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		case !cmdutil.IsNotFound(gerr):
 			return api.FromSDKError(gerr)
 		}
+		if err := dryRunRegistered(cmd, domain); err != nil {
+			return err
+		}
 	}
 
 	// Quote the transfer before asking. register/renew both show the amount in
@@ -859,6 +862,34 @@ func transferRows(out *output.Config, transfers []*coreapigo.Transfer) [][]strin
 		})
 	}
 	return rows
+}
+
+// dryRunRegistered fails a transfer dry run for a name nobody has registered:
+// it quoted the transfer fee for a name `domain check` called available
+// (#362), and the transfer would be refused. The API's own availability
+// check decides, one request under --dry-run only. A name it offers as a
+// plain registration is unregistered; one it offers as an aftermarket,
+// expiring or backorder purchase is registered to someone, and is let
+// through. A failed check says nothing either way, so the preview goes on.
+func dryRunRegistered(cmd *cobra.Command, domain string) error {
+	res, err := cmdutil.APIClient(cmd).SDK().Domains.CheckAvailability(cmd.Context(),
+		&coreapigo.AvailabilityRequest{DomainNames: []string{domain}})
+	if err != nil || res == nil {
+		return nil
+	}
+	for _, r := range res.Results {
+		if r == nil || !strings.EqualFold(r.DomainName, domain) || !r.Purchasable {
+			continue
+		}
+		if r.PurchaseType != nil && *r.PurchaseType != "" && *r.PurchaseType != coreapigo.SearchPurchaseTypeRegistration {
+			continue
+		}
+		return &cmdutil.UnavailableError{
+			Msg:  fmt.Sprintf("%s is not registered, so there is nothing to transfer — it is available to register", domain),
+			Hint: fmt.Sprintf("run 'namecom domain register %s' to register it", domain),
+		}
+	}
+	return nil
 }
 
 // transferPrompt is the confirmation for a transfer create. It quotes the

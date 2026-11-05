@@ -41,9 +41,15 @@ var (
 // The CLI does not shift them: the offset appears to follow daylight saving
 // and could be fixed upstream at any time.
 const timestampNote = `Note: name.com's order timestamps currently run several hours behind UTC
-despite the "Z" suffix, and the --since/--until filters use the same clock.
-An order placed near midnight UTC may show the previous day's date and fall
-outside a date filter you would expect to include it.`
+despite the "Z" suffix. An order placed near midnight UTC may show the
+previous day's date.`
+
+// listTimestampNote adds what the clock means for order list's date filters,
+// which order get does not have: its help named --since and --until (#362).
+const listTimestampNote = timestampNote + `
+
+The --since/--until filters use the same clock, so an order placed near
+midnight UTC can fall outside a date filter you would expect to include it.`
 
 var listCmd = &cobra.Command{
 	Use:     "list",
@@ -53,7 +59,7 @@ var listCmd = &cobra.Command{
 API returns; they do not fetch more pages. The footer says when there are
 more, and --all fetches every match.
 
-` + timestampNote,
+` + listTimestampNote,
 	Example: `  namecom order list                                   # most recent page
   namecom order list --all                             # full history (can be slow)
   namecom order list --since 2026-01-01                # orders from this year

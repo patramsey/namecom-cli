@@ -337,6 +337,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A dry run for a domain not in the account previewed the nameserver
+	// and exited 0; it reads the domain and fails not_found, as the create
+	// would (#362). A real run sends the create alone.
+	if _, err := cmdutil.DryRunDomain(cmd, domain); err != nil {
+		return err
+	}
 	body := coreapigo.CreateVanityNameserverBody{
 		DomainName: domain,
 		Hostname:   label,

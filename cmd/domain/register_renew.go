@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	coreapigo "github.com/namedotcom/core-api-go"
@@ -162,11 +163,19 @@ func runRegister(cmd *cobra.Command, args []string) error {
 			&coreapigo.AvailabilityRequest{DomainNames: []string{domainName}})
 		stop()
 		if err != nil {
+			if u := unknownTLD(err, domainName); u != err {
+				return u
+			}
 			return fmt.Errorf("checking availability: %w", err)
 		}
 		checkResult.Results = cmdutil.NonNil(checkResult.Results)
 		if len(checkResult.Results) == 0 {
-			return fmt.Errorf("%s is not available for registration", domainName)
+			// The API leaves out of its answer a name in a TLD it does not
+			// know (foo.zzzz), so this is a usage error, as an unknown TLD
+			// is everywhere else (#362).
+			return cmdutil.NewUsageErrorHint(
+				fmt.Errorf("%s is not available for registration: the API does not recognise its TLD", domainName),
+				"check the TLD for typos (e.g. com, fr, co.uk)")
 		}
 		r := (checkResult.Results)[0]
 		if !r.Purchasable {
@@ -288,6 +297,16 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.CheckMaxPrice(cmd, registerMaxPrice, domainName, charged); err != nil {
 		return err
 	}
+	// The price the API quoted for this purchase, which a --price override
+	// replaces in the body: the acquisition price for an aftermarket name,
+	// the registration total for the term otherwise.
+	quoted := checkPrice
+	if quoted == nil {
+		quoted = pricing.GetPurchasePrice()
+	}
+	if registerPrice > 0 {
+		warnPriceOverride(out, registerPrice, quoted, "registering "+domainName)
+	}
 	if kind := registerPremiumKind(body, pricing); kind != "" {
 		note := kind + " purchase"
 		if kind == "premium" && pricing.RenewalPrice != nil {
@@ -312,7 +331,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		Path:    "/core/v1/domains",
 		Body:    body,
 		Prompt:  registerPrompt(domainName, body, pricing),
-		Quote:   registerChargeQuote(body, pricing, charged),
+		Quote:   withQuoted(registerChargeQuote(body, pricing, charged), registerPrice > 0, quoted),
 		Balance: balance,
 	}, func(ctx context.Context, body coreapigo.CreateDomainRequest) error {
 		if claim != nil {
@@ -416,6 +435,39 @@ func priceOrUnquoted(p *float64) string {
 		return "an unquoted price"
 	}
 	return output.Money(*p)
+}
+
+// priceDiffers reports whether a and b are different amounts, compared in
+// cents as CheckMaxPrice compares them.
+func priceDiffers(a, b float64) bool {
+	return math.Round(a*100) != math.Round(b*100)
+}
+
+// warnPriceOverride warns when --price sends an amount other than the one the
+// API quoted. `register --price 1 --dry-run` previewed "Would charge: $1.00"
+// for a $17.99 name, and nothing said that the purchase would be refused
+// (#362): the API checks purchasePrice against its own price.
+func warnPriceOverride(out *output.Config, override float64, quoted *float64, what string) {
+	if quoted == nil || !priceDiffers(override, *quoted) {
+		return
+	}
+	out.Warn(fmt.Sprintf("--price %s differs from the quoted price %s for %s; the API refuses a purchase at a price other than its own",
+		output.Money(override), output.Money(*quoted), what))
+}
+
+// withQuoted adds the API's quote to the note of q when a --price override
+// (overridden) replaced it with a different amount, so a dry run shows both:
+// "$1.00 (1 year; --price, quoted $17.99)".
+func withQuoted(q *output.Quote, overridden bool, quoted *float64) *output.Quote {
+	if q == nil || !overridden || quoted == nil || !priceDiffers(q.Total, *quoted) {
+		return q
+	}
+	note := "--price, quoted " + output.Money(*quoted)
+	if q.Note != "" {
+		note = q.Note + "; " + note
+	}
+	q.Note = note
+	return q
 }
 
 // registerPrompt is the purchase confirmation for body: "Register acme.io for
@@ -608,12 +660,14 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	// A dry run reads the domain first, so one for a domain not in this
 	// account fails not_found, as the renewal would, rather than quoting a
 	// price for it (#292). A real run lets the renewal itself refuse: the GET
-	// would be a second request for the same answer.
-	if cmdutil.IsDryRun(cmd) {
-		if _, err := client.SDK().Domains.GetDomain(cmd.Context(),
-			&coreapigo.GetDomainRequest{DomainName: domainName}); err != nil {
-			return domainError(err, domainName)
-		}
+	// would be a second request for the same answer. The expiry it reads
+	// lets the preview say where the renewal takes it (#362).
+	current, err := cmdutil.DryRunDomain(cmd, domainName)
+	if err != nil {
+		return err
+	}
+	if current != nil {
+		previewRenewal(out, domainName, current.ExpireDate, renewYears, time.Now())
 	}
 
 	// Fetch pricing to show renewal cost before charging. Quote the same term
@@ -649,6 +703,9 @@ func runRenew(cmd *cobra.Command, args []string) error {
 	if err := cmdutil.CheckMaxPrice(cmd, renewMaxPrice, "renewing "+domainName, charged); err != nil {
 		return err
 	}
+	if renewPrice > 0 {
+		warnPriceOverride(out, renewPrice, pricing.GetRenewalPrice(), "renewing "+domainName)
+	}
 	if pricing.GetPremium() {
 		desc := fmt.Sprintf("renewing %s costs %s (premium)", domainName, priceOrUnquoted(charged))
 		if cmdutil.IsDryRun(cmd) && !renewAccept {
@@ -667,7 +724,7 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		Path:    fmt.Sprintf("/core/v1/domains/%s:renew", domainName),
 		Body:    body,
 		Prompt:  renewPrompt(domainName, body, pricing.RenewalPrice),
-		Quote:   cmdutil.ChargeQuote(charged, years, premiumNote(pricing.GetPremium())),
+		Quote:   withQuoted(cmdutil.ChargeQuote(charged, years, premiumNote(pricing.GetPremium())), renewPrice > 0, pricing.GetRenewalPrice()),
 		Balance: balance,
 	}, func(ctx context.Context, body coreapigo.DomainsRenewDomainBody) error {
 		var err error
@@ -705,6 +762,35 @@ func runRenew(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// maxTermYears is how far ahead of today a registration may run: registries
+// refuse a renewal that would take the expiry past ten years from now.
+const maxTermYears = 10
+
+// previewRenewal says, for a renew dry run, where a renewal of years takes
+// the domain's expiry, and warns when the registry is likely to refuse it or
+// it is late: past ten years from now, or a domain already expired. The
+// preview quoted a renewal of a long-expired domain, and a term past the
+// limit, without a word (#362).
+//
+// The new expiry is the current one plus years: registries add a renewal to
+// the expiry date, not to today, in the grace period after it too.
+func previewRenewal(out *output.Config, domain string, expiry *time.Time, years int, now time.Time) {
+	if expiry == nil || expiry.IsZero() {
+		return
+	}
+	next := expiry.AddDate(years, 0, 0)
+	if expiry.Before(now) {
+		out.Warn(fmt.Sprintf("%s expired on %s; once its renewal grace period has passed, a renewal is refused or needs a redemption fee",
+			domain, expiry.Format("2006-01-02")))
+	}
+	if limit := now.AddDate(maxTermYears, 0, 0); next.After(limit) {
+		out.Warn(fmt.Sprintf("renewing %s for %s would run it to %s, more than %d years from today; the registry will refuse it",
+			domain, output.Plural(years, "year"), next.Format("2006-01-02"), maxTermYears))
+	}
+	out.Note(fmt.Sprintf("%s expires %s; renewing for %s runs it to %s",
+		domain, expiry.Format("2006-01-02"), output.Plural(years, "year"), next.Format("2006-01-02")))
 }
 
 // resolveClaims checks a domain for trademark claims and, when any exist,

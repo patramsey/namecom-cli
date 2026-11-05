@@ -447,7 +447,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	if createIfNotExists {
 		// A read, so it runs under --dry-run too: the preview then says
-		// whether anything would be sent.
+		// whether anything would be sent. Its 404 is a domain not in the
+		// account.
 		existing, err := findRecord(cmd, domain, createType, host, answer)
 		if err != nil {
 			return err
@@ -455,6 +456,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if existing != nil {
 			return reportExisting(cmd, existing, body)
 		}
+	} else if _, err := cmdutil.DryRunDomain(cmd, domain); err != nil {
+		// Without that read, a dry run for a domain not in the account
+		// previewed the record and exited 0 (#362).
+		return err
 	}
 
 	var record *coreapigo.Record

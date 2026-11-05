@@ -556,6 +556,13 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com:setNameservers",
 			},
 		},
+		"domain set-ns --dry-run": {
+			args: []string{"domain", "set-ns", "example.com", "--ns", "ns1.name.com,ns2.name.com", "--dry-run"},
+			why:  "the GET fails a dry run for a domain not in the account, and shows the nameservers being replaced (#362)",
+			want: []string{
+				"GET /core/v1/domains/example.com",
+			},
+		},
 		"domain contacts get": {
 			args: []string{"domain", "contacts", "get", "example.com"},
 			want: []string{
@@ -592,6 +599,20 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"dns", "create", "example.com", "--type", "A", "--host", "api", "--answer", "192.0.2.9", "--yes"},
 			want: []string{
 				"POST /core/v1/domains/example.com/records",
+			},
+		},
+		"dns create --dry-run": {
+			args: []string{"dns", "create", "example.com", "--type", "A", "--host", "api", "--answer", "192.0.2.9", "--dry-run"},
+			why:  "the GET fails a dry run for a domain not in the account, as the create would (#362)",
+			want: []string{
+				"GET /core/v1/domains/example.com",
+			},
+		},
+		"dns create --if-not-exists --dry-run": {
+			args: []string{"dns", "create", "example.com", "--type", "A", "--host", "api", "--answer", "192.0.2.9", "--if-not-exists", "--dry-run"},
+			why:  "the zone read already fails for a domain not in the account; no domain read is added",
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
 			},
 		},
 		"dns create --if-not-exists": {
@@ -959,6 +980,13 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/vanity_nameservers",
 			},
 		},
+		"vanity-ns create --dry-run": {
+			args: []string{"vanity-ns", "create", "example.com", "--hostname", "ns1.example.com", "--ips", "192.0.2.1", "--dry-run"},
+			why:  "the GET fails a dry run for a domain not in the account, as the create would (#362)",
+			want: []string{
+				"GET /core/v1/domains/example.com",
+			},
+		},
 		"vanity-ns update": {
 			args: []string{"vanity-ns", "update", "example.com", "ns1.example.com", "--ips", "192.0.2.2", "--yes"},
 			want: []string{
@@ -1001,11 +1029,16 @@ func TestRequestCounts(t *testing.T) {
 			},
 		},
 		"transfer create --dry-run": {
-			args:   []string{"transfer", "create", "example.org", "--auth-code", "XYZ123", "--dry-run"},
-			why:    "the GET fails a dry run for a domain already in the account (#292)",
-			routes: map[string]reply{"GET /core/v1/domains/example.org": notFound},
+			args: []string{"transfer", "create", "example.org", "--auth-code", "XYZ123", "--dry-run"},
+			why: "the GET fails a dry run for a domain already in the account (#292); " +
+				"the availability check fails one for a name nobody has registered (#362)",
+			routes: map[string]reply{
+				"GET /core/v1/domains/example.org":        notFound,
+				"POST /core/v1/domains:checkAvailability": {200, `{"results":[{"domainName":"example.org","purchasable":false}]}`},
+			},
 			want: []string{
 				"GET /core/v1/domains/example.org",
+				"POST /core/v1/domains:checkAvailability",
 				together("GET /core/v1/domains/example.org:getPricing", "GET /core/v1/accountinfo/balance"),
 			},
 		},
