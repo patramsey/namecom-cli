@@ -46,8 +46,9 @@ var getCmd = &cobra.Command{
 {"data": [...]}, with one object per domain.
 
 It is all or nothing: if any domain cannot be read, nothing is printed but
-the error, the exit code is non-zero (4 for a domain not in the account),
-and the domains not yet read are not requested.`,
+the error and the exit code is non-zero (4 for a domain not in the account).
+The domains are read several at a time; when one fails, the reads in flight are
+cancelled and the rest are not started.`,
 	Example: `  namecom domain get example.com
   namecom domain get example.com example.net
   namecom domain list -q | namecom domain get - -o json`,

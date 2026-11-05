@@ -67,6 +67,46 @@ func TestDryRun_MissingNameserverIsNotFound(t *testing.T) {
 	}
 }
 
+// TestCreate_DryRunOfDomainNotInAccount pins #362: `vanity-ns create
+// --dry-run` for a domain not in the account previewed the nameserver and
+// exited 0. It reads the domain — one GET, under --dry-run only — and fails
+// not_found, as the create would. A real run sends the create alone.
+func TestCreate_DryRunOfDomainNotInAccount(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		var requests []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests = append(requests, r.Method+" "+r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"hostname":"ns1.example.com","ips":["192.0.2.1"]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		cmd := cmdForCreate(t, srv)
+		if err := cmd.ParseFlags([]string{"--hostname", "ns1", "--ips", "192.0.2.1"}); err != nil {
+			t.Fatal(err)
+		}
+		err := runCreate(withDryRun(t, cmd, dry), []string{"example.com"})
+		got := strings.Join(requests, " ")
+		if dry {
+			if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "example.com") {
+				t.Errorf("dry run: want not found naming the domain, got %v", err)
+			}
+			if got != "GET /core/v1/domains/example.com" {
+				t.Errorf("dry run: requests = %q, want the domain read alone", got)
+			}
+			continue
+		}
+		if err != nil || got != "POST /core/v1/domains/example.com/vanity_nameservers" {
+			t.Errorf("real run: err %v, requests %q, want the create alone", err, got)
+		}
+	}
+}
+
 // TestIPs_Validated pins #292: --ips took "999.1.1.1" and previewed it. Each
 // entry must be an IPv4 or IPv6 address, as in `dns create`, refused before
 // any request.

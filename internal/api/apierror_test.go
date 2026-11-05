@@ -430,7 +430,8 @@ func TestAPIError_DomainStateDenied(t *testing.T) {
 		denied   bool
 		wantHint bool
 	}{
-		{&APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}, true, false},
+		// An expired domain's hint names the way out (#362).
+		{&APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}, true, true},
 		{&APIError{StatusCode: 403, Message: "Permission Denied", Details: "The domain is locked"}, true, false},
 		{&APIError{StatusCode: 403, Message: "Permission Denied"}, false, true},
 		{&APIError{StatusCode: 403, Message: "Permission Denied", Details: "IP not whitelisted"}, false, true},
@@ -447,5 +448,9 @@ func TestAPIError_DomainStateDenied(t *testing.T) {
 		if got := tt.e.UserHint() != ""; got != tt.wantHint {
 			t.Errorf("%v: hint %q, want one: %v", tt.e, tt.e.UserHint(), tt.wantHint)
 		}
+	}
+	expired := &APIError{StatusCode: 403, Message: "Permission denied. The domain is expired."}
+	if h := expired.UserHint(); !strings.Contains(h, "namecom domain renew <domain>") {
+		t.Errorf("an expired domain's hint should point at domain renew, got %q", h)
 	}
 }
