@@ -32,15 +32,24 @@ A value that **starts or ends with `"`, or ends with `\`**, is refused:
 | `"x" said`        | `Parameter Value Error - Txt Missing Quote At End` |
 | `trailing\`       | `Parameter Value Error - Malformed Txt Record`  |
 
-The same values written as a quoted, escaped string are accepted, and
+A value that ends with `\` is refused **however it is written**: quoted
+with the backslash escaped (`"trailing\\"`), or with four backslashes, both
+get `Txt Missing Quote At End`. A backslash anywhere else is stored, even
+one just before an inner closing quote (`"a\\" "b"`). So a TXT value
+ending in a backslash cannot be created through the API at all.
+
+The first two values written as a quoted, escaped string are accepted, and
 **stored as sent**, quotes and escapes included: `"say \"x\""` is listed
 back as `"say \"x\""`. Quoted strings are also how a value is sent in
 several character-strings: `"a" "b"` is stored as `"a""b"`.
 
 ## What the CLI does
 
+- **It refuses a value that ends with `\`** as a usage error, from
+  `--answer` (typed or quoted) and from a file, before any request: there
+  is no spelling the API stores.
 - **It sends the value as given, unless the API would refuse it.** A value
-  that starts or ends with `"`, or ends with `\`, is sent as a quoted
+  that starts or ends with `"` is sent as a quoted
   string with `\` and `"` escaped (split at 255 bytes), which the API
   accepts (#360). Every other value is sent exactly as typed, including one
   with a `"` inside it, which the API escapes on storage. `--answer` text

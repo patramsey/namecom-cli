@@ -1553,6 +1553,9 @@ func asciiAnswerAs(rtype, host, answer, field string) (string, error) {
 	case "CNAME", "ANAME", "MX", "NS":
 		a, err = cmdutil.ASCIIHostname(answer, rtype+" record target")
 	case "TXT":
+		if txtValueEndsInBackslash(answer) {
+			return "", cmdutil.NewUsageError(fmt.Errorf("TXT record %s ends with a backslash, which name.com cannot store: it refuses such a value however it is quoted or escaped", field))
+		}
 		return apiTXT(answer), nil
 	case "SRV":
 		// "weight port target": only the last field is a name.
@@ -1771,9 +1774,23 @@ func zoneTXT(stored string) string {
 
 // txtNeedsQuotes reports whether the API refuses v, a TXT value, sent as it
 // is: one that starts or ends with `"`, or ends with `\`, is answered with
-// "Malformed Txt Record" or "Txt Missing Quote At End" (#360).
+// "Malformed Txt Record" or "Txt Missing Quote At End" (#360). Quoting
+// rescues only the first two: one that ends with `\` is refused in every
+// spelling, and asciiAnswerAs and zoneRdata refuse it first.
 func txtNeedsQuotes(v string) bool {
 	return strings.HasPrefix(v, `"`) || strings.HasSuffix(v, `"`) || strings.HasSuffix(v, `\`)
+}
+
+// txtValueEndsInBackslash reports whether a, a TXT answer given as text, is
+// a value whose last byte is `\`. The API refuses one in every spelling —
+// as typed, quoted with the backslash escaped (`"trailing\\"`), or escaped
+// twice — while a backslash anywhere else, even before an inner closing
+// quote (`"a\\" "b"`), is stored. Measured against the sandbox.
+func txtValueEndsInBackslash(a string) bool {
+	if parts, ok := parseQuotedStrings(a, true); ok {
+		return strings.HasSuffix(parts[len(parts)-1], `\`)
+	}
+	return strings.HasSuffix(a, `\`)
 }
 
 // txtAPIEscaper escapes a TXT value for the inside of a quoted string the

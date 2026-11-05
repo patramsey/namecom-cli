@@ -40,8 +40,11 @@ Output a script might notice:
   and, in a `domain renew` dry run, a domain already expired or a renewal
   that would take it past ten years from today.
 - `dns create`, `dns update`, `dns import` and `dns sync` send a TXT value
-  that starts or ends with `"`, or ends with `\`, as a quoted string
-  (`say "x"` is sent as `"say \"x\""`). The API refused it as typed.
+  that starts or ends with `"` as a quoted string (`say "x"` is sent as
+  `"say \"x\""`). The API refused it as typed.
+- A TXT value that ends with `\` is a usage error (exit 2) before anything
+  is sent: the API refuses it however it is quoted or escaped, so there is
+  no form of it to send.
 - `dns export --zone` writes TXT values as the value the record means,
   without the API's `\"` storage escape or a stored layer of quotes. The
   JSON export is unchanged.
