@@ -23,6 +23,9 @@ import (
 // and line feed, DEL, C1, the line and paragraph separators, and any byte
 // that is not UTF-8. ESC prints as \x1b. It also escapes the bidi and
 // zero-width characters that make text read as something else (escapeHuman).
+// Tab and line feed are kept for messages, which may be several lines; a
+// one-line item — a table cell, a plan line, a prompt — goes through
+// SanitizeLine, which shows them as \t and \n too (#359).
 // JSON and YAML escape control characters themselves and are left alone; TSV
 // escapes them as well as its own tab, line break and backslash (tsvEscape);
 // --jq prints a string raw, as jq -r does.
@@ -84,6 +87,43 @@ func trustedLen(s string) int {
 // this package.
 func Sanitize(s string) string {
 	return clean(s, escapeHuman, func(span string) string { return span })
+}
+
+// SanitizeLine is Sanitize for a value printed on one line — a table cell, a
+// line of the dns sync plan, a confirmation's question — which also shows a
+// line feed as \n and a tab as \t. Sanitize keeps both, since a message may
+// be several lines; in a one-line item a line feed printed a line of its own
+// that read as another item (a fake change in the --prune plan, a fake row),
+// and a tab hid the text after it from the table's width (#359).
+func SanitizeLine(s string) string {
+	return clean(s, escapeLine, func(span string) string {
+		// A styled chunk is the CLI's own escapes around text render has
+		// sanitized, so its only other C0 characters are these two.
+		return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(span)
+	})
+}
+
+// Unprintable reports whether s holds anything SanitizeLine would escape: a
+// control character (tab and line feed among them), a bidi or zero-width
+// character, or a byte that is not UTF-8.
+func Unprintable(s string) bool {
+	for _, r := range s {
+		if r == utf8.RuneError || escapeLine(r) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// escapeLine is escapeHuman plus line feed and tab, as \n and \t.
+func escapeLine(r rune) string {
+	switch r {
+	case '\n':
+		return `\n`
+	case '\t':
+		return `\t`
+	}
+	return escapeHuman(r)
 }
 
 // SanitizeWriter returns a writer that sanitizes what is written to it, for
@@ -189,11 +229,12 @@ func clean(s string, escape func(rune) string, span func(string) string) string 
 	return b.String()
 }
 
-// sanitizeCells returns cells with each one sanitized.
+// sanitizeCells returns cells with each one sanitized as one line
+// (SanitizeLine), before the table measures them.
 func sanitizeCells(cells []string) []string {
 	out := make([]string, len(cells))
 	for i, v := range cells {
-		out[i] = Sanitize(v)
+		out[i] = SanitizeLine(v)
 	}
 	return out
 }

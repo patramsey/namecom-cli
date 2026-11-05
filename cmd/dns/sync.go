@@ -304,21 +304,25 @@ func printPlan(out *output.Config, p *syncPlan) error {
 		return nil
 	}
 	// Sanitized: records come from the zone and the file, and a zone file's
-	// \DDD escapes can put any byte in a name (#337).
-	w := output.SanitizeWriter(out.Writer)
+	// \DDD escapes can put any byte in a name (#337). Each line as one
+	// line: a line feed in an answer printed a line of its own, which read
+	// as a change the plan does not make (#359).
+	line := func(format string, a ...any) {
+		fmt.Fprintln(out.Writer, output.SanitizeLine(fmt.Sprintf(format, a...)))
+	}
 	verb := "Plan"
 	if p.DryRun {
 		verb = "Plan (dry run, nothing sent)"
 	}
-	fmt.Fprintf(w, "%s for %s: %s, %d unchanged\n", verb, p.Domain, planCounts(p), p.Unchanged)
+	line("%s for %s: %s, %d unchanged", verb, p.Domain, planCounts(p), p.Unchanged)
 	for _, r := range p.Creates {
-		fmt.Fprintln(w, "  "+changeLine("create", r))
+		line("  %s", changeLine("create", r))
 	}
 	for _, u := range p.Updates {
-		fmt.Fprintf(w, "  update %s: %s\n", u.Before.summary(), strings.Join(u.Changes, ", "))
+		line("  update %s: %s", u.Before.summary(), strings.Join(u.Changes, ", "))
 	}
 	for _, r := range p.Deletes {
-		fmt.Fprintln(w, "  "+changeLine("delete", r))
+		line("  %s", changeLine("delete", r))
 	}
 	notInFile := 0
 	for _, k := range p.Kept {
@@ -326,7 +330,7 @@ func printPlan(out *output.Config, p *syncPlan) error {
 			notInFile++
 			continue
 		}
-		fmt.Fprintf(w, "  keep   %s: %s\n", k.summary(), k.Reason)
+		line("  keep   %s: %s", k.summary(), k.Reason)
 	}
 	if notInFile > 0 {
 		out.Note(fmt.Sprintf("%s not in the file %s kept — pass --prune to delete them",

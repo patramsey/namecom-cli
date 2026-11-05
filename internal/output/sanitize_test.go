@@ -133,3 +133,87 @@ func TestTSV_EscapesControlCharacters(t *testing.T) {
 		t.Errorf("TSV escaped a value twice:\n%q", got)
 	}
 }
+
+func TestSanitizeLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain":               "plain",
+		"tab\tand\nnewline":   `tab\tand\nnewline`,
+		evil:                  evilEscaped,
+		"evil\xe2\x80\xaetxt": "evil\\u202etxt",
+	} {
+		if got := SanitizeLine(in); got != want {
+			t.Errorf("SanitizeLine(%q) = %q, want %q", in, got, want)
+		}
+		if got := SanitizeLine(SanitizeLine(in)); got != want {
+			t.Errorf("SanitizeLine is not idempotent on %q: %q", in, got)
+		}
+	}
+}
+
+func TestUnprintable(t *testing.T) {
+	for in, want := range map[string]bool{
+		"example.com":         false,
+		"名前.com":              false,
+		"a\tb":                true,
+		"a\nb":                true,
+		"h1\x1b[2Jx.com":      true,
+		"x\u202e.com":         true,
+		"zero\u200bwidth.com": true,
+		"bad\xff.com":         true,
+		"del\x7f.com":         true,
+	} {
+		if got := Unprintable(in); got != want {
+			t.Errorf("Unprintable(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestTable_OneLineCells pins #359: a line feed in a cell printed a line of
+// its own, which read as another row, and a tab hid the text after it, since
+// the width code counted it as nothing. Both now show as escapes, measured
+// as they print, in the bordered and plain tables and the detail view.
+func TestTable_OneLineCells(t *testing.T) {
+	for _, plain := range []bool{false, true} {
+		var stdout bytes.Buffer
+		c := &Config{Format: FormatTable, Color: ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}, Plain: plain}
+		c.Table([]string{"ID", "ANSWER"}, [][]string{{"1", "a\tb\tc"}, {"2", "x\nFAKE"}})
+		c.KVTable([][]string{{"Answer", "y\nFAKE\tz"}})
+		got := stdout.String()
+		if strings.Contains(got, "\t") || strings.Contains(got, "\nFAKE") {
+			t.Errorf("plain=%v: a tab or line feed reached the table:\n%s", plain, got)
+		}
+		for _, want := range []string{`a\tb\tc`, `x\nFAKE`, `y\nFAKE\tz`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("plain=%v: table does not show %q:\n%s", plain, want, got)
+			}
+		}
+	}
+
+	// Measured as printed: at a width the escaped cell just fits, nothing
+	// is hidden or cut short.
+	var stdout, stderr bytes.Buffer
+	c := &Config{Format: FormatTable, Color: ColorNever, Writer: &stdout, EWriter: &stderr, MaxWidth: 40}
+	c.Table([]string{"ID", "ANSWER"}, [][]string{{"1", "a\tb\tc"}})
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	for _, l := range lines {
+		if lipgloss.Width(l) != lipgloss.Width(lines[0]) {
+			t.Errorf("line %q is not as wide as the border %q", l, lines[0])
+		}
+	}
+	if stderr.Len() > 0 {
+		t.Errorf("table fits but printed a footer: %q", stderr.String())
+	}
+}
+
+// TestSanitizeLine_StyledChunk: a cell styled by the CLI (out.Dim(answer))
+// carries the data's line feed inside the chunk render remembered, which
+// Sanitize passes through. SanitizeLine escapes it there too.
+func TestSanitizeLine_StyledChunk(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	c := &Config{Format: FormatTable, Color: ColorAlways}
+	if got := SanitizeLine(c.Dim("x\nFAKE")); strings.Contains(got, "\n") {
+		t.Errorf("SanitizeLine(Dim) = %q, holds a line feed", got)
+	}
+}

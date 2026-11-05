@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	sdk "github.com/namedotcom/core-api-go/client"
 	"github.com/patramsey/namecom-cli/internal/config"
+	"github.com/patramsey/namecom-cli/internal/output"
 	"golang.org/x/time/rate"
 )
 
@@ -162,9 +163,13 @@ func New(opts Options) (*Client, error) {
 		AddSecret(opts.Creds.Token)
 		AddSecret(strings.TrimPrefix(authHeader, "Basic "))
 	}
+	// The debug log quotes bodies, URLs and headers the server chose, so it
+	// is escaped as every other line on stderr is (#359): an escape sequence
+	// in a body cleared the screen or set the title. Secrets are scrubbed
+	// first, while they are still in the form AddSecret registered.
 	var logw io.Writer
 	if opts.DebugLog != nil {
-		logw = scrubWriter{opts.DebugLog}
+		logw = scrubWriter{output.SanitizeWriter(opts.DebugLog)}
 	}
 	writes := &writeLog{}
 	httpClient := &http.Client{

@@ -208,6 +208,23 @@ func TestCompleteDomains(t *testing.T) {
 		}
 	})
 
+	// #359: names went to the shell as the API sent them. An escape sequence
+	// reached the terminal the shell draws on, and a line feed split a name
+	// into two candidates. A real domain name holds none of these.
+	t.Run("drops names with control, bidi or zero-width characters", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"domains":[{"domainName":"h1\u001b[2Jx\u202e.com"},{"domainName":"a.com\nb.com"},` +
+				`{"domainName":"zw\u200b.com"},{"domainName":"tab\t.com"},{"domainName":"ok.com"},{"domainName":"名前.com"}]}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		got, _ := CompleteDomains(cmdWithClient(t, srv), nil, "")
+		if len(got) != 2 || got[0] != "ok.com" || got[1] != "名前.com" {
+			t.Errorf("CompleteDomains = %q, want only ok.com and 名前.com", got)
+		}
+	})
+
 	t.Run("suggests nothing once an argument is present", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			t.Error("completion made a request when the argument was already supplied")

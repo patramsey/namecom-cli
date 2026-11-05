@@ -96,3 +96,39 @@ func TestPrintPlan_EscapesControlCharacters(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintPlan_OneLinePerChange pins #359: a line feed in an answer printed
+// a line of its own in the plan — the summary --prune is confirmed on — so a
+// hostile record could add a delete or a create the plan does not make.
+func TestPrintPlan_OneLinePerChange(t *testing.T) {
+	var stdout bytes.Buffer
+	out := &output.Config{Format: output.FormatTable, Color: output.ColorNever, Writer: &stdout, EWriter: &bytes.Buffer{}}
+	fake := "x\n  delete A @ → 192.0.2.1 (TTL 300) [id 9]"
+	p := &syncPlan{
+		Domain:  "example.com",
+		Prune:   true,
+		Creates: []planRecord{{Type: "TXT", Host: "a", Answer: fake, TTL: 300}},
+		Updates: []planUpdate{{
+			planRecord: planRecord{ID: 2, Type: "TXT", Host: "u", Answer: "new", TTL: 300},
+			Before:     planRecord{ID: 2, Type: "TXT", Host: "u", Answer: "old\tHIDDEN", TTL: 300},
+			Changes:    []string{"answer old\tHIDDEN → new"},
+		}},
+		Deletes: []planRecord{{ID: 1, Type: "TXT", Host: "b", Answer: fake, TTL: 300}},
+		Kept:    []planKept{{planRecord: planRecord{ID: 3, Type: "NS", Host: "@", Answer: fake, TTL: 300}, Reason: "the zone's own"}},
+	}
+	if err := printPlan(out, p); err != nil {
+		t.Fatalf("printPlan: %v", err)
+	}
+	got := stdout.String()
+	if n := strings.Count(got, "\n"); n != 5 {
+		t.Errorf("plan is %d lines, want 5 (header, create, update, delete, keep):\n%s", n, got)
+	}
+	if strings.Contains(got, "\t") {
+		t.Errorf("plan holds a raw tab:\n%q", got)
+	}
+	for _, want := range []string{`x\n  delete A @`, `old\tHIDDEN`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan missing %s:\n%s", want, got)
+		}
+	}
+}
