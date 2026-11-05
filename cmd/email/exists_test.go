@@ -52,8 +52,8 @@ func TestEmailCreate_ExistingMailboxIsConflict(t *testing.T) {
 	if got := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String(); got != "" {
 		t.Errorf("stdout = %q, want nothing for a create that changed nothing", got)
 	}
-	if got := n.Load(); got != 1 {
-		t.Errorf("sent %d requests, want 1", got)
+	if got := n.Load(); got != 2 {
+		t.Errorf("sent %d requests, want 2 (the records read, the POST)", got)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestEmailCreate_SuccessPrintsTheResponse(t *testing.T) {
 	if got, want := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String(), "Created forwarding info@example.com → me@example.org"; !strings.Contains(got, want) {
 		t.Errorf("stdout = %q, want %q", got, want)
 	}
-	if got := n.Load(); got != 1 {
-		t.Errorf("sent %d requests, want 1", got)
+	if got := n.Load(); got != 2 {
+		t.Errorf("sent %d requests, want 2 (the records read, the POST)", got)
 	}
 }

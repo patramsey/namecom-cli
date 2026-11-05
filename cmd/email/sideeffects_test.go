@@ -19,7 +19,9 @@ func stderrOf(t *testing.T, cmdOut *output.Config) string {
 
 // TestEmailCreate_SaysWhichDNSRecordsAreAdded pins #286: name.com adds MX
 // and SPF records for forwarding, and nothing said so. Create says it, on
-// stderr, without a request to look: one request in all.
+// stderr. It said "if they are missing" while other MX records were
+// replaced (#358); it now says so. Two requests: the records read that
+// decides whether to ask, and the POST.
 func TestEmailCreate_SaysWhichDNSRecordsAreAdded(t *testing.T) {
 	var n atomic.Int32
 	srv := countingServer(t, `{"domainName":"example.com","emailBox":"info","emailTo":"me@example.org"}`, &n)
@@ -32,13 +34,16 @@ func TestEmailCreate_SaysWhichDNSRecordsAreAdded(t *testing.T) {
 		t.Fatalf("runCreate: %v", err)
 	}
 	stderr := stderrOf(t, cmdutil.Out(cmd))
-	for _, want := range []string{"mx3.name.com", "v=spf1 a mx ~all", "namecom dns list example.com --host @"} {
+	for _, want := range []string{"mx3.name.com", "replacing any others", "v=spf1 a mx ~all", "namecom dns list example.com --host @"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr = %q, want it to mention %q", stderr, want)
 		}
 	}
-	if got := n.Load(); got != 1 {
-		t.Errorf("sent %d requests, want 1", got)
+	if got := n.Load(); got != 2 {
+		t.Errorf("sent %d requests, want 2", got)
+	}
+	if strings.Contains(stderr, "if they are missing") {
+		t.Errorf("stderr = %q still says the records are added only if missing", stderr)
 	}
 	if !strings.Contains(createCmd.Long, "mx3.name.com") {
 		t.Error("create's help should say which records name.com adds")

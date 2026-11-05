@@ -129,7 +129,8 @@ func TestURLCreate_DuplicateRecordNotCreated(t *testing.T) {
 }
 
 // Only an apex create is checked: a subdomain's Duplicate Record is not the
-// left-over A record case, and costs no extra request.
+// left-over A record case, and costs no extra request beyond the records
+// read every subdomain create makes (#358).
 func TestURLCreate_DuplicateRecordOnSubdomainIsNotChecked(t *testing.T) {
 	var seen []string
 	cmd := cmdForURLCreate(t, duplicateServer(t, `{"urlForwarding":[]}`, &seen))
@@ -143,7 +144,7 @@ func TestURLCreate_DuplicateRecordOnSubdomainIsNotChecked(t *testing.T) {
 	if _, ok := errors.AsType[*cmdutil.ConflictError](err); ok {
 		t.Errorf("a subdomain's Duplicate Record was turned into a conflict: %v", err)
 	}
-	if len(seen) != 1 {
-		t.Errorf("sent %v, want only the POST", seen)
+	if len(seen) != 2 || !strings.HasPrefix(seen[0], "GET ") || !strings.Contains(seen[0], "/records") {
+		t.Errorf("sent %v, want only the records read and the POST", seen)
 	}
 }

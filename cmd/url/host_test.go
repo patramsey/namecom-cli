@@ -53,8 +53,13 @@ func TestURLCreate_FQDNHost(t *testing.T) {
 			if body.Host != want {
 				t.Errorf("sent host %q, want %q", body.Host, want)
 			}
-			if n != 1 {
-				t.Errorf("sent %d requests, want 1", n)
+			// A subdomain reads its records first, for what it replaces (#358).
+			wantN := 2
+			if want == "@" {
+				wantN = 1
+			}
+			if n != wantN {
+				t.Errorf("sent %d requests, want %d", n, wantN)
 			}
 			stdout := cmdutil.Out(cmd).Writer.(*bytes.Buffer).String()
 			if !strings.Contains(stdout, ": "+want+" → ") {

@@ -703,6 +703,8 @@ func TestDryRunMatchesRealRequest_URL(t *testing.T) {
 		setup func(*testing.T, *httptest.Server) *cobra.Command
 		args  []string
 		run   func(*cobra.Command, []string) error
+		// resp replaces getResponse.
+		resp string
 	}{
 		{
 			name: "update",
@@ -737,10 +739,30 @@ func TestDryRunMatchesRealRequest_URL(t *testing.T) {
 			args: []string{"example.com"},
 			run:  runCreate,
 		},
+		// A host whose A record the create replaces (#358): the dry run
+		// names it and the real run confirms, and the POST is the same. One
+		// reply serves the records read and the create.
+		{
+			name: "create replacing records",
+			setup: func(t *testing.T, srv *httptest.Server) *cobra.Command {
+				cmd := cmdForURLCreate(t, srv)
+				if err := cmd.ParseFlags([]string{"--to", "https://dest.example", "--host", "www"}); err != nil {
+					t.Fatalf("ParseFlags: %v", err)
+				}
+				return cmd
+			},
+			args: []string{"example.com"},
+			run:  runCreate,
+			resp: `{"id":1,"host":"www","forwardsTo":"https://dest.example","type":"redirect","records":[{"id":2,"host":"www","type":"A","answer":"192.0.2.1","ttl":300}]}`,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			getResponse := getResponse
+			if tc.resp != "" {
+				getResponse = tc.resp
+			}
 			printed := captureDryRunLine(t, func(srv *httptest.Server) (*cobra.Command, error) {
 				cmd := withDryRun(t, tc.setup(t, srv), true)
 				return cmd, tc.run(cmd, tc.args)

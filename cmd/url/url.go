@@ -74,9 +74,12 @@ The default type, redirect, is a 301 (permanent) redirect; 302 is a temporary
 one. masked keeps the domain in the address bar and shows the destination in
 a frame, with --title and --meta for the page around it.
 
-Forwarding a subdomain replaces that host's A records, and deleting the
-forwarding removes them. Forwarding the apex adds an A record for it, which
-deleting the forwarding leaves in place: remove it with 'namecom dns delete'.
+Forwarding a subdomain replaces that host's address records with name.com's,
+and deleting the forwarding removes those without restoring the old ones.
+create reads the zone first: when the host has A, AAAA or CNAME records, it
+names them, in --dry-run too, and asks before creating (--yes in a script).
+Forwarding the apex adds an A record for it, which deleting the forwarding
+leaves in place: remove it with 'namecom dns delete'.
 
 --title and --meta apply only to masked forwarding; with another type they
 are a usage error.`,
@@ -367,12 +370,32 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		body.Meta = &createMeta
 	}
 
+	// Forwarding a subdomain replaces its address records with name.com's,
+	// and deleting the forwarding leaves the host with none (#358). One
+	// records read says which this create would replace, so the dry run
+	// names them and the real run asks first. The apex is not read: there
+	// forwarding adds an A record and replaces nothing.
+	var effects []string
+	if host != "@" {
+		records, err := cmdutil.ZoneRecords(cmd, domain)
+		if err != nil {
+			return err
+		}
+		effects = hostEffects(records, host)
+	}
+	prompt := ""
+	if len(effects) > 0 {
+		prompt = fmt.Sprintf("Forward %s to %s? %s", forwardingName(domain, host), createForwardsTo, strings.Join(effects, "; "))
+	}
+
 	var entry *coreapigo.URLForwardingResponse
 	sent, err := cmdutil.RunWrite(cmd, cmdutil.Write[coreapigo.URLForwardingInput]{
-		Method: "POST",
-		Path:   fmt.Sprintf("/core/v1/domains/%s/url/forwarding", domain),
-		Body:   body,
-		Spin:   "Creating URL forwarding…",
+		Method:      "POST",
+		Path:        fmt.Sprintf("/core/v1/domains/%s/url/forwarding", domain),
+		Body:        body,
+		Prompt:      prompt,
+		SideEffects: effects,
+		Spin:        "Creating URL forwarding…",
 	}, func(ctx context.Context, body coreapigo.URLForwardingInput) error {
 		var err error
 		entry, err = client.SDK().URLForwardings.CreateURLForwarding(ctx, &body)
@@ -801,6 +824,23 @@ func validateDestination(s string) error {
 // forwardingName is the name a forwarding answers on: the bare domain for the
 // apex, host.domain otherwise. The form asked where "example.com/@" should
 // forward to.
+// hostEffects is what forwarding host would replace among records, one
+// sentence per record: its A, AAAA and CNAME records (#358).
+func hostEffects(records []*coreapigo.Record, host string) []string {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	var effects []string
+	for _, r := range records {
+		if cmdutil.RecordHost(r) != host {
+			continue
+		}
+		switch strings.ToUpper(derefStr(r.Type)) {
+		case "A", "AAAA", "CNAME":
+			effects = append(effects, fmt.Sprintf("name.com replaces %s with its forwarding record, and deleting the forwarding does not restore it", cmdutil.RecordLine(r)))
+		}
+	}
+	return effects
+}
+
 func forwardingName(domain, host string) string {
 	if host == "" || host == "@" {
 		return domain

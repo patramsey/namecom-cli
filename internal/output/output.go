@@ -1995,6 +1995,10 @@ type DryRunRequest struct {
 	// Quote is what the request would charge, for a write that buys
 	// something. Omitted for every other write.
 	Quote *Quote `json:"quote,omitempty"`
+	// SideEffects are changes the API makes beyond the request itself, one
+	// sentence each — the MX records an email forwarding replaces (#358).
+	// Omitted when there are none.
+	SideEffects []string `json:"sideEffects,omitempty"`
 }
 
 // Quote is the amount a billable request would charge, as a --dry-run of it
@@ -2054,7 +2058,15 @@ func (c *Config) DryRun(method, path string, body any) error {
 // default" — where context says who would pay (cmdutil.PromptContext). A nil
 // q is DryRun exactly.
 func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context string) error {
-	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body, Quote: q}
+	return c.DryRunEffects(method, path, body, q, context, nil)
+}
+
+// DryRunEffects is DryRunQuote for a request that changes more than it says:
+// JSON and YAML carry effects as the document's "sideEffects" array, and
+// table and TSV modes follow the request with one "Would also: …" line on
+// stderr for each. No effects is DryRunQuote exactly.
+func (c *Config) DryRunEffects(method, path string, body any, q *Quote, context string, effects []string) error {
+	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body, Quote: q, SideEffects: effects}
 	if c.filter != nil {
 		c.filter.dryRun = true
 	}
@@ -2078,6 +2090,11 @@ func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context st
 			line += " · " + context
 		}
 		fmt.Fprintln(c.EWriter, Sanitize(line))
+	}
+	if !c.QuietMode {
+		for _, e := range effects {
+			fmt.Fprintln(c.EWriter, Sanitize("Would also: "+e))
+		}
 	}
 	return nil
 }

@@ -783,7 +783,9 @@ func TestRequestCounts(t *testing.T) {
 		},
 		"email create": {
 			args: []string{"email", "create", "example.com", "info", "--to", "you@example.org", "--yes"},
+			why:  "one records read says which apex MX and SPF records name.com would replace or add beside, so the create can name them and ask (#358)",
 			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
 				"POST /core/v1/domains/example.com/email/forwarding",
 			},
 		},
@@ -866,6 +868,29 @@ func TestRequestCounts(t *testing.T) {
 		"url create --dry-run": {
 			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--dry-run"},
 			want: nil,
+		},
+		"url create --host": {
+			args: []string{"url", "create", "example.com", "--host", "www", "--to", "https://example.org", "--yes"},
+			why:  "one records read names the www A records the forwarding replaces, to confirm them (#358); the apex is not read",
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
+				"POST /core/v1/domains/example.com/url/forwarding",
+			},
+		},
+		"url create --host --dry-run": {
+			args: []string{"url", "create", "example.com", "--host", "www", "--to", "https://example.org", "--dry-run"},
+			why:  "the dry run names the records it would replace (#358)",
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
+			},
+		},
+		"url create --host, replacing records without --yes": {
+			args: []string{"url", "create", "example.com", "--host", "www", "--to", "https://example.org"},
+			why:  "the www A records are replaced, which needs confirming (#358)",
+			code: 2,
+			want: []string{
+				"GET /core/v1/domains/example.com/records?page=1&perPage=1000",
+			},
 		},
 		"url create, apex 400 Duplicate Record that landed": {
 			args: []string{"url", "create", "example.com", "--to", "https://example.org", "--yes"},

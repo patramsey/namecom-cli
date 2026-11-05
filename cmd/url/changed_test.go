@@ -14,12 +14,13 @@ import (
 
 // TestURLCreate_SaysChanged pins #326: a plain `url create -o json` printed
 // the forwarding with no "changed" key, which only the create recovered from
-// a Duplicate Record carried. It is one POST, and says "changed": true.
+// a Duplicate Record carried. It says "changed": true, from the POST and
+// the records read a subdomain forwarding makes first (#358).
 func TestURLCreate_SaysChanged(t *testing.T) {
 	var n atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n.Add(1)
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodPost && r.URL.Path != "/core/v1/domains/example.com/records" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -40,7 +41,7 @@ func TestURLCreate_SaysChanged(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc["changed"] != true || doc["id"] != float64(7) {
 		t.Errorf("stdout = %q (%v), want forwarding 7 with \"changed\": true", stdout, err)
 	}
-	if got := n.Load(); got != 1 {
-		t.Errorf("requests = %d, want 1", got)
+	if got := n.Load(); got != 2 {
+		t.Errorf("requests = %d, want 2", got)
 	}
 }
