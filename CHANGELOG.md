@@ -9,6 +9,12 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+### Security
+- The Go toolchain moves to 1.26.11 for `GO-2026-6859`, a crash in
+  `net/http`'s HTTP/1 server. `govulncheck` flags the binary because it
+  links `net/http`, but `namecom` runs no HTTP server, so it is not
+  exposed. Building now needs Go 1.26.11.
+
 ## [0.6.0] - 2026-11-05
 
 Fixes from a fourth live sweep (#358–#364). Several change what a script
