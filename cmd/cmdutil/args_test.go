@@ -446,6 +446,7 @@ func TestFlagError_BadValueIsPlain(t *testing.T) {
 	cmd.Flags().IntP("limit", "l", 0, "")
 	cmd.Flags().Uint("years", 0, "")
 	cmd.Flags().Float64("price", 0, "")
+	cmd.Flags().Uint8("tries", 0, "")
 	root.AddCommand(cmd)
 	root.SetFlagErrorFunc(FlagError)
 
@@ -457,6 +458,7 @@ func TestFlagError_BadValueIsPlain(t *testing.T) {
 		{[]string{"-l", "1.5"}, `--limit must be a whole number, got "1.5"`},
 		{[]string{"--limit=99999999999999999999"}, `--limit is out of range, got "99999999999999999999"`},
 		{[]string{"--years", "-1"}, `--years must be a whole number, got "-1"`},
+		{[]string{"--tries", "300"}, `--tries is out of range, got "300"`},
 		{[]string{"--price", "x"}, `--price must be a number, got "x"`},
 		{[]string{"--yes=maybe"}, `--yes takes true or false, got "maybe"`},
 		{[]string{"--timeout", "5"}, `--timeout must be a duration such as 30s or 2m, got "5"`},
