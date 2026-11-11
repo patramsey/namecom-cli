@@ -15,6 +15,11 @@ Releases before `0.2.0` predate this file. Their notes are on the
   links `net/http`, but `namecom` runs no HTTP server, so it is not
   exposed. Building now needs Go 1.26.11.
 
+### Fixed
+- A bad flag value keeps its plain message (`--limit must be a whole
+  number, got "abc"`) under pflag 1.1, which reports every integer
+  failure, out of range included, as `must be an integer`.
+
 ## [0.6.0] - 2026-11-05
 
 Fixes from a fourth live sweep (#358–#364). Several change what a script

@@ -246,30 +246,53 @@ func FlagErrorArgs(cmd *cobra.Command, err error, args []string) error {
 }
 
 // invalidValue restates a built-in flag type's parse failure without Go's
-// internals: pflag said `invalid argument "abc" for "--limit" flag:
-// strconv.ParseInt: parsing "abc": invalid syntax` (#324). It returns nil for
-// a failure it does not recognize, such as a custom flag type's own error,
-// which already says what is wrong.
+// internals: pflag 1.0 said `invalid argument "abc" for "--limit" flag:
+// strconv.ParseInt: parsing "abc": invalid syntax` (#324), and 1.1 says
+// `must be an integer` for an out-of-range value too. The message is chosen
+// by the flag's type, which both versions report, re-parsing the value only
+// to tell a range error apart. It returns nil for a type it does not know,
+// such as a custom flag type, whose own error already says what is wrong.
 func invalidValue(e *pflag.InvalidValueError) error {
 	name, value := "--"+e.GetFlag().Name, e.GetValue()
-	if numErr, ok := errors.AsType[*strconv.NumError](e); ok {
-		if errors.Is(numErr.Err, strconv.ErrRange) {
-			return fmt.Errorf("%s is out of range, got %q", name, value)
-		}
-		switch numErr.Func {
-		case "ParseInt", "ParseUint", "Atoi":
-			return fmt.Errorf("%s must be a whole number, got %q", name, value)
-		case "ParseFloat":
-			return fmt.Errorf("%s must be a number, got %q", name, value)
-		case "ParseBool":
-			return fmt.Errorf("%s takes true or false, got %q", name, value)
-		}
-		return nil
-	}
-	if e.GetFlag().Value.Type() == "duration" {
+	typ := e.GetFlag().Value.Type()
+	switch typ {
+	case "int", "int8", "int16", "int32", "int64", "count":
+		return wholeNumberError(name, value, func() error { _, err := strconv.ParseInt(value, 0, intBits(typ)); return err })
+	case "uint", "uint8", "uint16", "uint32", "uint64":
+		return wholeNumberError(name, value, func() error { _, err := strconv.ParseUint(value, 0, intBits(typ)); return err })
+	case "float32", "float64":
+		return fmt.Errorf("%s must be a number, got %q", name, value)
+	case "bool":
+		return fmt.Errorf("%s takes true or false, got %q", name, value)
+	case "duration":
 		return fmt.Errorf("%s must be a duration such as 30s or 2m, got %q", name, value)
 	}
 	return nil
+}
+
+// wholeNumberError is the message for a bad integer flag value: out of range
+// when parse fails only because the number is too large, else not a whole
+// number.
+func wholeNumberError(name, value string, parse func() error) error {
+	if errors.Is(parse(), strconv.ErrRange) {
+		return fmt.Errorf("%s is out of range, got %q", name, value)
+	}
+	return fmt.Errorf("%s must be a whole number, got %q", name, value)
+}
+
+// intBits is the bit size pflag parses an integer flag type with.
+func intBits(typ string) int {
+	switch strings.TrimLeft(typ, "u") {
+	case "int8":
+		return 8
+	case "int16":
+		return 16
+	case "int32":
+		return 32
+	case "int64":
+		return 64
+	}
+	return strconv.IntSize
 }
 
 // givenValue reports whether the unknown flag --name was given a value in
