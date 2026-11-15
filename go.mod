@@ -10,7 +10,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/itchyny/gojq v0.12.20
 	github.com/muesli/termenv v0.16.0
-	github.com/namedotcom/core-api-go v1.36.0
+	github.com/namedotcom/core-api-go v1.36.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
 	golang.org/x/mod v0.42.0
