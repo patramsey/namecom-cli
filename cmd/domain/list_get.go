@@ -23,13 +23,21 @@ var listCmd = &cobra.Command{
 	Short:   "List domains in your account",
 	Long: `List domains in your account, one page at a time (250 unless --limit says
 otherwise). The filters narrow what the API returns; they do not fetch more
-pages. The footer says when there are more, and --all fetches every match.`,
+pages. The footer says when there are more, and --all fetches every match.
+
+Filters combine: every one given must match. --locked and --unlocked,
+--autorenew and --no-autorenew, and --privacy and --no-privacy are pairs; a
+pair's two halves cannot be given together. --premium lists registry premium
+names. The date filters take YYYY-MM-DD and include the date named.`,
 	Example: `  namecom domain list                             # first page (250)
   namecom domain list --page 2                    # second page
   namecom domain list --all                       # all domains (good for scripting)
   namecom domain list --filter acme               # server-side wildcard search
   namecom domain list --tld io                    # filter by TLD
   namecom domain list --expiring-before 2026-09-01
+  namecom domain list --unlocked                  # domains without the transfer lock
+  namecom domain list --no-autorenew --expiring-before 2026-12-31
+  namecom domain list --created-after 2026-01-01
   namecom domain list --sort expireDate
   namecom domain list --all -o json | jq -r '.data[].domainName'   # JSON is wrapped in a "data" envelope`,
 	// Without it, cobra let a leaf command take any arguments and ignore
@@ -67,7 +75,27 @@ var (
 	listLimit          int
 	listExpiringAfter  string
 	listExpiringBefore string
+	listCreatedAfter   string
+	listCreatedBefore  string
 )
+
+// boolFilters are domain list's yes/no filters: each pair of flags sets one
+// query parameter, true for the first flag and false for the second, and
+// field reads the same property from a domain in the reply. premium has no
+// second flag: --premium=false asks for the names that are not.
+var boolFilters = []struct {
+	on, off, param string
+	usageOn        string
+	usageOff       string
+	field          func(*coreapigo.DomainResponsePayload) bool
+}{
+	{"locked", "unlocked", "locked", "only domains with the transfer lock on", "only domains with the transfer lock off",
+		func(d *coreapigo.DomainResponsePayload) bool { return d.Locked }},
+	{"autorenew", "no-autorenew", "autorenewEnabled", "only domains that renew automatically", "only domains that do not renew automatically",
+		func(d *coreapigo.DomainResponsePayload) bool { return d.AutorenewEnabled }},
+	{"privacy", "no-privacy", "privacyEnabled", "only domains with WHOIS privacy", "only domains without WHOIS privacy", nil},
+	{"premium", "", "isPremium", "only registry premium domains (--premium=false: only those that are not)", "", nil},
+}
 
 func init() {
 	// The API reads --filter as a SQL LIKE pattern, so % and _ are wildcards
@@ -80,6 +108,14 @@ func init() {
 	listCmd.Flags().StringVar(&listSortDir, "sort-dir", "", "sort direction: asc (default) or desc")
 	listCmd.Flags().StringVar(&listExpiringAfter, "expiring-after", "", "show domains expiring on or after this date (YYYY-MM-DD)")
 	listCmd.Flags().StringVar(&listExpiringBefore, "expiring-before", "", "show domains expiring on or before this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listCreatedAfter, "created-after", "", "show domains created on or after this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listCreatedBefore, "created-before", "", "show domains created on or before this date (YYYY-MM-DD)")
+	for _, f := range boolFilters {
+		listCmd.Flags().Bool(f.on, false, f.usageOn)
+		if f.off != "" {
+			listCmd.Flags().Bool(f.off, false, f.usageOff)
+		}
+	}
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "domains")
 	cmdutil.CompleteFlagValues(listCmd, "sort", sortFields)
 	cmdutil.CompleteFlagValues(listCmd, "sort-dir", cmdutil.SortDirs)
@@ -97,7 +133,85 @@ var sortFields = []string{"domainName", "createDate", "expireDate",
 
 // isFiltered reports whether any server-side filter flag is set.
 func isFiltered(cmd *cobra.Command) bool {
-	return slices.ContainsFunc([]string{"filter", "tld", "expiring-after", "expiring-before"}, cmd.Flags().Changed)
+	names := []string{"filter", "tld", "expiring-after", "expiring-before", "created-after", "created-before"}
+	for _, f := range boolFilters {
+		names = append(names, f.on)
+		if f.off != "" {
+			names = append(names, f.off)
+		}
+	}
+	return slices.ContainsFunc(names, cmd.Flags().Changed)
+}
+
+// boolFilter is the value a pair of boolFilters flags asks for: nil when
+// neither was given, true for --on (or --off=false), false for --off. Both
+// together is a usage error, even when they agree (--locked --unlocked=false):
+// one of them is a mistake.
+func boolFilter(cmd *cobra.Command, on, off string) (*bool, error) {
+	onSet := cmd.Flags().Changed(on)
+	offSet := off != "" && cmd.Flags().Changed(off)
+	switch {
+	case onSet && offSet:
+		return nil, cmdutil.NewUsageError(fmt.Errorf("--%s and --%s cannot be used together: pick one", on, off))
+	case onSet:
+		v, _ := cmd.Flags().GetBool(on)
+		return &v, nil
+	case offSet:
+		v, _ := cmd.Flags().GetBool(off)
+		v = !v
+		return &v, nil
+	}
+	return nil, nil
+}
+
+// dateFilter checks a pair of "on or after" / "on or before" date flags and
+// returns the start and end the API is sent. The API treats a range's end
+// as exclusive (#150), so "on or before D" is sent as D+1. Either may be ""
+// for an open end.
+func dateFilter(after, afterFlag, before, beforeFlag string) (start, end string, err error) {
+	if after != "" {
+		if err := cmdutil.ValidDate(after, afterFlag); err != nil {
+			return "", "", err
+		}
+	}
+	if before != "" {
+		if err := cmdutil.ValidDate(before, beforeFlag); err != nil {
+			return "", "", err
+		}
+		d, _ := time.Parse("2006-01-02", before)
+		end = d.AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	if err := cmdutil.ValidDateRange(after, afterFlag, before, beforeFlag); err != nil {
+		return "", "", err
+	}
+	return after, end, nil
+}
+
+// checkBoolFiltersApplied fails a yes/no filter the first page shows the API
+// did not apply, as checkTLDApplied does for --tld: a domain whose locked or
+// autorenewEnabled is not what was asked for can only be there if the filter
+// was ignored, and `domain list --unlocked -q | xargs …` would then act on
+// every domain. privacyEnabled and isPremium are not checked: the API
+// documents the privacy filter as "a privacy product associated with the
+// domain", which need not be the privacyEnabled a domain reports, and a
+// domain in a list does not say whether it is premium.
+func checkBoolFiltersApplied(want map[string]*bool, domains []*coreapigo.DomainResponsePayload) error {
+	for _, f := range boolFilters {
+		v := want[f.on]
+		if v == nil || f.field == nil {
+			continue
+		}
+		for _, d := range domains {
+			if d != nil && f.field(d) != *v {
+				flag := f.on
+				if !*v {
+					flag = f.off
+				}
+				return fmt.Errorf("--%s: the API did not apply the filter; it returned %s, whose %s is %t", flag, d.DomainName, f.param, f.field(d))
+			}
+		}
+	}
+	return nil
 }
 
 func runList(cmd *cobra.Command, _ []string) error {
@@ -118,23 +232,21 @@ func runList(cmd *cobra.Command, _ []string) error {
 	if err := cmdutil.ValidSortDir(sortDir); err != nil {
 		return err
 	}
-	if listExpiringAfter != "" {
-		if err := cmdutil.ValidDate(listExpiringAfter, "expiring-after"); err != nil {
-			return err
-		}
-	}
 	// The API treats expireDateEnd as exclusive (#150), so "on or before D"
-	// has to be sent as D+1. ValidDate guarantees a YYYY-MM-DD date.
-	var expireEnd string
-	if listExpiringBefore != "" {
-		if err := cmdutil.ValidDate(listExpiringBefore, "expiring-before"); err != nil {
+	// has to be sent as D+1; createDateEnd is taken to be the same.
+	expireStart, expireEnd, err := dateFilter(listExpiringAfter, "expiring-after", listExpiringBefore, "expiring-before")
+	if err != nil {
+		return err
+	}
+	createStart, createEnd, err := dateFilter(listCreatedAfter, "created-after", listCreatedBefore, "created-before")
+	if err != nil {
+		return err
+	}
+	bools := map[string]*bool{}
+	for _, f := range boolFilters {
+		if bools[f.on], err = boolFilter(cmd, f.on, f.off); err != nil {
 			return err
 		}
-		d, _ := time.Parse("2006-01-02", listExpiringBefore)
-		expireEnd = d.AddDate(0, 0, 1).Format("2006-01-02")
-	}
-	if err := cmdutil.ValidDateRange(listExpiringAfter, "expiring-after", listExpiringBefore, "expiring-before"); err != nil {
-		return err
 	}
 	tld := ""
 	if listTLD != "" {
@@ -161,12 +273,22 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if tld != "" {
 			p.Tld = &tld
 		}
-		if listExpiringAfter != "" {
-			p.ExpireDateStart = &listExpiringAfter
+		if expireStart != "" {
+			p.ExpireDateStart = &expireStart
 		}
 		if expireEnd != "" {
 			p.ExpireDateEnd = &expireEnd
 		}
+		if createStart != "" {
+			p.CreateDateStart = &createStart
+		}
+		if createEnd != "" {
+			p.CreateDateEnd = &createEnd
+		}
+		p.Locked = bools["locked"]
+		p.AutorenewEnabled = bools["autorenew"]
+		p.PrivacyEnabled = bools["privacy"]
+		p.IsPremium = bools["premium"]
 		return p
 	}
 
@@ -187,6 +309,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 		lastResult = &coreapigo.ListDomainsResponse{}
 	}
 	if err := checkTLDApplied(tld, lastResult.Domains); err != nil {
+		spin.Stop()
+		return err
+	}
+	if err := checkBoolFiltersApplied(bools, lastResult.Domains); err != nil {
 		spin.Stop()
 		return err
 	}
@@ -437,6 +563,15 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 	} else if always {
 		rows = append(rows, []string{"Transfer lock", ""})
 	}
+	// The registry statuses (EPP codes such as clientHold or
+	// clientTransferProhibited) were in -o json only, so a domain on hold
+	// looked like any other (#383). The row is there only when there are
+	// some, as Transfer lock is; in TSV it is always there, but last, so the
+	// rows a script already reads by position do not move.
+	locks := strings.Join(d.Locks, ", ")
+	if locks != "" && !always {
+		rows = append(rows, []string{"Locks", locks})
+	}
 	rows = append(rows, []string{"Privacy", out.BoolBadge(d.PrivacyEnabled)})
 	var reg *coreapigo.RegistrantContact
 	if d.Contacts != nil {
@@ -453,7 +588,11 @@ func domainRows(out *output.Config, d *coreapigo.DomainResponsePayload, now time
 	} else if registrant := registrantLabel(reg); registrant != "" {
 		rows = append(rows, []string{"Registrant", registrant})
 	}
-	return append(rows, []string{"Nameservers", out.Dim(formatNS(d.Nameservers))})
+	rows = append(rows, []string{"Nameservers", out.Dim(formatNS(d.Nameservers))})
+	if always {
+		rows = append(rows, []string{"Locks", locks})
+	}
+	return rows
 }
 
 // registrantFields returns a registrant's name ("Jane Doe"), company, and

@@ -182,6 +182,8 @@ func defaultReply(method, path string, body []byte) reply {
 		return reply{200, stubTransfer}
 	case strings.HasPrefix(p, "/transfers/"):
 		return reply{200, stubTransfer}
+	case p == "/tldpricing":
+		return reply{200, `{"pricing":[{"tld":"com","duration":1,"registrationPrice":10.99}],"totalCount":1,"from":1,"to":1,"lastPage":1}`}
 	case p == "/orders":
 		return reply{200, `{"orders":[` + stubOrder + `],"totalCount":1,"lastPage":1}`}
 	case strings.HasPrefix(p, "/orders/"):
@@ -355,6 +357,28 @@ func TestRequestCounts(t *testing.T) {
 				"GET /core/v1/domains?page=1&perPage=1000&tld=cmo",
 			},
 		},
+		"domain list, yes/no and date filters": {
+			args: []string{"domain", "list", "--unlocked", "--autorenew", "--no-privacy", "--premium", "--created-after", "2025-01-01", "--created-before", "2025-06-30"},
+			routes: map[string]reply{"GET /core/v1/domains": {200, `{"domains":[{"domainName":"example.com","locked":false,` +
+				`"autorenewEnabled":true}],"totalCount":1,"lastPage":1}`}},
+			want: []string{
+				"GET /core/v1/domains?autorenewEnabled=true&createDateEnd=2025-07-01&createDateStart=2025-01-01&isPremium=true&locked=false&page=1&privacyEnabled=false",
+			},
+		},
+		"domain list -q, a filter, two pages": {
+			args: []string{"domain", "list", "-q", "--locked"},
+			routes: map[string]reply{"GET /core/v1/domains": {200, `{"domains":[` + stubDomain("example.com") +
+				`],"totalCount":2,"nextPage":2,"lastPage":2}`}},
+			why: "-q pages fully, and each page carries the filter",
+			want: []string{
+				"GET /core/v1/domains?locked=true&page=1&perPage=1000",
+				"GET /core/v1/domains?locked=true&page=2&perPage=1000",
+			},
+		},
+		"domain list --locked --unlocked": {
+			args: []string{"domain", "list", "--locked", "--unlocked"},
+			code: 2,
+		},
 		"domain list, reversed date range": {
 			args: []string{"domain", "list", "--expiring-after", "2027-01-01", "--expiring-before", "2026-01-01"},
 			code: 2,
@@ -375,6 +399,23 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"domain", "search", "foo"},
 			want: []string{
 				"POST /core/v1/domains:search",
+			},
+		},
+		"domain search, every flag": {
+			args: []string{"domain", "search", "foo", "--tld", "com,io", "--purchase-type", "registration", "--search-timeout", "2s"},
+			want: []string{
+				"POST /core/v1/domains:search",
+			},
+		},
+		"domain search, a bad --purchase-type": {
+			args: []string{"domain", "search", "foo", "--purchase-type", "aftermarket"},
+			code: 2,
+		},
+		"domain check --purchase-type": {
+			args: []string{"domain", "check", "a.com", "--purchase-type", "registration"},
+			want: []string{
+				"POST /core/v1/zonecheck",
+				"POST /core/v1/domains:checkAvailability",
 			},
 		},
 		"domain check": {
@@ -469,6 +510,40 @@ func TestRequestCounts(t *testing.T) {
 			why:  "availability gives the aftermarket price pricing leaves out (#187)",
 			want: []string{
 				together("GET /core/v1/domains/example.com:getPricing", "POST /core/v1/domains:checkAvailability"),
+			},
+		},
+		"domain pricing --years": {
+			args: []string{"domain", "pricing", "example.com", "--years", "2"},
+			want: []string{
+				together("GET /core/v1/domains/example.com:getPricing?years=2", "POST /core/v1/domains:checkAvailability"),
+			},
+		},
+		"domain tld-pricing": {
+			args: []string{"domain", "tld-pricing"},
+			want: []string{
+				"GET /core/v1/tldpricing?page=1",
+			},
+		},
+		"domain tld-pricing --tld --years": {
+			args: []string{"domain", "tld-pricing", "--tld", "com,io", "--years", "3"},
+			want: []string{
+				"GET /core/v1/tldpricing?duration=3&page=1&tlds=com%2Cio",
+			},
+		},
+		"domain tld-pricing --all, two pages": {
+			args: []string{"domain", "tld-pricing", "--all"},
+			routes: map[string]reply{"GET /core/v1/tldpricing": {200, `{"pricing":[{"tld":"com","duration":1}],` +
+				`"totalCount":1001,"nextPage":2,"lastPage":2}`}},
+			why: "1000 a page, the most the API serves",
+			want: []string{
+				"GET /core/v1/tldpricing?page=1&perPage=1000",
+				"GET /core/v1/tldpricing?page=2&perPage=1000",
+			},
+		},
+		"domain tld-pricing -q": {
+			args: []string{"domain", "tld-pricing", "-q"},
+			want: []string{
+				"GET /core/v1/tldpricing?page=1&perPage=1000",
 			},
 		},
 		"domain auth-code": {
@@ -1187,6 +1262,12 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"order", "list", "-q"},
 			want: []string{
 				"GET /core/v1/orders?dir=desc&page=1&perPage=1000",
+			},
+		},
+		"order list --type": {
+			args: []string{"order", "list", "--type", "renewal"},
+			want: []string{
+				"GET /core/v1/orders?dir=desc&page=1&type=renewal",
 			},
 		},
 		"order list, reversed date range": {

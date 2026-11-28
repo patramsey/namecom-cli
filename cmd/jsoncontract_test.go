@@ -889,7 +889,7 @@ func TestJSONContract_FlagValueErrors(t *testing.T) {
 		notInHint     string
 	}{
 		{[]string{"domain", "list", "--limit", "abc"}, `--limit must be a whole number, got "abc"`, "", ""},
-		{[]string{"domain", "pricing", "example.com", "--years", "3"}, "unknown flag: --years", "namecom domain pricing --help", "--yes"},
+		{[]string{"domain", "auth-code", "example.com", "--years", "3"}, "unknown flag: --years", "namecom domain auth-code --help", "--yes"},
 		{[]string{"domain", "list", "--pgae", "2"}, "unknown flag: --pgae", "did you mean --page?", ""},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {

@@ -894,11 +894,23 @@ func runAuthCode(cmd *cobra.Command, args []string) error {
 var pricingCmd = &cobra.Command{
 	Use:   "pricing <domain>",
 	Short: "Get registration, renewal, and transfer pricing for a domain",
+	Long: `Get registration, renewal, and transfer pricing for a domain. The prices
+are for the TLD's minimum term, 1 year for most, or for --years years: each
+is the total for the term, not a yearly rate. A transfer is priced for one
+year whatever --years says, and an aftermarket, expiring or backorder name
+is a flat fee.`,
 	Example: `  namecom domain pricing example.com
+  namecom domain pricing example.com --years 3   # three-year totals
   namecom domain pricing premium.io      # shows premium flag and confirmed price`,
 	Args:              cmdutil.ExactArgs(1),
 	RunE:              runPricing,
 	ValidArgsFunction: cmdutil.CompleteDomains,
+}
+
+var pricingYears int
+
+func init() {
+	pricingCmd.Flags().IntVar(&pricingYears, "years", 0, "price this many years, 1 to 10 (default: the TLD's minimum term)")
 }
 
 func runPricing(cmd *cobra.Command, args []string) error {
@@ -909,6 +921,16 @@ func runPricing(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Sent only when given, so the API's own default term still applies
+	// (2 years for .ai) without it.
+	req := &coreapigo.GetPricingForDomainRequest{DomainName: domain}
+	if cmd.Flags().Changed("years") {
+		if err := cmdutil.ValidYears(pricingYears); err != nil {
+			return err
+		}
+		years := pricingYears
+		req.Years = &years
+	}
 	// The two lookups are independent, so they are sent together.
 	var acq *coreapigo.SearchResult
 	var acqErr error
@@ -917,8 +939,7 @@ func runPricing(cmd *cobra.Command, args []string) error {
 		defer close(acqDone)
 		acq, acqErr = acquisition(cmd, domain)
 	}()
-	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(),
-		&coreapigo.GetPricingForDomainRequest{DomainName: domain})
+	pricing, err := client.SDK().Domains.GetPricingForDomain(cmd.Context(), req)
 	<-acqDone
 	if err != nil {
 		return api.FromSDKError(err)
@@ -989,11 +1010,21 @@ func runPricing(cmd *cobra.Command, args []string) error {
 	if pricing.Premium {
 		title += " (premium)"
 	}
-	out.Title(title + " — per term (1 year for most TLDs)")
+	term := " — per term (1 year for most TLDs)"
+	// The API prices a transfer for one year whatever years says: $21.99
+	// for 1 and for 3, where register and renew became 3-year totals.
+	transferLabel := "Transfer"
+	if req.Years != nil {
+		term = " — for " + output.Plural(*req.Years, "year")
+		if *req.Years > 1 {
+			transferLabel = "Transfer (1 year)"
+		}
+	}
+	out.Title(title + term)
 	out.Table([]string{"TYPE", "PRICE"}, [][]string{
 		{"Register", register},
 		{"Renew", fmtPrice(pricing.RenewalPrice)},
-		{"Transfer", fmtPrice(pricing.TransferPrice)},
+		{transferLabel, fmtPrice(pricing.TransferPrice)},
 	})
 	return nil
 }

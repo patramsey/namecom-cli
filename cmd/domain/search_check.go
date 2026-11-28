@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	coreapigo "github.com/namedotcom/core-api-go"
 	"github.com/patramsey/namecom-cli/cmd/cmdutil"
@@ -151,14 +152,49 @@ func searchRenewLabel(out *output.Config, r *coreapigo.SearchResult) string {
 var searchCmd = &cobra.Command{
 	Use:   "search <term>",
 	Short: "Search for available domains matching a keyword",
+	Long: `Search for available domains matching a keyword, which can be a word or a
+whole domain name.
+
+The results mix several kinds of purchase: names registered at the TLD's
+standard price, registry premium names (PREMIUM yes, priced by the
+registry), and aftermarket, expiring and backorder listings, which are
+bought for a flat fee (PRICE reads "$500.00 flat (aftermarket_s)").
+--purchase-type registration narrows them to plain registrations, standard
+and premium; the other types narrow to that kind of listing.
+
+--tld limits the results to the TLDs named, up to 50. --search-timeout is
+how long name.com searches, from 500ms to 12s (its default is 12s); the
+response can take a little longer. It is not --timeout, the time the CLI
+waits for any API call.`,
 	Example: `  namecom domain search mystartup
+  namecom domain search mystartup --tld com,io --tld dev
+  namecom domain search mystartup --purchase-type registration   # no aftermarket names
+  namecom domain search mystartup --search-timeout 3s
   namecom domain search myidea -q  # print only available domains`,
 	Args:              cmdutil.ExactArgs(1),
 	ValidArgsFunction: cobra.NoFileCompletions,
 	RunE:              runSearch,
 }
 
-var checkAuthoritative, checkExitStatus bool
+var (
+	checkAuthoritative, checkExitStatus bool
+	checkPurchaseType                   string
+
+	searchTLDs         []string
+	searchPurchaseType string
+	searchTimeout      time.Duration
+)
+
+// maxSearchTLDs is the most TLDs Search's tldFilter takes: "There is a
+// maximum of 50 TLDs that can be used in this filter".
+const maxSearchTLDs = 50
+
+// Search's timeout bounds, from the SDK: "Valid timeouts are between 500ms
+// to 12,000ms".
+const (
+	minSearchTimeout = 500 * time.Millisecond
+	maxSearchTimeout = 12 * time.Second
+)
 
 var checkCmd = &cobra.Command{
 	Use:   "check <domain> [<domain>...]",
@@ -171,13 +207,18 @@ sent 50 at a time. '-' reads names from stdin, one per line; blank lines and
 A name the registry did not answer for reads "unknown", not taken: in JSON
 and YAML its "purchasable" is null, where a taken name's is false, and the
 command exits 1. With --exit-status a name that is not available exits 1
-too, with error type "unavailable".`,
+too, with error type "unavailable".
+
+--purchase-type checks for that kind of purchase only: with registration, a
+name that can only be bought as an aftermarket, expiring or backorder
+listing reads as not available.`,
 	Example: `  namecom domain check example.com
   namecom domain check example.com myidea.io coolname.dev
   namecom domain check - < names.txt                # one name per line
   namecom domain check --exit-status example.com && echo "it's free"
   namecom domain check --authoritative example.com  # skip ZoneCheck, hit registry directly
-  namecom domain check --sandbox example.com        # sandbox: registry check used automatically`,
+  namecom domain check --sandbox example.com        # sandbox: registry check used automatically
+  namecom domain check --purchase-type registration example.com   # an aftermarket listing reads as not available`,
 	Args: cmdutil.MinimumNArgs(1),
 	// Names to check are not ones you own, nor files (#187).
 	ValidArgsFunction: cobra.NoFileCompletions,
@@ -187,6 +228,36 @@ too, with error type "unavailable".`,
 func init() {
 	checkCmd.Flags().BoolVar(&checkAuthoritative, "authoritative", false, "use registry check instead of DNS zone check (slower but authoritative)")
 	checkCmd.Flags().BoolVar(&checkExitStatus, "exit-status", false, "exit 1 if any name checked is not available")
+	checkCmd.Flags().StringVar(&checkPurchaseType, "purchase-type", "", "count a name as available only for this purchase type: "+
+		strings.Join(purchaseTypes, ", ")+" (registration covers standard and registry premium names)")
+	cmdutil.CompleteFlagValues(checkCmd, "purchase-type", purchaseTypes)
+
+	searchCmd.Flags().StringArrayVar(&searchTLDs, "tld", nil, "show only these TLDs (e.g. com,io); repeatable, up to 50")
+	searchCmd.Flags().StringVar(&searchPurchaseType, "purchase-type", "", purchaseTypeUsage)
+	searchCmd.Flags().DurationVar(&searchTimeout, "search-timeout", 0,
+		"how long name.com searches, 500ms to 12s (default 12s); not --timeout, which bounds every API call")
+	cmdutil.CompleteFlagValues(searchCmd, "purchase-type", purchaseTypes)
+}
+
+// searchRequest builds the Search request for term from the flags.
+func searchRequest(cmd *cobra.Command, term string) (*coreapigo.SearchRequest, error) {
+	req := &coreapigo.SearchRequest{Keyword: term}
+	tlds, err := tldList(searchTLDs, "tld", maxSearchTLDs)
+	if err != nil {
+		return nil, err
+	}
+	req.TldFilter = tlds
+	if req.PurchaseType, err = purchaseTypeArg(searchPurchaseType); err != nil {
+		return nil, err
+	}
+	if cmd.Flags().Changed("search-timeout") {
+		if searchTimeout < minSearchTimeout || searchTimeout > maxSearchTimeout || searchTimeout%time.Millisecond != 0 {
+			return nil, cmdutil.NewUsageError(fmt.Errorf("--search-timeout must be a whole number of milliseconds from 500ms to 12s (got %s)", searchTimeout))
+		}
+		ms := int(searchTimeout / time.Millisecond)
+		req.Timeout = &ms
+	}
+	return req, nil
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -198,9 +269,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return cmdutil.NewUsageError(errors.New("search term must not be empty"))
 	}
 
+	req, err := searchRequest(cmd, args[0])
+	if err != nil {
+		return err
+	}
+
 	stop := out.Spin("Searching domains…")
-	result, err := client.SDK().Domains.Search(cmd.Context(),
-		&coreapigo.SearchRequest{Keyword: args[0]})
+	result, err := client.SDK().Domains.Search(cmd.Context(), req)
 	stop()
 	if err != nil {
 		return err
@@ -229,6 +304,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	//
 	// One trailing dot is dropped first: `check foo.com.` was a usage error
 	// while the dns commands take the FQDN form (#322).
+	// Checked before stdin is read, and before any request.
+	if _, err := purchaseTypeArg(checkPurchaseType); err != nil {
+		return err
+	}
 	names, err := cmdutil.ExpandStdinArgs(cmd, args)
 	if err != nil {
 		return err
@@ -281,8 +360,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 func checkRegistry(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, error) {
 	client := cmdutil.APIClient(cmd)
 	stop := cmdutil.Out(cmd).Spin("Checking availability…")
-	result, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
-		&coreapigo.AvailabilityRequest{DomainNames: args})
+	result, err := client.SDK().Domains.CheckAvailability(cmd.Context(), availabilityRequest(args))
 	stop()
 	if noneValid(err) {
 		return make([]*coreapigo.SearchResult, len(args)), nil
@@ -303,6 +381,13 @@ func checkRegistry(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult
 		}
 	}
 	return results, nil
+}
+
+// availabilityRequest is check's CheckAvailability request for names, with
+// --purchase-type, which runCheck has already validated.
+func availabilityRequest(names []string) *coreapigo.AvailabilityRequest {
+	pt, _ := purchaseTypeArg(checkPurchaseType)
+	return &coreapigo.AvailabilityRequest{DomainNames: names, PurchaseType: pt}
 }
 
 // checkZone is checkRegistry by way of ZoneCheck: the names ZoneCheck finds
@@ -375,8 +460,7 @@ func checkZone(cmd *cobra.Command, args []string) ([]*coreapigo.SearchResult, er
 
 	// Step 2: CheckAvailability for every name not known to be taken.
 	if len(registry) > 0 {
-		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(),
-			&coreapigo.AvailabilityRequest{DomainNames: registry})
+		checkResult, err := client.SDK().Domains.CheckAvailability(cmd.Context(), availabilityRequest(registry))
 		if noneValid(err) {
 			checkResult, err = &coreapigo.SearchResponse{}, nil
 		}

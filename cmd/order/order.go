@@ -33,7 +33,14 @@ var (
 	listSince  string
 	listUntil  string
 	listStatus string
+	listType   string
 )
+
+// orderItemTypes are the order item types --type completes: the ones the
+// SDK names for ListOrdersRequest.Type ("e.g., 'registration', 'renewal',
+// 'transfer', 'whois_privacy'"). It gives them as examples, not a closed
+// list, so a value outside them is sent as given rather than refused.
+var orderItemTypes = []string{"registration", "renewal", "transfer", "whois_privacy"}
 
 // timestampNote is shared by `order list` and `order get`. name.com's order
 // API returns timestamps about 6h behind real UTC (#134), most likely US
@@ -65,6 +72,7 @@ more, and --all fetches every match.
   namecom order list --since 2026-01-01                # orders from this year
   namecom order list --domain acme.io                  # orders for one domain
   namecom order list --status success
+  namecom order list --type renewal                    # orders holding a renewal
   namecom order list --all -o json | jq '.data[].id'   # JSON output is wrapped in a "data" envelope`,
 	Args: cmdutil.NoArgs,
 	RunE: runList,
@@ -134,6 +142,8 @@ func init() {
 	listCmd.Flags().StringVar(&listUntil, "until", "", "filter orders created on or before this date (YYYY-MM-DD); name.com's order clock runs hours behind UTC")
 	listCmd.Flags().StringVar(&listStatus, "status", "", "filter by status: "+strings.Join(cmdutil.OrderStatuses, ", "))
 	cmdutil.CompleteFlagValues(listCmd, "status", cmdutil.OrderStatuses)
+	listCmd.Flags().StringVar(&listType, "type", "", "only orders holding an item of this type, such as "+strings.Join(orderItemTypes, ", "))
+	cmdutil.CompleteFlagValues(listCmd, "type", orderItemTypes)
 
 	refundCmd.Flags().Int32Var(&refundOrderID, "order-id", 0, "order ID (required)")
 	refundCmd.Flags().Int32SliceVar(&refundItemIDs, "item-ids", nil, "comma-separated order item IDs (required)")
@@ -180,6 +190,10 @@ func runList(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	itemType := strings.ToLower(strings.TrimSpace(listType))
+	if cmd.Flags().Changed("type") && itemType == "" {
+		return cmdutil.NewUsageError(errors.New("--type must not be empty"))
+	}
 	// A filter does not make the list page fully (#281): see cmdutil.ListPaging.
 	paging, err := cmdutil.ListPaging(cmd, listAll, listPage, listLimit)
 	if err != nil {
@@ -211,6 +225,9 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if listStatus != "" {
 			s := coreapigo.ListOrdersRequestOrderStatus(listStatus)
 			req.OrderStatus = &s
+		}
+		if itemType != "" {
+			req.Type = &itemType
 		}
 		result, err := client.SDK().Orders.ListOrders(cmd.Context(), req)
 		if page == listPage && cmdutil.PageOutOfRange(page, err) {

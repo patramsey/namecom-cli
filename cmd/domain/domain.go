@@ -38,6 +38,7 @@ func init() {
 		contactsCmd,
 		authCodeCmd,
 		pricingCmd,
+		tldPricingCmd,
 		renewCmd,
 		claimsCmd,
 		requirementsCmd,
