@@ -72,7 +72,7 @@ func TestDNSSync_AppliesThenIsIdempotent(t *testing.T) {
 	for _, s := range []string{
 		"Plan for example.com: 1 create, 1 update, 1 delete, 1 unchanged",
 		"create A api → 192.0.2.7",
-		"update A www → 192.0.2.1 (TTL 300) [id 2]: ttl 300 → 3600",
+		"update A www → 192.0.2.1 (TTL 3600) [id 2]: ttl 300 → 3600",
 		"delete TXT old → remove me",
 		"keep   NS @ → ns1.name.com",
 		"Synced example.com: created 1, updated 1, deleted 1",

@@ -42,9 +42,9 @@ func TestReportError_AuthHintOnStderrOnce(t *testing.T) {
 					t.Errorf("an error must write nothing to stdout, got:\n%s", w.String())
 				}
 				// Table mode prints the hint as a "→" line (#238), the
-				// structured modes as error.hint, and — deprecated, for one
-				// release — again as a top-level "hint" key (#240).
-				marker, want := "hint", 2
+				// structured modes once, as error.hint: the deprecated
+				// top-level "hint" key is gone (#382).
+				marker, want := "hint", 1
 				if f == output.FormatTable {
 					marker, want = "→ ", 1
 				}

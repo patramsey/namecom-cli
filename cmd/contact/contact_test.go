@@ -37,7 +37,7 @@ func contactCmd(t *testing.T, srv *httptest.Server, format output.Format) (*cobr
 // "check your credentials" when the credentials are fine and the account simply
 // is not enrolled.
 //
-// A 403 also maps to exit code 3, whose top-level hint points at
+// A 403 also maps to exit code 3, whose hint points at
 // 'namecom auth login'. Without this wrapping, an ordinary user is sent to
 // re-enter a working token.
 func TestVerify_RestrictedErrorExplainsTheGate(t *testing.T) {

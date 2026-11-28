@@ -430,7 +430,7 @@ func cmdForRefund(t *testing.T, srv *httptest.Server, dryRun bool) *cobra.Comman
 // misreports the endpoint is exactly the wrong place to have drift.
 func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 	// The order, for the dry run's check of its items (#326).
-	const resp = `{"id":42,"orderItems":[{"id":7}]}`
+	const resp = `{"id":42,"orderItems":[{"id":7,"isRefundable":true}]}`
 
 	var dryRunHits int
 	dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -499,7 +499,7 @@ func TestDryRunMatchesRealRequest_Refund(t *testing.T) {
 func TestRefund_DedupesItemIDs(t *testing.T) {
 	// Captured from the sandbox: one item refunded. orderItems is the order
 	// a dry run reads to check the items (#326).
-	const resp = `{"orderItems":[{"id":9},{"id":7}],"results":[{"orderId":2141951,"orderItemId":11573483,"orderItemStatus":"refunded","refundAmount":17.989999999999998}],"totalRefundAmount":17.989999999999998}`
+	const resp = `{"orderItems":[{"id":9,"isRefundable":true},{"id":7,"isRefundable":true}],"results":[{"orderId":2141951,"orderItemId":11573483,"orderItemStatus":"refunded","refundAmount":17.989999999999998}],"totalRefundAmount":17.989999999999998}`
 
 	for _, dryRun := range []bool{false, true} {
 		t.Run("dry-run="+strconv.FormatBool(dryRun), func(t *testing.T) {

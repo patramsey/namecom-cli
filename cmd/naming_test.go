@@ -152,9 +152,9 @@ func TestUnknownCommandSuggestionsField(t *testing.T) {
 			var env struct {
 				Error struct {
 					Message     string   `json:"message"`
+					Hint        string   `json:"hint"`
 					Suggestions []string `json:"suggestions"`
 				} `json:"error"`
-				Hint string `json:"hint"`
 			}
 			if err := json.Unmarshal(ew.Bytes(), &env); err != nil {
 				t.Fatalf("envelope does not parse: %v\n%s", err, ew.String())
@@ -162,7 +162,7 @@ func TestUnknownCommandSuggestionsField(t *testing.T) {
 			if !slices.Equal(env.Error.Suggestions, want) {
 				t.Errorf("suggestions = %q, want %q\n%s", env.Error.Suggestions, want, ew.String())
 			}
-			if !strings.HasPrefix(env.Error.Message, "unknown command ") || strings.Contains(env.Error.Message, "\n") || env.Hint == "" {
+			if !strings.HasPrefix(env.Error.Message, "unknown command ") || strings.Contains(env.Error.Message, "\n") || env.Error.Hint == "" {
 				t.Errorf("message and hint should be unchanged:\n%s", ew.String())
 			}
 		})

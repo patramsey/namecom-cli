@@ -69,7 +69,7 @@ const (
 	stubDNSSEC   = `{"domainName":"example.com","keyTag":12345,"algorithm":8,"digestType":2,"digest":"abc123"}`
 	stubVanity   = `{"domainName":"example.com","hostname":"ns1.example.com","ips":["192.0.2.1"]}`
 	stubTransfer = `{"domainName":"example.org","email":"a@example.org","status":"pending_transfer"}`
-	stubOrder    = `{"id":1,"orderItems":[{"id":2,"name":"example.com","productType":"domain","price":10,"refundable":true}]}`
+	stubOrder    = `{"id":1,"orderItems":[{"id":2,"name":"example.com","productType":"domain","price":10,"isRefundable":true}]}`
 	stubMailbox  = `{"domainName":"example.com","emailBox":"info","emailTo":"you@example.org"}`
 )
 
@@ -843,6 +843,10 @@ func TestRequestCounts(t *testing.T) {
 				"POST /core/v1/domains/example.com/dnssec",
 			},
 		},
+		"dnssec create, no terminal": {
+			args: []string{"dnssec", "create", "example.com", "--algorithm", "8", "--digest-type", "2", "--key-tag", "12345", "--digest", strings.Repeat("ab", 32)},
+			code: 2, // it asks, as set-ns does (#382)
+		},
 		"dnssec create --dry-run": {
 			args: []string{"dnssec", "create", "example.com", "--algorithm", "8", "--digest-type", "2", "--key-tag", "12345", "--digest", strings.Repeat("ab", 32), "--dry-run"},
 			why:  "the GET fails a dry run for a domain not in the account, as the create would (#326)",
@@ -930,6 +934,20 @@ func TestRequestCounts(t *testing.T) {
 			args: []string{"email", "delete", "example.com", "info", "--yes"},
 			want: []string{
 				"DELETE /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email delete --if-exists": {
+			args: []string{"email", "delete", "example.com", "info", "--if-exists", "--yes"},
+			why:  "the list finds the mailbox and shows the domain is there; a mailbox's 404 could be either (#382)",
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding?page=1&perPage=1000",
+				"DELETE /core/v1/domains/example.com/email/forwarding/info",
+			},
+		},
+		"email delete --if-exists, gone": {
+			args: []string{"email", "delete", "example.com", "gone", "--if-exists", "--yes"},
+			want: []string{
+				"GET /core/v1/domains/example.com/email/forwarding?page=1&perPage=1000",
 			},
 		},
 		"email delete, prompted": {
@@ -1088,12 +1106,11 @@ func TestRequestCounts(t *testing.T) {
 		"url delete --if-exists, gone": {
 			args: []string{"url", "delete", "example.com", "99", "--if-exists", "--yes"},
 			routes: map[string]reply{
-				"GET /core/v1/urlforwarding/example.com/99": {404, `{"message":"Not Found"}`},
+				"GET /core/v1/urlforwarding/example.com": {200, `{"urlForwarding":[` + stubURLEntry + `],"lastPage":1}`},
 			},
-			why: "a one-entry list tells a missing forwarding from a missing domain",
+			why: "the list finds the ID and shows the domain is there; a GET's 404 could be either (#382)",
 			want: []string{
-				"GET /core/v1/urlforwarding/example.com/99",
-				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1",
+				"GET /core/v1/urlforwarding/example.com?page=1&perPage=1000",
 			},
 		},
 		"url update, no flags": {
