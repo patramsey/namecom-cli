@@ -338,7 +338,10 @@ func printPlan(out *output.Config, p *syncPlan) error {
 		line("  %s", changeLine("create", r))
 	}
 	for _, u := range p.Updates {
-		line("  update %s: %s", u.Before.summary(), strings.Join(u.Changes, ", "))
+		// The record as the update leaves it, as a create line shows it: the
+		// old state is in the changes. A CNAME heading named the old target
+		// (#382).
+		line("  update %s: %s", u.summary(), strings.Join(u.Changes, ", "))
 	}
 	for _, r := range p.Deletes {
 		line("  %s", changeLine("delete", r))

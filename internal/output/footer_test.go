@@ -128,18 +128,24 @@ func TestFields_ListFooterAfterTable(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", both.String(), want)
 	}
 
-	// Other formats print no footer.
-	both.Reset()
-	c.Format = FormatTSV
-	c.BeginFilter(&Filter{Fields: []string{"domainName"}})
-	c.ListFooter(ListPage{Noun: "domain", Count: 1, Next: 2})
-	if err := c.JSONList([]map[string]string{{"domainName": "a.com"}}, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.EndFilter(false); err != nil {
-		t.Fatal(err)
-	}
-	if both.String() != "domainName\na.com\n" {
-		t.Errorf("tsv: %q", both.String())
+	// TSV prints one line saying there is more, after the rows (#382); on
+	// the last page, nothing.
+	for next, want := range map[int]string{
+		2: "domainName\na.com\n1 domain · --page 2 for more, --all for everything\n",
+		0: "domainName\na.com\n",
+	} {
+		both.Reset()
+		c.Format = FormatTSV
+		c.BeginFilter(&Filter{Fields: []string{"domainName"}})
+		c.ListFooter(ListPage{Noun: "domain", Count: 1, Next: next})
+		if err := c.JSONList([]map[string]string{{"domainName": "a.com"}}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.EndFilter(false); err != nil {
+			t.Fatal(err)
+		}
+		if both.String() != want {
+			t.Errorf("tsv, next %d: %q, want %q", next, both.String(), want)
+		}
 	}
 }

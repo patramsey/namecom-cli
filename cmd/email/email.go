@@ -35,6 +35,8 @@ var (
 	createEmailTo string
 	updateEmailTo string
 	listAll       bool
+	// deleteIfExists is --if-exists.
+	deleteIfExists bool
 )
 
 var listCmd = &cobra.Command{
@@ -100,11 +102,17 @@ request. --dry-run checks, and says when there is nothing to change.`,
 }
 
 var deleteCmd = &cobra.Command{
-	Use:               "delete <domain> <mailbox>",
-	Aliases:           []string{"rm"},
-	Short:             "Delete an email forwarding entry",
-	Long:              `Stop forwarding mail sent to <mailbox>@<domain>.`,
-	Example:           `  namecom email delete example.com info`,
+	Use:     "delete <domain> <mailbox>",
+	Aliases: []string{"rm"},
+	Short:   "Delete an email forwarding entry",
+	Long: `Stop forwarding mail sent to <mailbox>@<domain>.
+
+With --if-exists a mailbox with no forwarding is a success ("changed": false
+in JSON), so a retry does not fail; a domain not in the account still does.`,
+	Example: `  namecom email delete example.com info
+
+  # Skip a mailbox already gone, so a retry does not fail:
+  namecom email delete example.com info --yes --if-exists`,
 	Args:              cmdutil.ExactArgs(2),
 	RunE:              runDelete,
 	ValidArgsFunction: cmdutil.CompleteDomains,
@@ -115,6 +123,7 @@ func init() {
 
 	createCmd.Flags().StringVar(&createEmailTo, "to", "", "destination email address "+cmdutil.PromptedRequired)
 	updateCmd.Flags().StringVar(&updateEmailTo, "to", "", "new destination email address "+cmdutil.PromptedRequired)
+	deleteCmd.Flags().BoolVar(&deleteIfExists, "if-exists", false, "succeed, changing nothing, when the mailbox has no forwarding")
 
 	cmdutil.GroupCmd(Cmd)
 	cmdutil.MarkWrite(createCmd, updateCmd, deleteCmd)
@@ -564,15 +573,32 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	// as the real DELETE's 404 would (#292). That takes a GET, so it is made
 	// only for those two: --yes and a script without a terminal send what
 	// they did before. A missing mailbox fails here, before asking.
+	//
+	// --if-exists reads the domain's forwardings list instead, prompt or
+	// not (#382): a mailbox's 404 could also mean the domain is missing,
+	// which --if-exists must not hide, and one list answers both, as
+	// `url delete --if-exists` reads its forwardings.
 	prompt := fmt.Sprintf("Delete forwarding for %s@%s?", mailbox, domain)
-	if cmdutil.IsDryRun(cmd) || (!cmdutil.IsYes(cmd) && output.IsInteractive()) {
-		current, err := fetchMailbox(cmd, domain, mailbox)
-		if err != nil {
+	absent := func() error {
+		out.Unchanged(fmt.Sprintf("%s@%s has no forwarding: nothing to delete", mailbox, domain))
+		return nil
+	}
+	var current *coreapigo.EmailForwarding
+	switch {
+	case deleteIfExists:
+		if current, err = findMailbox(cmd, domain, mailbox); err != nil {
+			return err
+		}
+		if current == nil {
+			return absent()
+		}
+	case cmdutil.IsDryRun(cmd) || (!cmdutil.IsYes(cmd) && output.IsInteractive()):
+		if current, err = fetchMailbox(cmd, domain, mailbox); err != nil {
 			return mailboxErr(err, mailbox, domain)
 		}
-		if current != nil && current.EmailTo != "" {
-			prompt = fmt.Sprintf("Delete forwarding %s@%s → %s?", mailbox, domain, current.EmailTo)
-		}
+	}
+	if current != nil && current.EmailTo != "" {
+		prompt = fmt.Sprintf("Delete forwarding %s@%s → %s?", mailbox, domain, current.EmailTo)
 	}
 
 	// Escaped as the SDK escapes it, so --dry-run shows the path sent (#187).
@@ -585,10 +611,13 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return api.FromSDKError(client.SDK().EmailForwardings.DeleteEmailForwarding(ctx,
 			&coreapigo.DeleteEmailForwardingRequest{DomainName: domain, EmailBox: mailbox}))
 	})
-	if cmdutil.IsNotFound(err) {
+	switch {
+	case cmdutil.IsNotFound(err) && deleteIfExists:
+		// Gone between the list and the DELETE.
+		return absent()
+	case cmdutil.IsNotFound(err):
 		return mailboxNotFound(err, mailbox, domain)
-	}
-	if err != nil || !sent {
+	case err != nil || !sent:
 		return err
 	}
 	out.Success(fmt.Sprintf("Deleted forwarding for %s@%s", mailbox, domain))
@@ -620,6 +649,35 @@ func fetchMailbox(cmd *cobra.Command, domain, mailbox string) (*coreapigo.EmailF
 	defer stop()
 	return cmdutil.APIClient(cmd).SDK().EmailForwardings.GetEmailForwarding(cmd.Context(),
 		&coreapigo.GetEmailForwardingRequest{DomainName: domain, EmailBox: mailbox})
+}
+
+// findMailbox is mailbox's forwarding, or nil when it has none, read from
+// the domain's forwardings list, perPage 1000 a page: one request for
+// nearly every domain. A domain not in the account is a not-found error.
+func findMailbox(cmd *cobra.Command, domain, mailbox string) (*coreapigo.EmailForwarding, error) {
+	stop := cmdutil.Out(cmd).Spin("Fetching email forwardings…")
+	defer stop()
+	page, perPage := 1, cmdutil.MaxPerPage
+	for {
+		result, err := cmdutil.APIClient(cmd).SDK().EmailForwardings.ListEmailForwardings(cmd.Context(),
+			&coreapigo.ListEmailForwardingsRequest{DomainName: domain, Page: &page, PerPage: &perPage})
+		if err != nil {
+			if cmdutil.IsNotFound(err) {
+				return nil, cmdutil.DomainNotFound(err, domain)
+			}
+			return nil, api.FromSDKError(err)
+		}
+		for _, f := range cmdutil.NonNil(result.EmailForwarding) {
+			if strings.EqualFold(f.EmailBox, mailbox) {
+				return f, nil
+			}
+		}
+		next, ok := cmdutil.NextPage(page, result.NextPage, result.LastPage)
+		if !ok {
+			return nil, nil
+		}
+		page = next
+	}
 }
 
 // mailboxErr is fetchMailbox's error as a command returns it: a 404 as

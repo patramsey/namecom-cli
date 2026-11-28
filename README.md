@@ -334,9 +334,10 @@ terminal:
 - anything that charges, refunds or moves a domain: `domain register`,
   `domain renew`, `transfer create`, `transfer internal-in`,
   `transfer cancel`, `transfer cancel-outbound`, `order refund`
-- `domain set-ns`, `domain contacts set`, `domain lock off`,
+- `domain set-ns`, `dnssec create`, `domain contacts set`, `domain lock off`,
   `domain privacy off`, `domain autorenew on` and `off`, and `domain update`
   making any of those three changes
+- `email create` and `url create --host` when they would replace records
 - `dns sync` with changes to apply, `auth login` replacing a saved profile,
   and `namecom api` with any method but GET and HEAD
 
@@ -348,8 +349,9 @@ write can be previewed with `--dry-run`.
 
 **Paging.** A `list` prints one page: 1 to 1000 items with `--limit` (the
 API's page size without it) from `--page`, filtered or not, and its footer —
-or `nextPage` in JSON — says when there are more. `--all` fetches every page,
-1000 items a request, and so does `-q` without `--page` or `--limit`.
+`nextPage` in JSON, a line on stderr in TSV — says when there are more.
+`--all` fetches every page, 1000 items a request, and so does `-q` without
+`--page` or `--limit`.
 
 ## Output formats
 

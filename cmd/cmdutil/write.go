@@ -60,6 +60,11 @@ type Write[B any] struct {
 	// JSON and YAML, a "Would also" line each in table mode. A write with
 	// any should set a Prompt naming them, so they are confirmed.
 	SideEffects []string
+
+	// Refund, when set, is what a refund would return. --dry-run reports
+	// it: a "refund" field in JSON and YAML, a "Would refund" line in table
+	// mode. It changes nothing else.
+	Refund *output.Refund
 }
 
 // confirmFunc is Confirm, replaceable in tests so the decline path can be
@@ -90,7 +95,10 @@ func RunWrite[B any](cmd *cobra.Command, w Write[B], send func(ctx context.Conte
 			quote = &q
 			ctx = withBalance(cmd, AccountContext(cmd), &q.Total, q.Balance)
 		}
-		return false, out.DryRunEffects(w.Method, w.Path, previewOf(w), quote, ctx, w.SideEffects)
+		return false, out.DryRunOne(output.DryRunRequest{
+			Method: w.Method, Path: w.Path, Body: previewOf(w),
+			Quote: quote, SideEffects: w.SideEffects, Refund: w.Refund,
+		}, ctx)
 	}
 
 	if w.Prompt != "" {

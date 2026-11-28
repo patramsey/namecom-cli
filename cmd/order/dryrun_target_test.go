@@ -30,7 +30,7 @@ func TestRefundDryRun_ChecksTheOrder(t *testing.T) {
 			_, ok := errors.AsType[*cmdutil.UsageError](err)
 			return ok && strings.Contains(err.Error(), "order 42 has no item 7")
 		}, false},
-		"order and item there": {http.StatusOK, `{"id":42,"orderItems":[{"id":7,"price":10}]}`, func(err error) bool { return err == nil }, true},
+		"order and item there": {http.StatusOK, `{"id":42,"orderItems":[{"id":7,"price":10,"isRefundable":true}]}`, func(err error) bool { return err == nil }, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var seen []string

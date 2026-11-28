@@ -133,7 +133,7 @@ func TestDNSSECCreate_DomainNormalized(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cmd := cmdForCreate(t, srv)
+	cmd := withDryRun(t, cmdForCreate(t, srv), false) // --yes: create asks (#382)
 	createAlgorithm, createDigest, createDigestType, createKeyTag = 8, sha256Digest, 2, 12345
 
 	if err := runCreate(cmd, []string{"EXAMPLE.COM"}); err != nil {
@@ -296,7 +296,7 @@ func TestDNSSECCreate_SendsEachFieldToItsOwnKey(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cmd := cmdForCreate(t, srv)
+	cmd := withDryRun(t, cmdForCreate(t, srv), false) // --yes: create asks (#382)
 	if err := cmd.ParseFlags([]string{
 		"--algorithm", "8",
 		"--digest-type", "2",

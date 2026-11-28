@@ -473,8 +473,8 @@ func TestJSONContract_NoHTMLEscaping(t *testing.T) {
 
 // TestJSONContract_Errors checks the error envelope for each type a script
 // can branch on: one JSON document on stderr with error.type, error.status
-// for an API answer, error.message and error.hint, the deprecated top-level
-// hint beside it, and the warnings the run collected (#240).
+// for an API answer, error.message and error.hint, no top-level hint beside
+// it (#382), and the warnings the run collected (#240).
 func TestJSONContract_Errors(t *testing.T) {
 	withConfig(t, loneProfile)
 
@@ -620,8 +620,8 @@ func TestJSONContract_Errors(t *testing.T) {
 					t.Errorf("error.message %q should leave the advice to the hint", msg)
 				}
 			}
-			if hint, _ := e["hint"].(string); hint != "" && doc["hint"] != hint {
-				t.Errorf("the deprecated top-level hint should repeat error.hint %q, got %v", hint, doc["hint"])
+			if _, ok := doc["hint"]; ok {
+				t.Errorf("the deprecated top-level hint was removed (#382), got %v", doc["hint"])
 			}
 			// Usage errors fail before the client is built, so no warning;
 			// config commands never build one.

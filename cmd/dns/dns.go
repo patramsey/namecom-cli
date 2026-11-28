@@ -342,6 +342,8 @@ func runList(cmd *cobra.Command, args []string) error {
 			// The filter matched nothing on this page, not in the zone.
 			if out.Format == output.FormatTSV {
 				out.EmptyTable(headers, "", "")
+				out.ListFooter(foot) // TSV's one line saying there is more (#382)
+				return nil
 			}
 			next := listPage + 1
 			if nextPage != nil {

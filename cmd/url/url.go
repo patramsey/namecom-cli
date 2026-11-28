@@ -719,7 +719,8 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	// 7 from D?" named only an ID, and was asked even for one that did not
 	// exist (#235). A missing one fails here, before any prompt — unless
 	// --if-exists, which skips it and deletes the rest. One ID is one GET;
-	// several are found in one list of the domain's forwardings.
+	// several, or any under --if-exists, are found in one list of the
+	// domain's forwardings.
 	stop := out.Spin("Fetching URL forwarding…")
 	currents, err := forwardingsByID(cmd, domain, ids)
 	stop()
@@ -746,9 +747,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		})
 	}
 	if len(present) == 0 {
-		// Several IDs were looked up in the domain's forwardings list, which
-		// has already shown that the domain exists.
-		return deleteAbsent(cmd, domain, absent, len(ids) > 1)
+		return deleteAbsent(cmd, domain, absent)
 	}
 	// A note, not a Success line: under --dry-run -o json stdout is the
 	// preview alone.
@@ -810,13 +809,15 @@ func runDelete(cmd *cobra.Command, args []string) error {
 // order. One ID is one GET; several are read from one list of the domain's
 // forwardings rather than a GET each, as `dns delete` reads records (#323).
 // A missing ID is a not-found error, or under --if-exists a nil entry.
+//
+// Under --if-exists one ID is read from the list too. Its GET's 404 could
+// mean the domain is missing, which --if-exists must not hide, and telling
+// the two apart took a second request; the list answers both (#382).
 func forwardingsByID(cmd *cobra.Command, domain string, ids []int) ([]*coreapigo.URLForwardingResponse, error) {
-	if len(ids) == 1 {
+	if len(ids) == 1 && !deleteIfExists {
 		f, err := cmdutil.APIClient(cmd).SDK().URLForwardings.GetURLForwardingByID(cmd.Context(),
 			&coreapigo.GetURLForwardingByIDRequest{DomainName: domain, ID: ids[0]})
 		switch {
-		case cmdutil.IsNotFound(err) && deleteIfExists:
-			return []*coreapigo.URLForwardingResponse{nil}, nil
 		case cmdutil.IsNotFound(err):
 			return nil, forwardingNotFound(err, ids[0], domain)
 		case err != nil:
@@ -844,21 +845,10 @@ func forwardingsByID(cmd *cobra.Command, domain string, ids []int) ([]*coreapigo
 }
 
 // deleteAbsent is `url delete --if-exists` when none of the forwardings is
-// there. A forwarding's 404 could also mean the domain is missing, which
-// --if-exists must not hide, so the domain is checked with a one-entry list
-// first, unless domainChecked says a list has already answered.
-func deleteAbsent(cmd *cobra.Command, domain string, ids []int, domainChecked bool) error {
+// there. They were looked up in the domain's forwardings list, whose answer
+// has already shown that the domain exists.
+func deleteAbsent(cmd *cobra.Command, domain string, ids []int) error {
 	out := cmdutil.Out(cmd)
-	if !domainChecked {
-		page, one := 1, 1
-		if _, err := cmdutil.APIClient(cmd).SDK().URLForwardings.ListURLForwardingsByDomain(cmd.Context(),
-			&coreapigo.ListURLForwardingsByDomainRequest{DomainName: domain, Page: &page, PerPage: &one}); err != nil {
-			if cmdutil.IsNotFound(err) {
-				return cmdutil.DomainNotFound(err, domain)
-			}
-			return api.FromSDKError(err)
-		}
-	}
 	res := out.Results()
 	for _, id := range ids {
 		res.Add(output.ResultItem{Domain: domain, ID: id, Message: fmt.Sprintf("URL forwarding %d is not on %s: nothing to delete", id, domain)})

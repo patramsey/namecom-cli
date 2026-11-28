@@ -90,8 +90,9 @@ var getCmd = &cobra.Command{
 var refundCmd = &cobra.Command{
 	Use:   "refund",
 	Short: "Refund items of an order",
-	Long: `Refund items of an order. The confirmation names what is refunded and for
-how much. A refund cannot be undone; 'order get' shows which items can be
+	Long: `Refund items of an order. The confirmation and --dry-run name what is
+refunded and for how much, and refuse an item the order marks not
+refundable. A refund cannot be undone; 'order get' shows which items can be
 refunded.`,
 	Example: `  namecom order refund --order-id 12345 --item-ids 67890
 
@@ -422,10 +423,16 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 	// the command stops at needing --yes — and for a dry run, which never
 	// asks but fails, as the refund would, for an order or item that is not
 	// there rather than previewing it (#326).
+	//
+	// The same read gives the dry run what it previews beside the body —
+	// each item and the total (#382) — and refuses an item the order marks
+	// not refundable, before anything is sent. With --yes or no terminal the
+	// order is not read, and the API answers for such an item.
 	prompt := refundFallbackPrompt(body)
+	var preview *output.Refund
 	if cmdutil.IsDryRun(cmd) || (!cmdutil.IsYes(cmd) && output.IsInteractive()) {
 		var err error
-		if prompt, err = refundPrompt(cmd, body); err != nil {
+		if prompt, preview, err = refundPrompt(cmd, body); err != nil {
 			return err
 		}
 	}
@@ -444,6 +451,7 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 		Path:   "/core/v1/refund",
 		Body:   body,
 		Prompt: prompt,
+		Refund: preview,
 	}, func(ctx context.Context, body coreapigo.RefundRequest) error {
 		var err error
 		result, err = client.SDK().Refunds.ProcessRefund(ctx, &body)
@@ -536,17 +544,21 @@ func runRefund(cmd *cobra.Command, _ []string) error {
 // An order that does not exist fails here, before the question, as does an
 // item ID the order does not have. Any other failure to fetch the order falls
 // back to the prompt without names: the lookup only words the question, and
-// should not stand between the user and a refund.
-func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, error) {
+// should not stand between the user and a refund; it returns no preview.
+//
+// An item the order marks not refundable fails here too (#382): the API
+// would decline it, and a dry run that previewed it as a refund misled.
+// The preview is what --dry-run shows beside the body.
+func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, *output.Refund, error) {
 	out := cmdutil.Out(cmd)
 	stop := out.Spin("Fetching order…")
 	o, err := cmdutil.APIClient(cmd).SDK().Orders.GetOrder(cmd.Context(), &coreapigo.GetOrderRequest{OrderID: body.OrderID})
 	stop()
 	if cmdutil.IsNotFound(err) {
-		return "", cmdutil.NotFound(err, fmt.Sprintf("order %d not found", body.OrderID), "run 'namecom order list' to see your orders")
+		return "", nil, cmdutil.NotFound(err, fmt.Sprintf("order %d not found", body.OrderID), "run 'namecom order list' to see your orders")
 	}
 	if err != nil || o == nil {
-		return refundFallbackPrompt(body), nil
+		return refundFallbackPrompt(body), nil, nil
 	}
 
 	byID := make(map[int]*coreapigo.OrderItem, len(o.OrderItems))
@@ -557,10 +569,11 @@ func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, err
 	}
 	var total float64
 	descs := make([]string, 0, len(body.OrderItemIDs))
+	items := make([]output.RefundItem, 0, len(body.OrderItemIDs))
 	for _, id := range body.OrderItemIDs {
 		it, ok := byID[id]
 		if !ok {
-			return "", cmdutil.NewUsageError(fmt.Errorf("order %d has no item %d — run 'namecom order get %d' to see its items",
+			return "", nil, cmdutil.NewUsageError(fmt.Errorf("order %d has no item %d — run 'namecom order get %d' to see its items",
 				body.OrderID, id, body.OrderID))
 		}
 		total += it.Price
@@ -571,10 +584,26 @@ func refundPrompt(cmd *cobra.Command, body coreapigo.RefundRequest) (string, err
 		if it.Type != "" {
 			desc += " " + strings.ReplaceAll(it.Type, "_", " ")
 		}
+		if !it.IsRefundable {
+			return "", nil, cmdutil.NewUsageError(fmt.Errorf("item %d of order %d (%s) is not refundable — run 'namecom order get %d' to see which items are",
+				id, body.OrderID, desc, body.OrderID))
+		}
 		descs = append(descs, desc)
+		ri := output.RefundItem{ID: id, Type: it.Type, Amount: it.Price}
+		if it.Name != nil {
+			ri.Name = *it.Name
+		}
+		items = append(items, ri)
 	}
-	return fmt.Sprintf("Refund %s for %s (order %d, %s)? This cannot be undone.",
-		formatAmount(total, o.Currency), strings.Join(descs, ", "), body.OrderID, itemList(body.OrderItemIDs)), nil
+	amount := formatAmount(total, o.Currency)
+	preview := &output.Refund{
+		Total: total, Items: items,
+		Summary: fmt.Sprintf("%s for %s (order %d, %s)", amount, strings.Join(descs, ", "), body.OrderID, itemList(body.OrderItemIDs)),
+	}
+	if o.Currency != nil {
+		preview.Currency = *o.Currency
+	}
+	return "Refund " + preview.Summary + "? This cannot be undone.", preview, nil
 }
 
 // refundFallbackPrompt is the refund confirmation without the order's

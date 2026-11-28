@@ -246,10 +246,7 @@ func TestURLDelete_SeveralAndIfExists(t *testing.T) {
 		deleteIfExists = true
 		t.Cleanup(func() { deleteIfExists = false })
 		var seen []string
-		srv := routedServer(t, map[string]reply{
-			"GET /core/v1/urlforwarding/example.com/9": {http.StatusNotFound, `{"message":"Not Found"}`},
-			list: {200, listBody},
-		}, &seen)
+		srv := routedServer(t, map[string]reply{list: {200, listBody}}, &seen)
 		cmd := cmdForURLDelete(t, srv)
 		out := cmdutil.Out(cmd)
 		out.Format = output.FormatJSON
@@ -259,8 +256,25 @@ func TestURLDelete_SeveralAndIfExists(t *testing.T) {
 		if got := out.Writer.(*bytes.Buffer).String(); !strings.Contains(got, `"changed": false`) {
 			t.Errorf("stdout = %s, want changed false", got)
 		}
-		if len(seen) != 2 {
-			t.Errorf("requests = %q, want the GET and a one-entry list", seen)
+		// The list alone, which also shows the domain is there (#382). It
+		// was the GET's 404, then a one-entry list to tell the two apart.
+		if len(seen) != 1 || seen[0] != list {
+			t.Errorf("requests = %q, want the list alone", seen)
+		}
+	})
+
+	// --if-exists skips a missing forwarding, never a missing domain.
+	t.Run("--if-exists, domain gone", func(t *testing.T) {
+		deleteIfExists = true
+		t.Cleanup(func() { deleteIfExists = false })
+		var seen []string
+		srv := routedServer(t, map[string]reply{list: {http.StatusNotFound, `{"message":"Not Found"}`}}, &seen)
+		err := runDelete(cmdForURLDelete(t, srv), []string{"example.com", "9"})
+		if !cmdutil.IsNotFound(err) || !strings.Contains(err.Error(), "example.com") {
+			t.Errorf("err = %v, want the domain not found", err)
+		}
+		if len(seen) != 1 {
+			t.Errorf("requests = %q, want the list alone", seen)
 		}
 	})
 }

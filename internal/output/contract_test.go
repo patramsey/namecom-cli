@@ -66,8 +66,8 @@ type withHint struct{ error }
 func (withHint) UserHint() string { return "do the thing" }
 
 // TestErrorWith_Envelope pins the envelope's shape: type (defaulting to
-// "api"), status only when set, the hint inside "error" and, deprecated, beside
-// it, and the warnings Warn kept back, which are then forgotten (#240).
+// "api"), status only when set, the hint inside "error" and not beside it
+// (#382), and the warnings Warn kept back, which are then forgotten (#240).
 func TestErrorWith_Envelope(t *testing.T) {
 	var ew bytes.Buffer
 	c := &Config{Format: FormatJSON, EWriter: &ew}
@@ -76,7 +76,7 @@ func TestErrorWith_Envelope(t *testing.T) {
 
 	var got struct {
 		Error    map[string]any `json:"error"`
-		Hint     string         `json:"hint"`
+		Hint     *string        `json:"hint"`
 		Warnings []string       `json:"warnings"`
 	}
 	if err := json.Unmarshal(ew.Bytes(), &got); err != nil {
@@ -86,8 +86,8 @@ func TestErrorWith_Envelope(t *testing.T) {
 	if e["type"] != "not_found" || e["status"] != float64(404) || e["message"] != "boom" || e["hint"] != "do the thing" {
 		t.Errorf("unexpected error object: %v", e)
 	}
-	if got.Hint != "do the thing" {
-		t.Errorf("deprecated top-level hint = %q, want it kept for one release", got.Hint)
+	if got.Hint != nil {
+		t.Errorf("the deprecated top-level hint was removed (#382), got %q", *got.Hint)
 	}
 	if len(got.Warnings) != 1 || got.Warnings[0] != "careful" {
 		t.Errorf("warnings = %v, want [careful]", got.Warnings)

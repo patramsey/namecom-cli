@@ -1429,12 +1429,8 @@ type errorBody struct {
 
 // errorEnvelope is the document an error prints in JSON and YAML modes.
 type errorEnvelope struct {
-	Error errorBody `json:"error"`
-	// Hint repeats error.hint where it used to be, beside "error" rather
-	// than in it. Deprecated: kept for one release so scripts can move to
-	// error.hint (#240).
-	Hint     string   `json:"hint,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	Error    errorBody `json:"error"`
+	Warnings []string  `json:"warnings,omitempty"`
 }
 
 // Error prints a user-facing error to stderr, with no classification: its
@@ -1466,7 +1462,7 @@ func (c *Config) ErrorWith(err error, info ErrorInfo) {
 		if k, ok := errors.AsType[idempotencyKeyer](err); ok {
 			e.IdempotencyKey = k.IdempotencyKey()
 		}
-		env := errorEnvelope{Error: e, Hint: hint, Warnings: c.TakeWarnings()}
+		env := errorEnvelope{Error: e, Warnings: c.TakeWarnings()}
 		if c.Format == FormatYAML {
 			_ = writeYAML(c.EWriter, env)
 			return
@@ -2062,6 +2058,30 @@ type DryRunRequest struct {
 	// sentence each — the MX records an email forwarding replaces (#358).
 	// Omitted when there are none.
 	SideEffects []string `json:"sideEffects,omitempty"`
+	// Refund is what a refund request would return, for `order refund`.
+	// Omitted for every other write.
+	Refund *Refund `json:"refund,omitempty"`
+}
+
+// Refund is what an `order refund --dry-run` would refund: the order's
+// items named in the request, and their total in the order's currency. The
+// body holds only IDs, so the preview did not say what was refunded or for
+// how much (#382).
+type Refund struct {
+	Total    float64      `json:"total"`
+	Currency string       `json:"currency,omitempty"`
+	Items    []RefundItem `json:"items"`
+	// Summary is the table-mode line after "Would refund: ", worded by the
+	// caller in the order's currency: "$35.98 for acme.io registration".
+	Summary string `json:"-"`
+}
+
+// RefundItem is one item of a Refund, as the order lists it.
+type RefundItem struct {
+	ID     int     `json:"id"`
+	Name   string  `json:"name,omitempty"`
+	Type   string  `json:"type,omitempty"`
+	Amount float64 `json:"amount"`
 }
 
 // Quote is the amount a billable request would charge, as a --dry-run of it
@@ -2129,7 +2149,17 @@ func (c *Config) DryRunQuote(method, path string, body any, q *Quote, context st
 // table and TSV modes follow the request with one "Would also: …" line on
 // stderr for each. No effects is DryRunQuote exactly.
 func (c *Config) DryRunEffects(method, path string, body any, q *Quote, context string, effects []string) error {
-	req := DryRunRequest{DryRun: true, Method: method, Path: path, Body: body, Quote: q, SideEffects: effects}
+	return c.DryRunOne(DryRunRequest{Method: method, Path: path, Body: body, Quote: q, SideEffects: effects}, context)
+}
+
+// DryRunOne prints one previewed request with whatever it carries: its
+// Quote, SideEffects and Refund. JSON and YAML print req as the document;
+// table and TSV modes print the request, then on stderr a "Would charge"
+// line for the quote (with context, as DryRunQuote describes), a "Would
+// refund" line for the refund, and a "Would also" line per side effect.
+func (c *Config) DryRunOne(req DryRunRequest, context string) error {
+	req.DryRun = true
+	q, effects := req.Quote, req.SideEffects
 	if c.filter != nil {
 		c.filter.dryRun = true
 	}
@@ -2153,6 +2183,9 @@ func (c *Config) DryRunEffects(method, path string, body any, q *Quote, context 
 			line += " · " + context
 		}
 		fmt.Fprintln(c.EWriter, Sanitize(line))
+	}
+	if r := req.Refund; r != nil && r.Summary != "" && !c.QuietMode {
+		fmt.Fprintln(c.EWriter, Sanitize("Would refund: "+r.Summary))
 	}
 	if !c.QuietMode {
 		for _, e := range effects {
@@ -2398,16 +2431,33 @@ func (p ListPage) parts() []string {
 //
 // A command calls it after its table, and also in its JSON branch: when
 // --fields is printing a table, the command runs in JSON mode, and the
-// footer is kept for EndFilter to print under the filtered table. It prints
-// nothing in any other format.
+// footer is kept for EndFilter to print under the filtered table.
+//
+// TSV, with or without --fields, gets one line on stderr when the list
+// stopped before its last page, and nothing otherwise: `domain list -o tsv`
+// printed 251 of 6,522 domains and said nothing (#382). stdout stays rows
+// only, for the script reading it. It prints nothing in any other format.
 func (c *Config) ListFooter(p ListPage) {
 	if f := c.filter; f != nil {
-		if f.format == FormatTable {
+		if f.format == FormatTable || f.format == FormatTSV {
 			f.page = &p
 		}
 		return
 	}
+	if c.Format == FormatTSV {
+		c.tsvMore(&p)
+		return
+	}
 	c.Footer(p.parts()...)
+}
+
+// tsvMore is a TSV list's footer: one line on stderr when p stopped before
+// the list's last page, and nothing otherwise.
+func (c *Config) tsvMore(p *ListPage) {
+	if p == nil || p.Next == 0 || c.QuietMode {
+		return
+	}
+	fmt.Fprintln(c.EWriter, c.Dim(Sanitize(strings.Join(p.parts(), " · "))))
 }
 
 // Dim returns text rendered in a muted/gray style.

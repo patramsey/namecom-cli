@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -378,9 +379,11 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int, start time.T
 	if attempt > 0 {
 		prefix = fmt.Sprintf("→ (retry %d)", attempt)
 	}
-	fmt.Fprintf(t.logw, "%s %s %s %s\n", start.Format(debugTimeFormat), prefix, req.Method, redactURL(req.URL))
+	var b bytes.Buffer
+	defer t.writeLog(&b)
+	fmt.Fprintf(&b, "%s %s %s %s\n", start.Format(debugTimeFormat), prefix, req.Method, redactURL(req.URL))
 	for _, line := range redactHeaders(req.Header, nil) {
-		fmt.Fprintf(t.logw, "  %s\n", line)
+		fmt.Fprintf(&b, "  %s\n", line)
 	}
 	if req.Body != nil && req.GetBody != nil {
 		body, err := req.GetBody()
@@ -392,7 +395,7 @@ func (t *retryTransport) logRequest(req *http.Request, attempt int, start time.T
 			data = RedactBody(data)
 			data = data[:min(len(data), 4096)]
 			if len(data) > 0 {
-				fmt.Fprintf(t.logw, "  body: %s\n", data)
+				fmt.Fprintf(&b, "  body: %s\n", data)
 			}
 		}
 	}
@@ -405,10 +408,12 @@ func (t *retryTransport) logResponse(resp *http.Response, start time.Time) {
 	if t.logw == nil {
 		return
 	}
+	var b bytes.Buffer
+	defer t.writeLog(&b)
 	now := time.Now()
-	fmt.Fprintf(t.logw, "%s ← %s (%s)\n", now.Format(debugTimeFormat), resp.Status, now.Sub(start).Round(time.Microsecond))
+	fmt.Fprintf(&b, "%s ← %s (%s)\n", now.Format(debugTimeFormat), resp.Status, now.Sub(start).Round(time.Microsecond))
 	for _, line := range redactHeaders(resp.Header, debugResponseHeader) {
-		fmt.Fprintf(t.logw, "  %s\n", line)
+		fmt.Fprintf(&b, "  %s\n", line)
 	}
 	// Read the full body so the caller receives it intact; truncate only the log.
 	data, _ := io.ReadAll(resp.Body)
@@ -418,9 +423,9 @@ func (t *retryTransport) logResponse(resp *http.Response, start time.Time) {
 		const logLimit = 4096
 		logged := RedactBody(data)
 		if len(logged) > logLimit {
-			fmt.Fprintf(t.logw, "  body: %s… (%d bytes total)\n", logged[:logLimit], len(data))
+			fmt.Fprintf(&b, "  body: %s… (%d bytes total)\n", logged[:logLimit], len(data))
 		} else {
-			fmt.Fprintf(t.logw, "  body: %s\n", logged)
+			fmt.Fprintf(&b, "  body: %s\n", logged)
 		}
 	}
 }
@@ -433,6 +438,28 @@ func (t *retryTransport) logError(err error, start time.Time) {
 	}
 	now := time.Now()
 	fmt.Fprintf(t.logw, "%s ← error: %v (%s)\n", now.Format(debugTimeFormat), err, now.Sub(start).Round(time.Microsecond))
+}
+
+// writeLog writes one entry of the debug log — a request, a response or an
+// error, each built whole in b — in a single Write. Written a line at a
+// time, the headers of requests sent in parallel (`status`, `domain get A
+// B`) interleaved, and could not be told apart (#382). logw is a
+// lockedWriter, so each entry also reaches the log in one piece.
+func (t *retryTransport) writeLog(b *bytes.Buffer) {
+	_, _ = t.logw.Write(b.Bytes())
+}
+
+// lockedWriter serializes Writes to w, so one Write is never interleaved
+// with another's, whatever w does with it.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // debugResponseHeader reports whether a response header is worth logging:

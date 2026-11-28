@@ -229,7 +229,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Method: "POST",
 		Path:   fmt.Sprintf("/core/v1/domains/%s/dnssec", domain),
 		Body:   body,
-		Spin:   "Adding DS record…",
+		// It asks, as set-ns does (#382): a DS record that matches none of
+		// the zone's keys stops the domain resolving, as wrong nameservers do.
+		Prompt: fmt.Sprintf("Add DS record with key tag %d (algorithm %d, digest type %d) to %s? "+
+			"The domain stops resolving for validating resolvers if it matches no key the zone is signed with.",
+			body.KeyTag, body.Algorithm, body.DigestType, domain),
+		Spin: "Adding DS record…",
 	}, func(ctx context.Context, body coreapigo.CreateDnssecBody) error {
 		var err error
 		key, err = client.SDK().DnsseCs.CreateDnssec(ctx, &body)
@@ -279,9 +284,16 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	// domain when the remaining DS records match none of the keys its DNS
 	// host signs with, and simply stop validating when none remain — the
 	// first step of turning DNSSEC off.
-	if out.Format == output.FormatTable && !out.QuietMode {
-		out.Warn(fmt.Sprintf("If other DS records remain for %s and none matches a key its DNS host signs the zone with, "+
-			"validating resolvers will fail to resolve it. With no DS record left, validation simply stops.", domain))
+	//
+	// It is shown before the question, which it bears on, and otherwise
+	// only once the delete worked or was previewed: printed first, it read
+	// as though the record had gone before a "not found" (#382).
+	warning := fmt.Sprintf("If other DS records remain for %s and none matches a key its DNS host signs the zone with, "+
+		"validating resolvers will fail to resolve it. With no DS record left, validation simply stops.", domain)
+	warn := out.Format == output.FormatTable && !out.QuietMode
+	asks := !cmdutil.IsDryRun(cmd) && !cmdutil.IsYes(cmd) && output.IsInteractive()
+	if warn && asks {
+		out.Warn(warning)
 	}
 
 	// Escaped as the SDK escapes it, so --dry-run shows the path sent (#187).
@@ -291,13 +303,27 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		Prompt: fmt.Sprintf("Remove DS record %s from %s?", digest, domain),
 		Spin:   "Removing DS record…",
 	}, func(ctx context.Context, _ cmdutil.NoBody) error {
-		return api.FromSDKError(client.SDK().DnsseCs.DeleteDnssec(ctx,
-			&coreapigo.DeleteDnssecRequest{DomainName: domain, Digest: digest}))
+		// Through keyError, as get and --dry-run are: the API's 404 says
+		// only "Not Found" (#382).
+		if err := client.SDK().DnsseCs.DeleteDnssec(ctx,
+			&coreapigo.DeleteDnssecRequest{DomainName: domain, Digest: digest}); err != nil {
+			return keyError(err, domain, digest)
+		}
+		return nil
 	})
-	if err != nil || !sent {
+	if err != nil {
 		return err
 	}
+	if !sent {
+		if warn && cmdutil.IsDryRun(cmd) {
+			out.Warn(warning)
+		}
+		return nil
+	}
 	out.Success(fmt.Sprintf("Removed DS record from %s", domain))
+	if warn && !asks {
+		out.Warn(warning)
+	}
 	return nil
 }
 

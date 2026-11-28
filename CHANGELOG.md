@@ -41,6 +41,16 @@ Output a script might notice:
 - `domain get -o tsv` has a `Locks` row, last, after `Nameservers`: the
   registry statuses comma-separated, empty when there are none. The rows
   before it do not move.
+- `dnssec delete` of a digest the domain does not have says `DS record …
+  not found on …`, as `get` and `--dry-run` do, where it said only "Not
+  Found". The warning about the DS records that remain no longer prints
+  before that failure: it is shown before the question, or after the
+  delete with `--yes`.
+- `--debug` writes each request and response as one block, so the headers
+  of requests sent in parallel (`status`, `domain get A B`) no longer
+  interleave.
+- `dns sync`'s plan line for a CNAME update named the old target in its
+  heading, so it read as though the record stayed.
 
 ### Added
 - `domain tld-pricing` lists what each TLD costs to register, renew,
@@ -65,6 +75,30 @@ Output a script might notice:
   `order list --type` (#383). With `--years`, register and renew are
   totals for the term; the API prices a transfer for one year, and the
   table labels it so.
+- The error envelope no longer has a top-level `hint` beside `error`, as
+  0.5.3 announced (#314). Read `error.hint`, which is unchanged (#382).
+- `dnssec create` now asks first, as `domain set-ns` does: without a
+  terminal it needs `--yes` (type `confirmation_required`, exit 2).
+- `order refund --dry-run` refuses an item the order marks
+  `isRefundable: false` (type `usage`, exit 2), as does the prompted
+  refund, before asking. Its JSON gains a `refund` key beside `body`: the
+  `total`, `currency` and `items` (`id`, `name`, `type`, `amount`).
+- A paged list in `-o tsv` that stopped before its last page prints one
+  line on stderr saying so, with the `--page` and `--all` to use. stdout
+  is unchanged.
+- `url delete --if-exists` with one ID reads the domain's forwardings list
+  instead of the ID, and makes one request where a missing ID made two.
+- `dns sync`'s plan heads an update line with the record as it will be,
+  not as it is: `update A www → 192.0.2.1 (TTL 3600) [id 2]: ttl 300 →
+  3600`. The changes after the colon, and JSON, are unchanged.
+- `email delete --if-exists` succeeds, with `"changed": false`, when the
+  mailbox has no forwarding, as `dns delete --if-exists` and `url delete
+  --if-exists` do; a domain not in the account still fails. It reads the
+  domain's forwardings list first: one more request when the mailbox is
+  there.
+- `order refund --dry-run` says what would be refunded and for how much:
+  a `Would refund: $35.98 for acme.io registration (order 42, item 7)`
+  line on stderr, from the order it already read.
 
 ## [0.6.1] - 2026-11-27
 

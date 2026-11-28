@@ -169,7 +169,7 @@ func New(opts Options) (*Client, error) {
 	// first, while they are still in the form AddSecret registered.
 	var logw io.Writer
 	if opts.DebugLog != nil {
-		logw = scrubWriter{output.SanitizeWriter(opts.DebugLog)}
+		logw = &lockedWriter{w: scrubWriter{output.SanitizeWriter(opts.DebugLog)}}
 	}
 	writes := &writeLog{}
 	httpClient := &http.Client{

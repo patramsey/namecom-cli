@@ -348,6 +348,7 @@ func (c *Config) fieldTable(w io.Writer, doc any, fields []string, dryRun bool, 
 	}
 	if c.Format == FormatTSV {
 		c.writeTSV(fields, rows)
+		c.tsvMore(page)
 		return nil
 	}
 	if len(rows) > 0 {
