@@ -62,7 +62,9 @@ Output a script might notice:
   sent in the same create request, so custom nameservers need no `set-ns`
   afterwards (#383).
 - `domain pricing --years`, `domain check --purchase-type` and
-  `order list --type` (#383).
+  `order list --type` (#383). With `--years`, register and renew are
+  totals for the term; the API prices a transfer for one year, and the
+  table labels it so.
 
 ## [0.6.1] - 2026-11-27
 

@@ -82,9 +82,13 @@ func runTLDPricing(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	tldParams := make([]*string, len(tlds))
-	for i := range tlds {
-		tldParams[i] = &tlds[i]
+	// One comma-joined tlds value. The SDK sends a slice as a repeated key,
+	// tlds=com&tlds=io, and the API reads only the last of them: --tld com,io
+	// priced io alone (#383).
+	var tldParams []*string
+	if len(tlds) > 0 {
+		joined := strings.Join(tlds, ",")
+		tldParams = []*string{&joined}
 	}
 
 	spin := out.StartSpinner("Fetching TLD prices…")

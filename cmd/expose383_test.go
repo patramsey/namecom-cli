@@ -257,7 +257,9 @@ func TestTLDPricing(t *testing.T) {
 	if code != 0 || len(reqs) != 1 {
 		t.Fatalf("exit %d, %v; stderr:\n%s", code, reqs, stderr)
 	}
-	if want := "GET /core/v1/tldpricing?duration=2&page=1&tlds=com&tlds=io&tlds=zzzz"; reqs[0].line != want {
+	// One tlds value, comma-joined: the API reads only the last of a
+	// repeated key, so tlds=com&tlds=io priced io alone.
+	if want := "GET /core/v1/tldpricing?duration=2&page=1&tlds=com%2Cio%2Czzzz"; reqs[0].line != want || strings.Count(reqs[0].line, "tlds=") != 1 {
 		t.Errorf("sent %s, want %s", reqs[0].line, want)
 	}
 	for _, s := range []string{"TLD", "REGISTER", "$10.99", "$44.99", "$80.00", "—"} {
@@ -375,6 +377,19 @@ func TestPricingYears_OrderType(t *testing.T) {
 	}
 	if !found || !strings.Contains(stdout+stderr, "for 3 years") {
 		t.Errorf("sent %v; printed:\n%s%s", reqs, stdout, stderr)
+	}
+	// The API prices a transfer for one year whatever --years says, so the
+	// row must not read as part of the 3-year total.
+	if !strings.Contains(stdout, "Transfer (1 year)") {
+		t.Errorf("transfer row not labelled one year:\n%s", stdout)
+	}
+	stdout, _, _, _ = run383(t, nil, "domain", "pricing", "example.com", "-o", "table")
+	if strings.Contains(stdout, "(1 year)") {
+		t.Errorf("transfer labelled without --years:\n%s", stdout)
+	}
+	stdout, _, _, _ = run383(t, nil, "domain", "pricing", "example.com", "--years", "3", "-o", "json")
+	if !strings.Contains(stdout, `"transferPrice"`) {
+		t.Errorf("JSON keys changed:\n%s", stdout)
 	}
 	if _, _, code, reqs := run383(t, nil, "domain", "pricing", "example.com", "--years", "11"); code != 2 || len(reqs) != 0 {
 		t.Errorf("--years 11: exit %d, %d requests", code, len(reqs))

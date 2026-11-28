@@ -527,7 +527,7 @@ func TestRequestCounts(t *testing.T) {
 		"domain tld-pricing --tld --years": {
 			args: []string{"domain", "tld-pricing", "--tld", "com,io", "--years", "3"},
 			want: []string{
-				"GET /core/v1/tldpricing?duration=3&page=1&tlds=com&tlds=io",
+				"GET /core/v1/tldpricing?duration=3&page=1&tlds=com%2Cio",
 			},
 		},
 		"domain tld-pricing --all, two pages": {
