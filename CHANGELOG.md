@@ -9,6 +9,18 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-27
+
+Rebuilds v0.6.0 with Go 1.26.11 for a standard-library advisory, with
+updated dependencies. No command changes what it sends to the API.
+
+Output a script might notice:
+
+- `transfer list` and `transfer get -o json` can no longer print an
+  `email` key: core-api-go v1.36.4 removed the field from a transfer, so
+  one the API sent would be dropped. Whether the API sends it was not
+  checked; the sandbox account has no transfers.
+
 ### Security
 - The Go toolchain moves to 1.26.11 for `GO-2026-6859`, a crash in
   `net/http`'s HTTP/1 server. `govulncheck` flags the binary because it
@@ -19,6 +31,13 @@ Releases before `0.2.0` predate this file. Their notes are on the
 - A bad flag value keeps its plain message (`--limit must be a whole
   number, got "abc"`) under pflag 1.1, which reports every integer
   failure, out of range included, as `must be an integer`.
+
+### Changed
+- Dependency updates: `github.com/namedotcom/core-api-go` v1.36.4, which
+  drops a transfer's `email` field and otherwise changes documentation
+  and its version header; `spf13/pflag` v1.1.0; `itchyny/gojq` v0.12.20;
+  and minor and patch releases of `charmbracelet/x/ansi`, `go-isatty`,
+  `go-runewidth` and `golang.org/x/*`.
 
 ## [0.6.0] - 2026-11-05
 
