@@ -132,10 +132,14 @@ func Execute() {
 	}
 }
 
+var decimalFlags sync.Once
+
 // run executes the root command and returns its exit code, having reported
 // the outcome on stderr: the error, or on success any warnings JSON and YAML
 // modes kept back (#240). Execute is this plus os.Exit, so tests call run.
 func run() int {
+	// Every command's flags exist by now; see DecimalIntFlags (#381).
+	decimalFlags.Do(func() { cmdutil.DecimalIntFlags(rootCmd) })
 	err := suggestFor(misparsedFlag(cmdutil.ClassifyCobraUsage(rootCmd.Execute()), os.Args[1:]))
 	// --fields and --jq print the command's output once it has returned,
 	// failed or not: `dns sync` prints a document when a change fails. The

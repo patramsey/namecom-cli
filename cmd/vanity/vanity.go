@@ -22,8 +22,8 @@ var Cmd = &cobra.Command{
 
 var (
 	createHostname string
-	createIPs      string
-	updateIPs      string
+	createIPs      []string
+	updateIPs      []string
 	listAll        bool
 )
 
@@ -86,15 +86,20 @@ nameservers first ('domain set-ns'); the registry may refuse while one does.`,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
+// ipsUsage is --ips's help. A repeated --ips kept only the last value, so a
+// nameserver given two addresses that way ended up with one (#381); a repeat
+// now adds to the list.
+const ipsUsage = "IP addresses, comma-separated or with --ips repeated (required)"
+
 func init() {
 	cmdutil.AddPageFlags(listCmd, &listAll, &listPage, &listLimit, "nameservers")
 
 	createCmd.Flags().StringVar(&createHostname, "hostname", "", "nameserver hostname, either fully-qualified (ns1.example.com) or bare label (ns1) (required)")
-	createCmd.Flags().StringVar(&createIPs, "ips", "", "comma-separated IP addresses (required)")
+	createCmd.Flags().StringSliceVar(&createIPs, "ips", nil, ipsUsage)
 	_ = createCmd.MarkFlagRequired("hostname")
 	_ = createCmd.MarkFlagRequired("ips")
 
-	updateCmd.Flags().StringVar(&updateIPs, "ips", "", "comma-separated IP addresses (required)")
+	updateCmd.Flags().StringSliceVar(&updateIPs, "ips", nil, ipsUsage)
 	_ = updateCmd.MarkFlagRequired("ips")
 
 	cmdutil.GroupCmd(Cmd)
@@ -335,7 +340,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ips, err := parseIPs(createIPs)
+	ips, err := parseIPs(strings.Join(createIPs, ","))
 	if err != nil {
 		return err
 	}
@@ -376,7 +381,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	return out.Written(ns, fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(createIPs))))
+	return out.Written(ns, fmt.Sprintf("Created vanity nameserver %s → %s", createHostname, ipList(splitIPs(strings.Join(createIPs, ",")))))
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -391,7 +396,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ips, err := parseIPs(updateIPs)
+	ips, err := parseIPs(strings.Join(updateIPs, ","))
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package cmdutil
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -447,8 +448,12 @@ func TestFlagError_BadValueIsPlain(t *testing.T) {
 	cmd.Flags().Uint("years", 0, "")
 	cmd.Flags().Float64("price", 0, "")
 	cmd.Flags().Uint8("tries", 0, "")
+	cmd.Flags().Int32Slice("ids", nil, "")
+	cmd.Flags().Float32("ratio", 0, "")
+	cmd.Flags().StringSlice("keys", nil, "")
 	root.AddCommand(cmd)
 	root.SetFlagErrorFunc(FlagError)
+	DecimalIntFlags(root)
 
 	for _, tt := range []struct {
 		args []string
@@ -462,6 +467,21 @@ func TestFlagError_BadValueIsPlain(t *testing.T) {
 		{[]string{"--price", "x"}, `--price must be a number, got "x"`},
 		{[]string{"--yes=maybe"}, `--yes takes true or false, got "maybe"`},
 		{[]string{"--timeout", "5"}, `--timeout must be a duration such as 30s or 2m, got "5"`},
+		// #381: pflag 1.1 wraps strconv's error only for the slice types, which
+		// the type switch missed; and a float out of range is not "not a number".
+		{[]string{"--ids", "abc"}, `--ids must be a whole number, got "abc"`},
+		{[]string{"--ids", "1,x"}, `--ids must be a whole number, got "x"`},
+		{[]string{"--ids", "99999999999"}, `--ids is out of range, got "99999999999"`},
+		{[]string{"--price", "1e309"}, `--price is out of range, got "1e309"`},
+		{[]string{"--ratio", "1e39"}, `--ratio is out of range, got "1e39"`},
+		{[]string{"--keys", `a"b`}, `--keys could not be read as a comma-separated list, got "a\"b": ` +
+			"wrap a value holding a quote or comma in double quotes, doubling each quote inside"},
+		// #381: base 0 read 010 as octal, and took hex, 0o and underscores.
+		{[]string{"--limit", "010"}, `--limit takes a plain decimal number (no leading zeros, 0x, 0o or _), got "010"`},
+		{[]string{"--limit=0x10"}, `--limit takes a plain decimal number (no leading zeros, 0x, 0o or _), got "0x10"`},
+		{[]string{"--years", "0o7"}, `--years takes a plain decimal number (no leading zeros, 0x, 0o or _), got "0o7"`},
+		{[]string{"-l", "1_000"}, `--limit takes a plain decimal number (no leading zeros, 0x, 0o or _), got "1_000"`},
+		{[]string{"--ids", "1,-010"}, `--ids takes a plain decimal number (no leading zeros, 0x, 0o or _), got "-010"`},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			root.SetArgs(append([]string{"list"}, tt.args...))
@@ -475,6 +495,40 @@ func TestFlagError_BadValueIsPlain(t *testing.T) {
 				t.Errorf("message = %q\nwant      %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestDecimalIntFlags_AcceptsDecimal pins what DecimalIntFlags leaves alone
+// (#381): a sign, a lone zero, and a list, which cobra's completion must still
+// see as one.
+func TestDecimalIntFlags_AcceptsDecimal(t *testing.T) {
+	fs := &cobra.Command{Use: "x"}
+	n := fs.Flags().Int("n", 0, "")
+	u := fs.Flags().Uint16("u", 0, "")
+	ids := fs.Flags().Int32Slice("ids", nil, "")
+	DecimalIntFlags(fs)
+	DecimalIntFlags(fs) // twice is harmless
+	for _, tt := range []struct {
+		flag, value string
+		check       func() bool
+	}{
+		{"n", "+5", func() bool { return *n == 5 }},
+		{"n", "-3", func() bool { return *n == -3 }},
+		{"n", "0", func() bool { return *n == 0 }},
+		{"n", "-0", func() bool { return *n == 0 }},
+		{"u", "10", func() bool { return *u == 10 }},
+		{"ids", "1,20", func() bool { return slices.Equal(*ids, []int32{1, 20}) }},
+		{"ids", "300", func() bool { return slices.Equal(*ids, []int32{1, 20, 300}) }},
+	} {
+		if err := fs.Flags().Set(tt.flag, tt.value); err != nil || !tt.check() {
+			t.Errorf("--%s %s: err %v, or the wrong value", tt.flag, tt.value, err)
+		}
+	}
+	if _, ok := fs.Flags().Lookup("ids").Value.(cobra.SliceValue); !ok {
+		t.Error("a wrapped list flag is no longer a cobra.SliceValue")
+	}
+	if _, ok := fs.Flags().Lookup("n").Value.(decimalValue); !ok {
+		t.Error("--n was not wrapped")
 	}
 }
 

@@ -362,6 +362,7 @@ answering for the domain once it points at other nameservers.
 says when the domain already has the ones given.`,
 	Example: `  namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com
   namecom domain set-ns example.com --ns ns1.example.com,ns2.example.com  # custom nameservers
+  namecom domain set-ns example.com --ns ns1.example.com --ns ns2.example.com  # the same
 
   # In a script, skip the confirmation:
   namecom domain set-ns example.com --ns ns1.name.com,ns2.name.com --yes`,
@@ -370,10 +371,13 @@ says when the domain already has the ones given.`,
 	ValidArgsFunction: cmdutil.CompleteDomains,
 }
 
-var setNSList string
+// setNSList is --ns. A repeat adds to the list: it was a plain string, so
+// `--ns ns1.a.com --ns ns2.b.com` sent ns2.b.com alone and, since set-ns
+// replaces every nameserver, left the domain on one (#381).
+var setNSList []string
 
 func init() {
-	setNSCmd.Flags().StringVar(&setNSList, "ns", "", "comma-separated nameservers (required)")
+	setNSCmd.Flags().StringSliceVar(&setNSList, "ns", nil, "nameservers, comma-separated or with --ns repeated (required)")
 	_ = setNSCmd.MarkFlagRequired("ns")
 	_ = setNSCmd.Flags().SetAnnotation("ns", cmdutil.SuggestFlagFor, []string{"nameservers", "nameserver"})
 }
@@ -381,11 +385,36 @@ func init() {
 // setNSArgs is ExactArgs(1), except that nameservers passed as arguments get
 // the command rewritten with --ns as the hint (#234).
 func setNSArgs(cmd *cobra.Command, args []string) error {
-	if len(args) > 1 && setNSList == "" {
-		return cmdutil.NewUsageErrorHint(fmt.Errorf("too many arguments — set-ns takes the nameservers in --ns, not as arguments"),
-			fmt.Sprintf("run '%s %s --ns %s'", cmd.CommandPath(), args[0], strings.Join(args[1:], ",")))
+	if len(args) > 1 && len(setNSList) == 0 {
+		err := fmt.Errorf("too many arguments — set-ns takes the nameservers in --ns, not as arguments")
+		if ns := nsFromArgs(args[1:]); len(ns) > 0 {
+			return cmdutil.NewUsageErrorHint(err, fmt.Sprintf("run '%s %s --ns %s'", cmd.CommandPath(), args[0], strings.Join(ns, ",")))
+		}
+		return cmdutil.NewUsageErrorHint(err, "usage: "+cmd.UseLine())
 	}
 	return cmdutil.ExactArgs(1)(cmd, args)
+}
+
+// nsFromArgs is the nameservers among arguments set-ns was given in place of
+// --ns. After `--` they may include the flag itself: `set-ns D -- --ns a`
+// was hinted `--ns --ns,a` (#381). Nil when an argument is some other flag,
+// which the hint cannot place.
+func nsFromArgs(extra []string) []string {
+	var ns []string
+	for _, a := range extra {
+		if a == "--ns" {
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "--ns="); ok {
+			a = v
+		} else if strings.HasPrefix(a, "-") {
+			return nil
+		}
+		if a != "" {
+			ns = append(ns, a)
+		}
+	}
+	return ns
 }
 
 func runSetNS(cmd *cobra.Command, args []string) error {
@@ -399,7 +428,7 @@ func runSetNS(cmd *cobra.Command, args []string) error {
 	// accepts them: `NS1.Example.org.` was refused here and taken there
 	// (#292). A nameserver listed twice is refused rather than sent; it is
 	// more likely a typo for a second one than meant.
-	ns := strings.Split(setNSList, ",")
+	ns := strings.Split(strings.Join(setNSList, ","), ",")
 	seen := make(map[string]bool, len(ns))
 	for i := range ns {
 		ns[i] = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(ns[i]), "."))

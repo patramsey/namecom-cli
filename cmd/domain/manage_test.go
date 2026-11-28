@@ -55,7 +55,7 @@ func baseCmd(t *testing.T, srv *httptest.Server) *cobra.Command {
 
 func cmdForSetNS(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd := baseCmd(t, srv)
-	cmd.Flags().StringVar(&setNSList, "ns", "", "")
+	cmd.Flags().StringSliceVar(&setNSList, "ns", nil, "")
 	return cmd
 }
 
@@ -159,7 +159,7 @@ func TestSetNS_InvalidNameserver(t *testing.T) {
 func TestSetNS_PositionalNameserversSuggestNS(t *testing.T) {
 	prev := setNSList
 	t.Cleanup(func() { setNSList = prev })
-	setNSList = ""
+	setNSList = nil
 
 	err := setNSArgs(setNSCmd, []string{"example.com", "ns1.a.com", "ns2.a.com"})
 	u, ok := errors.AsType[*cmdutil.UsageError](err)
@@ -172,6 +172,33 @@ func TestSetNS_PositionalNameserversSuggestNS(t *testing.T) {
 	}
 	if err := setNSArgs(setNSCmd, []string{"example.com"}); err != nil {
 		t.Errorf("one domain rejected: %v", err)
+	}
+}
+
+// TestSetNS_HintAfterDoubleDash pins #381: `set-ns example.com -- --ns a`
+// was hinted `--ns --ns,a`, the flag folded into the list.
+func TestSetNS_HintAfterDoubleDash(t *testing.T) {
+	prev := setNSList
+	t.Cleanup(func() { setNSList = prev })
+	setNSList = nil
+
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"example.com", "--ns", "a.example.net"}, " example.com --ns a.example.net'"},
+		{[]string{"example.com", "--ns=a.example.net", "b.example.net"}, " example.com --ns a.example.net,b.example.net'"},
+		// Another flag cannot be placed: the usage line instead.
+		{[]string{"example.com", "--yes", "a.example.net"}, "usage: "},
+	} {
+		err := setNSArgs(setNSCmd, tt.args)
+		u, ok := errors.AsType[*cmdutil.UsageError](err)
+		if !ok {
+			t.Fatalf("setNSArgs(%q) = %v, want a usage error", tt.args, err)
+		}
+		if h := u.UserHint(); !strings.Contains(h, tt.want) || strings.Contains(h, "--ns --ns") {
+			t.Errorf("setNSArgs(%q) hint = %q, want it to contain %q", tt.args, h, tt.want)
+		}
 	}
 }
 
@@ -1421,10 +1448,12 @@ func TestDryRunMatchesRealRequest_Domain(t *testing.T) {
 		{"privacy on", nil, []string{"on", "example.com"}, runPrivacy},
 		{"privacy off", nil, []string{"off", "example.com"}, runPrivacy},
 		{
-			name:     "set-ns",
-			register: func(c *cobra.Command) { c.Flags().StringVar(&setNSList, "ns", "ns1.example.com,ns2.example.com", "") },
-			args:     []string{"example.com"},
-			run:      runSetNS,
+			name: "set-ns",
+			register: func(c *cobra.Command) {
+				c.Flags().StringSliceVar(&setNSList, "ns", []string{"ns1.example.com", "ns2.example.com"}, "")
+			},
+			args: []string{"example.com"},
+			run:  runSetNS,
 		},
 		{
 			// update may GET before it PATCHes (to decide whether to prompt or
@@ -2638,6 +2667,16 @@ func TestRegister_MalformedTLDRequirementFailsBeforeAnyPrompt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "key=value") {
 		t.Errorf("error should show the expected form, got: %v", err)
+	}
+	// It is the user's mistake, made before any request: a usage error,
+	// exit 2. It was reported as an API error, exit 1 (#381).
+	if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+		t.Errorf("error is %T, want a *cmdutil.UsageError", err)
+	}
+	if _, err := parseTLDRequirements([]string{""}); err == nil {
+		t.Error("an empty --tld-requirement was accepted")
+	} else if _, ok := errors.AsType[*cmdutil.UsageError](err); !ok {
+		t.Errorf("empty --tld-requirement: %T, want a *cmdutil.UsageError", err)
 	}
 }
 

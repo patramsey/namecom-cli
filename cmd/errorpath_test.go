@@ -393,3 +393,41 @@ func TestErrorOutput_FilterConflictHonoursOutputFlag(t *testing.T) {
 		})
 	}
 }
+
+// TestFlagValues_UsageErrors pins #381 through the real command tree: each is
+// a usage error, exit 2, naming the flag, before any request is made. The
+// slice and float messages regressed with pflag 1.1; the decimal check is
+// run() wrapping every integer flag; --tld-requirement was type api, exit 1.
+func TestFlagValues_UsageErrors(t *testing.T) {
+	withConfig(t, loneProfile)
+	for _, tc := range []struct {
+		args    []string
+		message string
+	}{
+		{[]string{"order", "refund", "--order-id", "1", "--item-ids", "abc", "--dry-run"}, `--item-ids must be a whole number, got "abc"`},
+		{[]string{"order", "refund", "--order-id", "1", "--item-ids", "99999999999", "--dry-run"}, `--item-ids is out of range, got "99999999999"`},
+		{[]string{"domain", "register", "foo.com", "--max-price", "1e309", "--dry-run"}, `--max-price is out of range, got "1e309"`},
+		{[]string{"domain", "list", "--limit", "010"}, `--limit takes a plain decimal number (no leading zeros, 0x, 0o or _), got "010"`},
+		{[]string{"order", "refund", "--order-id", "0x10", "--item-ids", "1", "--dry-run"}, `--order-id takes a plain decimal number (no leading zeros, 0x, 0o or _), got "0x10"`},
+		{[]string{"domain", "register", "foo.com", "--tld-requirement=", "--dry-run"}, `invalid --tld-requirement "": expected key=value`},
+		{[]string{"api", "POST", "/x", "-f="}, `invalid -f "=": the key before '=' is empty`},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			resetFlags(t, tc.args)
+			srv, seen := apiStub(t, nil)
+			_, stderr, code := runContract(t, append([]string{"--base-url", srv.URL}, append(tc.args, "-o", "json")...)...)
+			var env struct {
+				Error struct{ Type, Message string } `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+				t.Fatalf("stderr is not the error envelope: %v\n%s", err, stderr)
+			}
+			if code != 2 || env.Error.Type != "usage" || env.Error.Message != tc.message {
+				t.Errorf("exit %d, error %+v; want exit 2, usage %q", code, env.Error, tc.message)
+			}
+			if got := seen(); len(got) != 0 {
+				t.Errorf("requests made: %v", got)
+			}
+		})
+	}
+}
