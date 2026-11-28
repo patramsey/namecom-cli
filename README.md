@@ -163,7 +163,7 @@ namecom open mycoolstartup.com
 
 | Group | Commands |
 |---|---|
-| `domain` | `list` `get` `search` `check` `register` `renew` `lock` `autorenew` `privacy` `set-ns` `contacts` `auth-code` `pricing` `update` `claims` `requirements` |
+| `domain` | `list` `get` `search` `check` `register` `renew` `lock` `autorenew` `privacy` `set-ns` `contacts` `auth-code` `pricing` `tld-pricing` `update` `claims` `requirements` |
 | `dns` | `list` `create` `update` `delete` `export` `import` `sync` |
 | `dnssec` | `list` `get` `create` `delete` |
 | `transfer` | `list` `get` `create` `cancel` `eligibility` `internal-in` `cancel-outbound` |

@@ -38,6 +38,31 @@ Output a script might notice:
 - Help shows a list of numbers, such as `--item-ids`, as `ints` rather
   than `int32Slice`, and `--tld-requirement`'s help says a comma is part of
   the value: repeat the flag for each field.
+- `domain get -o tsv` has a `Locks` row, last, after `Nameservers`: the
+  registry statuses comma-separated, empty when there are none. The rows
+  before it do not move.
+
+### Added
+- `domain tld-pricing` lists what each TLD costs to register, renew,
+  transfer in and restore, with `--tld` (up to 25) and `--years`, paged
+  like other lists (#383).
+- `domain search` takes `--tld` (up to 50), `--purchase-type` and
+  `--search-timeout`; its help says what kinds of result it mixes, and
+  `--purchase-type registration` leaves out aftermarket, expiring and
+  backorder listings (#383).
+- `domain list` filters by `--locked`/`--unlocked`,
+  `--autorenew`/`--no-autorenew`, `--privacy`/`--no-privacy`, `--premium`,
+  and `--created-after`/`--created-before`. A pair's two halves together
+  are a usage error. `status` points at `domain list --unlocked` when it
+  counts unlocked domains (#383).
+- `domain get` shows the registry statuses (`clientHold`,
+  `clientTransferProhibited`, …) as a `Locks` row when there are any
+  (#383).
+- `domain register` takes `--nameservers`, `--promo-code` and `--lock`,
+  sent in the same create request, so custom nameservers need no `set-ns`
+  afterwards (#383).
+- `domain pricing --years`, `domain check --purchase-type` and
+  `order list --type` (#383).
 
 ## [0.6.1] - 2026-11-27
 

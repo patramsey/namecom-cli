@@ -108,6 +108,15 @@ func TestDryRunMatchesRealRequest_DomainWriteBodies(t *testing.T) {
 			runRegister, []string{"example.com"}, registerStub)
 	})
 
+	// The body fields #383 added: nameservers and the lock in the domain,
+	// the promo code beside it. --lock=false is sent, as false.
+	t.Run("register with nameservers, a promo code and the lock", func(t *testing.T) {
+		drifttest.AssertDryRunBodyMatches(t, registerBuild("--years", "1",
+			"--nameservers", "NS1.example.net., ns2.example.net", "--nameservers", "ns3.example.net",
+			"--promo-code", "SAVE10", "--lock=false"),
+			runRegister, []string{"example.com"}, registerStub)
+	})
+
 	// The claim is the one part of register that is not a plain field: it is
 	// looked up before the body is built, and acknowledged after confirmation.
 	t.Run("register with a trademark claim", func(t *testing.T) {

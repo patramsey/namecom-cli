@@ -302,8 +302,12 @@ func cmdForRegister(t *testing.T, srv *httptest.Server) *cobra.Command {
 	cmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil, "")
 	cmd.Flags().Float64Var(&registerMaxPrice, "max-price", 0, "")
 	cmd.Flags().BoolVar(&registerAccept, "accept-premium", false, "")
+	cmd.Flags().StringArrayVar(&registerNameservers, "nameservers", nil, "")
+	cmd.Flags().StringVar(&registerPromoCode, "promo-code", "", "")
+	cmd.Flags().BoolVar(&registerLock, "lock", false, "")
 	t.Cleanup(func() {
 		registerAckClaim, registerTLDReqs, registerMaxPrice, registerAccept = false, nil, 0, false
+		registerNameservers, registerPromoCode, registerLock = nil, "", false
 	})
 	var yes bool
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "")

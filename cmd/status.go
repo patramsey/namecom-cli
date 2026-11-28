@@ -392,6 +392,10 @@ func renderStatus(out *output.Config, s statusSummary) {
 	case expiringN > 0:
 		out.Hint("Run 'namecom domain renew <domain>' to renew expiring domains")
 	}
+	// The count came from the same filter domain list --unlocked sends.
+	if s.Unlocked > 0 {
+		out.Hint("Run 'namecom domain list --unlocked' to see the unlocked domains")
+	}
 	out.Hint("Run 'namecom domain list' to see all domains")
 }
 

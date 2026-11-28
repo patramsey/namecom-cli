@@ -20,8 +20,18 @@ import (
 var registerCmd = &cobra.Command{
 	Use:   "register <domain>",
 	Short: "Register a new domain",
+	Long: `Register a new domain. It checks availability and the price first, and
+asks before buying; the confirmation and --dry-run show the request sent.
+
+--nameservers sets the domain's nameservers in the same order, instead of
+the account's defaults, so there is no set-ns to run afterwards. --lock sets
+the transfer lock; without it the API decides. --promo-code applies a promo
+code: the price quoted is the price before its discount, and a code that
+applies no discount to this purchase fails the order, with nothing bought.`,
 	Example: `  namecom domain register example.com
-  namecom domain register example.com --years 2 --privacy --autorenew`,
+  namecom domain register example.com --years 2 --privacy --autorenew
+  namecom domain register example.com --nameservers ns1.example.net,ns2.example.net --lock
+  namecom domain register example.com --promo-code SAVE10 --dry-run`,
 	Args: cmdutil.ExactArgs(1),
 	// A name to register is not one you own, nor a file (#187).
 	ValidArgsFunction: cobra.NoFileCompletions,
@@ -48,6 +58,9 @@ var (
 	registerTLDReqs      []string
 	registerMaxPrice     float64
 	registerAccept       bool
+	registerNameservers  []string
+	registerPromoCode    string
+	registerLock         bool
 	renewYears           int
 	renewPrice           float64
 	renewMaxPrice        float64
@@ -70,6 +83,12 @@ func init() {
 		"acknowledge a trademark claim on this domain (required to register a claimed domain non-interactively; --yes does NOT cover this)")
 	registerCmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil,
 		"registry-required field as key=value; repeat the flag for each field, as a comma is part of the value (see 'namecom domain requirements <tld>')")
+	registerCmd.Flags().StringArrayVar(&registerNameservers, "nameservers", nil,
+		"nameservers to register the domain with, instead of the account's defaults; comma-separated or repeated")
+	registerCmd.Flags().StringVar(&registerPromoCode, "promo-code", "",
+		"promo code to apply; one that gives this purchase no discount fails the order")
+	registerCmd.Flags().BoolVar(&registerLock, "lock", false, "transfer-lock the domain (--lock=false: unlocked); sent only when given")
+	_ = registerCmd.Flags().SetAnnotation("nameservers", cmdutil.SuggestFlagFor, []string{"ns", "nameserver"})
 
 	renewCmd.Flags().IntVar(&renewYears, "years", 1, "number of years to renew")
 	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "renewal price in USD to send as purchasePrice instead of the quoted one "+
@@ -122,6 +141,15 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	tldReqs, err := parseTLDRequirements(registerTLDReqs)
 	if err != nil {
 		return err
+	}
+	// The same up-front rule for the other body fields given as flags.
+	nameservers, err := nameserverList(registerNameservers, "nameservers")
+	if err != nil {
+		return err
+	}
+	promo := strings.TrimSpace(registerPromoCode)
+	if cmd.Flags().Changed("promo-code") && promo == "" {
+		return cmdutil.NewUsageError(errors.New("--promo-code must not be empty"))
 	}
 
 	// The guided form runs in a terminal when no option flag was passed. It
@@ -263,6 +291,14 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	body.Domain.Contacts = contacts
 	if len(tldReqs) > 0 {
 		body.TldRequirements = tldReqs
+	}
+	body.Domain.Nameservers = nameservers
+	// Locked only when --lock was given: the API's default otherwise.
+	if cmd.Flags().Changed("lock") {
+		body.Domain.Locked = &registerLock
+	}
+	if promo != "" {
+		body.PromoCode = &promo
 	}
 	body.PurchaseType = checkPurchaseType
 	body.PurchasePrice = purchasePrice
@@ -490,6 +526,11 @@ func registerPrompt(domainName string, body coreapigo.CreateDomainRequest, prici
 		years = *body.Years
 	}
 	choices := registerChoices(body.Domain)
+	if body.PromoCode != nil {
+		// The quote is the price before the promo's discount: no pricing
+		// endpoint applies a promo code.
+		choices += ", with promo code " + *body.PromoCode + " (price before its discount)"
+	}
 	if body.PurchasePrice != nil && body.PurchaseType != nil {
 		// An acquisition price is a flat fee: the API documents that years on
 		// create does not multiply it, so "/yr" or "total for N years" would
