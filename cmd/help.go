@@ -590,6 +590,9 @@ func printFlags(w io.Writer, fs *pflag.FlagSet, width int, style func(lipgloss.S
 			}
 		case f.Value.Type() == "stringArray", f.Value.Type() == "stringSlice":
 			typHint = " strings"
+		case strings.HasSuffix(f.Value.Type(), "Slice") && strings.Contains(f.Value.Type(), "int"):
+			// `--item-ids int32Slice` was pflag's name for a list of numbers (#381).
+			typHint = " ints"
 		default:
 			typHint = " " + f.Value.Type()
 		}

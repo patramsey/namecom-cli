@@ -69,7 +69,7 @@ func init() {
 	registerCmd.Flags().BoolVar(&registerAckClaim, "acknowledge-claim", false,
 		"acknowledge a trademark claim on this domain (required to register a claimed domain non-interactively; --yes does NOT cover this)")
 	registerCmd.Flags().StringArrayVar(&registerTLDReqs, "tld-requirement", nil,
-		"registry-required field as key=value; repeatable (see 'namecom domain requirements <tld>')")
+		"registry-required field as key=value; repeat the flag for each field, as a comma is part of the value (see 'namecom domain requirements <tld>')")
 
 	renewCmd.Flags().IntVar(&renewYears, "years", 1, "number of years to renew")
 	renewCmd.Flags().Float64Var(&renewPrice, "price", 0, "renewal price in USD to send as purchasePrice instead of the quoted one "+
@@ -936,7 +936,9 @@ func parseTLDRequirements(pairs []string) (map[string]string, error) {
 		k, v, found := strings.Cut(p, "=")
 		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
 		if !found || k == "" {
-			return nil, fmt.Errorf("invalid --tld-requirement %q: expected key=value", p)
+			// A usage error: it was reported as an API error, exit 1, before
+			// any request was made (#381).
+			return nil, cmdutil.NewUsageError(fmt.Errorf("invalid --tld-requirement %q: expected key=value", p))
 		}
 		reqs[k] = v
 	}

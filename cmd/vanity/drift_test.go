@@ -235,7 +235,7 @@ func TestVanity_HostnameWrongDomain(t *testing.T) {
 		{"get", baseCmd, runGet},
 		{"update", func(t *testing.T, srv *httptest.Server) *cobra.Command {
 			cmd := cmdForUpdate(t, srv)
-			updateIPs = "203.0.114.53"
+			updateIPs = []string{"203.0.114.53"}
 			return cmd
 		}, runUpdate},
 		{"delete", cmdForDelete, runDelete},

@@ -9,6 +9,36 @@ Releases before `0.2.0` predate this file. Their notes are on the
 
 ## [Unreleased]
 
+Output a script might notice:
+
+- An integer flag takes decimal only: `--limit 010`, `--ttl 0o777`,
+  `--ttl 1_000` and `--order-id 0x10` are usage errors (exit 2). They
+  were read in base 0, so `--limit 010` sent `perPage=8`. A leading `+`
+  or `-` is still accepted.
+- A repeated `domain set-ns --ns` or `vanity-ns create/update --ips` adds
+  to the list instead of keeping only the last value. The comma form
+  sends the same body as before.
+- A malformed `domain register --tld-requirement` is a usage error
+  (`"type":"usage"`, exit 2), not an API error (exit 1).
+
+### Fixed
+- `domain set-ns` kept only the last of several `--ns` flags, and since it
+  replaces every nameserver, `--ns ns1.a.com --ns ns2.b.com --yes` left the
+  domain on one. `vanity-ns create/update --ips` did the same.
+- A bad value for a list of numbers, such as `order refund --item-ids abc`,
+  printed Go's parse error again under pflag 1.1; it says `--item-ids must
+  be a whole number, got "abc"`, or that it is out of range.
+- A float flag out of range, such as `--max-price 1e309`, says so rather
+  than `must be a number`.
+- `--fields 'a"b'` explains how to quote a list value instead of printing
+  a raw CSV parse error.
+- The hint for `domain set-ns D -- --ns a` no longer folds `--ns` into the
+  list it suggests.
+- `api -f=` says the key before `=` is empty.
+- Help shows a list of numbers, such as `--item-ids`, as `ints` rather
+  than `int32Slice`, and `--tld-requirement`'s help says a comma is part of
+  the value: repeat the flag for each field.
+
 ## [0.6.1] - 2026-11-27
 
 Rebuilds v0.6.0 with Go 1.26.11 for a standard-library advisory, with

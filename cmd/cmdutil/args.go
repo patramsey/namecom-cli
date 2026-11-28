@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"slices"
@@ -248,19 +249,59 @@ func FlagErrorArgs(cmd *cobra.Command, err error, args []string) error {
 // invalidValue restates a built-in flag type's parse failure without Go's
 // internals: pflag 1.0 said `invalid argument "abc" for "--limit" flag:
 // strconv.ParseInt: parsing "abc": invalid syntax` (#324), and 1.1 says
-// `must be an integer` for an out-of-range value too. The message is chosen
-// by the flag's type, which both versions report, re-parsing the value only
-// to tell a range error apart. It returns nil for a type it does not know,
-// such as a custom flag type, whose own error already says what is wrong.
+// `must be an integer` for an out-of-range value too. For a scalar type the
+// message is chosen by the flag's type, which both versions report,
+// re-parsing the value only to tell a range error apart. The slice types
+// still return strconv's error, so for any other type a *strconv.NumError in
+// the chain says what was wrong, and with which element (#381). It returns
+// nil for an error it does not know, such as a custom flag type's, whose own
+// error already says what is wrong.
 func invalidValue(e *pflag.InvalidValueError) error {
 	name, value := "--"+e.GetFlag().Name, e.GetValue()
-	typ := e.GetFlag().Value.Type()
+	if nd, ok := errors.AsType[*notDecimalError](e); ok {
+		return fmt.Errorf("%s takes a plain decimal number (no leading zeros, 0x, 0o or _), got %q", name, nd.value)
+	}
+	if msg := scalarInvalid(e.GetFlag().Value.Type(), name, value); msg != nil {
+		return msg
+	}
+	if ne, ok := errors.AsType[*strconv.NumError](e); ok {
+		switch {
+		case errors.Is(ne.Err, strconv.ErrRange):
+			return fmt.Errorf("%s is out of range, got %q", name, ne.Num)
+		case strings.HasPrefix(ne.Func, "ParseFloat"):
+			return fmt.Errorf("%s must be a number, got %q", name, ne.Num)
+		case strings.HasPrefix(ne.Func, "ParseBool"):
+			return fmt.Errorf("%s takes true or false, got %q", name, ne.Num)
+		case strings.HasPrefix(ne.Func, "ParseInt"), strings.HasPrefix(ne.Func, "ParseUint"):
+			return fmt.Errorf("%s must be a whole number, got %q", name, ne.Num)
+		}
+	}
+	// A comma-separated list flag reads its value as a CSV record, so a
+	// stray quote was reported as `parse error on line 1, column 2: bare " in
+	// non-quoted-field`.
+	if _, ok := errors.AsType[*csv.ParseError](e); ok {
+		return fmt.Errorf("%s could not be read as a comma-separated list, got %q: "+
+			"wrap a value holding a quote or comma in double quotes, doubling each quote inside", name, value)
+	}
+	return nil
+}
+
+// scalarInvalid is invalidValue's message for a flag of a scalar type typ,
+// or nil for any other type.
+func scalarInvalid(typ, name, value string) error {
 	switch typ {
 	case "int", "int8", "int16", "int32", "int64", "count":
 		return wholeNumberError(name, value, func() error { _, err := strconv.ParseInt(value, 0, intBits(typ)); return err })
 	case "uint", "uint8", "uint16", "uint32", "uint64":
 		return wholeNumberError(name, value, func() error { _, err := strconv.ParseUint(value, 0, intBits(typ)); return err })
 	case "float32", "float64":
+		bits := 64
+		if typ == "float32" {
+			bits = 32
+		}
+		if _, err := strconv.ParseFloat(value, bits); errors.Is(err, strconv.ErrRange) {
+			return fmt.Errorf("%s is out of range, got %q", name, value)
+		}
 		return fmt.Errorf("%s must be a number, got %q", name, value)
 	case "bool":
 		return fmt.Errorf("%s takes true or false, got %q", name, value)

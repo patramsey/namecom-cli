@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/patramsey/namecom-cli/internal/drifttest"
 )
@@ -57,6 +58,25 @@ func TestRequestShape_Domain(t *testing.T) {
 		}
 		drifttest.AssertRequest(t, drifttest.Request{
 			Method: "POST", Path: "/core/v1/domains/example.com:setNameservers", Body: `{"nameservers":["ns1.example.net","ns2.example.net"]}`,
+		}, build, runSetNS, []string{"example.com"}, domainStub)
+	})
+
+	// A repeated --ns adds to the list. It kept only the last value, and
+	// set-ns replaces every nameserver, so the domain was left on one (#381).
+	t.Run("set-ns --ns repeated", func(t *testing.T) {
+		if _, ok := setNSCmd.Flags().Lookup("ns").Value.(pflag.SliceValue); !ok {
+			t.Fatal("set-ns --ns is not a list flag")
+		}
+		build := func(t *testing.T, srv *httptest.Server) *cobra.Command {
+			cmd := cmdForSetNS(t, srv)
+			if err := cmd.ParseFlags([]string{"--ns", "ns1.example.net", "--ns", "ns2.example.net,ns3.example.net"}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			return cmd
+		}
+		drifttest.AssertRequest(t, drifttest.Request{
+			Method: "POST", Path: "/core/v1/domains/example.com:setNameservers",
+			Body: `{"nameservers":["ns1.example.net","ns2.example.net","ns3.example.net"]}`,
 		}, build, runSetNS, []string{"example.com"}, domainStub)
 	})
 

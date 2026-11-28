@@ -143,6 +143,20 @@ func TestStyledHelp_WritesToCommandOutput(t *testing.T) {
 
 // ---- flag rendering ---------------------------------------------------------
 
+// TestPrintFlags_NumberListIsInts pins #381: `--item-ids int32Slice` was
+// pflag's type name, where the other lists say `strings`.
+func TestPrintFlags_NumberListIsInts(t *testing.T) {
+	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+	fs.Int32Slice("item-ids", nil, "order item IDs")
+	fs.IntSlice("ports", nil, "ports")
+	var buf bytes.Buffer
+	printFlags(&buf, fs, 0, noStyle)
+	got := buf.String()
+	if !strings.Contains(got, "--item-ids ints") || !strings.Contains(got, "--ports ints") || strings.Contains(got, "Slice") {
+		t.Errorf("want each list of numbers shown as ints, got:\n%s", got)
+	}
+}
+
 func TestPrintFlags_RendersNamesShorthandsAndUsage(t *testing.T) {
 	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
 	fs.StringP("output", "o", "table", "output format")

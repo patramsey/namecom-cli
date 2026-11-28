@@ -47,11 +47,16 @@ func parseFields(raw, typed []string) ([]field, error) {
 	return fields, nil
 }
 
-// splitField splits key=value.
+// splitField splits key=value. A missing key is named as such: `-f=`, which
+// pflag reads as the value "=", was reported only as `invalid -f "="` (#381).
 func splitField(flag, kv string) (key, val string, err error) {
 	key, val, ok := strings.Cut(kv, "=")
-	if !ok || key == "" {
+	if !ok {
 		return "", "", cmdutil.NewUsageError(fmt.Errorf("invalid %s %q: expected key=value", flag, kv))
+	}
+	if key == "" {
+		return "", "", cmdutil.NewUsageErrorHint(fmt.Errorf("invalid %s %q: the key before '=' is empty", flag, kv),
+			fmt.Sprintf("pass %s key=value", flag))
 	}
 	return key, val, nil
 }

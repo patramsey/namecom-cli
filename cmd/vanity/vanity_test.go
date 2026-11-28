@@ -51,16 +51,16 @@ func cmdForCreate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	t.Helper()
 	cmd := baseCmd(t, srv)
 	cmd.Flags().StringVar(&createHostname, "hostname", "", "")
-	cmd.Flags().StringVar(&createIPs, "ips", "", "")
-	t.Cleanup(func() { createHostname = ""; createIPs = "" })
+	cmd.Flags().StringSliceVar(&createIPs, "ips", nil, "")
+	t.Cleanup(func() { createHostname = ""; createIPs = nil })
 	return cmd
 }
 
 func cmdForUpdate(t *testing.T, srv *httptest.Server) *cobra.Command {
 	t.Helper()
 	cmd := baseCmd(t, srv)
-	cmd.Flags().StringVar(&updateIPs, "ips", "", "")
-	t.Cleanup(func() { updateIPs = "" })
+	cmd.Flags().StringSliceVar(&updateIPs, "ips", nil, "")
+	t.Cleanup(func() { updateIPs = nil })
 	return cmd
 }
 
@@ -201,7 +201,7 @@ func TestVanityGet_ReturnsEntry(t *testing.T) {
 func TestVanityCreate_BadDomain(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForCreate(t, srv)
-	createHostname, createIPs = "ns1.example.com", "1.2.3.4"
+	createHostname, createIPs = "ns1.example.com", []string{"1.2.3.4"}
 	err := runCreate(cmd, []string{"nodot"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot, got nil")
@@ -218,7 +218,7 @@ func TestVanityCreate_DomainNormalized(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForCreate(t, srv)
-	createHostname, createIPs = "ns1.example.com", "1.2.3.4"
+	createHostname, createIPs = "ns1.example.com", []string{"1.2.3.4"}
 	if err := runCreate(cmd, []string{"EXAMPLE.COM"}); err != nil {
 		t.Fatalf("runCreate: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestVanityCreate_HostnameSentAsLabel(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			cmd := cmdForCreate(t, srv)
-			createHostname, createIPs = tc.hostname, "1.2.3.4"
+			createHostname, createIPs = tc.hostname, []string{"1.2.3.4"}
 			if err := runCreate(cmd, []string{"example.com"}); err != nil {
 				t.Fatalf("runCreate: %v", err)
 			}
@@ -281,7 +281,7 @@ func TestVanityCreate_HostnameSentAsLabel(t *testing.T) {
 func TestVanityCreate_HostnameWrongDomain(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForCreate(t, srv)
-	createHostname, createIPs = "ns1.other.com", "1.2.3.4"
+	createHostname, createIPs = "ns1.other.com", []string{"1.2.3.4"}
 	err := runCreate(cmd, []string{"example.com"})
 	if err == nil {
 		t.Fatal("expected error for hostname outside the target domain, got nil")
@@ -320,7 +320,7 @@ func isUsage(err error) bool {
 func TestVanityUpdate_BadDomain(t *testing.T) {
 	srv := neverCalledServer(t)
 	cmd := cmdForUpdate(t, srv)
-	updateIPs = "1.2.3.4"
+	updateIPs = []string{"1.2.3.4"}
 	err := runUpdate(cmd, []string{"nodot", "ns1.example.com"})
 	if err == nil {
 		t.Fatal("expected error for domain without dot, got nil")
@@ -339,7 +339,7 @@ func TestVanityUpdate_Success(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cmd := cmdForUpdate(t, srv)
-	updateIPs = "5.6.7.8"
+	updateIPs = []string{"5.6.7.8"}
 	if err := runUpdate(cmd, []string{"example.com", "ns1.example.com"}); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestVanityUpdate_EmptyIPsClearsGlueRecords(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			cmd := cmdForUpdate(t, srv)
-			updateIPs = tc.ips
+			updateIPs = []string{tc.ips}
 			if err := runUpdate(cmd, []string{"example.com", "ns1.example.com"}); err != nil {
 				t.Fatalf("runUpdate: %v", err)
 			}
